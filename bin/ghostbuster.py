@@ -643,7 +643,7 @@ def main():
             subprocess.run(["Rscript", ghost_buster_apply, output_file, tuned_model_file, working_dir], check=True)
 
         elif args.mode in ['nucl_aligned']:
-            generate_trees_only = os.path.join(script_dir, "generate_trees_only.sh")
+            generate_trees_only = os.path.join(script_dir, "generate_alignment_and_trees_only.sh")
             subprocess.run(["bash", generate_trees_only, args.input_directory, working_dir], check=True)
             recoded_tree_file = os.path.join(args.working_directory, "recoded_trees.txt")
             input_trees_path = os.path.join(working_dir, "calculated_trees.txt")
@@ -657,7 +657,7 @@ def main():
             )
             output_file=f"{args.working_directory}/input_tree_stats.csv"
             process_trees_python = os.path.join(script_dir, "relative_lengths.py")
-            subprocess.run(["python", process_trees_python, args.input_trees_file, output_file])
+            subprocess.run(["python", process_trees_python, recoded_tree_file, output_file])
             tuned_model_file = f"{working_dir}/tuned_model.RData"
             ghost_buster_apply = os.path.join(script_dir, "apply_ghost_buster_model.R")
             subprocess.run(["Rscript", ghost_buster_apply, output_file, tuned_model_file, working_dir], check=True)
@@ -767,7 +767,7 @@ def main():
             subprocess.run(["Rscript", ghost_buster_apply, output_file, tuned_model_file, working_dir], check=True)
 
         elif args.mode in ['aa_aligned']:
-            generate_trees_only = os.path.join(script_dir, "generate_trees_only.sh")
+            generate_trees_only = os.path.join(script_dir, "generate_alignment_and_trees_only.sh")
             subprocess.run(["bash", generate_trees_only, args.input_directory, working_dir], check=True)
             recoded_tree_file = os.path.join(args.working_directory, "recoded_trees.txt")
             input_trees_path = os.path.join(working_dir, "calculated_trees.txt")
@@ -781,7 +781,7 @@ def main():
             )
             output_file=f"{args.working_directory}/input_tree_stats.csv"
             process_trees_python = os.path.join(script_dir, "relative_lengths.py")
-            subprocess.run(["python", process_trees_python, args.input_trees_file, output_file])
+            subprocess.run(["python", process_trees_python, recoded_tree_file, output_file])
             tuned_model_file = f"{working_dir}/tuned_model.RData"
             ghost_buster_apply = os.path.join(script_dir, "apply_ghost_buster_model.R")
             subprocess.run(["Rscript", ghost_buster_apply, output_file, tuned_model_file, working_dir], check=True)
@@ -801,7 +801,7 @@ def main():
             )
             output_file=f"{args.working_directory}/input_tree_stats.csv"
             process_trees_python = os.path.join(script_dir, "relative_lengths.py")
-            subprocess.run(["python", process_trees_python, args.input_trees_file, output_file])
+            subprocess.run(["python", process_trees_python, recoded_tree_file, output_file])
             tuned_model_file = f"{working_dir}/tuned_model.RData"
             ghost_buster_apply = os.path.join(script_dir, "apply_ghost_buster_model.R")
             subprocess.run(["Rscript", ghost_buster_apply, output_file, tuned_model_file, working_dir], check=True)
