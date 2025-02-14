@@ -142,7 +142,7 @@ while read line; do
     # Get summary stats
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
     python $SCRIPT_DIR/process_trees.py triplet.txt "$input_trees.tree_stats.txt"
-    Sis_introgression=$(Rscript $SCRIPT_DIR/introgression_between_sister_pairs.r $input_trees.tree_stats.txt)
+#    Sis_introgression=$(Rscript $SCRIPT_DIR/introgression_between_sister_pairs.r $input_trees.tree_stats.txt)
     #python $SCRIPT_DIR/pairwise_topology.py "$input_trees.tree_stats.txt" "$input_trees.means.csv" > "$input_trees.statistical_comparisons.txt"
     bl_stats=$(Rscript $SCRIPT_DIR/branch_stats2.0.r $input_trees.tree_stats.txt)
 
@@ -157,12 +157,12 @@ while read line; do
         out_pval_decimal=$(echo "$out_pval" | awk '{printf "%f", $1}')
 
         if [[ $(echo "$out_pval_decimal < 0.05" | bc -l 2>/dev/null) -eq 1 && "$out_higher" == AC ]]; then
-		echo -e "$line\t Evidence of unsampled introgression\t $chisq\t $blt\t $Sis_introgression" >> $output_file
+		echo -e "$line\t Evidence of unsampled introgression\t $chisq\t $blt" >> $output_file
         else
-                echo -e "$line\t Evidence of sampled introgression\t $chisq\t $blt\t $Sis_introgression" >> $output_file
+                echo -e "$line\t Evidence of sampled introgression\t $chisq\t $blt" >> $output_file
         fi
     else
-	    echo -e "$line\t No evidence of introgression\t $chisq\t $blt\t $Sis_introgression" >> $output_file
+	    echo -e "$line\t No evidence of introgression\t $chisq\t $blt" >> $output_file
 fi
 done < possible_combinations.txt
 
