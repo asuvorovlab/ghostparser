@@ -1,6 +1,6 @@
-# Ghostbuster Pipeline
+# The GhostBuster Pipeline
 
-The Ghostbuster Pipeline is a tool designed to analyze gene trees for evidence of introgression between taxa. The pipeline processes multiple taxa files and gene trees, validates the taxa, generates all possible combinations, and runs downstream analyses using a mix of Bash, Python, and R scripts.
+The GhostBuster Pipeline is a tool designed to exploit gene trees to detect GhostIntrogression
 
 ## Overview 
 (from Tolman et al. in preparation)
