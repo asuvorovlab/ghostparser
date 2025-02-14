@@ -94,4 +94,4 @@ bin/ghostbuster.sh --out_taxa data/out_taxa.txt --A_taxa data/A_taxa.txt --B_tax
    - For each taxa combination processed, the pipeline appends a summary of the computed branch metrics and statistical test results to the user-specified output file.
   
 ### Theoretical rational
-
+THIS WILL BE PULLED FROM THE VERSION OF THE DRAFT WE SUBMIT
