@@ -65,28 +65,28 @@ print(result)
 
 sim1 <- data
 
-# Perform the KS test for Out
+# Perform the KS test for A_length
 
 ks_test <- tryCatch(
-  ks.test(sim1$Out[sim1$Topology == "AC"], 
-          sim1$Out[sim1$Topology == "AB"]), 
+  ks.test(sim1$A_length[sim1$Topology == "AC"], 
+          sim1$A_length[sim1$Topology == "AB"]), 
   error = function(e) NULL
 )
 
 if (is.null(ks_test)) {
-  # If the KS test fails, assign the message to Out
-  Out <- "Insufficient data to compare branch lengths."
+  # If the KS test fails, assign the message to A_length
+  A_length <- "Insufficient data to compare branch lengths."
 } else {
   # Calculate the medians for each topology
-  medians <- aggregate(Out ~ Topology, data = sim1, median)
+  medians <- aggregate(A_length ~ Topology, data = sim1, median)
   medians_filtered <- medians[medians$Topology %in% c("AC", "AB"), ]
-  topology_with_highest_median <- medians_filtered[which.max(medians_filtered$Out), "Topology"]
+  topology_with_highest_median <- medians_filtered[which.max(medians_filtered$A_length), "Topology"]
 
   # Format the output with the KS test results
-  Out <- sprintf(
+  A_length <- sprintf(
     "The topology with the highest median is:%s; D-statistic:%.4f; P-value:%.4e",
     topology_with_highest_median, ks_test$statistic, ks_test$p.value
   )
 }
 
-cat(result, Out, sep = "~")
+cat(result, A_length, sep = "~")
