@@ -42,12 +42,12 @@ conda env create -f environment.yml
 ## Usage
 The pipeline is executed using a the bash script bin/ghostbuster.sh. The script requires several arguments that specify input files and an output file.
 
-Command-Line Arguments
---out_taxa: Path to a file containing each of the outgroup taxa (one per line).
---A_taxa: Path to a file containing each of the A taxa (one per line).
---B_taxa: Path to a file containing each of the B taxa (one per line).
---C_taxa: Path to a file containing each of the C taxa (one per line).
---input_trees: Path to a file containing the gene trees (one per line).
+Command-Line Arguments    
+--out_taxa: Path to a file containing each of the outgroup taxa (one per line).    
+--A_taxa: Path to a file containing each of the A taxa (one per line).    
+--B_taxa: Path to a file containing each of the B taxa (one per line).    
+--C_taxa: Path to a file containing each of the C taxa (one per line).    
+--input_trees: Path to a file containing the gene trees (one per line).    
 --output_file: Path where the output will be written.
 Example
 Run the pipeline with your files as follows:
