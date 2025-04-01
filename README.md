@@ -91,7 +91,7 @@ bin/ghostbuster.sh --out_taxa data/out_taxa.txt --A_taxa data/A_taxa.txt --B_tax
 6. **Final Output:**  
    - For each taxa combination processed, the pipeline appends a summary of the computed branch metrics and statistical test results to the user-specified output file.
   
-## Theoretical rational
+## Theoretical rationale
 ![Figure 1](https://github.com/e-tolman/images/blob/main/Figure_1.png?raw=true)
 Theoretical framework of GhostBuster, with the expected coalescence of the “outgroup” taxa demonstrated. Outgroup branch lengths are shown from empirical systems identified with BPP as evolving without introgression  (Jaltomata: J. auriculata, J. yungayensis, J. biflora), under sampled introgression (Jaltomata: J. repandidentata, J. procumbens, J. darcyana), and under ghost introgression (Thuja: T. standishii, T. sutchuenensis, T. plicata). 
 
