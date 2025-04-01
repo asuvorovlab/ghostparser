@@ -49,7 +49,7 @@ Command-Line Arguments
 --C_taxa: Path to a file containing each of the C taxa (one per line).    
 --input_trees: Path to a file containing the gene trees (one per line).    
 --output_file: Path where the output will be written.
-Example
+Example    
 Run the pipeline with your files as follows:
 
 ```bash
