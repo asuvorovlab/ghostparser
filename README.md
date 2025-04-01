@@ -82,7 +82,7 @@ bin/ghostbuster.sh --out_taxa data/out_taxa.txt --A_taxa data/A_taxa.txt --B_tax
      - It performs a two-proportion z-test comparing the proportions of `AC` versus `BC` topologies:
        - If the p-value is less than 0.01, the difference is considered statistically significant, and evidence of introgression.
        - Otherwise, it is deemed not significant.
-     - The script conducts a Kolmogorov–Smirnov (KS) test on the **Out** branch length data for topologies `AC|B` versus `AB|C`:
+     - The script conducts a Kolmogorov–Smirnov (KS) test on the **A** branch length data for topologies `AC|B` versus `AB|C`:
        - It calculates median branch lengths for these topologies and identifies which one has the higher median.
        - The KS test yields a D-statistic and p-value that are reported alongside the proportion test result. If the outgroup branch length for `AC|B` has a higher median than `AB|C`, and the distributions are significantly different (p < .05)
          this is considered evidence of unsampled or "ghost introgression" between an unsampled taxon and "B." If this is not the case, this is considered to be a case of introgression between the "A" and "C" taxa.
