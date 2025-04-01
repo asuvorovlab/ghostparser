@@ -48,8 +48,8 @@ Command-Line Arguments
 --B_taxa: Path to a file containing each of the B taxa (one per line).    
 --C_taxa: Path to a file containing each of the C taxa (one per line).    
 --input_trees: Path to a file containing the gene trees (one per line).    
---output_file: Path where the output will be written.
-Example    
+--output_file: Path where the output will be written.     
+Example        
 Run the pipeline with your files as follows:
 
 ```bash
