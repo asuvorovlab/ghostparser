@@ -48,11 +48,14 @@ if (total_count > 0) {
   } else {
     # Display results if the test is successful
     if (prop_test$p.value < 0.01) {
-      result <- sprintf("The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: %.4f, P-value: %.4e",
+      result <- sprintf("The proportions of AC and BC are significantly different. ab_count: %.0f, ac_count: %.0f, bc_count: %.0f. Proportion Test: Chi-squared: %.4f, P-value: %.4e",
+                        ab_count, ac_count, bc_count,
                         prop_test$statistic, prop_test$p.value)
     } else {
-      result <- sprintf("The proportions of AC and BC are not significantly different. Proportion Test: Chi-squared: %.4f, P-value: %.4e",
+      result <- sprintf("The proportions of AC and BC are not significantly different. ab_count: %.0f, ac_count: %.0f, bc_count: %.0f. Proportion Test: Chi-squared: %.4f, P-value: %.4e",
+                        ab_count, ac_count, bc_count,
                         prop_test$statistic, prop_test$p.value)
+      
     }
   }
 } else {
@@ -60,7 +63,7 @@ if (total_count > 0) {
 }
 
 # Print the result
-print(result)
+#print(result)
 
 
 sim1 <- data
