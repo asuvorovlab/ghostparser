@@ -13,17 +13,17 @@ from functools import partial
 lock = threading.Lock()
 
 def usage_error():
-    sys.stderr.write("Usage: {} --out_taxa <value> --A_taxa <value> --B_taxa <value> --C_taxa <value> --input_trees <value> --output_file <value>\n".format(sys.argv[0]))
+    sys.stderr.write("Usage: {} --out_taxa <value> --A_taxa <value> --B_taxa <value> --C_taxa <value> --input_trees <value> --output_file <value> --threads <value> (optional)\n".format(sys.argv[0]))
     sys.exit(1)
 
 def parse_args():
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--out_taxa")
-    parser.add_argument("--A_taxa")
-    parser.add_argument("--B_taxa")
-    parser.add_argument("--C_taxa")
-    parser.add_argument("--input_trees")
-    parser.add_argument("--output_file")
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--out_taxa", help="File containing each of the Outgroup taxa, one per line")
+    parser.add_argument("--A_taxa", help="File containing each of the A taxa, one per line")
+    parser.add_argument("--B_taxa", help="File containing each of the B taxa, one per line")
+    parser.add_argument("--C_taxa", help="File containing each of the C taxa, one per line")
+    parser.add_argument("--input_trees", help="File containing the gene trees, one per line")
+    parser.add_argument("--output_file", help="User specified path to an output file")
     # New --threads option; default to using all available threads.
     parser.add_argument("--threads", type=int, default=os.cpu_count(),
                         help="Number of threads to use (default: all available threads)")
