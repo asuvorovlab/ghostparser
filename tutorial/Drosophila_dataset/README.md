@@ -9,7 +9,7 @@ To run ghostbuster, we need to first prepare several input files.
 
 The first four files specify the taxa hypothesized to be the A,B,C taxa, as well as the outgroup taxa used to root triplets. They contain the name of one taxa per line, as they appear in the gene trees.   
 
-In this example, the files are called "A.txt", "B.txt", "C.txt", and "Out.txt" respectively.
+In this example, the files are called "A.txt", "B.txt", "C.txt", and "Out.txt" respectively. The first few lines of A.txt are shown below. The species names appear exactly as they are shown in the gene trees.
 
 ```bash
 bin/ghostbuster.sh --out_taxa data/out_taxa.txt --A_taxa data/A_taxa.txt --B_taxa data/B_taxa.txt --C_taxa data/C_taxa.txt --input_trees data/input_trees.txt --output_file results/output.txt
