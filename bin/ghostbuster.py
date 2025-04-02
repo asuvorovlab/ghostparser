@@ -4,6 +4,13 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+import concurrent.futures
+import threading
+from functools import partial
+
+# Global lock to serialize access to the shared tree_stats file.
+lock = threading.Lock()
 
 def usage_error():
     sys.stderr.write("Usage: {} --out_taxa <value> --A_taxa <value> --B_taxa <value> --C_taxa <value> --input_trees <value> --output_file <value>\n".format(sys.argv[0]))
@@ -17,6 +24,9 @@ def parse_args():
     parser.add_argument("--C_taxa")
     parser.add_argument("--input_trees")
     parser.add_argument("--output_file")
+    # New --threads option; default to using all available threads.
+    parser.add_argument("--threads", type=int, default=os.cpu_count(),
+                        help="Number of threads to use (default: all available threads)")
     args, unknown = parser.parse_known_args()
     if unknown:
         sys.stderr.write("Error: Unknown option {}\n".format(" ".join(unknown)))
@@ -101,60 +111,68 @@ def process_combination(line_tuple, args, script_dir):
     triplet_content = triplet_content.replace(c_taxon, "C")
     triplet_content = triplet_content.replace(out_taxon, "Out")
 
-    # Write the output to triplet.txt (overwriting each time)
-    triplet_filename = "triplet.txt"
-    with open(triplet_filename, "w") as f:
-        f.write(triplet_content)
+    # Write the output to a unique temporary file instead of a fixed "triplet.txt"
+    tmp = tempfile.NamedTemporaryFile(mode="w", delete=False, prefix="triplet_", suffix=".txt")
+    tmp.write(triplet_content)
+    tmp.close()
+    triplet_filename = tmp.name
 
-    # Run process_trees.py on triplet.txt and the tree stats file.
-    tree_stats_file = args.input_trees + ".tree_stats.txt"
-    process_trees_cmd = ["python", os.path.join(script_dir, "process_trees.py"), triplet_filename, tree_stats_file]
-    run_command(process_trees_cmd)
-
-    # Run the R script branch_stats2.0.r
-    branch_stats_cmd = ["Rscript", os.path.join(script_dir, "branch_stats2.0.r"), tree_stats_file]
-    bl_stats = run_command(branch_stats_cmd, capture_output=True).strip().replace("\n", " ")
-
-    # Process the output from the R script
-    # Expected format: <chisq>~<second_field>
-    fields = bl_stats.split("~")
-    chisq = fields[0].strip() if len(fields) >= 1 else ""
-    second_field = fields[1].strip() if len(fields) >= 2 else ""
-    # Determine if the first field contains "are significantly different"
-    result_signif = ("are significantly different" in chisq)
-
-    # Process second_field to extract out_pval and out_higher
-    out_pval = ""
-    out_higher = ""
-    if second_field:
-        colon_parts = second_field.split(":")
-        if len(colon_parts) >= 4:
-            out_pval = colon_parts[3].strip()
-        # For out_higher, take the first semicolon-delimited segment then split by colon
-        semicolon_parts = second_field.split(";")
-        if len(semicolon_parts) >= 1:
-            colon_parts_first = semicolon_parts[0].split(":")
-            if len(colon_parts_first) >= 2:
-                out_higher = colon_parts_first[1].strip()
-    # The entire second_field is used as blt output
-    blt = second_field
-
-    # Determine the conclusion based on the parsed output
-    if result_signif:
-        try:
-            out_pval_decimal = float(out_pval)
-        except ValueError:
-            out_pval_decimal = 1.0  # if conversion fails, default to non-significant
-        if out_pval_decimal < 0.05 and out_higher == "AC":
-            conclusion = "Evidence of unsampled introgression"
+    try:
+        # The tree stats file is shared, so acquire a lock to prevent concurrent access.
+        with lock:
+            tree_stats_file = args.input_trees + ".tree_stats.txt"
+            process_trees_cmd = ["python", os.path.join(script_dir, "process_trees.py"), triplet_filename, tree_stats_file]
+            run_command(process_trees_cmd)
+    
+            branch_stats_cmd = ["Rscript", os.path.join(script_dir, "branch_stats2.0.r"), tree_stats_file]
+            bl_stats = run_command(branch_stats_cmd, capture_output=True).strip().replace("\n", " ")
+    
+        # Process the output from the R script
+        # Expected format: <chisq>~<second_field>
+        fields = bl_stats.split("~")
+        chisq = fields[0].strip() if len(fields) >= 1 else ""
+        second_field = fields[1].strip() if len(fields) >= 2 else ""
+        # Determine if the first field contains "are significantly different"
+        result_signif = ("are significantly different" in chisq)
+    
+        # Process second_field to extract out_pval and out_higher
+        out_pval = ""
+        out_higher = ""
+        if second_field:
+            colon_parts = second_field.split(":")
+            if len(colon_parts) >= 4:
+                out_pval = colon_parts[3].strip()
+            # For out_higher, take the first semicolon-delimited segment then split by colon
+            semicolon_parts = second_field.split(";")
+            if len(semicolon_parts) >= 1:
+                colon_parts_first = semicolon_parts[0].split(":")
+                if len(colon_parts_first) >= 2:
+                    out_higher = colon_parts_first[1].strip()
+        # The entire second_field is used as blt output
+        blt = second_field
+    
+        # Determine the conclusion based on the parsed output
+        if result_signif:
+            try:
+                out_pval_decimal = float(out_pval)
+            except ValueError:
+                out_pval_decimal = 1.0  # if conversion fails, default to non-significant
+            if out_pval_decimal < 0.05 and out_higher == "AC":
+                conclusion = "Evidence of unsampled introgression"
+            else:
+                conclusion = "Evidence of sampled introgression"
         else:
-            conclusion = "Evidence of sampled introgression"
-    else:
-        conclusion = "No evidence of introgression"
-
-    # Return the combination line and results in the desired format
-    # Note: The bash script outputs: combination_line, conclusion, chisq, blt (tab-separated)
-    return "{}\t{}\t{}\t{}".format(combination_line, conclusion, chisq, blt)
+            conclusion = "No evidence of introgression"
+    
+        # Return the combination line and results in the desired format
+        # Note: The bash script outputs: combination_line, conclusion, chisq, blt (tab-separated)
+        return "{}\t{}\t{}\t{}".format(combination_line, conclusion, chisq, blt)
+    finally:
+        # Remove the intermediate temporary file
+        try:
+            os.remove(triplet_filename)
+        except OSError:
+            pass
 
 def main():
     args = parse_args()
@@ -170,6 +188,7 @@ def main():
     sys.stdout.write("  B_taxa: {}\n".format(args.B_taxa))
     sys.stdout.write("  C_taxa: {}\n".format(args.C_taxa))
     sys.stdout.write("  input_trees: {}\n".format(args.input_trees))
+    sys.stdout.write("  threads: {}\n".format(args.threads))
 
     # Write header to the output file
     with open(args.output_file, "w") as out_f:
@@ -182,12 +201,14 @@ def main():
     # Generate every valid combination from the four taxa files.
     combinations = generate_combinations(args.C_taxa, args.B_taxa, args.A_taxa, args.out_taxa)
 
-    # Process each combination and append the results to the output file.
+    # Process each combination in parallel and collect the results.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
+        results = list(executor.map(lambda comb: process_combination(comb, args, script_dir), combinations))
+
+    # Append the results to the output file.
     with open(args.output_file, "a") as out_f:
-        for comb in combinations:
-            result_line = process_combination(comb, args, script_dir)
+        for result_line in results:
             out_f.write(result_line + "\n")
 
 if __name__ == "__main__":
     main()
-
