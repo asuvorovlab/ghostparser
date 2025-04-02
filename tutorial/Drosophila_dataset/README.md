@@ -37,14 +37,12 @@ python ghostbuster/bin/ghostbuster.py --out_taxa Out.txt --A_taxa A.txt --B_taxa
 
 
 ## Step two: consider the ghostbuster output
+Following the completion of the ghostbuster run (1-2 minutes) three new files will have been created:
+  1. drosophila.trees.tree_stats.txt: A tsv file with branch lengths statistics used to determine the presence and type of introgression for the tested hypothesis.
+  2. triplet.txt: A text file listing the triplet combinations tested.
+  3. tutorial_output.txt: A tsv file, containing the main output of ghostbuster.
 
-- **Git** – For version control.
-- **Bash** – To run the main pipeline script.
-- **nw_prune** – A tool for pruning phylogenetic trees.  
-  (Installation instructions can be found on the [nw_prune GitHub page](https://github.com/josephryan/nw_prune) or your package manager.)
-- **Python 3** – For running the `process_trees.py` script.
-- **R** – For running R scripts (`introgression_between_sister_pairs.r` and `branch_stats2.0.r`).
-- **Conda** – To easily install all the required dependencies from the `environment.yml` file.
+
 
 ## Step 3: Run ghostfinder to search for the ghost lineage in the drosophila tree
 
