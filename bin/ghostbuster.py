@@ -198,7 +198,7 @@ def main():
 
     # Write header to the output file
     with open(args.output_file, "w") as out_f:
-        header = "Triplet Tested\tConclusion\tDCT result\tBLT result\tIBL result\tSister_introggression\n"
+        header = "Triplet Tested\tConclusion\tDCT result\tBLT result\n"
         out_f.write(header)
 
     # Determine the directory where this script is located (for calling other scripts)
