@@ -32,7 +32,7 @@ D_mush_saotome
 With these input files prepared, ghostbuster can be executed like so:
 
 ```bash
-
+python ghostbuster/bin/ghostbuster.py --out_taxa Out.txt --A_taxa A.txt --B_taxa B.txt --C_taxa C.txt --input_trees drosophila.trees --output_file tutorial_output.txt
 ```
 
 
