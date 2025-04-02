@@ -154,7 +154,7 @@ def filter_output(full_output_file, final_output_file):
     """
     with open(full_output_file, 'r') as fin, open(final_output_file, 'w') as fout:
         for line in fin:
-            if " sampled" in line:
+            if " sampled" in line: # Also add syntax that proportion of AC is greater than BC!!!
                 fout.write(line)
 
 def remove_intermediate_files(files):
@@ -187,8 +187,8 @@ def main():
     filter_output(full_output_file, args.output_file)
     
     # Step 5: Remove all intermediate files.
-    intermediate_files = [a_file, b_file, additional_file, c_file, full_output_file]
-    remove_intermediate_files(intermediate_files)
+   # intermediate_files = [a_file, b_file, additional_file, c_file, full_output_file]
+   # remove_intermediate_files(intermediate_files)
 
 if __name__ == "__main__":
     main()
