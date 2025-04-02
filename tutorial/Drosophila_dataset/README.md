@@ -53,7 +53,7 @@ D_arawakana D_sulfurigaster_sulfurigaster D_pruinosa Anopheles_gambiae	Evidence 
 D_arawakana D_sulfurigaster_bilimbata D_pruinosa Anopheles_gambiae	Evidence of unsampled introgression	[1] "The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 177.5444, P-value: 1.6657e-40" The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 177.5444, P-value: 1.6657e-40	The topology with the highest median is:AC; D-statistic:0.2230; P-value:5.8733e-14
 D_arawakana D_neohypocausta D_pruinosa Anopheles_gambiae	Evidence of unsampled introgression	[1] "The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 170.3925, P-value: 6.0737e-39" The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 170.3925, P-value: 6.0737e-39	The topology with the highest median is:AC; D-statistic:0.2215; P-value:5.8614e-14
 ```
-
+#Need to update ghostbuster to clean up the output.
 The first column prints the triplet tested, in the order of C taxa B taxa A taxa Out taxa (used to root the triplet). The second column is the most likely introgression scenario for the tested triplet. The third column is the results of the Discordant Count Test (DCT) used to test for the presence of introgression, and the fourth column is the result of Branch-Length Test used to distinguish between ghost and sampled introgression. 
 
 The ghostbuster results can be summarized by counting the unique values in the second column of the output file.
@@ -63,9 +63,10 @@ cut -f2 tutorial_output.txt | grep -v "Conclusion" | sort | uniq -c
 ```
 
 ## Step 3: Run ghostfinder to search for the ghost lineage in the drosophila tree
+Once ghostbuster is complete, ghostfinder can take the output of the ghostbuster run, consider the "B" taxa as A taxa that have received sampled introgression, the "A" taxa as the taxa which are not hypothesized to have received introgression from a sampled lineage, and run ghostbuster with all other possible "C" across the tree, identifying lineages as having introgressed with the putative ghost recipients as the possible ghost lineage. This script uses the ghostbuster output, the same file indicating the taxa used to root the species tree, and the gene trees used to run ghostbuster. It can be called like so.
 
 ```bash
-bin/ghostbuster.sh --out_taxa data/out_taxa.txt --A_taxa data/A_taxa.txt --B_taxa data/B_taxa.txt --C_taxa data/C_taxa.txt --input_trees data/input_trees.txt --output_file results/output.txt
+python ~/Desktop/Ghostbuster/ghostbuster/bin/ghostfinder.py --out_taxa Out.txt --ghostbuster_output tutorial_output.txt --input_trees drosophila.trees --output_file tutorial_ghostfinder_output
 ```
 
 ## Step 4: Look at the ghostfinder output
