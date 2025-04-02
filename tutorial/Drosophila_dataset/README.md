@@ -1,6 +1,8 @@
 # Drosophila Tutorial
 
-This tutorial tests for ghost introgression in clade nine of the fly genus _Drosophila_. Suvorov et al. (2021) found evidence of introgression between the clade comprised of _D. immigrans_,_D._ albomicans_,_D. neonasuta_, etc.
+This tutorial tests for ghost introgression in clade nine of the fly genus _Drosophila_. Suvorov et al. (2021) found evidence of introgression between the clade comprised of _D. arawakana_, _D. dunni_, _D. funebris_ etc. and _D.immigrans_. Here we test if this is in fact introgression between these two lineages, or introgression involving _D. immigrans_, _D._ albomicans_, _D. neonasuta_,etc. and a "ghost clade." In this scenario, _D. arawakana_, _D. dunni_, _D. funebris_ etc. is the A clade, hypothesized to have introgressed with the C clade, _D. immigrans_. The clade sister to _D. immigrans_ is the B clade, hypothesized to have introgressed with a ghost lineage.
+
+#Add a picture.
 
 ## Step one: run ghostbuster
 Ghostbuster operates under the theory that gene trees with the topology A,C|B would have a longer outgroup branch length than genes supporting the topology A,B|C if ghost introgression has occurred(Fig. 1). The user provides, as input, paths to five separate files, one file each containing the putative “A”, “B”, “C”, and “Out” taxa (used to root the triplet) with one taxa per line, and a fifth file containing all of the gene trees. Within this framework, the A and B taxa should be sister, C taxa are hypothesized to have introgressed with A taxa, and B taxa are the hypothesized recipients of ghost introgression. The GhostBuster pipeline tests all possible combinations of A,B,C and Out taxa. For each triplet, the pipeline  first employs the Discordant Count Test (DCT) (Suvorov, Kim, et al. 2022; Suvorov, Scornavacca, et al. 2022) to test for any signal of introgression. This implementation of the DCT uses a two proportion Z-test to determine if the counts of the two discordant topologies for a given triplet are significantly different. If these counts are not significantly different (p > .01), Ghostbuster concludes that there is no evidence of introgression in the species triplet. The stringent cutoff (p < .01) is used to reduce the occurrence of false positives.
@@ -39,4 +41,5 @@ Run the pipeline with your files as follows:
 ```bash
 bin/ghostbuster.sh --out_taxa data/out_taxa.txt --A_taxa data/A_taxa.txt --B_taxa data/B_taxa.txt --C_taxa data/C_taxa.txt --input_trees data/input_trees.txt --output_file results/output.txt
 ```
+## Step 4: Look at the ghostfinder output
 
