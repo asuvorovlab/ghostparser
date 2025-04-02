@@ -40,7 +40,7 @@ conda env create -f environment.yml
 ```
 
 ## Usage
-The pipeline is executed using a the bash script bin/ghostbuster.sh. The script requires several arguments that specify input files and an output file.
+The pipeline is executed using a the python script bin/ghostbuster.sh. The script requires several arguments that specify input files and an output file.
 
 Command-Line Arguments    
 --out_taxa: Path to a file containing each of the outgroup taxa (one per line).    
