@@ -1,0 +1,4 @@
+D_hydei D_repleta D_seriema Anopheles_gambiae
+D_hydei D_repleta D_mojavensis Anopheles_gambiae
+D_hydei D_repleta D_arizonae Anopheles_gambiae
+D_hydei D_repleta D_navojoa Anopheles_gambiae

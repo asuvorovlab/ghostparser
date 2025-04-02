@@ -1,0 +1,11 @@
+L_stackelbergi
+L_magnipectinata
+D_sturtevanti
+D_neocordata
+D_saltans
+D_prosaltans
+D_insularis
+D_tropicalis
+D_willistoni
+D_equinoxialis
+D_paulistorum

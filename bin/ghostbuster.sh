@@ -129,6 +129,16 @@ while read a; do
         done < $A_taxa
     done < $B_taxa
 done < $C_taxa > possible_combinations.txt
+awk '{
+  delete seen; dup=0;
+  for(i=1; i<=NF; i++){
+    if($i in seen){ dup=1; break }
+    seen[$i]=1
+  }
+  if(!dup) print
+}' possible_combinations.txt > tmp && mv tmp possible_combinations.txt
+
+
 #order is out, c, b, a
 
 

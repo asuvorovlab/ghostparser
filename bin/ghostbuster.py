@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import re
+import subprocess
+import sys
+
+def usage_error():
+    sys.stderr.write("Usage: {} --out_taxa <value> --A_taxa <value> --B_taxa <value> --C_taxa <value> --input_trees <value> --output_file <value>\n".format(sys.argv[0]))
+    sys.exit(1)
+
+def parse_args():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--out_taxa")
+    parser.add_argument("--A_taxa")
+    parser.add_argument("--B_taxa")
+    parser.add_argument("--C_taxa")
+    parser.add_argument("--input_trees")
+    parser.add_argument("--output_file")
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        sys.stderr.write("Error: Unknown option {}\n".format(" ".join(unknown)))
+        usage_error()
+    if (not args.out_taxa or not args.A_taxa or not args.B_taxa or 
+        not args.C_taxa or not args.input_trees or not args.output_file):
+        sys.stderr.write("Error: Missing required arguments.\n")
+        usage_error()
+    return args
+
+def read_file_lines(filepath):
+    with open(filepath, "r") as f:
+        # Skip empty lines and remove whitespace
+        return [line.strip() for line in f if line.strip()]
+
+def check_taxa_in_trees(taxa_files, input_trees_file):
+    # Read the entire input trees file into a single string
+    with open(input_trees_file, "r") as f:
+        trees_content = f.read()
+    missing_taxa = []
+    for taxa_file in taxa_files:
+        for taxon in read_file_lines(taxa_file):
+            # Using regex for whole-word matching
+            if not re.search(r'\b{}\b'.format(re.escape(taxon)), trees_content):
+                missing_taxa.append(taxon)
+    if missing_taxa:
+        sys.stderr.write("Error: The following taxa were not found in any input tree:\n")
+        for taxon in missing_taxa:
+            sys.stderr.write(" - {}\n".format(taxon))
+        sys.exit(1)
+
+def generate_combinations(C_taxa_file, B_taxa_file, A_taxa_file, out_taxa_file):
+    # Read the taxa from each file
+    taxa_C = read_file_lines(C_taxa_file)
+    taxa_B = read_file_lines(B_taxa_file)
+    taxa_A = read_file_lines(A_taxa_file)
+    taxa_out = read_file_lines(out_taxa_file)
+
+    combinations = []
+    # Nested loops in the same order as the bash script:
+    # Outer loop: C_taxa, then B_taxa, then A_taxa, then out_taxa.
+    for c in taxa_C:
+        for b in taxa_B:
+            for a in taxa_A:
+                for out in taxa_out:
+                    # Ensure all four taxa are distinct
+                    if len({c, b, a, out}) == 4:
+                        # The bash prints the line as: a (from C_taxa), b (from B_taxa), c (from A_taxa), d (from out_taxa)
+                        # Later, the variables are re-assigned so that:
+                        #   out = 4th field, c = 1st, b = 2nd, a = 3rd.
+                        combinations.append((c, b, a, out))
+    return combinations
+
+def run_command(command_list, capture_output=False):
+    try:
+        if capture_output:
+            result = subprocess.check_output(command_list)
+            return result.decode("utf-8")
+        else:
+            subprocess.check_call(command_list)
+            return ""
+    except subprocess.CalledProcessError as e:
+        sys.stderr.write("Error running command: {}\n".format(" ".join(command_list)))
+        sys.exit(1)
+
+def process_combination(line_tuple, args, script_dir):
+    # Unpack the combination tuple (as generated above):
+    # tuple order: (c, b, a, out) where:
+    #   c from C_taxa, b from B_taxa, a from A_taxa, out from out_taxa.
+    c_taxon, b_taxon, a_taxon, out_taxon = line_tuple
+    # For output, the original bash saves the combination line as: "c b a out"
+    combination_line = "{} {} {} {}".format(c_taxon, b_taxon, a_taxon, out_taxon)
+
+    # Run nw_prune -v input_trees out a b c
+    nw_command = ["nw_prune", "-v", args.input_trees, out_taxon, a_taxon, b_taxon, c_taxon]
+    nw_output = run_command(nw_command, capture_output=True)
+
+    # Perform the sed-like replacements in the order given:
+    # replace a_taxon -> "A", b_taxon -> "B", c_taxon -> "C", out_taxon -> "Out"
+    triplet_content = nw_output.replace(a_taxon, "A")
+    triplet_content = triplet_content.replace(b_taxon, "B")
+    triplet_content = triplet_content.replace(c_taxon, "C")
+    triplet_content = triplet_content.replace(out_taxon, "Out")
+
+    # Write the output to triplet.txt (overwriting each time)
+    triplet_filename = "triplet.txt"
+    with open(triplet_filename, "w") as f:
+        f.write(triplet_content)
+
+    # Run process_trees.py on triplet.txt and the tree stats file.
+    tree_stats_file = args.input_trees + ".tree_stats.txt"
+    process_trees_cmd = ["python", os.path.join(script_dir, "process_trees.py"), triplet_filename, tree_stats_file]
+    run_command(process_trees_cmd)
+
+    # Run the R script branch_stats2.0.r
+    branch_stats_cmd = ["Rscript", os.path.join(script_dir, "branch_stats2.0.r"), tree_stats_file]
+    bl_stats = run_command(branch_stats_cmd, capture_output=True).strip().replace("\n", " ")
+
+    # Process the output from the R script
+    # Expected format: <chisq>~<second_field>
+    fields = bl_stats.split("~")
+    chisq = fields[0].strip() if len(fields) >= 1 else ""
+    second_field = fields[1].strip() if len(fields) >= 2 else ""
+    # Determine if the first field contains "are significantly different"
+    result_signif = ("are significantly different" in chisq)
+
+    # Process second_field to extract out_pval and out_higher
+    out_pval = ""
+    out_higher = ""
+    if second_field:
+        colon_parts = second_field.split(":")
+        if len(colon_parts) >= 4:
+            out_pval = colon_parts[3].strip()
+        # For out_higher, take the first semicolon-delimited segment then split by colon
+        semicolon_parts = second_field.split(";")
+        if len(semicolon_parts) >= 1:
+            colon_parts_first = semicolon_parts[0].split(":")
+            if len(colon_parts_first) >= 2:
+                out_higher = colon_parts_first[1].strip()
+    # The entire second_field is used as blt output
+    blt = second_field
+
+    # Determine the conclusion based on the parsed output
+    if result_signif:
+        try:
+            out_pval_decimal = float(out_pval)
+        except ValueError:
+            out_pval_decimal = 1.0  # if conversion fails, default to non-significant
+        if out_pval_decimal < 0.05 and out_higher == "AC":
+            conclusion = "Evidence of unsampled introgression"
+        else:
+            conclusion = "Evidence of sampled introgression"
+    else:
+        conclusion = "No evidence of introgression"
+
+    # Return the combination line and results in the desired format
+    # Note: The bash script outputs: combination_line, conclusion, chisq, blt (tab-separated)
+    return "{}\t{}\t{}\t{}".format(combination_line, conclusion, chisq, blt)
+
+def main():
+    args = parse_args()
+
+    # Check that all taxa in the provided taxa files appear in the input_trees file.
+    taxa_files = [args.out_taxa, args.A_taxa, args.B_taxa, args.C_taxa]
+    check_taxa_in_trees(taxa_files, args.input_trees)
+
+    # Display parsed arguments
+    sys.stdout.write("Parsed arguments:\n")
+    sys.stdout.write("  out_taxa: {}\n".format(args.out_taxa))
+    sys.stdout.write("  A_taxa: {}\n".format(args.A_taxa))
+    sys.stdout.write("  B_taxa: {}\n".format(args.B_taxa))
+    sys.stdout.write("  C_taxa: {}\n".format(args.C_taxa))
+    sys.stdout.write("  input_trees: {}\n".format(args.input_trees))
+
+    # Write header to the output file
+    with open(args.output_file, "w") as out_f:
+        header = "Triplet Tested\tConclusion\tDCT result\tBLT result\tIBL result\tSister_introggression\n"
+        out_f.write(header)
+
+    # Determine the directory where this script is located (for calling other scripts)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Generate every valid combination from the four taxa files.
+    combinations = generate_combinations(args.C_taxa, args.B_taxa, args.A_taxa, args.out_taxa)
+
+    # Process each combination and append the results to the output file.
+    with open(args.output_file, "a") as out_f:
+        for comb in combinations:
+            result_line = process_combination(comb, args, script_dir)
+            out_f.write(result_line + "\n")
+
+if __name__ == "__main__":
+    main()
+

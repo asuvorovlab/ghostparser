@@ -1,0 +1,12 @@
+D_albomicans
+D_nasuta
+D_kepulauana
+D_neonasuta
+D_sulfurigaster_albostrigata
+D_pulaua
+D_sulfurigaster_sulfurigaster
+D_sulfurigaster_bilimbata
+D_neohypocausta
+D_immigrans
+D_immigrans_kari17
+D_pruinosa
