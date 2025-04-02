@@ -126,6 +126,12 @@ def process_combination(line_tuple, args, script_dir):
     
             branch_stats_cmd = ["Rscript", os.path.join(script_dir, "branch_stats2.0.r"), tree_stats_file]
             bl_stats = run_command(branch_stats_cmd, capture_output=True).strip().replace("\n", " ")
+            
+            # Remove the intermediate tree_stats file.
+            try:
+                os.remove(tree_stats_file)
+            except OSError:
+                pass
     
         # Process the output from the R script
         # Expected format: <chisq>~<second_field>
