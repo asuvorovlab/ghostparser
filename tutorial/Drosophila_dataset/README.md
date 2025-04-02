@@ -1,6 +1,6 @@
-# The GhostBuster Pipeline
+# Drosophila Tutorial
 
-The GhostBuster Pipeline utilized branch lengths to detect detect ghost introgression
+This tutorial tests for ghost introgression in clade nine of the fly genus Drosophila. 
 
 ## Overview 
 (From Tolman et al. in preparation)
