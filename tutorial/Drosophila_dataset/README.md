@@ -1,6 +1,6 @@
 # _Drosophila_ ghostbuster Tutorial
 
-This tutorial tests for ghost introgression in clade nine of the fly genus _Drosophila_. Suvorov et al. (2021) found evidence of introgression between the clade comprised of _D. arawakana_, _D. dunni_, _D. funebris_ etc. and _D.immigrans_. Here we test if this is in fact introgression between these two lineages, or introgression involving _D. immigrans_, _D._ albomicans_, _D. neonasuta_,etc. and a "ghost clade." In this scenario, _D. arawakana_, _D. dunni_, _D. funebris_ etc. is the A clade, hypothesized to have introgressed with the C clade, _D. immigrans_. The clade sister to _D. immigrans_ is the B clade, hypothesized to have introgressed with a ghost lineage. 
+This tutorial tests for ghost introgression in clade nine of the fly genus _Drosophila_. Suvorov et al. (2021) found evidence of introgression between the clade comprised of _D. arawakana_, _D. dunni_, _D. funebris_ etc. and _D. pruinos_. Here we test if this is in fact introgression between these two lineages, or introgression involving _D. immigrans_, _D._ albomicans_, _D. neonasuta_,etc. and a "ghost clade." In this scenario, _D. arawakana_, _D. dunni_, _D. funebris_ etc. is the C clade, hypothesized to have introgressed with the A clade, _D. pruinosa_. The clade sister to _D. pruinosa_ is the B clade, hypothesized to have introgressed with a ghost lineage. 
 
 #Add a picture.
 
@@ -35,6 +35,7 @@ With these input files prepared, ghostbuster can be executed like so:
 python ghostbuster/bin/ghostbuster.py --out_taxa Out.txt --A_taxa A.txt --B_taxa B.txt --C_taxa C.txt --input_trees drosophila.trees --output_file tutorial_output.txt
 ```
 
+By default, ghostbuster will utilize all available threads when computing summaring statistics. This can be changed using the optional --threads option.
 
 ## Step two: consider the ghostbuster output
 Following the completion of the ghostbuster run (1-2 minutes) three new files will have been created:
@@ -43,6 +44,7 @@ Following the completion of the ghostbuster run (1-2 minutes) three new files wi
   3. tutorial_output.txt: A tsv file, containing the main output of ghostbuster, as shown below.
 
 ```bash
+Triplet Tested	Conclusion	DCT result	BLT result
 D_arawakana D_albomicans D_pruinosa Anopheles_gambiae	Evidence of unsampled introgression	[1] "The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 132.7514, P-value: 1.0247e-30" The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 132.7514, P-value: 1.0247e-30	The topology with the highest median is:AC; D-statistic:0.2423; P-value:2.4303e-12
 D_arawakana D_nasuta D_pruinosa Anopheles_gambiae	Evidence of unsampled introgression	[1] "The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 173.2038, P-value: 1.4772e-39" The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 173.2038, P-value: 1.4772e-39	The topology with the highest median is:AC; D-statistic:0.2212; P-value:7.1615e-14
 D_arawakana D_kepulauana D_pruinosa Anopheles_gambiae	Evidence of unsampled introgression	[1] "The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 173.8586, P-value: 1.0629e-39" The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 173.8586, P-value: 1.0629e-39	The topology with the highest median is:AC; D-statistic:0.2171; P-value:6.2097e-13
@@ -53,7 +55,7 @@ D_arawakana D_sulfurigaster_sulfurigaster D_pruinosa Anopheles_gambiae	Evidence 
 D_arawakana D_sulfurigaster_bilimbata D_pruinosa Anopheles_gambiae	Evidence of unsampled introgression	[1] "The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 177.5444, P-value: 1.6657e-40" The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 177.5444, P-value: 1.6657e-40	The topology with the highest median is:AC; D-statistic:0.2230; P-value:5.8733e-14
 D_arawakana D_neohypocausta D_pruinosa Anopheles_gambiae	Evidence of unsampled introgression	[1] "The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 170.3925, P-value: 6.0737e-39" The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 170.3925, P-value: 6.0737e-39	The topology with the highest median is:AC; D-statistic:0.2215; P-value:5.8614e-14
 ```
-#Need to update ghostbuster to clean up the output.
+
 The first column prints the triplet tested, in the order of C taxa B taxa A taxa Out taxa (used to root the triplet). The second column is the most likely introgression scenario for the tested triplet. The third column is the results of the Discordant Count Test (DCT) used to test for the presence of introgression, and the fourth column is the result of Branch-Length Test used to distinguish between ghost and sampled introgression. 
 
 The ghostbuster results can be summarized by counting the unique values in the second column of the output file.
