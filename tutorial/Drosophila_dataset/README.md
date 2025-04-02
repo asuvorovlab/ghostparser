@@ -56,6 +56,11 @@ D_arawakana D_neohypocausta D_pruinosa Anopheles_gambiae	Evidence of unsampled i
 
 The first column prints the triplet tested, in the order of C taxa B taxa A taxa Out taxa (used to root the triplet). The second column is the most likely introgression scenario for the tested triplet. The third column is the results of the Discordant Count Test (DCT) used to test for the presence of introgression, and the fourth column is the result of Branch-Length Test used to distinguish between ghost and sampled introgression. 
 
+The ghostbuster results can be summarized by counting the unique values in the second column of the output file.
+
+```bash
+cut -f2 tutorial_output.txt | grep -v "Conclusion" | sort | uniq -c
+```
 
 ## Step 3: Run ghostfinder to search for the ghost lineage in the drosophila tree
 
