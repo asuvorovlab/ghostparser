@@ -2,7 +2,7 @@
 
 This tutorial tests for ghost introgression in clade nine of the fly genus _Drosophila_. Suvorov et al. (2021) found evidence of introgression between the clade comprised of _D. arawakana_, _D. dunni_, _D. funebris_ etc. and _D. pruinos_. Here we test if this is in fact introgression between these two lineages, or introgression involving _D. immigrans_, _D._ albomicans_, _D. neonasuta_,etc. and a "ghost clade." In this scenario, _D. arawakana_, _D. dunni_, _D. funebris_ etc. is the C clade, hypothesized to have introgressed with the A clade, _D. pruinosa_. The clade sister to _D. pruinosa_ is the B clade, hypothesized to have introgressed with a ghost lineage. 
 
-#Add a picture.  
+![Figure 1](https://github.com/e-tolman/images/blob/main/github_fig2.png?raw=true)
 
 
 ## Step one: Install ghostbuster
