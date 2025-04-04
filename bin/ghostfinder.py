@@ -7,8 +7,8 @@ import sys
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Run GhostBuster workflow by generating intermediate taxa files, "
-                    "invoking ghostbuster.py, and filtering the output."
+        description="GhostFinder: Build taxa lists from a GhostBuster output, then run ghostbuster.py to analyze gene trees.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("--out_taxa", required=True,
                         help="File with outgroup taxa, one per line.")
@@ -18,177 +18,199 @@ def parse_args():
                         help="File containing the gene trees, one per line.")
     parser.add_argument("--output_file", required=True,
                         help="Path to the final output file.")
+    parser.add_argument("--threads", type=int, default=os.cpu_count(),
+                        help="Number of threads to use for ghostbuster.py")
     return parser.parse_args()
 
-def generate_taxa_files(ghostbuster_output, work_dir):
-    """
-    Process ghostbuster_output to create three files:
-      - GhostFinder_A_taxa.txt: from token2 (second token) of field1
-      - GhostFinder_B_taxa.txt: from token3 (third token) of field1
-      - additional_taxa_to_exclude.txt: from token1 (first token) of field1
-    (Only lines with field2 equal to "Evidence of unsampled introgression" are used.)
-    """
-    a_set = set()
-    b_set = set()
-    additional_set = set()
-    
-    with open(ghostbuster_output, 'r') as fin:
-        for line in fin:
+def generate_GhostFinder_A_taxa(ghostbuster_output_file, output_filename="GhostFinder_A_taxa.txt"):
+    taxa_set = set()
+    with open(ghostbuster_output_file, "r") as f:
+        for line in f:
             line = line.rstrip("\n")
             if not line:
                 continue
-            # Split by tab; expect at least two fields.
             fields = line.split("\t")
             if len(fields) < 2:
                 continue
-            # Use strip to remove any extra spaces.
             if fields[1].strip() == "Evidence of unsampled introgression":
                 tokens = fields[0].split()
                 if len(tokens) >= 2:
-                    a_set.add(tokens[1])
-                if len(tokens) >= 3:
-                    b_set.add(tokens[2])
-                if len(tokens) >= 1:
-                    additional_set.add(tokens[0])
-    
-    a_file = os.path.join(work_dir, "GhostFinder_A_taxa.txt")
-    b_file = os.path.join(work_dir, "GhostFinder_B_taxa.txt")
-    additional_file = os.path.join(work_dir, "additional_taxa_to_exclude.txt")
-    
-    with open(a_file, 'w') as fout:
-        for taxon in sorted(a_set):
-            fout.write(f"{taxon}\n")
-    with open(b_file, 'w') as fout:
-        for taxon in sorted(b_set):
-            fout.write(f"{taxon}\n")
-    with open(additional_file, 'w') as fout:
-        for taxon in sorted(additional_set):
-            fout.write(f"{taxon}\n")
-    
-    return a_file, b_file, additional_file
+                    taxa_set.add(tokens[1])
+    print(f"[DEBUG] GhostFinder_A_taxa.txt: found {len(taxa_set)} taxa")
+    with open(output_filename, "w") as out:
+        for taxon in sorted(taxa_set):
+            out.write(taxon + "\n")
+    return output_filename
 
-def generate_ghostfinder_c_taxa(a_file, b_file, additional_file, out_taxa, input_trees, work_dir):
-    """
-    Build GhostFinder_C_taxa.txt by:
-      1. Building an exclusion set from:
-         - All taxa from GhostFinder_B_taxa.txt,
-         - additional_taxa_to_exclude.txt,
-         - GhostFinder_A_taxa.txt,
-         - And (if out_taxa is literally named "Out.txt") taxa from that file.
-      2. Then scanning the out_taxa and input_trees files:
-         - Replace any of the characters ( ) , ; with spaces.
-         - Split the line into tokens and remove any branch lengths (remove colon and following text).
-         - If a token is nonempty, not in the exclusion set, and not solely numeric,
-           it is included in the output.
-    """
-    exclusion = set()
-    
+def generate_GhostFinder_B_taxa(ghostbuster_output_file, output_filename="GhostFinder_B_taxa.txt"):
+    taxa_set = set()
+    with open(ghostbuster_output_file, "r") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            fields = line.split("\t")
+            if len(fields) < 2:
+                continue
+            if fields[1].strip() == "Evidence of unsampled introgression":
+                tokens = fields[0].split()
+                if len(tokens) >= 3:
+                    taxa_set.add(tokens[2])
+    print(f"[DEBUG] GhostFinder_B_taxa.txt: found {len(taxa_set)} taxa")
+    with open(output_filename, "w") as out:
+        for taxon in sorted(taxa_set):
+            out.write(taxon + "\n")
+    return output_filename
+
+def generate_additional_taxa_to_exclude(ghostbuster_output_file, output_filename="additional_taxa_to_exclude.txt"):
+    taxa_set = set()
+    with open(ghostbuster_output_file, "r") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            fields = line.split("\t")
+            if len(fields) < 2:
+                continue
+            if fields[1].strip() == "Evidence of unsampled introgression":
+                tokens = fields[0].split()
+                if tokens:
+                    taxa_set.add(tokens[0])
+    print(f"[DEBUG] additional_taxa_to_exclude.txt: found {len(taxa_set)} taxa")
+    with open(output_filename, "w") as out:
+        for taxon in sorted(taxa_set):
+            out.write(taxon + "\n")
+    return output_filename
+
+def generate_GhostFinder_C_taxa(out_taxa_file, input_trees_file,
+                                gf_B_taxa_file="GhostFinder_B_taxa.txt",
+                                additional_exclude_file="additional_taxa_to_exclude.txt",
+                                gf_A_taxa_file="GhostFinder_A_taxa.txt",
+                                output_filename="GhostFinder_C_taxa.txt"):
+    # Build the exclusion set from the four files.
+    exclude_set = set()
     def add_file_to_exclusion(filename):
         try:
-            with open(filename, 'r') as fin:
-                for line in fin:
-                    token = line.strip()
-                    if token:
-                        exclusion.add(token)
-        except Exception as e:
-            print(f"Error reading {filename}: {e}", file=sys.stderr)
-    
-    # Process the first three files.
-    add_file_to_exclusion(b_file)
-    add_file_to_exclusion(additional_file)
-    add_file_to_exclusion(a_file)
-    # Also add tokens from out_taxa if its basename is "Out.txt"
-    if os.path.basename(out_taxa) == "Out.txt":
-        add_file_to_exclusion(out_taxa)
-    
-    result_tokens = set()
-    
-    def process_file(filename):
-        with open(filename, 'r') as fin:
-            for line in fin:
-                # Replace the characters ( ) , ; with a space.
-                line_clean = re.sub(r"[(),;]", " ", line)
-                for token in line_clean.split():
-                    # Remove branch lengths (anything after a colon).
-                    token = token.split(":", 1)[0].strip()
-                    # Skip empty tokens, tokens in exclusion, or tokens that are purely numbers.
-                    if token and token not in exclusion and not re.fullmatch(r"\d+", token):
-                        result_tokens.add(token)
-    
-    process_file(out_taxa)
-    process_file(input_trees)
-    
-    c_file = os.path.join(work_dir, "GhostFinder_C_taxa.txt")
-    with open(c_file, 'w') as fout:
-        for token in sorted(result_tokens):
-            fout.write(f"{token}\n")
-    
-    return c_file
+            with open(filename, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        token = line.split()[0]
+                        exclude_set.add(token)
+        except IOError:
+            sys.stderr.write("Error reading file: {}\n".format(filename))
+            sys.exit(1)
+    add_file_to_exclusion(gf_B_taxa_file)
+    add_file_to_exclusion(additional_exclude_file)
+    add_file_to_exclusion(gf_A_taxa_file)
+    add_file_to_exclusion(out_taxa_file)  # Adjust if out_taxa file isn’t exactly named Out.txt
 
-def run_ghostbuster(script_dir, out_taxa, a_file, b_file, c_file, input_trees, full_output_file):
-    """
-    Run ghostbuster.py from the same directory as this script.
-    Pass along the necessary file arguments.
-    """
-    ghostbuster_script = os.path.join(script_dir, "ghostbuster.py")
-    cmd = [
-        sys.executable,  # Use the same Python interpreter.
-        ghostbuster_script,
-        "--out_taxa", out_taxa,
-        "--A_taxa", a_file,
-        "--B_taxa", b_file,
-        "--C_taxa", c_file,
-        "--input_trees", input_trees,
-        "--output_file", full_output_file
+    output_set = set()
+    with open(input_trees_file, "r") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            # Replace characters ( ) , ; with a space
+            line = re.sub(r'[(),;]', ' ', line)
+            fields = line.split()
+            for field in fields:
+                # Remove branch lengths (remove colon and everything after)
+                field = re.sub(r':.*', '', field)
+                if field and field not in exclude_set and not field.isdigit():
+                    output_set.add(field)
+    print(f"[DEBUG] GhostFinder_C_taxa.txt: found {len(output_set)} taxa after exclusion")
+    with open(output_filename, "w") as out:
+        for taxon in sorted(output_set):
+            out.write(taxon + "\n")
+    return output_filename
+
+def run_ghostbuster(args, script_dir, ghostbuster_py="ghostbuster.py"):
+    ghostbuster_path = os.path.join(script_dir, ghostbuster_py)
+    command = [
+        "python", ghostbuster_path,
+        "--out_taxa", args.out_taxa,
+        "--A_taxa", "GhostFinder_A_taxa.txt",
+        "--B_taxa", "GhostFinder_B_taxa.txt",
+        "--C_taxa", "GhostFinder_C_taxa.txt",
+        "--input_trees", args.input_trees,
+        "--output_file", "Full_GhostFinder_output.txt",
+        "--threads", str(args.threads)
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print("Error running ghostbuster.py:", file=sys.stderr)
-        print(result.stderr, file=sys.stderr)
-        sys.exit(result.returncode)
+    print("[DEBUG] Running ghostbuster.py with command:")
+    print(" ".join(command))
+    try:
+        subprocess.check_call(command)
+    except subprocess.CalledProcessError as e:
+        sys.stderr.write("Error running ghostbuster.py: {}\n".format(e))
+        sys.exit(1)
 
-def filter_output(full_output_file, final_output_file):
-    """
-    Read the ghostbuster output and filter only lines containing " sampled".
-    Write these lines to the final output file.
-    """
-    with open(full_output_file, 'r') as fin, open(final_output_file, 'w') as fout:
-        for line in fin:
-            if " sampled" in line: # Also add syntax that proportion of AC is greater than BC!!!
-                fout.write(line)
+def filter_ghostbuster_output(full_output_file, final_output_file):
+    try:
+        with open(full_output_file, "r") as fin, open(final_output_file, "w") as fout:
+            for line in fin:
+                # Filter to only keep lines containing the required phrase.
+                if "Evidence of sampled introgression" not in line:
+                    continue
 
-def remove_intermediate_files(files):
-    for file in files:
+                # Extract ac_count and bc_count values.
+                match_ac = re.search(r"ac_count:\s*(\d+)", line)
+                match_bc = re.search(r"bc_count:\s*(\d+)", line)
+                if match_ac and match_bc:
+                    ac_val = int(match_ac.group(1))
+                    bc_val = int(match_bc.group(1))
+                    if ac_val > bc_val:
+                        fout.write(line)
+    except IOError as e:
+        sys.stderr.write("Error processing output files: {}\n".format(e))
+        sys.exit(1)
+
+def cleanup_intermediate_files(file_list):
+    for filename in file_list:
         try:
-            os.remove(file)
+            if os.path.exists(filename):
+                os.remove(filename)
+                print(f"[DEBUG] Removed intermediate file: {filename}")
         except Exception as e:
-            print(f"Warning: could not remove file {file}: {e}", file=sys.stderr)
+            sys.stderr.write(f"Error removing file {filename}: {e}\n")
 
 def main():
     args = parse_args()
-    # Use the current working directory for intermediate files.
-    work_dir = os.getcwd()
-    # Get the directory where this script resides (for locating ghostbuster.py)
+
+    # Generate intermediate taxa files from ghostbuster_output.
+    gf_A = generate_GhostFinder_A_taxa(args.ghostbuster_output, "GhostFinder_A_taxa.txt")
+    gf_B = generate_GhostFinder_B_taxa(args.ghostbuster_output, "GhostFinder_B_taxa.txt")
+    additional_exclude = generate_additional_taxa_to_exclude(args.ghostbuster_output, "additional_taxa_to_exclude.txt")
+
+    generate_GhostFinder_C_taxa(args.out_taxa, args.input_trees,
+                                gf_B_taxa_file=gf_B,
+                                additional_exclude_file=additional_exclude,
+                                gf_A_taxa_file=gf_A,
+                                output_filename="GhostFinder_C_taxa.txt")
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Step 1: Generate intermediate taxa files from ghostbuster_output.
-    a_file, b_file, additional_file = generate_taxa_files(args.ghostbuster_output, work_dir)
-    
-    # Step 2: Build GhostFinder_C_taxa.txt using the out_taxa and input_trees files.
-    c_file = generate_ghostfinder_c_taxa(a_file, b_file, additional_file,
-                                         args.out_taxa, args.input_trees, work_dir)
-    
-    # Step 3: Run ghostbuster.py, outputting to Full_GhostFinder_output.txt.
-    full_output_file = os.path.join(work_dir, "Full_GhostFinder_output.txt")
-    run_ghostbuster(script_dir, args.out_taxa, a_file, b_file, c_file,
-                    args.input_trees, full_output_file)
-    
-    # Step 4: Filter the ghostbuster output to only include lines with " sampled"
-    filter_output(full_output_file, args.output_file)
-    
-    # Step 5: Remove all intermediate files.
-   # intermediate_files = [a_file, b_file, additional_file, c_file, full_output_file]
-   # remove_intermediate_files(intermediate_files)
+
+    # Run ghostbuster.py with the constructed taxa files and threads option.
+    run_ghostbuster(args, script_dir)
+
+    # Filter the ghostbuster output for the desired lines.
+    filter_ghostbuster_output("Full_GhostFinder_output.txt", args.output_file)
+    print(f"[DEBUG] Final output written to {args.output_file}")
+
+    try:
+        if os.path.getsize(args.output_file) == 0:
+            with open(args.output_file, "w") as f:
+                f.write("No putative ghost lineages found.\n")
+            print("[DEBUG] Final output was empty; wrote default message.")
+    except Exception as e:
+        sys.stderr.write(f"Error checking or writing final output file: {e}\n")
+
+    # Cleanup intermediate files.
+    cleanup_intermediate_files([
+        "GhostFinder_A_taxa.txt",
+        "GhostFinder_B_taxa.txt",
+        "GhostFinder_C_taxa.txt",
+        "additional_taxa_to_exclude.txt",
+        "Full_GhostFinder_output.txt"
+    ])
 
 if __name__ == "__main__":
     main()
