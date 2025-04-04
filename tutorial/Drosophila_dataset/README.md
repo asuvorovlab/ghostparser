@@ -5,10 +5,28 @@ This tutorial tests for ghost introgression in clade nine of the fly genus _Dros
 #Add a picture.  
 
 
-## Install ghostbuster
+## Step one: Install ghostbuster
 
+### 1. Clone the Repository
 
-## Step one: run ghostbuster
+Clone the repository to your local machine using either SSH or HTTPS:
+
+Using SSH (recommended if you have a passkey set up):
+```bash
+git clone git@github.com:asuvorovlab/ghostbuster.git
+
+git clone https://github.com/asuvorovlab/ghostbuster.git
+```
+This repository includes an environment.yml file that lists all necessary dependencies. Follow these steps to set up the environment:
+
+Ensure Conda is installed.
+You can download Miniconda if you don't have it.
+#### 2. Download the dependencies using conda
+```bash
+conda env create -f environment.yml
+```
+
+## Step two: run ghostbuster
 To run ghostbuster, we need to first prepare several input files. The file "drosophila.trees" contains the gene trees for the _Drosophila_ dataset, previously reported by Suvorov et al. (2021). Note that one gene tree is shown per line.
 
 ```bash
@@ -41,7 +59,7 @@ python ghostbuster/bin/ghostbuster.py --out_taxa Out.txt --A_taxa A.txt --B_taxa
 
 By default, ghostbuster will utilize all available threads when computing summaring statistics. This can be changed using the optional --threads option.
 
-## Step two: consider the ghostbuster output
+## Step three: Examine the ghostbuster output
 Following the completion of the ghostbuster run (1-2 minutes) three new files will have been created:
   1. drosophila.trees.tree_stats.txt: A tsv file with branch lengths statistics used to determine the presence and type of introgression for the tested hypothesis.
   2. triplet.txt: A text file listing the triplet combinations tested.
@@ -68,13 +86,13 @@ The ghostbuster results can be summarized by counting the unique values in the s
 cut -f2 tutorial_output.txt | grep -v "Conclusion" | sort | uniq -c
 ```
 
-## Step 3: Run ghostfinder to search for the ghost lineage in the drosophila tree
+## Step four: Run ghostfinder to search for the ghost lineage in the drosophila tree
 Once ghostbuster is complete, ghostfinder can take the output of the ghostbuster run, consider the "B" taxa as A taxa that have received sampled introgression, the "A" taxa as the taxa which are not hypothesized to have received introgression from a sampled lineage, and run ghostbuster with all other possible "C" across the tree, identifying lineages as having introgressed with the putative ghost recipients as the possible ghost lineage. This script uses the ghostbuster output, the same file indicating the taxa used to root the species tree, and the gene trees used to run ghostbuster. It can be called like so.
 
 ```bash
 python ghostbuster/bin/ghostfinder.py --out_taxa Out.txt --ghostbuster_output tutorial_output.txt --input_trees drosophila.trees --output_file ghostfinder_output.txt
 ```
 
-## Step 4: Look at the ghostfinder output
+## Step five: Examine at the ghostfinder output
 The ghostfinder output file will either contain ghostbuster results, listing lines where another taxa shows in the tree shows evidence of introgressing with the putative ghost recipient, or will display the line "No putative ghost lineages found."
 
