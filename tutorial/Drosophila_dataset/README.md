@@ -25,7 +25,7 @@ You can download Miniconda if you don't have it.
 conda env create -f environment.yml
 ```
 
-## Step two: run ghostbuster
+## Step two: Run ghostbuster
 To run ghostbuster, we need to first prepare several input files. The file "drosophila.trees" contains the gene trees for the _Drosophila_ dataset, previously reported by Suvorov et al. (2021). Note that one gene tree is shown per line.
 
 ```bash
