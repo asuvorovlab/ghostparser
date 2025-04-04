@@ -96,3 +96,7 @@ python ghostbuster/bin/ghostfinder.py --out_taxa Out.txt --ghostbuster_output tu
 ## Step five: Examine at the ghostfinder output
 The ghostfinder output file will either contain ghostbuster results, listing lines where another taxa shows in the tree shows evidence of introgressing with the putative ghost recipient, or will display the line "No putative ghost lineages found."
 
+## Citations
+Suvorov A, Kim BY, Wang J, Armstrong EE, Peede D, D’Agostino ERR, et al. Widespread introgression across a phylogeny of 155 Drosophila genomes. Curr Biol. 2022 Jan 10;32(1):111-123.e5. 
+
+
