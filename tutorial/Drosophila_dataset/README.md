@@ -89,6 +89,7 @@ Once ghostbuster is complete, ghostfinder can take the output of the ghostbuster
 ```bash
 python ghostbuster/bin/ghostfinder.py --out_taxa Out.txt --ghostbuster_output tutorial_output.txt --input_trees drosophila.trees --output_file ghostfinder_output.txt
 ```
+As the ghostfinder pipeline is testing many more triplets than the first ghostbuster run, it should take between 15 and 30 minutes to run on 8 threads.
 
 ## Step five: Examine at the ghostfinder output
 The ghostfinder output file will either contain ghostbuster results, listing lines where another taxa shows in the tree shows evidence of introgressing with the putative ghost recipient, or will display the line "No putative ghost lineages found." In this case, there is not evidence that the putative ghost recipients introgressed with another lineage in sampled _Drosophila_. The mystery continues!
