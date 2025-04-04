@@ -72,24 +72,9 @@ cut -f2 tutorial_output.txt | grep -v "Conclusion" | sort | uniq -c
 Once ghostbuster is complete, ghostfinder can take the output of the ghostbuster run, consider the "B" taxa as A taxa that have received sampled introgression, the "A" taxa as the taxa which are not hypothesized to have received introgression from a sampled lineage, and run ghostbuster with all other possible "C" across the tree, identifying lineages as having introgressed with the putative ghost recipients as the possible ghost lineage. This script uses the ghostbuster output, the same file indicating the taxa used to root the species tree, and the gene trees used to run ghostbuster. It can be called like so.
 
 ```bash
-python ~/Desktop/Ghostbuster/ghostbuster/bin/ghostfinder.py --out_taxa Out.txt --ghostbuster_output tutorial_output.txt --input_trees drosophila.trees --output_file tutorial_ghostfinder_output
+python ghostbuster/bin/ghostfinder.py --out_taxa Out.txt --ghostbuster_output tutorial_output.txt --input_trees drosophila.trees --output_file ghostfinder_output.txt
 ```
 
 ## Step 4: Look at the ghostfinder output
-The pipeline is executed using a the bash script bin/ghostbuster.sh. The script requires several arguments that specify input files and an output file.
-
-Command-Line Arguments    
---out_taxa: Path to a file containing each of the outgroup taxa (one per line).    
---A_taxa: Path to a file containing each of the A taxa (one per line).    
---B_taxa: Path to a file containing each of the B taxa (one per line).    
---C_taxa: Path to a file containing each of the C taxa (one per line).    
---input_trees: Path to a file containing the gene trees (one per line).    
---output_file: Path where the output will be written.     
-Example        
-Run the pipeline with your files as follows:
-
-```bash
-bin/ghostbuster.sh --out_taxa data/out_taxa.txt --A_taxa data/A_taxa.txt --B_taxa data/B_taxa.txt --C_taxa data/C_taxa.txt --input_trees data/input_trees.txt --output_file results/output.txt
-```
-## Step 4: Look at the ghostfinder output
+The ghostfinder output file will either contain ghostbuster results, listing lines where another taxa shows in the tree shows evidence of introgressing with the putative ghost recipient, or will display the line "No putative ghost lineages found."
 
