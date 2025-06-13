@@ -204,13 +204,13 @@ def main():
         sys.stderr.write(f"Error checking or writing final output file: {e}\n")
 
     # Cleanup intermediate files.
-    cleanup_intermediate_files([
-        "GhostFinder_A_taxa.txt",
-        "GhostFinder_B_taxa.txt",
-        "GhostFinder_C_taxa.txt",
-        "additional_taxa_to_exclude.txt",
-        "Full_GhostFinder_output.txt"
-    ])
+#    cleanup_intermediate_files([
+#        "GhostFinder_A_taxa.txt",
+#        "GhostFinder_B_taxa.txt",
+#        "GhostFinder_C_taxa.txt",
+#        "additional_taxa_to_exclude.txt",
+#        "Full_GhostFinder_output.txt"
+#    ])
 
 if __name__ == "__main__":
     main()

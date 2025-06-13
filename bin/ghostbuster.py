@@ -166,7 +166,10 @@ def process_combination(line_tuple, args, script_dir):
             if out_pval_decimal < 0.05 and out_higher == "AC":
                 conclusion = "Evidence of unsampled introgression"
             else:
-                conclusion = "Evidence of sampled introgression"
+                if out_pval_decimal < 0.05 and out_higher == "AB":
+                    conclusion = "Evidence of sampled introgression, possibly involving inflow."
+                else:
+                    conclusion = "Evidence of sampled introgression, likely not involving inflow."
         else:
             conclusion = "No evidence of introgression"
     

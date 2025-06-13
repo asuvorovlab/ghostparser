@@ -26,7 +26,7 @@ def main():
         with open(file_path, 'r') as file, open(output_path, 'w', newline='') as output_file:
             tsv_writer = csv.writer(output_file, delimiter='\t')
             # Updated header to include the new A_length column
-            tsv_writer.writerow(["Topology", "Distance", "A_length", "Out", "Internal", "Internal_ABCO"])
+            tsv_writer.writerow(["Topology", "Distance", "tree_height", "Out", "Internal", "Internal_ABCO", "A_length", "B_length", "C_length"])
 
             for line_number, line in enumerate(file, start=1):
                 line = line.strip()
@@ -81,7 +81,11 @@ def main():
                             # MRCA of A, B, and C
                             mrca_abc = tree.get_common_ancestor(a_node, b_node, c_node)
                             # New A_length: distance from A to the MRCA of A, B, and C
+                            # Recoding to calculate tree height from all three lineages and take the average
                             a_length = a_node.get_distance(mrca_abc)
+                            b_length = b_node.get_distance(mrca_abc)
+                            c_length = c_node.get_distance(mrca_abc)
+                            tree_height = (a_length + b_length + c_length) / 3
                             distance_to_mrca = non_sister.get_distance(mrca_abc)
 
                             # Calculate internal branch length from MRCA of A, B, C to MRCA of the sister pair
@@ -99,7 +103,7 @@ def main():
 
                     # Write data to TSV file; each row corresponds to one sister pair
                     for pair, distance in distances.items():
-                        tsv_writer.writerow([pair, distance, a_length, distance_to_mrca, internal_branch_length, internal_abco])
+                        tsv_writer.writerow([pair, distance, tree_height, distance_to_mrca, internal_branch_length, internal_abco, a_length, b_length, c_length])
     except Exception as e:
         print(f"Error processing file: {e}")
 
