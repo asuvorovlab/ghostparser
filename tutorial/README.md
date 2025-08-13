@@ -14,7 +14,7 @@ Using HTTPS
 ```bash
 git clone https://github.com/asuvorovlab/ghostparser.git
 ```
-This repository includes an environment.yml file that lists all necessary dependencies. Follow these steps to set up the environment:
+Ghostparser has a few dependencies it needs to run. These can be downloaded easily using either conda or mamba.
 
 Ensure that Conda is installed.
 You can download Miniconda if you don't have it.
