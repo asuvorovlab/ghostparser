@@ -1,0 +1,2 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+D_cardini	D_arawakana	D_dunni	Anopheles_gambiae	0.7404	3.8953e-01	2393	48	40	0.3596	1.0375e-05	0.055228	0.081807	No evidence of introgression

@@ -1,0 +1,2 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+D_kepulauana	D_albomicans	D_nasuta	Anopheles_gambiae	0.0564	8.1234e-01	1076	410	404	0.0676	1.3285e-01	0.010612	0.010758	No evidence of introgression

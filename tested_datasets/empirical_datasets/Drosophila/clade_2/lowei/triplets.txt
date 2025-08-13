@@ -1,0 +1,9 @@
+D_affinis,D_lowei,D_miranda
+D_affinis,D_lowei,D_persimilis
+D_affinis,D_lowei,D_pseudoobscura
+D_athabasca,D_lowei,D_miranda
+D_athabasca,D_lowei,D_persimilis
+D_athabasca,D_lowei,D_pseudoobscura
+D_azteca,D_lowei,D_miranda
+D_azteca,D_lowei,D_persimilis
+D_azteca,D_lowei,D_pseudoobscura

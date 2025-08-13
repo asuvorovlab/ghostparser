@@ -1,0 +1,61 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+D_robusta	D_americana	D_acanthoptera	Anopheles_gambiae	9.8289	1.7179e-03	155	59	32	0.2207	2.5751e-02	0.163851	0.190091	Evidence of unsampled introgression
+D_robusta	D_lummei	D_acanthoptera	Anopheles_gambiae	15.1324	1.0023e-04	104	46	18	0.2993	4.8905e-03	0.156744	0.197783	Evidence of unsampled introgression
+D_robusta	D_montana	D_acanthoptera	Anopheles_gambiae	12.7298	3.5987e-04	154	62	31	0.2166	2.6213e-02	0.165362	0.191160	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_acanthoptera	Anopheles_gambiae	11.7484	6.0896e-04	160	62	32	0.205	3.9239e-02	0.162863	0.188350	Evidence of unsampled introgression
+D_robusta	D_virilis	D_acanthoptera	Anopheles_gambiae	12.7062	3.6445e-04	156	62	31	0.1902	6.8783e-02	0.167345	0.193065	Evidence of sampled introgression, likely not involving inflow.
+D_robusta	D_americana	D_arizonae	Anopheles_gambiae	10.2156	1.3926e-03	155	57	30	0.2429	1.1718e-02	0.148184	0.170713	Evidence of unsampled introgression
+D_robusta	D_americana	D_bromeliae	Anopheles_gambiae	11.7589	6.0552e-04	159	62	32	0.2935	6.6965e-04	0.161954	0.196291	Evidence of unsampled introgression
+D_robusta	D_americana	D_hydei	Anopheles_gambiae	13.6280	2.2284e-04	159	62	30	0.247	6.8706e-03	0.143070	0.163352	Evidence of unsampled introgression
+D_robusta	D_americana	D_mojavensis	Anopheles_gambiae	10.6517	1.0997e-03	157	59	31	0.2999	6.5590e-04	0.148729	0.174939	Evidence of unsampled introgression
+D_robusta	D_americana	D_nannoptera	Anopheles_gambiae	9.6299	1.9144e-03	157	60	33	0.2301	1.6368e-02	0.165451	0.194201	Evidence of unsampled introgression
+D_robusta	D_americana	D_navojoa	Anopheles_gambiae	11.9565	5.4456e-04	161	61	31	0.2155	2.7291e-02	0.149968	0.172150	Evidence of unsampled introgression
+D_robusta	D_americana	D_pachea	Anopheles_gambiae	9.4388	2.1244e-03	159	61	34	0.1917	6.6872e-02	0.163690	0.180758	Evidence of sampled introgression, likely not involving inflow.
+D_robusta	D_americana	D_pseudotalamancana	Anopheles_gambiae	4.9303	2.6390e-02	162	54	35	0.1049	7.4609e-01	0.137582	0.146642	No evidence of introgression
+D_robusta	D_americana	D_repleta	Anopheles_gambiae	11.7589	6.0552e-04	159	62	32	0.2293	1.5001e-02	0.143727	0.174457	Evidence of unsampled introgression
+D_robusta	D_americana	D_seriema	Anopheles_gambiae	16.3032	5.3971e-05	159	60	26	0.2346	1.3409e-02	0.147156	0.172319	Evidence of unsampled introgression
+D_robusta	D_americana	D_wassermani	Anopheles_gambiae	10.0696	1.5074e-03	158	62	34	0.2546	4.8774e-03	0.165801	0.190061	Evidence of unsampled introgression
+D_robusta	D_lummei	D_arizonae	Anopheles_gambiae	15.4995	8.2527e-05	106	42	15	0.3423	1.1760e-03	0.134854	0.171691	Evidence of unsampled introgression
+D_robusta	D_montana	D_arizonae	Anopheles_gambiae	15.5687	7.9560e-05	155	59	26	0.2272	1.9741e-02	0.149955	0.168481	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_arizonae	Anopheles_gambiae	13.4072	2.5067e-04	160	59	28	0.2333	1.4985e-02	0.144688	0.164984	Evidence of unsampled introgression
+D_robusta	D_virilis	D_arizonae	Anopheles_gambiae	15.2330	9.5031e-05	157	60	27	0.2331	1.4435e-02	0.151366	0.170714	Evidence of unsampled introgression
+D_robusta	D_lummei	D_bromeliae	Anopheles_gambiae	16.8972	3.9459e-05	105	48	18	0.4143	1.3247e-05	0.146384	0.207496	Evidence of unsampled introgression
+D_robusta	D_montana	D_bromeliae	Anopheles_gambiae	15.1037	1.0176e-04	159	64	30	0.3033	4.5270e-04	0.159220	0.194545	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_bromeliae	Anopheles_gambiae	13.0704	3.0000e-04	165	64	32	0.3146	2.1737e-04	0.160316	0.194576	Evidence of unsampled introgression
+D_robusta	D_virilis	D_bromeliae	Anopheles_gambiae	13.8509	1.9790e-04	159	65	32	0.294	6.8536e-04	0.164672	0.199170	Evidence of unsampled introgression
+D_robusta	D_lummei	D_hydei	Anopheles_gambiae	16.7798	4.1979e-05	110	45	16	0.3111	3.0522e-03	0.133090	0.163425	Evidence of unsampled introgression
+D_robusta	D_montana	D_hydei	Anopheles_gambiae	19.5493	9.8037e-06	161	64	26	0.201	4.9446e-02	0.144101	0.160451	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_hydei	Anopheles_gambiae	17.1436	3.4658e-05	166	64	28	0.214	2.9033e-02	0.141505	0.158002	Evidence of unsampled introgression
+D_robusta	D_virilis	D_hydei	Anopheles_gambiae	18.0034	2.2051e-05	162	65	28	0.217	2.5336e-02	0.145948	0.163433	Evidence of unsampled introgression
+D_robusta	D_lummei	D_mojavensis	Anopheles_gambiae	15.9490	6.5071e-05	106	44	16	0.437	6.9454e-06	0.139309	0.176245	Evidence of unsampled introgression
+D_robusta	D_lummei	D_nannoptera	Anopheles_gambiae	15.0906	1.0247e-04	106	46	18	0.3298	1.3069e-03	0.157252	0.198401	Evidence of unsampled introgression
+D_robusta	D_lummei	D_navojoa	Anopheles_gambiae	16.7798	4.1979e-05	110	45	16	0.3293	1.3972e-03	0.141632	0.172752	Evidence of unsampled introgression
+D_robusta	D_lummei	D_pachea	Anopheles_gambiae	13.5509	2.3218e-04	103	47	20	0.3388	8.3832e-04	0.153732	0.189481	Evidence of unsampled introgression
+D_robusta	D_lummei	D_pseudotalamancana	Anopheles_gambiae	12.8334	3.4049e-04	110	42	17	0.1567	3.9507e-01	0.131990	0.144239	Evidence of sampled introgression, likely not involving inflow.
+D_robusta	D_lummei	D_repleta	Anopheles_gambiae	15.4452	8.4934e-05	109	45	17	0.2905	7.0251e-03	0.137824	0.175928	Evidence of unsampled introgression
+D_robusta	D_lummei	D_seriema	Anopheles_gambiae	18.6863	1.5409e-05	113	44	14	0.329	1.4912e-03	0.135119	0.170925	Evidence of unsampled introgression
+D_robusta	D_lummei	D_wassermani	Anopheles_gambiae	14.3907	1.4853e-04	103	48	20	0.3645	2.1074e-04	0.156710	0.204859	Evidence of unsampled introgression
+D_robusta	D_montana	D_mojavensis	Anopheles_gambiae	15.9837	6.3892e-05	159	61	27	0.2698	2.4815e-03	0.150922	0.167371	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_mojavensis	Anopheles_gambiae	13.8159	2.0163e-04	165	61	29	0.2789	1.9604e-03	0.148237	0.168432	Evidence of unsampled introgression
+D_robusta	D_virilis	D_mojavensis	Anopheles_gambiae	16.4276	5.0543e-05	161	63	28	0.2533	5.9975e-03	0.153351	0.173148	Evidence of unsampled introgression
+D_robusta	D_montana	D_nannoptera	Anopheles_gambiae	13.4158	2.4952e-04	156	63	31	0.2265	1.6381e-02	0.163544	0.193876	Evidence of unsampled introgression
+D_robusta	D_montana	D_navojoa	Anopheles_gambiae	17.5304	2.8275e-05	162	63	27	0.2134	3.2117e-02	0.151416	0.169601	Evidence of unsampled introgression
+D_robusta	D_montana	D_pachea	Anopheles_gambiae	12.4540	4.1710e-04	158	63	32	0.1953	5.3986e-02	0.163504	0.177030	Evidence of sampled introgression, likely not involving inflow.
+D_robusta	D_montana	D_pseudotalamancana	Anopheles_gambiae	6.7914	9.1600e-03	165	54	32	0.1559	2.4484e-01	0.138961	0.150563	Evidence of sampled introgression, likely not involving inflow.
+D_robusta	D_montana	D_repleta	Anopheles_gambiae	17.2174	3.3337e-05	161	64	28	0.2183	2.5471e-02	0.145930	0.170554	Evidence of unsampled introgression
+D_robusta	D_montana	D_seriema	Anopheles_gambiae	21.2570	4.0165e-06	158	63	24	0.2425	8.0138e-03	0.147495	0.168835	Evidence of unsampled introgression
+D_robusta	D_montana	D_wassermani	Anopheles_gambiae	14.1257	1.7099e-04	157	64	31	0.2318	1.5113e-02	0.165290	0.189311	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_nannoptera	Anopheles_gambiae	11.5179	6.8931e-04	162	63	33	0.2363	1.2603e-02	0.163450	0.192080	Evidence of unsampled introgression
+D_robusta	D_virilis	D_nannoptera	Anopheles_gambiae	11.7589	6.0552e-04	159	62	32	0.2612	3.5230e-03	0.166558	0.195467	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_navojoa	Anopheles_gambiae	15.2662	9.3375e-05	168	63	29	0.2262	1.8404e-02	0.147780	0.170156	Evidence of unsampled introgression
+D_robusta	D_virilis	D_navojoa	Anopheles_gambiae	16.0680	6.1107e-05	165	64	29	0.2227	2.0610e-02	0.154710	0.173113	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_pachea	Anopheles_gambiae	10.6489	1.1013e-03	164	63	34	0.2143	3.0597e-02	0.161543	0.177700	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_pseudotalamancana	Anopheles_gambiae	4.8977	2.6893e-02	170	54	35	0.1059	6.9953e-01	0.136021	0.143053	No evidence of introgression
+D_robusta	D_novamexicana	D_repleta	Anopheles_gambiae	15.2662	9.3375e-05	168	63	29	0.1964	5.8274e-02	0.145261	0.167882	Evidence of sampled introgression, likely not involving inflow.
+D_robusta	D_novamexicana	D_seriema	Anopheles_gambiae	19.8802	8.2448e-06	164	63	25	0.2325	1.4598e-02	0.143982	0.166480	Evidence of unsampled introgression
+D_robusta	D_novamexicana	D_wassermani	Anopheles_gambiae	12.1791	4.8328e-04	163	64	33	0.2586	4.2763e-03	0.163192	0.186388	Evidence of unsampled introgression
+D_robusta	D_virilis	D_pachea	Anopheles_gambiae	12.4093	4.2719e-04	162	63	32	0.1993	5.4469e-02	0.167717	0.187451	Evidence of sampled introgression, likely not involving inflow.
+D_robusta	D_virilis	D_pseudotalamancana	Anopheles_gambiae	5.3923	2.0226e-02	166	55	35	0.0941	8.1560e-01	0.141799	0.147943	No evidence of introgression
+D_robusta	D_virilis	D_repleta	Anopheles_gambiae	15.8324	6.9208e-05	161	65	30	0.1992	5.0639e-02	0.148830	0.174662	Evidence of sampled introgression, likely not involving inflow.
+D_robusta	D_virilis	D_seriema	Anopheles_gambiae	19.9310	8.0286e-06	161	63	25	0.2271	1.8767e-02	0.149913	0.171976	Evidence of unsampled introgression
+D_robusta	D_virilis	D_wassermani	Anopheles_gambiae	14.0622	1.7686e-04	162	64	31	0.25	6.4649e-03	0.170478	0.195321	Evidence of unsampled introgression

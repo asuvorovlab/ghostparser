@@ -48,11 +48,11 @@ if (total_count > 0) {
   } else {
     # Display results if the test is successful
     if (prop_test$p.value < 0.01) {
-      result <- sprintf("The proportions of AC and BC are significantly different. ab_count: %.0f, ac_count: %.0f, bc_count: %.0f. Proportion Test: Chi-squared: %.4f, P-value: %.4e",
+      result <- sprintf("The proportions of AC and BC are significantly different. ab_count: %.0f, ac_count: %.0f, bc_count: %.0f. Proportion Test: Chi-squared: %.4f, P-value: %.4e~",
                         ab_count, ac_count, bc_count,
                         prop_test$statistic, prop_test$p.value)
     } else {
-      result <- sprintf("The proportions of AC and BC are not significantly different. ab_count: %.0f, ac_count: %.0f, bc_count: %.0f. Proportion Test: Chi-squared: %.4f, P-value: %.4e",
+      result <- sprintf("The proportions of AC and BC are not significantly different. ab_count: %.0f, ac_count: %.0f, bc_count: %.0f. Proportion Test: Chi-squared: %.4f, P-value: %.4e~",
                         ab_count, ac_count, bc_count,
                         prop_test$statistic, prop_test$p.value)
       
@@ -72,28 +72,39 @@ sim1 <- data
 # Perform the KS test for tree_height
 
 
-ks_test <- tryCatch(
-  ks.test(sim1$tree_height[sim1$Topology == "AC"],
-          sim1$tree_height[sim1$Topology == "AB"]),
+
+ks_test2 <- tryCatch(
+  ks.test(sim1$tree_height[sim1$Topology == "AB"],
+          sim1$tree_height[sim1$Topology == "BC"]),
   error = function(e) NULL
 )
 
-if (is.null(ks_test)) {
-  # If the KS test fails, assign the message to A_length
+# … assume sim1, ks_test1 and ks_test2 are already defined …
+
+# Compute medians
+medians <- aggregate(tree_height ~ Topology, data = sim1, median)
+
+# Prepare the output string
+if (is.null(ks_test2)) {
   tree_height <- "Insufficient data to compare branch lengths."
 } else {
-  # Calculate the medians for each topology
-  medians <- aggregate(tree_height ~ Topology, data = sim1, median)
-  medians_filtered <- medians[medians$Topology %in% c("AC", "AB"), ]
-  topology_with_highest_median <- medians_filtered[which.max(medians_filtered$tree_height), "Topology"]
+  # Which median is higher?
+  medians_filtered <- subset(medians, Topology %in% c("AB","BC"))
 
-  # Format the output with the KS test results
-  tree_height <- sprintf(
-    "The topology with the highest median is:%s; D-statistic:%.4f; P-value:%.4e",
-    topology_with_highest_median, ks_test$statistic, ks_test$p.value
-  )
+  # Extract medians for AB and BC (NA if a group is missing)
+  ab_med <- medians$tree_height[match("AB", medians$Topology)]
+  bc_med <- medians$tree_height[match("BC", medians$Topology)]
+
+
+  # Now include BOTH D‐statistics and p‐values
+    tree_height <- paste0(result, sprintf(
+    " AB vs BC: D=%.4f (p=%.4e)",
+    ks_test2$statistic, ks_test2$p.value
+  ),"~",sprintf("%.6f\t%.6f", ab_med, bc_med))
+  
+
 }
 
+# Print
+cat(tree_height)
 
-
-cat(result, tree_height, sep = "~")

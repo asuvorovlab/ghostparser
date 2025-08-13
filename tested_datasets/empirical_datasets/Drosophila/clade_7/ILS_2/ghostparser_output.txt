@@ -1,0 +1,2 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+D_lummei	D_americana	D_novamexicana	Anopheles_gambiae	0.8347	3.6092e-01	699	70	60	0.1527	1.0300e-01	0.009212	0.009849	No evidence of introgression

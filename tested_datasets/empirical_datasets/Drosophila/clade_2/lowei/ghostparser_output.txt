@@ -1,0 +1,10 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+D_affinis	D_lowei	D_miranda	Anopheles_gambiae	3.6308	5.6719e-02	1863	39	24	0.2511	1.6190e-02	0.041584	0.037193	No evidence of introgression
+D_affinis	D_lowei	D_persimilis	Anopheles_gambiae	18.4514	1.7429e-05	1905	70	28	0.3848	4.1520e-09	0.046970	0.104057	Evidence of unsampled introgression
+D_affinis	D_lowei	D_pseudoobscura	Anopheles_gambiae	12.9285	3.2363e-04	1996	66	31	0.399	2.9210e-09	0.046381	0.085779	Evidence of unsampled introgression
+D_athabasca	D_lowei	D_miranda	Anopheles_gambiae	4.7077	3.0028e-02	2012	44	26	0.2692	3.8962e-03	0.039069	0.044456	No evidence of introgression
+D_athabasca	D_lowei	D_persimilis	Anopheles_gambiae	22.7032	1.8905e-06	2045	76	28	0.3933	2.8404e-10	0.044163	0.105371	Evidence of unsampled introgression
+D_athabasca	D_lowei	D_pseudoobscura	Anopheles_gambiae	17.7022	2.5832e-05	2138	75	32	0.4005	1.6026e-10	0.043313	0.094817	Evidence of unsampled introgression
+D_azteca	D_lowei	D_miranda	Anopheles_gambiae	7.1808	7.3689e-03	2038	49	26	0.3081	2.2733e-04	0.039687	0.044023	Evidence of unsampled introgression
+D_azteca	D_lowei	D_persimilis	Anopheles_gambiae	28.1985	1.0949e-07	2063	80	26	0.4156	5.5878e-12	0.044520	0.098160	Evidence of unsampled introgression
+D_azteca	D_lowei	D_pseudoobscura	Anopheles_gambiae	19.3827	1.0697e-05	2160	76	31	0.4022	9.7063e-11	0.043885	0.092930	Evidence of unsampled introgression

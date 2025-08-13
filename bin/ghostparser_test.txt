@@ -1,0 +1,2 @@
+Triplet Tested	Conclusion	DCT result	DT1 vs DT2	Dt1 vs Con
+C B A Out	Evidence of unsampled introgression	The proportions of AC and BC are significantly different. ab_count: 439, ac_count: 150, bc_count: 411. Proportion Test: Chi-squared: 168.7669, P-value: 1.3756e-38	 AB vs BC: D=0.6765 (p=4.1470e-44) Topology with highest median is: BC	 AC vs BC: D=0.6804 (p=8.9080e-86) Topology with highest median is: BC

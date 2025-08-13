@@ -1,2 +1,0 @@
-Triplet Tested	Conclusion	DCT result	BLT result	IBL result	Sister_introggression
-JA0694 JA0456 JA0701 Solyc	 Evidence of unsampled introgression	 [1] "The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 57.5195, P-value: 3.3465e-14" The proportions of AC and BC are significantly different. Proportion Test: Chi-squared: 57.5195, P-value: 3.3465e-14	 The topology with the highest median is:AC; D-statistic:0.0558; P-value:1.4450e-03

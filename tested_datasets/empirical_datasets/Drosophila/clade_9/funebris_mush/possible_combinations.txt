@@ -1,2 +1,0 @@
-D_funebris D_guttifera D_innubila Anopheles_gambiae
-D_funebris D_guttifera D_mush_saotome Anopheles_gambiae

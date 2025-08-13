@@ -1,2 +1,0 @@
-Triplet Tested	Conclusion	DCT result	BLT result	IBL result	Sister_introggression
-D_miranda D_persimilis D_pseudoobscura Anopheles_gambiae	 No evidence of introgression	 [1] "The proportions of AC and BC are not significantly different. Proportion Test: Chi-squared: 0.3502, P-value: 5.5400e-01" The proportions of AC and BC are not significantly different. Proportion Test: Chi-squared: 0.3502, P-value: 5.5400e-01	 The topology with the highest median is:AC; D-statistic:0.1894; P-value:7.3125e-06

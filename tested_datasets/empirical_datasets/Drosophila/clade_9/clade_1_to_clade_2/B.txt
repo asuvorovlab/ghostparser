@@ -1,6 +1,0 @@
-D_arawakana
-D_dunni
-D_cardini
-D_ornatifrons
-D_subbadia
-D_pallidipennis

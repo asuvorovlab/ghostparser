@@ -1,0 +1,2 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+D_navojoa	D_arizonae	D_mojavensis	Anopheles_gambiae	5.7279	1.6698e-02	2378	54	32	0.2716	8.2879e-04	0.027095	0.025588	No evidence of introgression

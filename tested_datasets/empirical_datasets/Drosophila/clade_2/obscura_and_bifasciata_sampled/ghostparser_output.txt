@@ -1,0 +1,29 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+D_affinis	D_bifasciata	D_guanche	Anopheles_gambiae	316.2926	9.2996e-71	1117	877	343	0.0675	2.2595e-02	0.072186	0.068219	Evidence of sampled introgression, possibly involving inflow.
+D_affinis	D_bifasciata	D_subobscura	Anopheles_gambiae	307.4014	8.0411e-69	1124	871	345	0.0938	3.5602e-04	0.071246	0.065920	Evidence of sampled introgression, possibly involving inflow.
+D_affinis	D_obscura	D_guanche	Anopheles_gambiae	505.2454	6.8657e-112	1067	903	247	0.0753	7.8042e-03	0.070328	0.066868	Evidence of sampled introgression, possibly involving inflow.
+D_affinis	D_obscura	D_subobscura	Anopheles_gambiae	503.7246	1.4709e-111	1075	899	245	0.0863	1.3641e-03	0.069561	0.064995	Evidence of sampled introgression, possibly involving inflow.
+D_athabasca	D_bifasciata	D_guanche	Anopheles_gambiae	342.5029	1.8188e-76	1186	945	369	0.0335	5.9525e-01	0.069560	0.068355	Evidence of sampled introgression, likely not involving inflow.
+D_athabasca	D_bifasciata	D_subobscura	Anopheles_gambiae	330.6163	7.0559e-74	1197	939	373	0.0555	7.8181e-02	0.068518	0.065785	Evidence of sampled introgression, likely not involving inflow.
+D_athabasca	D_obscura	D_guanche	Anopheles_gambiae	561.2316	4.5362e-124	1136	973	258	0.023	9.4530e-01	0.067967	0.067274	Evidence of sampled introgression, likely not involving inflow.
+D_athabasca	D_obscura	D_subobscura	Anopheles_gambiae	549.9363	1.2997e-121	1145	969	261	0.0381	4.3121e-01	0.066570	0.064939	Evidence of sampled introgression, likely not involving inflow.
+D_azteca	D_bifasciata	D_guanche	Anopheles_gambiae	350.3641	3.5307e-78	1202	964	376	0.0457	2.1303e-01	0.069654	0.068205	Evidence of sampled introgression, likely not involving inflow.
+D_azteca	D_bifasciata	D_subobscura	Anopheles_gambiae	339.1955	9.5517e-76	1215	956	378	0.0734	6.3196e-03	0.068665	0.065328	Evidence of sampled introgression, possibly involving inflow.
+D_azteca	D_obscura	D_guanche	Anopheles_gambiae	588.3370	5.7627e-130	1151	1000	260	0.0351	5.2330e-01	0.067254	0.066596	Evidence of sampled introgression, likely not involving inflow.
+D_azteca	D_obscura	D_subobscura	Anopheles_gambiae	585.9391	1.9152e-129	1160	997	259	0.0486	1.5904e-01	0.065854	0.065130	Evidence of sampled introgression, likely not involving inflow.
+D_lowei	D_bifasciata	D_guanche	Anopheles_gambiae	362.7204	7.1982e-81	1177	952	360	0.0808	2.0674e-03	0.061626	0.064859	Evidence of unsampled introgression
+D_miranda	D_bifasciata	D_guanche	Anopheles_gambiae	249.4938	3.3481e-56	1032	813	351	0.048	2.4497e-01	0.065980	0.066858	Evidence of sampled introgression, likely not involving inflow.
+D_persimilis	D_bifasciata	D_guanche	Anopheles_gambiae	309.9629	2.2249e-69	1081	847	328	0.0597	6.7488e-02	0.075094	0.074461	Evidence of sampled introgression, likely not involving inflow.
+D_pseudoobscura	D_bifasciata	D_guanche	Anopheles_gambiae	316.2906	9.3090e-71	1133	885	348	0.0541	1.0897e-01	0.073348	0.071719	Evidence of sampled introgression, likely not involving inflow.
+D_lowei	D_bifasciata	D_subobscura	Anopheles_gambiae	359.0695	4.4895e-80	1190	949	360	0.0573	6.2428e-02	0.060614	0.062335	Evidence of sampled introgression, likely not involving inflow.
+D_miranda	D_bifasciata	D_subobscura	Anopheles_gambiae	246.6231	1.4146e-55	1045	809	350	0.0443	3.3332e-01	0.064973	0.065939	Evidence of sampled introgression, likely not involving inflow.
+D_persimilis	D_bifasciata	D_subobscura	Anopheles_gambiae	304.5890	3.2962e-68	1094	845	330	0.0645	3.8036e-02	0.074074	0.072268	Evidence of sampled introgression, possibly involving inflow.
+D_pseudoobscura	D_bifasciata	D_subobscura	Anopheles_gambiae	303.6752	5.2130e-68	1142	878	352	0.0582	6.9152e-02	0.072910	0.069245	Evidence of sampled introgression, likely not involving inflow.
+D_lowei	D_obscura	D_guanche	Anopheles_gambiae	606.2264	7.4048e-134	1125	988	245	0.0892	4.6279e-04	0.059586	0.063436	Evidence of unsampled introgression
+D_miranda	D_obscura	D_guanche	Anopheles_gambiae	491.2740	7.5268e-109	1012	863	232	0.0571	9.5514e-02	0.064447	0.064941	Evidence of sampled introgression, likely not involving inflow.
+D_persimilis	D_obscura	D_guanche	Anopheles_gambiae	520.9260	2.6612e-115	1023	887	231	0.0632	4.4778e-02	0.072810	0.071850	Evidence of sampled introgression, possibly involving inflow.
+D_pseudoobscura	D_obscura	D_guanche	Anopheles_gambiae	565.5002	5.3474e-125	1085	930	232	0.0522	1.3016e-01	0.071205	0.069771	Evidence of sampled introgression, likely not involving inflow.
+D_lowei	D_obscura	D_subobscura	Anopheles_gambiae	595.6732	1.4619e-131	1134	985	248	0.0731	7.2031e-03	0.058537	0.061448	Evidence of unsampled introgression
+D_miranda	D_obscura	D_subobscura	Anopheles_gambiae	494.8412	1.2602e-109	1021	865	231	0.058	8.5205e-02	0.062824	0.063829	Evidence of sampled introgression, likely not involving inflow.
+D_persimilis	D_obscura	D_subobscura	Anopheles_gambiae	506.6282	3.4342e-112	1034	884	236	0.0588	7.4471e-02	0.071705	0.071278	Evidence of sampled introgression, likely not involving inflow.
+D_pseudoobscura	D_obscura	D_subobscura	Anopheles_gambiae	554.0971	1.6170e-122	1091	926	235	0.0538	1.0986e-01	0.070151	0.068085	Evidence of sampled introgression, likely not involving inflow.

@@ -1,0 +1,2 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+D_miranda	D_pseudoobscura	D_persimilis	Anopheles_gambiae	0.3502	5.5400e-01	1418	199	188	0.2925	2.1375e-13	0.012440	0.036741	No evidence of introgression

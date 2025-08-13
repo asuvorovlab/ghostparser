@@ -1,0 +1,5 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+Hnum	Hpar	Hcyd	Etal	3854.6788	0.0000e+00	2591	5750	1539	0.0698	5.5075e-08	0.048603	0.051656	Evidence of unsampled introgression
+Hnum	Hpar	HmelDisco	Etal	3602.3569	0.0000e+00	2691	5624	1565	0.0659	2.7431e-07	0.047997	0.050633	Evidence of unsampled introgression
+Hnum	Hpar	HmelRef	Etal	3636.8109	0.0000e+00	2694	5632	1554	0.0664	2.0690e-07	0.047782	0.050586	Evidence of unsampled introgression
+Hnum	Hpar	Htim	Etal	3642.9173	0.0000e+00	2681	5641	1558	0.0793	2.3999e-10	0.047723	0.051117	Evidence of unsampled introgression

@@ -1,0 +1,289 @@
+Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
+D_albomicans	D_funebris	D_arawakana	Anopheles_gambiae	17.6163	2.7027e-05	1623	166	100	0.1795	1.2155e-04	0.196965	0.176428	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_guttifera	D_arawakana	Anopheles_gambiae	5.1658	2.3036e-02	1565	145	110	0.235	8.6306e-07	0.203398	0.175914	No evidence of introgression
+D_albomicans	D_innubila	D_arawakana	Anopheles_gambiae	11.0988	8.6386e-04	1641	151	100	0.2295	9.3890e-07	0.198168	0.171854	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_mush_saotome	D_arawakana	Anopheles_gambiae	10.3315	1.3078e-03	1618	149	100	0.1806	2.7336e-04	0.206128	0.183454	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_funebris	D_cardini	Anopheles_gambiae	17.1214	3.5065e-05	1643	170	104	0.1884	3.5680e-05	0.194934	0.175447	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_guttifera	D_cardini	Anopheles_gambiae	5.0165	2.5107e-02	1576	149	114	0.1976	4.8115e-05	0.201441	0.177412	No evidence of introgression
+D_albomicans	D_innubila	D_cardini	Anopheles_gambiae	10.5432	1.1662e-03	1657	152	102	0.2314	6.7007e-07	0.196413	0.170884	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_mush_saotome	D_cardini	Anopheles_gambiae	9.4264	2.1388e-03	1640	149	102	0.2003	3.4631e-05	0.204494	0.178381	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_funebris	D_dunni	Anopheles_gambiae	17.8359	2.4080e-05	1630	169	102	0.1659	4.3640e-04	0.198615	0.177698	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_guttifera	D_dunni	Anopheles_gambiae	5.0535	2.4577e-02	1571	148	113	0.1987	4.6117e-05	0.204610	0.177446	No evidence of introgression
+D_albomicans	D_innubila	D_dunni	Anopheles_gambiae	11.8076	5.8989e-04	1646	154	101	0.2089	9.2069e-06	0.200392	0.173750	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_mush_saotome	D_dunni	Anopheles_gambiae	10.0995	1.4831e-03	1628	152	103	0.1828	1.8504e-04	0.208234	0.183845	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_funebris	D_ornatifrons	Anopheles_gambiae	23.4891	1.2562e-06	1441	189	109	0.1308	6.5952e-03	0.198112	0.184689	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_funebris	D_pallidipennis	Anopheles_gambiae	19.6158	9.4685e-06	1640	174	103	0.1982	8.6260e-06	0.194845	0.169673	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_funebris	D_subbadia	Anopheles_gambiae	11.3556	7.5223e-04	212	54	26	0.24	1.4031e-02	0.196175	0.210593	Evidence of unsampled introgression
+D_albomicans	D_guttifera	D_ornatifrons	Anopheles_gambiae	10.1021	1.4810e-03	1397	166	115	0.1329	1.0577e-02	0.202398	0.190029	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_guttifera	D_pallidipennis	Anopheles_gambiae	6.7404	9.4251e-03	1576	155	114	0.2097	8.1703e-06	0.198983	0.176130	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_guttifera	D_subbadia	Anopheles_gambiae	5.6745	1.7213e-02	211	46	27	0.2522	1.3030e-02	0.197447	0.209632	No evidence of introgression
+D_albomicans	D_innubila	D_ornatifrons	Anopheles_gambiae	17.3783	3.0630e-05	1459	174	107	0.1514	1.5995e-03	0.197129	0.178808	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_innubila	D_pallidipennis	Anopheles_gambiae	9.7327	1.8101e-03	1653	157	108	0.2378	1.8028e-07	0.193618	0.166885	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_innubila	D_subbadia	Anopheles_gambiae	6.3430	1.1785e-02	218	46	26	0.2551	1.4263e-02	0.192193	0.209945	No evidence of introgression
+D_albomicans	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	19.9236	8.0597e-06	1445	173	102	0.1308	1.0101e-02	0.204384	0.193085	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	11.6415	6.4495e-04	1635	156	103	0.2237	1.2989e-06	0.201836	0.178088	Evidence of sampled introgression, possibly involving inflow.
+D_albomicans	D_mush_saotome	D_subbadia	Anopheles_gambiae	7.6902	5.5521e-03	214	47	25	0.2698	7.3094e-03	0.201805	0.211561	Evidence of unsampled introgression
+D_immigrans	D_funebris	D_arawakana	Anopheles_gambiae	16.2347	5.5958e-05	2164	213	140	0.141	8.9490e-04	0.185093	0.171257	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_funebris	D_arawakana	Anopheles_gambiae	17.5148	2.8508e-05	2151	210	135	0.1384	1.3147e-03	0.186474	0.172824	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_funebris	D_arawakana	Anopheles_gambiae	13.9442	1.8831e-04	2054	207	140	0.169	4.3081e-05	0.191982	0.174834	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_funebris	D_arawakana	Anopheles_gambiae	17.0386	3.6628e-05	2179	215	140	0.1764	1.0314e-05	0.192046	0.173719	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_funebris	D_arawakana	Anopheles_gambiae	14.9608	1.0977e-04	2179	211	141	0.17	2.9642e-05	0.197329	0.178913	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_funebris	D_arawakana	Anopheles_gambiae	17.8674	2.3684e-05	1985	202	128	0.1804	1.3221e-05	0.193918	0.174262	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_funebris	D_arawakana	Anopheles_gambiae	265.4309	1.1240e-59	1821	441	88	0.1469	4.4600e-07	0.173827	0.158781	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_funebris	D_arawakana	Anopheles_gambiae	15.2435	9.4500e-05	2092	208	138	0.1771	1.3952e-05	0.193513	0.175817	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_funebris	D_arawakana	Anopheles_gambiae	14.6712	1.2798e-04	2138	209	140	0.1631	7.9476e-05	0.192681	0.175235	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_funebris	D_arawakana	Anopheles_gambiae	15.9201	6.6074e-05	2163	211	139	0.1734	1.8952e-05	0.192718	0.175791	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_funebris	D_arawakana	Anopheles_gambiae	12.8094	3.4489e-04	574	98	56	0.1521	4.1661e-02	0.188805	0.176115	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_guttifera	D_arawakana	Anopheles_gambiae	2.6821	1.0148e-01	2085	183	154	0.1619	2.9448e-04	0.190113	0.172506	No evidence of introgression
+D_immigrans_kari17	D_guttifera	D_arawakana	Anopheles_gambiae	4.2410	3.9458e-02	2072	182	146	0.1565	5.5078e-04	0.191527	0.173488	No evidence of introgression
+D_kepulauana	D_guttifera	D_arawakana	Anopheles_gambiae	3.1431	7.6250e-02	1999	180	149	0.1902	1.3008e-05	0.197248	0.176322	No evidence of introgression
+D_nasuta	D_guttifera	D_arawakana	Anopheles_gambiae	3.2201	7.2739e-02	2095	187	155	0.2098	5.4428e-07	0.197571	0.173401	No evidence of introgression
+D_neohypocausta	D_guttifera	D_arawakana	Anopheles_gambiae	1.9922	1.5811e-01	2102	181	156	0.2026	2.2814e-06	0.202285	0.177987	No evidence of introgression
+D_neonasuta	D_guttifera	D_arawakana	Anopheles_gambiae	3.9128	4.7919e-02	1923	176	142	0.2322	5.6272e-08	0.198767	0.175435	No evidence of introgression
+D_pruinosa	D_guttifera	D_arawakana	Anopheles_gambiae	136.9791	1.2186e-31	1786	360	118	0.1648	1.7172e-07	0.178336	0.162795	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_guttifera	D_arawakana	Anopheles_gambiae	3.3370	6.7737e-02	2023	181	149	0.2277	6.5723e-08	0.198418	0.174985	No evidence of introgression
+D_sulfurigaster_albostrigata	D_guttifera	D_arawakana	Anopheles_gambiae	3.2959	6.9454e-02	2059	183	151	0.2039	1.6973e-06	0.196918	0.175523	No evidence of introgression
+D_sulfurigaster_bilimbata	D_guttifera	D_arawakana	Anopheles_gambiae	3.2930	6.9575e-02	2087	183	151	0.2177	2.3766e-07	0.197604	0.175199	No evidence of introgression
+D_sulfurigaster_sulfurigaster	D_guttifera	D_arawakana	Anopheles_gambiae	0.8251	3.6368e-01	567	72	62	0.2449	9.3767e-04	0.193164	0.174486	No evidence of introgression
+D_immigrans	D_innubila	D_arawakana	Anopheles_gambiae	10.5647	1.1526e-03	2192	193	136	0.1604	2.1625e-04	0.185175	0.167072	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_mush_saotome	D_arawakana	Anopheles_gambiae	8.2539	4.0664e-03	2162	187	137	0.1527	6.5627e-04	0.192528	0.176852	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_innubila	D_arawakana	Anopheles_gambiae	12.4592	4.1595e-04	2182	190	129	0.1569	3.6601e-04	0.186900	0.170040	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_mush_saotome	D_arawakana	Anopheles_gambiae	7.8361	5.1214e-03	2154	181	133	0.1689	1.4533e-04	0.193598	0.177398	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_innubila	D_arawakana	Anopheles_gambiae	8.5343	3.4851e-03	2078	189	138	0.1763	4.1969e-05	0.191424	0.171740	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_innubila	D_arawakana	Anopheles_gambiae	11.1250	8.5173e-04	2204	197	138	0.1986	1.2694e-06	0.191440	0.170806	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_innubila	D_arawakana	Anopheles_gambiae	8.7143	3.1572e-03	2207	192	140	0.1978	1.9976e-06	0.197016	0.173524	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_innubila	D_arawakana	Anopheles_gambiae	10.7112	1.0649e-03	2009	185	129	0.2014	2.1416e-06	0.193557	0.173374	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_innubila	D_arawakana	Anopheles_gambiae	191.2049	1.7351e-43	1874	381	95	0.1533	6.8417e-07	0.172813	0.158115	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_innubila	D_arawakana	Anopheles_gambiae	9.9131	1.6410e-03	2120	191	136	0.2067	6.3209e-07	0.192513	0.171933	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_innubila	D_arawakana	Anopheles_gambiae	9.4083	2.1600e-03	2166	193	139	0.1864	8.9807e-06	0.191996	0.171700	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_innubila	D_arawakana	Anopheles_gambiae	9.4555	2.1052e-03	2190	192	138	0.1982	1.8880e-06	0.191963	0.171914	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_innubila	D_arawakana	Anopheles_gambiae	9.1369	2.5051e-03	587	87	53	0.176	1.8263e-02	0.189788	0.173459	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_mush_saotome	D_arawakana	Anopheles_gambiae	5.8774	1.5337e-02	2049	182	140	0.166	1.9913e-04	0.199916	0.179475	No evidence of introgression
+D_nasuta	D_mush_saotome	D_arawakana	Anopheles_gambiae	9.0360	2.6471e-03	2172	193	140	0.1736	4.6060e-05	0.199271	0.176373	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_mush_saotome	D_arawakana	Anopheles_gambiae	5.7878	1.6138e-02	2178	184	142	0.1853	1.7378e-05	0.203738	0.182320	No evidence of introgression
+D_neonasuta	D_mush_saotome	D_arawakana	Anopheles_gambiae	7.2785	6.9784e-03	1975	179	133	0.1852	2.5709e-05	0.200780	0.178089	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_mush_saotome	D_arawakana	Anopheles_gambiae	189.2602	4.6113e-43	1848	377	94	0.1363	1.7820e-05	0.179453	0.164642	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_mush_saotome	D_arawakana	Anopheles_gambiae	6.7573	9.3364e-03	2095	183	138	0.1885	1.2734e-05	0.200275	0.176964	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_mush_saotome	D_arawakana	Anopheles_gambiae	6.9518	8.3735e-03	2132	186	140	0.1742	6.1948e-05	0.198761	0.177075	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_mush_saotome	D_arawakana	Anopheles_gambiae	6.6669	9.8219e-03	2159	185	140	0.1856	1.5976e-05	0.199554	0.176792	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_mush_saotome	D_arawakana	Anopheles_gambiae	6.3734	1.1584e-02	576	82	54	0.1672	3.6187e-02	0.197420	0.176413	No evidence of introgression
+D_immigrans	D_funebris	D_cardini	Anopheles_gambiae	19.6614	9.2450e-06	2188	220	139	0.1399	8.0271e-04	0.183750	0.169070	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_funebris	D_cardini	Anopheles_gambiae	23.1762	1.4781e-06	2172	219	132	0.1286	2.7848e-03	0.185057	0.170022	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_funebris	D_cardini	Anopheles_gambiae	17.6921	2.5971e-05	2075	214	138	0.1545	1.9004e-04	0.190335	0.172308	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_funebris	D_cardini	Anopheles_gambiae	19.1218	1.2264e-05	2201	220	140	0.1797	4.8945e-06	0.189945	0.169480	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_funebris	D_cardini	Anopheles_gambiae	19.1212	1.2268e-05	2202	220	140	0.1472	3.4452e-04	0.195035	0.177005	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_funebris	D_cardini	Anopheles_gambiae	21.0951	4.3705e-06	2005	208	127	0.1858	4.4944e-06	0.191682	0.171441	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_funebris	D_cardini	Anopheles_gambiae	267.5292	3.9211e-60	1842	447	90	0.1413	1.1585e-06	0.171554	0.158426	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_funebris	D_cardini	Anopheles_gambiae	17.2535	3.2709e-05	2115	213	138	0.178	9.4464e-06	0.191394	0.171884	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_funebris	D_cardini	Anopheles_gambiae	17.4610	2.9326e-05	2158	216	140	0.1658	4.0888e-05	0.190162	0.172569	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_funebris	D_cardini	Anopheles_gambiae	19.3317	1.0986e-05	2185	218	138	0.1688	2.4853e-05	0.190249	0.172313	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_funebris	D_cardini	Anopheles_gambiae	11.4630	7.0994e-04	585	98	58	0.1744	1.2100e-02	0.189761	0.172091	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_guttifera	D_cardini	Anopheles_gambiae	5.0308	2.4901e-02	2099	191	151	0.1252	8.2574e-03	0.188557	0.176505	No evidence of introgression
+D_immigrans_kari17	D_guttifera	D_cardini	Anopheles_gambiae	8.0847	4.4641e-03	2088	191	141	0.1257	7.9608e-03	0.189414	0.177712	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_guttifera	D_cardini	Anopheles_gambiae	5.9771	1.4493e-02	2011	188	145	0.1586	3.5208e-04	0.195424	0.177076	No evidence of introgression
+D_nasuta	D_guttifera	D_cardini	Anopheles_gambiae	4.7417	2.9439e-02	2111	192	153	0.1944	3.3362e-06	0.195112	0.175896	No evidence of introgression
+D_neohypocausta	D_guttifera	D_cardini	Anopheles_gambiae	4.5134	3.3631e-02	2115	191	153	0.1695	8.4958e-05	0.200450	0.181083	No evidence of introgression
+D_neonasuta	D_guttifera	D_cardini	Anopheles_gambiae	5.9329	1.4861e-02	1938	181	139	0.2007	3.2405e-06	0.196554	0.174272	No evidence of introgression
+D_pruinosa	D_guttifera	D_cardini	Anopheles_gambiae	137.0871	1.1541e-31	1798	365	121	0.1298	7.2288e-05	0.175990	0.163335	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_guttifera	D_cardini	Anopheles_gambiae	4.9124	2.6665e-02	2039	186	147	0.1912	7.7736e-06	0.196602	0.176396	No evidence of introgression
+D_sulfurigaster_albostrigata	D_guttifera	D_cardini	Anopheles_gambiae	5.0904	2.4059e-02	2074	189	149	0.1751	4.8886e-05	0.194911	0.176383	No evidence of introgression
+D_sulfurigaster_bilimbata	D_guttifera	D_cardini	Anopheles_gambiae	5.6073	1.7886e-02	2102	190	148	0.1715	7.0910e-05	0.195645	0.176363	No evidence of introgression
+D_sulfurigaster_sulfurigaster	D_guttifera	D_cardini	Anopheles_gambiae	2.2753	1.3145e-01	570	79	62	0.1914	1.2377e-02	0.192325	0.175269	No evidence of introgression
+D_immigrans	D_innubila	D_cardini	Anopheles_gambiae	14.1167	1.7181e-04	2211	198	132	0.1856	7.3186e-06	0.183443	0.166986	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_mush_saotome	D_cardini	Anopheles_gambiae	11.5179	6.8930e-04	2188	191	132	0.1606	2.3219e-04	0.191078	0.175597	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_innubila	D_cardini	Anopheles_gambiae	17.2988	3.1939e-05	2199	196	124	0.1665	9.2818e-05	0.184127	0.169957	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_mush_saotome	D_cardini	Anopheles_gambiae	11.8666	5.7148e-04	2179	186	127	0.1607	2.8758e-04	0.192019	0.175644	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_innubila	D_cardini	Anopheles_gambiae	13.0902	2.9684e-04	2098	194	131	0.1923	3.9668e-06	0.189985	0.172249	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_innubila	D_cardini	Anopheles_gambiae	13.5714	2.2966e-04	2224	199	134	0.2113	1.6440e-07	0.190176	0.170808	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_innubila	D_cardini	Anopheles_gambiae	13.9528	1.8746e-04	2224	200	134	0.1827	9.6184e-06	0.194945	0.172642	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_innubila	D_cardini	Anopheles_gambiae	14.5522	1.3633e-04	2029	188	123	0.2074	7.5025e-07	0.191620	0.170484	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_innubila	D_cardini	Anopheles_gambiae	192.9934	7.0624e-44	1891	383	95	0.1396	8.1908e-06	0.170843	0.158209	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_innubila	D_cardini	Anopheles_gambiae	12.6263	3.8035e-04	2139	194	132	0.208	4.1104e-07	0.190882	0.170911	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_innubila	D_cardini	Anopheles_gambiae	13.2092	2.7858e-04	2183	198	134	0.1841	9.0465e-06	0.190168	0.172035	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_innubila	D_cardini	Anopheles_gambiae	13.7312	2.1092e-04	2211	197	132	0.1918	3.3303e-06	0.190070	0.170364	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_innubila	D_cardini	Anopheles_gambiae	10.0968	1.4853e-03	597	89	53	0.1987	4.4071e-03	0.189009	0.170513	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_mush_saotome	D_cardini	Anopheles_gambiae	9.4339	2.1301e-03	2076	186	133	0.1671	1.4481e-04	0.198445	0.177459	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_mush_saotome	D_cardini	Anopheles_gambiae	11.6705	6.3499e-04	2199	195	135	0.1914	4.0061e-06	0.198132	0.177134	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_mush_saotome	D_cardini	Anopheles_gambiae	9.1835	2.4421e-03	2204	190	137	0.1859	1.1179e-05	0.201433	0.180451	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_mush_saotome	D_cardini	Anopheles_gambiae	9.7425	1.8006e-03	2000	181	128	0.2158	3.8741e-07	0.199680	0.175487	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_mush_saotome	D_cardini	Anopheles_gambiae	194.6610	3.0550e-44	1871	381	93	0.1469	2.3119e-06	0.177241	0.165129	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_mush_saotome	D_cardini	Anopheles_gambiae	8.7236	3.1411e-03	2122	185	134	0.1934	5.9089e-06	0.199097	0.176225	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_mush_saotome	D_cardini	Anopheles_gambiae	9.6287	1.9156e-03	2157	189	135	0.1805	2.4097e-05	0.197423	0.175917	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_mush_saotome	D_cardini	Anopheles_gambiae	10.0096	1.5572e-03	2186	189	134	0.1915	5.7213e-06	0.198081	0.176360	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_mush_saotome	D_cardini	Anopheles_gambiae	6.9638	8.3174e-03	590	81	52	0.2282	1.2037e-03	0.196571	0.175043	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_funebris	D_dunni	Anopheles_gambiae	13.7441	2.0948e-04	2175	209	142	0.1425	8.7091e-04	0.186820	0.171869	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_funebris	D_dunni	Anopheles_gambiae	15.2948	9.1970e-05	2160	207	137	0.1431	8.7184e-04	0.188367	0.174094	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_funebris	D_dunni	Anopheles_gambiae	13.6377	2.2169e-04	2062	205	139	0.1428	9.9629e-04	0.193395	0.176319	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_funebris	D_dunni	Anopheles_gambiae	15.8237	6.9525e-05	2188	212	140	0.1564	1.5618e-04	0.193228	0.175291	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_funebris	D_dunni	Anopheles_gambiae	15.4296	8.5636e-05	2185	211	140	0.1522	2.6795e-04	0.198750	0.180426	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_funebris	D_dunni	Anopheles_gambiae	17.0065	3.7251e-05	1993	200	128	0.1593	1.9631e-04	0.195261	0.175021	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_funebris	D_dunni	Anopheles_gambiae	252.1920	8.6413e-57	1831	434	91	0.1353	5.2328e-06	0.174878	0.160395	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_funebris	D_dunni	Anopheles_gambiae	12.8076	3.4522e-04	2102	204	140	0.1586	1.7341e-04	0.194524	0.175983	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_funebris	D_dunni	Anopheles_gambiae	13.8289	2.0023e-04	2148	208	141	0.1345	2.0918e-03	0.193315	0.177817	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_funebris	D_dunni	Anopheles_gambiae	14.7345	1.2376e-04	2174	208	139	0.1527	2.8589e-04	0.193126	0.175358	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_funebris	D_dunni	Anopheles_gambiae	9.5156	2.0373e-03	579	94	58	0.1453	6.5719e-02	0.191545	0.174354	Evidence of sampled introgression, likely not involving inflow.
+D_immigrans	D_guttifera	D_dunni	Anopheles_gambiae	2.1732	1.4044e-01	2098	180	154	0.1167	2.1890e-02	0.191247	0.177031	No evidence of introgression
+D_immigrans_kari17	D_guttifera	D_dunni	Anopheles_gambiae	3.5929	5.8026e-02	2086	179	146	0.1215	1.5394e-02	0.192225	0.178353	No evidence of introgression
+D_kepulauana	D_guttifera	D_dunni	Anopheles_gambiae	3.6016	5.7723e-02	2008	179	146	0.1364	4.4121e-03	0.198816	0.180727	No evidence of introgression
+D_nasuta	D_guttifera	D_dunni	Anopheles_gambiae	3.2546	7.1222e-02	2106	185	153	0.1569	4.6139e-04	0.198960	0.178636	No evidence of introgression
+D_neohypocausta	D_guttifera	D_dunni	Anopheles_gambiae	2.3492	1.2535e-01	2112	180	153	0.1604	3.9103e-04	0.203679	0.183768	No evidence of introgression
+D_neonasuta	D_guttifera	D_dunni	Anopheles_gambiae	3.9581	4.6647e-02	1933	174	140	0.1702	1.9337e-04	0.200073	0.179120	No evidence of introgression
+D_pruinosa	D_guttifera	D_dunni	Anopheles_gambiae	127.1686	1.7064e-29	1794	355	122	0.135	4.0714e-05	0.179467	0.165774	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_guttifera	D_dunni	Anopheles_gambiae	2.7631	9.6459e-02	2035	178	149	0.1664	2.3059e-04	0.199514	0.178622	No evidence of introgression
+D_sulfurigaster_albostrigata	D_guttifera	D_dunni	Anopheles_gambiae	3.3132	6.8725e-02	2071	182	150	0.1492	1.1694e-03	0.198568	0.179450	No evidence of introgression
+D_sulfurigaster_bilimbata	D_guttifera	D_dunni	Anopheles_gambiae	3.3292	6.8061e-02	2099	181	149	0.1616	3.3104e-04	0.199032	0.178357	No evidence of introgression
+D_sulfurigaster_sulfurigaster	D_guttifera	D_dunni	Anopheles_gambiae	0.8139	3.6697e-01	568	73	63	0.2031	9.6287e-03	0.195213	0.174939	No evidence of introgression
+D_immigrans	D_innubila	D_dunni	Anopheles_gambiae	9.9471	1.6110e-03	2203	190	135	0.1497	7.9152e-04	0.186777	0.168205	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_mush_saotome	D_dunni	Anopheles_gambiae	7.6480	5.6835e-03	2177	185	137	0.13	6.3038e-03	0.193759	0.177448	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_innubila	D_dunni	Anopheles_gambiae	11.3616	7.4977e-04	2191	187	129	0.1507	7.9968e-04	0.188166	0.171436	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_mush_saotome	D_dunni	Anopheles_gambiae	6.9054	8.5935e-03	2167	179	134	0.1404	2.9490e-03	0.195083	0.179976	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_innubila	D_dunni	Anopheles_gambiae	9.7048	1.8379e-03	2086	188	134	0.1628	2.1344e-04	0.192986	0.174108	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_innubila	D_dunni	Anopheles_gambiae	11.6660	6.3652e-04	2213	195	135	0.1682	7.8561e-05	0.193362	0.173164	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_innubila	D_dunni	Anopheles_gambiae	9.1815	2.4448e-03	2212	190	137	0.1758	4.0199e-05	0.198813	0.177907	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_innubila	D_dunni	Anopheles_gambiae	10.4868	1.2023e-03	2015	182	127	0.1801	3.9583e-05	0.195807	0.173861	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_innubila	D_dunni	Anopheles_gambiae	184.6272	4.7335e-42	1880	376	96	0.1335	2.8170e-05	0.174375	0.160545	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_innubila	D_dunni	Anopheles_gambiae	9.3103	2.2787e-03	2127	188	135	0.1985	2.4515e-06	0.194386	0.173635	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_innubila	D_dunni	Anopheles_gambiae	9.8416	1.7061e-03	2173	192	137	0.1551	4.1281e-04	0.193656	0.174314	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_innubila	D_dunni	Anopheles_gambiae	10.3431	1.2996e-03	2199	190	134	0.1887	7.7949e-06	0.193810	0.172937	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_innubila	D_dunni	Anopheles_gambiae	7.7421	5.3949e-03	592	84	53	0.1811	1.6079e-02	0.190696	0.170664	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_mush_saotome	D_dunni	Anopheles_gambiae	6.8035	9.0978e-03	2063	182	137	0.1525	8.4063e-04	0.200766	0.182075	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_mush_saotome	D_dunni	Anopheles_gambiae	9.4565	2.1040e-03	2186	192	138	0.1562	3.6334e-04	0.200352	0.181792	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_mush_saotome	D_dunni	Anopheles_gambiae	6.1174	1.3385e-02	2191	183	140	0.1516	8.5115e-04	0.205199	0.186668	No evidence of introgression
+D_neonasuta	D_mush_saotome	D_dunni	Anopheles_gambiae	6.6971	9.6571e-03	1987	177	133	0.1769	7.6029e-05	0.203275	0.180557	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_mush_saotome	D_dunni	Anopheles_gambiae	178.6331	9.6354e-41	1857	373	98	0.1175	3.7885e-04	0.180673	0.166963	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_mush_saotome	D_dunni	Anopheles_gambiae	5.9010	1.5132e-02	2110	181	139	0.1757	6.7824e-05	0.201759	0.180969	No evidence of introgression
+D_sulfurigaster_albostrigata	D_mush_saotome	D_dunni	Anopheles_gambiae	6.9889	8.2018e-03	2148	185	139	0.1575	4.2774e-04	0.200864	0.182678	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_mush_saotome	D_dunni	Anopheles_gambiae	7.0243	8.0409e-03	2175	184	138	0.174	6.9524e-05	0.201526	0.182058	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_mush_saotome	D_dunni	Anopheles_gambiae	4.6791	3.0533e-02	581	80	56	0.1826	1.8414e-02	0.198613	0.180233	No evidence of introgression
+D_immigrans	D_funebris	D_ornatifrons	Anopheles_gambiae	23.2332	1.4350e-06	1934	240	149	0.0976	3.4163e-02	0.184294	0.177332	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_funebris	D_pallidipennis	Anopheles_gambiae	17.7654	2.4989e-05	2192	218	141	0.1745	1.1455e-05	0.180493	0.164933	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_funebris	D_subbadia	Anopheles_gambiae	11.4462	7.1642e-04	268	68	36	0.2794	4.1982e-04	0.180674	0.201293	Evidence of unsampled introgression
+D_immigrans_kari17	D_funebris	D_ornatifrons	Anopheles_gambiae	27.5506	1.5304e-07	1919	239	141	0.1042	1.9875e-02	0.186338	0.177894	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_funebris	D_pallidipennis	Anopheles_gambiae	19.2079	1.1723e-05	2180	214	135	0.175	1.3122e-05	0.181861	0.165434	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_funebris	D_subbadia	Anopheles_gambiae	15.7172	7.3553e-05	266	69	32	0.2861	2.5462e-04	0.182168	0.201951	Evidence of unsampled introgression
+D_kepulauana	D_funebris	D_ornatifrons	Anopheles_gambiae	21.7300	3.1385e-06	1840	234	147	0.1026	2.5182e-02	0.191959	0.181319	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_funebris	D_pallidipennis	Anopheles_gambiae	16.6799	4.4247e-05	2084	214	140	0.199	4.2125e-07	0.188245	0.166375	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_funebris	D_subbadia	Anopheles_gambiae	10.1055	1.4783e-03	258	67	37	0.272	7.6604e-04	0.187479	0.194084	Evidence of unsampled introgression
+D_nasuta	D_funebris	D_ornatifrons	Anopheles_gambiae	26.2618	2.9813e-07	1945	244	147	0.0995	2.7431e-02	0.191816	0.183220	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_funebris	D_pallidipennis	Anopheles_gambiae	17.8974	2.3315e-05	2204	222	144	0.2031	1.1899e-07	0.188052	0.166587	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_funebris	D_subbadia	Anopheles_gambiae	12.0864	5.0791e-04	265	69	36	0.293	1.6521e-04	0.189218	0.205369	Evidence of unsampled introgression
+D_neohypocausta	D_funebris	D_ornatifrons	Anopheles_gambiae	26.8696	2.1766e-07	1945	244	146	0.1016	2.2846e-02	0.197284	0.184611	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_funebris	D_pallidipennis	Anopheles_gambiae	15.0206	1.0635e-04	2205	216	145	0.1745	1.2576e-05	0.191150	0.173310	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_funebris	D_subbadia	Anopheles_gambiae	15.1672	9.8399e-05	269	71	34	0.2817	2.6881e-04	0.197575	0.208995	Evidence of unsampled introgression
+D_neonasuta	D_funebris	D_ornatifrons	Anopheles_gambiae	24.2028	8.6708e-07	1772	228	138	0.1013	3.1702e-02	0.194253	0.184830	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_funebris	D_pallidipennis	Anopheles_gambiae	18.8511	1.4133e-05	2008	208	131	0.2152	5.2285e-08	0.190767	0.168971	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_funebris	D_subbadia	Anopheles_gambiae	9.0242	2.6643e-03	242	65	37	0.2829	5.4859e-04	0.192132	0.205753	Evidence of unsampled introgression
+D_pruinosa	D_funebris	D_ornatifrons	Anopheles_gambiae	276.8282	3.6881e-62	1635	460	94	0.0673	7.7104e-02	0.174670	0.167749	Evidence of sampled introgression, likely not involving inflow.
+D_pulaua	D_funebris	D_ornatifrons	Anopheles_gambiae	23.7376	1.1041e-06	1877	236	145	0.1026	2.4230e-02	0.194416	0.183814	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_funebris	D_ornatifrons	Anopheles_gambiae	23.7130	1.1182e-06	1910	241	149	0.0984	3.1765e-02	0.192314	0.184900	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_funebris	D_ornatifrons	Anopheles_gambiae	26.0400	3.3441e-07	1936	241	145	0.105	1.7750e-02	0.192608	0.183957	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_funebris	D_ornatifrons	Anopheles_gambiae	10.9064	9.5833e-04	548	103	63	0.131	1.0209e-01	0.190241	0.177699	Evidence of sampled introgression, likely not involving inflow.
+D_pruinosa	D_funebris	D_pallidipennis	Anopheles_gambiae	258.5570	3.5405e-58	1846	444	93	0.1472	3.6352e-07	0.169780	0.156327	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_funebris	D_pallidipennis	Anopheles_gambiae	16.2545	5.5377e-05	2124	213	140	0.2071	1.2298e-07	0.189812	0.167840	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_funebris	D_pallidipennis	Anopheles_gambiae	15.9800	6.4015e-05	2166	216	143	0.2069	9.8958e-08	0.188921	0.167641	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_funebris	D_pallidipennis	Anopheles_gambiae	16.7692	4.2213e-05	2188	218	143	0.2045	1.2494e-07	0.188559	0.168557	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_funebris	D_pallidipennis	Anopheles_gambiae	10.2266	1.3843e-03	585	98	60	0.1522	4.0924e-02	0.187561	0.172176	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_funebris	D_subbadia	Anopheles_gambiae	53.4124	2.7038e-13	224	107	30	0.1638	4.1147e-02	0.174835	0.167930	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_funebris	D_subbadia	Anopheles_gambiae	11.7070	6.2266e-04	256	67	35	0.2719	7.7987e-04	0.188121	0.193717	Evidence of unsampled introgression
+D_sulfurigaster_albostrigata	D_funebris	D_subbadia	Anopheles_gambiae	10.8677	9.7856e-04	261	67	36	0.2943	1.9536e-04	0.188743	0.206003	Evidence of unsampled introgression
+D_sulfurigaster_bilimbata	D_funebris	D_subbadia	Anopheles_gambiae	13.6019	2.2596e-04	264	70	35	0.2886	1.9826e-04	0.188730	0.201683	Evidence of unsampled introgression
+D_sulfurigaster_sulfurigaster	D_funebris	D_subbadia	Anopheles_gambiae	4.8707	2.7316e-02	115	40	24	0.1293	6.5001e-01	0.194831	0.184702	No evidence of introgression
+D_immigrans	D_guttifera	D_ornatifrons	Anopheles_gambiae	8.0462	4.5599e-03	1871	209	157	0.1184	1.0235e-02	0.189659	0.182522	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_guttifera	D_pallidipennis	Anopheles_gambiae	4.9755	2.5709e-02	2105	193	153	0.1307	4.7703e-03	0.185274	0.171331	No evidence of introgression
+D_immigrans	D_guttifera	D_subbadia	Anopheles_gambiae	3.9644	4.6473e-02	266	56	38	0.3064	3.3803e-04	0.182591	0.209089	No evidence of introgression
+D_immigrans_kari17	D_guttifera	D_ornatifrons	Anopheles_gambiae	11.7408	6.1144e-04	1860	209	147	0.1268	4.7699e-03	0.190758	0.183552	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_guttifera	D_pallidipennis	Anopheles_gambiae	6.1898	1.2849e-02	2094	190	146	0.1301	5.5033e-03	0.187039	0.172361	No evidence of introgression
+D_immigrans_kari17	D_guttifera	D_subbadia	Anopheles_gambiae	6.6623	9.8474e-03	266	57	34	0.3145	1.8504e-04	0.183647	0.210316	Evidence of unsampled introgression
+D_kepulauana	D_guttifera	D_ornatifrons	Anopheles_gambiae	8.5351	3.4836e-03	1797	206	153	0.1109	2.1253e-02	0.196819	0.185255	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_guttifera	D_pallidipennis	Anopheles_gambiae	5.5910	1.8053e-02	2020	191	149	0.166	1.3337e-04	0.192650	0.174537	No evidence of introgression
+D_kepulauana	D_guttifera	D_subbadia	Anopheles_gambiae	3.5151	6.0812e-02	258	56	39	0.3199	1.6252e-04	0.192694	0.206670	No evidence of introgression
+D_nasuta	D_guttifera	D_ornatifrons	Anopheles_gambiae	9.9068	1.6467e-03	1879	214	156	0.114	1.3607e-02	0.196641	0.185698	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_guttifera	D_pallidipennis	Anopheles_gambiae	4.8693	2.7339e-02	2112	197	157	0.1868	6.9342e-06	0.192864	0.173705	No evidence of introgression
+D_nasuta	D_guttifera	D_subbadia	Anopheles_gambiae	5.2543	2.1893e-02	263	59	38	0.3086	2.0689e-04	0.191675	0.210092	No evidence of introgression
+D_neohypocausta	D_guttifera	D_ornatifrons	Anopheles_gambiae	9.6860	1.8568e-03	1888	211	154	0.1147	1.3512e-02	0.202410	0.188046	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_guttifera	D_pallidipennis	Anopheles_gambiae	3.3577	6.6893e-02	2120	191	158	0.1764	3.6825e-05	0.197912	0.175220	No evidence of introgression
+D_neohypocausta	D_guttifera	D_subbadia	Anopheles_gambiae	6.4068	1.1369e-02	268	59	36	0.3071	2.1864e-04	0.198995	0.213939	No evidence of introgression
+D_neonasuta	D_guttifera	D_ornatifrons	Anopheles_gambiae	9.5143	2.0388e-03	1725	201	146	0.1153	1.6621e-02	0.198685	0.184448	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_guttifera	D_pallidipennis	Anopheles_gambiae	5.7645	1.6354e-02	1940	186	144	0.1821	2.5732e-05	0.194648	0.172526	No evidence of introgression
+D_neonasuta	D_guttifera	D_subbadia	Anopheles_gambiae	3.6101	5.7428e-02	241	55	38	0.3065	4.4306e-04	0.192845	0.210476	No evidence of introgression
+D_pruinosa	D_guttifera	D_ornatifrons	Anopheles_gambiae	164.4378	1.2137e-37	1613	384	115	0.0814	3.2816e-02	0.179034	0.170819	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_guttifera	D_ornatifrons	Anopheles_gambiae	9.5422	2.0080e-03	1825	207	151	0.1112	2.0067e-02	0.198169	0.185465	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_guttifera	D_ornatifrons	Anopheles_gambiae	9.6521	1.8913e-03	1849	212	155	0.122	6.9280e-03	0.197011	0.186346	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_guttifera	D_ornatifrons	Anopheles_gambiae	10.4355	1.2362e-03	1876	211	152	0.1146	1.3734e-02	0.197283	0.186034	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_guttifera	D_ornatifrons	Anopheles_gambiae	2.2000	1.3801e-01	544	82	65	0.1092	3.6363e-01	0.193147	0.181185	No evidence of introgression
+D_pruinosa	D_guttifera	D_pallidipennis	Anopheles_gambiae	134.6825	3.8742e-31	1802	367	124	0.1429	7.8732e-06	0.174270	0.161550	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_guttifera	D_pallidipennis	Anopheles_gambiae	4.5726	3.2488e-02	2048	189	151	0.1851	1.4091e-05	0.193823	0.173017	No evidence of introgression
+D_sulfurigaster_albostrigata	D_guttifera	D_pallidipennis	Anopheles_gambiae	4.4939	3.4017e-02	2080	192	154	0.1803	2.1800e-05	0.193325	0.174317	No evidence of introgression
+D_sulfurigaster_bilimbata	D_guttifera	D_pallidipennis	Anopheles_gambiae	4.2458	3.9348e-02	2104	192	155	0.1837	1.3968e-05	0.192971	0.173474	No evidence of introgression
+D_sulfurigaster_sulfurigaster	D_guttifera	D_pallidipennis	Anopheles_gambiae	2.4707	1.1598e-01	571	82	64	0.1336	1.5465e-01	0.190427	0.174607	No evidence of introgression
+D_pruinosa	D_guttifera	D_subbadia	Anopheles_gambiae	22.5668	2.0296e-06	227	86	38	0.1933	1.8943e-02	0.177808	0.181716	Evidence of unsampled introgression
+D_pulaua	D_guttifera	D_subbadia	Anopheles_gambiae	4.9154	2.6619e-02	256	57	37	0.2884	8.5494e-04	0.192763	0.208608	No evidence of introgression
+D_sulfurigaster_albostrigata	D_guttifera	D_subbadia	Anopheles_gambiae	4.3870	3.6214e-02	260	57	38	0.3103	2.4673e-04	0.192997	0.210947	No evidence of introgression
+D_sulfurigaster_bilimbata	D_guttifera	D_subbadia	Anopheles_gambiae	5.8173	1.5869e-02	264	59	37	0.3163	1.2933e-04	0.192858	0.211212	No evidence of introgression
+D_sulfurigaster_sulfurigaster	D_guttifera	D_subbadia	Anopheles_gambiae	2.1967	1.3831e-01	118	32	22	0.1653	4.4413e-01	0.195049	0.193142	No evidence of introgression
+D_immigrans	D_innubila	D_ornatifrons	Anopheles_gambiae	18.6514	1.5694e-05	1958	221	142	0.1302	2.3862e-03	0.184071	0.174566	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_innubila	D_pallidipennis	Anopheles_gambiae	10.6597	1.0950e-03	2210	198	140	0.2074	3.2302e-07	0.180604	0.159668	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_innubila	D_subbadia	Anopheles_gambiae	7.6864	5.5638e-03	277	59	34	0.2906	5.3971e-04	0.175467	0.200099	Evidence of unsampled introgression
+D_immigrans	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	17.0883	3.5682e-05	1933	216	141	0.13	2.8152e-03	0.191962	0.182455	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	10.4488	1.2273e-03	2181	195	138	0.1844	1.0284e-05	0.187827	0.166706	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans	D_mush_saotome	D_subbadia	Anopheles_gambiae	7.0277	8.0260e-03	273	59	35	0.328	5.8566e-05	0.185345	0.210021	Evidence of unsampled introgression
+D_immigrans_kari17	D_innubila	D_ornatifrons	Anopheles_gambiae	22.1678	2.4983e-06	1948	219	134	0.1281	3.1271e-03	0.185663	0.177548	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_innubila	D_pallidipennis	Anopheles_gambiae	11.7367	6.1279e-04	2201	194	134	0.197	1.9654e-06	0.182000	0.161259	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_innubila	D_subbadia	Anopheles_gambiae	11.4019	7.3370e-04	276	60	30	0.2964	3.4731e-04	0.177404	0.200490	Evidence of unsampled introgression
+D_immigrans_kari17	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	18.0702	2.1291e-05	1925	211	135	0.1278	4.0016e-03	0.193099	0.183442	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	9.3516	2.2279e-03	2177	187	134	0.1999	2.0940e-06	0.188699	0.166426	Evidence of sampled introgression, possibly involving inflow.
+D_immigrans_kari17	D_mush_saotome	D_subbadia	Anopheles_gambiae	9.1590	2.4750e-03	272	59	32	0.3206	9.3873e-05	0.186057	0.209668	Evidence of unsampled introgression
+D_kepulauana	D_innubila	D_ornatifrons	Anopheles_gambiae	16.3158	5.3615e-05	1865	214	141	0.1335	2.1235e-03	0.190610	0.175567	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_innubila	D_pallidipennis	Anopheles_gambiae	9.3211	2.2652e-03	2101	195	141	0.2082	3.8300e-07	0.187492	0.166590	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_innubila	D_subbadia	Anopheles_gambiae	4.9827	2.5601e-02	269	56	36	0.2924	7.2188e-04	0.185507	0.204122	No evidence of introgression
+D_nasuta	D_innubila	D_ornatifrons	Anopheles_gambiae	20.9173	4.7954e-06	1970	225	141	0.1298	2.2275e-03	0.190276	0.176434	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_innubila	D_pallidipennis	Anopheles_gambiae	10.0958	1.4861e-03	2222	201	144	0.2174	5.4282e-08	0.188114	0.165379	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_innubila	D_subbadia	Anopheles_gambiae	7.5479	6.0079e-03	275	60	35	0.3058	2.0022e-04	0.186016	0.207110	Evidence of unsampled introgression
+D_neohypocausta	D_innubila	D_ornatifrons	Anopheles_gambiae	19.4959	1.0082e-05	1975	223	142	0.1232	4.5767e-03	0.196212	0.181587	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_innubila	D_pallidipennis	Anopheles_gambiae	7.7891	5.2561e-03	2224	197	147	0.2073	3.5033e-07	0.191846	0.168009	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_innubila	D_subbadia	Anopheles_gambiae	8.9551	2.7670e-03	280	60	33	0.3024	2.3813e-04	0.196043	0.213687	Evidence of unsampled introgression
+D_neonasuta	D_innubila	D_ornatifrons	Anopheles_gambiae	18.6907	1.5373e-05	1797	211	134	0.1312	3.0114e-03	0.192959	0.177232	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_innubila	D_pallidipennis	Anopheles_gambiae	9.9991	1.5661e-03	2025	190	135	0.2257	4.0959e-08	0.189565	0.165450	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_innubila	D_subbadia	Anopheles_gambiae	4.5738	3.2465e-02	252	55	36	0.2853	1.2870e-03	0.186211	0.206051	No evidence of introgression
+D_pruinosa	D_innubila	D_ornatifrons	Anopheles_gambiae	221.5999	4.0495e-50	1689	406	93	0.0901	9.8690e-03	0.173190	0.165548	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_innubila	D_ornatifrons	Anopheles_gambiae	18.0307	2.1737e-05	1905	217	140	0.1307	2.5864e-03	0.192874	0.176092	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_innubila	D_ornatifrons	Anopheles_gambiae	18.9936	1.3115e-05	1940	223	143	0.1215	5.4572e-03	0.191350	0.179514	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_innubila	D_ornatifrons	Anopheles_gambiae	19.7057	9.0333e-06	1962	221	140	0.1249	4.0713e-03	0.191850	0.177817	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_innubila	D_ornatifrons	Anopheles_gambiae	6.9549	8.3590e-03	559	93	62	0.1654	2.5429e-02	0.187069	0.172645	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_innubila	D_pallidipennis	Anopheles_gambiae	184.1677	5.9635e-42	1891	386	102	0.1392	8.0972e-06	0.168908	0.156494	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_innubila	D_pallidipennis	Anopheles_gambiae	8.6326	3.3019e-03	2143	194	142	0.2289	1.6079e-08	0.189283	0.166591	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_innubila	D_pallidipennis	Anopheles_gambiae	8.7855	3.0363e-03	2185	198	145	0.2201	4.5563e-08	0.188405	0.167051	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_innubila	D_pallidipennis	Anopheles_gambiae	8.4752	3.6002e-03	2206	197	145	0.2337	5.2835e-09	0.188633	0.167192	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_innubila	D_pallidipennis	Anopheles_gambiae	6.5967	1.0217e-02	590	91	61	0.1646	2.7916e-02	0.186701	0.168880	No evidence of introgression
+D_pruinosa	D_innubila	D_subbadia	Anopheles_gambiae	40.9248	1.5820e-10	234	95	30	0.1747	3.2387e-02	0.171101	0.177570	Evidence of unsampled introgression
+D_pulaua	D_innubila	D_subbadia	Anopheles_gambiae	8.2714	4.0275e-03	266	60	34	0.3054	2.1637e-04	0.185364	0.209593	Evidence of unsampled introgression
+D_sulfurigaster_albostrigata	D_innubila	D_subbadia	Anopheles_gambiae	7.0305	8.0134e-03	272	59	35	0.3169	1.1783e-04	0.186171	0.207263	Evidence of unsampled introgression
+D_sulfurigaster_bilimbata	D_innubila	D_subbadia	Anopheles_gambiae	8.2379	4.1024e-03	276	60	34	0.3022	2.4670e-04	0.186565	0.209220	Evidence of unsampled introgression
+D_sulfurigaster_sulfurigaster	D_innubila	D_subbadia	Anopheles_gambiae	3.0547	8.0506e-02	121	34	22	0.1526	5.0888e-01	0.189481	0.192751	No evidence of introgression
+D_kepulauana	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	15.2951	9.1953e-05	1843	209	139	0.1271	4.6618e-03	0.198946	0.185383	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	8.4860	3.5790e-03	2077	190	139	0.2131	2.7394e-07	0.194876	0.171544	Evidence of sampled introgression, possibly involving inflow.
+D_kepulauana	D_mush_saotome	D_subbadia	Anopheles_gambiae	5.9246	1.4931e-02	265	58	36	0.299	4.0301e-04	0.197139	0.205267	No evidence of introgression
+D_nasuta	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	20.5993	5.6617e-06	1943	223	140	0.12	6.2943e-03	0.198673	0.189068	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	10.5481	1.1631e-03	2192	200	142	0.2157	7.8486e-08	0.194772	0.172223	Evidence of sampled introgression, possibly involving inflow.
+D_nasuta	D_mush_saotome	D_subbadia	Anopheles_gambiae	9.9904	1.5736e-03	270	63	34	0.3259	3.8714e-05	0.195991	0.209445	Evidence of unsampled introgression
+D_neohypocausta	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	17.4899	2.8883e-05	1951	217	141	0.1116	1.5441e-02	0.203316	0.190850	Evidence of sampled introgression, possibly involving inflow.
+D_neohypocausta	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	6.4721	1.0958e-02	2202	190	145	0.21	3.9976e-07	0.198994	0.173269	No evidence of introgression
+D_neohypocausta	D_mush_saotome	D_subbadia	Anopheles_gambiae	10.1565	1.4379e-03	275	62	33	0.308	1.3530e-04	0.200100	0.217065	Evidence of unsampled introgression
+D_neonasuta	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	16.4960	4.8752e-05	1766	207	135	0.1222	7.8698e-03	0.200760	0.186056	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	8.7064	3.1709e-03	1994	186	135	0.2406	5.5724e-09	0.196594	0.171321	Evidence of sampled introgression, possibly involving inflow.
+D_neonasuta	D_mush_saotome	D_subbadia	Anopheles_gambiae	5.4958	1.9062e-02	246	57	36	0.2955	6.1939e-04	0.196480	0.209828	No evidence of introgression
+D_pruinosa	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	217.8663	2.6412e-49	1664	402	93	0.079	3.5292e-02	0.179841	0.173776	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	16.4755	4.9284e-05	1885	212	139	0.1328	2.4211e-03	0.200438	0.185705	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	17.9334	2.2877e-05	1911	218	141	0.1177	8.8162e-03	0.198576	0.189979	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	17.6825	2.6101e-05	1937	215	139	0.1326	2.2148e-03	0.199012	0.185617	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_mush_saotome	D_ornatifrons	Anopheles_gambiae	7.3056	6.8740e-03	552	89	58	0.1571	4.5591e-02	0.196533	0.181763	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	189.0750	5.0611e-43	1870	384	98	0.1369	1.3065e-05	0.176247	0.163842	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	8.2150	4.1545e-03	2125	188	138	0.2386	5.7194e-09	0.196090	0.172111	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_albostrigata	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	8.0227	4.6196e-03	2158	192	142	0.2309	1.3578e-08	0.195557	0.171255	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_bilimbata	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	7.6786	5.5881e-03	2180	192	143	0.2352	6.6346e-09	0.195720	0.172142	Evidence of sampled introgression, possibly involving inflow.
+D_sulfurigaster_sulfurigaster	D_mush_saotome	D_pallidipennis	Anopheles_gambiae	7.7942	5.2415e-03	583	89	57	0.2057	2.9030e-03	0.194747	0.174245	Evidence of sampled introgression, possibly involving inflow.
+D_pruinosa	D_mush_saotome	D_subbadia	Anopheles_gambiae	40.9732	1.5433e-10	232	95	30	0.1746	3.2777e-02	0.178904	0.176330	Evidence of sampled introgression, possibly involving inflow.
+D_pulaua	D_mush_saotome	D_subbadia	Anopheles_gambiae	7.5919	5.8631e-03	261	60	35	0.3052	2.2632e-04	0.195407	0.207917	Evidence of unsampled introgression
+D_sulfurigaster_albostrigata	D_mush_saotome	D_subbadia	Anopheles_gambiae	8.2679	4.0352e-03	267	60	34	0.3071	1.9383e-04	0.195825	0.210140	Evidence of unsampled introgression
+D_sulfurigaster_bilimbata	D_mush_saotome	D_subbadia	Anopheles_gambiae	9.3994	2.1706e-03	270	62	34	0.3115	1.1279e-04	0.195582	0.211122	Evidence of unsampled introgression
+D_sulfurigaster_sulfurigaster	D_mush_saotome	D_subbadia	Anopheles_gambiae	3.0612	8.0181e-02	119	34	22	0.1723	3.7648e-01	0.200683	0.183819	No evidence of introgression
