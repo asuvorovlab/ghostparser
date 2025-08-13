@@ -16,7 +16,7 @@ git clone https://github.com/asuvorovlab/ghostparser.git
 ```
 This repository includes an environment.yml file that lists all necessary dependencies. Follow these steps to set up the environment:
 
-Ensure tgat Conda is installed.
+Ensure that Conda is installed.
 You can download Miniconda if you don't have it.
 
 #### 2. Download the dependencies using conda
