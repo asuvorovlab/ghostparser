@@ -48,16 +48,18 @@ D_hydei D_navojoa       D_repleta       Anopheles_gambiae       366.4096        
 D_hydei D_seriema       D_repleta       Anopheles_gambiae       324.3658        1.6216e-72      1079    905     358     0.0736  9.6875e-03      0.084029        0.087615        Evidence of unsampled introgression
 ```
 
-The first column, Taxon_C is the "C" taxon, Taxon_B is the "B" taxon in the triplet, and Taxon_A is "A" taxon in the triplet. Taxon_C is the outgroup in the triplet. Taxon_B appears as sister to Taxon_C more frequently than Taxon_A does in the gene tree set. The DCT statistic is the Z-score from the two-sample Z-test used test if the count of discordant topology one (B,C)A is significantly greater than the count of discordant topology two (A,C)B in the gene trees.
+The first column, Taxon_C is the "C" taxon, Taxon_B is the "B" taxon in the triplet, and Taxon_A is "A" taxon in the triplet. Taxon_C is the outgroup in the triplet. Taxon_B appears as sister to Taxon_C more frequently than Taxon_A does in the gene tree set. DCT_statistic is the Z-score from the two-sample Z-test used test if the count of discordant topology one (B,C)A is significantly greater than the count of discordant topology two (A,C)B in the gene trees. DCT_p_value is the p-value from this test, ghostparser considers any value below 0.01 to be significant. If the p-value is larger than 0.01, Test_conclusion will be "No evidence of introgression." AB_count, BC_count, and AC_count are the counts of gene trees reflecting the triplet topologies (A,B)C, (B,C)A and (A,C)B respectively. THT_statistic is the test statistic of a KS test comparing the distributions of triplet tree heights of concordant gene trees ((A,B)C) and discordant-one gene trees ((B,C)A). THT_p_value is the p-value from this test, with 0.05 used as the cutoff for significance. Assuming the Z-test is passed, Test conclusion will be "Evidence of sampled introgression, likely not involving inflow" if the THT test is not significant, "Evidence of sampled introgression, possibly involving inflow" if the distribution of tree heights of discordant-one gene trees is significantly _smaller_ than the distribution of tree heights of concordant gene trees, and "Evidence of unsampled introgression" if the distribution of tree heights of discordant-one gene trees is significantly _larger_ than the distribution of tree heights of concordant gene trees
 
-The ghostparser results can be summarized by counting the unique values in the second column of the output file.
+
+
+The ghostparser results for all tested triplets can be summarized by counting the unique values in the fourteenth column of the output file.
 
 ```bash
 cut -f14 tutorial_output.txt | grep -v "Conclusion" | sort | uniq -c
 ```
 
 ## Step four: Run ghostfinder to search for the ghost lineage in the drosophila tree
-Once ghostparser is complete, ghostfinder can take the output of the ghostparser run, consider the taxa hypothesized as recipients of recipients of ghost introgression, and determine if there is evidence of sampled introgression involving the putative ghosts lineages, and other taxa in the species tree. The ghostfinder script uses the ghostparser output, the same file indicating the taxa used to root the species tree, and the gene trees used to run ghostparser. It can be called like so.
+Once ghostparser is complete, ghostfinder can take the output of the ghostparser run, consider the taxa hypothesized as recipients of recipients of ghost introgression, and determine if there is evidence of sampled introgression involving the putative ghosts 
 
 ```bash
 python ghostparser/bin/ghostfinder.py --out_taxa Out.txt --ghostparser_output tutorial_output.txt --input_trees drosophila.trees --output_file ghostfinder_output.txt
