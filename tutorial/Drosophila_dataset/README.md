@@ -10,10 +10,8 @@ This tutorial tests for ghost introgression in clade seven of the fly genus _Dro
 
 Clone the repository to your local machine using either SSH or HTTPS:
 
-Using SSH (recommended if you have a passkey set up):
+Using HTTPS
 ```bash
-git clone git@github.com:asuvorovlab/ghostparser.git
-
 git clone https://github.com/asuvorovlab/ghostparser.git
 ```
 This repository includes an environment.yml file that lists all necessary dependencies. Follow these steps to set up the environment:
