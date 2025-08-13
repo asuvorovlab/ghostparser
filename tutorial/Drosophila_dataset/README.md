@@ -1,6 +1,6 @@
 # _Drosophila_ ghostparser Tutorial
 
-This tutorial tests for ghost introgression in clade seven of the fly genus _Drosophila_. Suvorov et al. (2022) found evidence of introgression between _D. hydei_ and a clade comprised of _D. arizonae_, _D. mojavensis_, and _D. navojoa_ using the Branch Length Test (BLT) and Discordant Count Test (DCT). Here we recreate the "ghostparser" run to test if this is in fact introgression between these two lineages, or introgression involving _D. repleta_ and an unsampled "ghost" lineage. 
+This tutorial tests for ghost introgression in clade seven of the fly genus _Drosophila_. Suvorov et al. (2022) found evidence of introgression between _D. hydei_ and a clade comprising _D. arizonae_, _D. mojavensis_, and _D. navojoa_ using the Branch Length Test (BLT) and Discordant Count Test (DCT). Here, we recreate the "ghostparser" run from Tolman and Suvorov (2025) to test whether this is in fact introgression between these two lineages, or introgression involving _D. repleta_ and an unsampled "ghost" lineage. 
 ![Figure 1](https://github.com/e-tolman/images/blob/main/Drosophila_github_figure.png?raw=true)
 
 
@@ -18,7 +18,7 @@ git clone https://github.com/asuvorovlab/ghostparser.git
 ```
 This repository includes an environment.yml file that lists all necessary dependencies. Follow these steps to set up the environment:
 
-Ensure Conda is installed.
+Ensure tgat Conda is installed.
 You can download Miniconda if you don't have it.
 
 #### 2. Download the dependencies using conda
@@ -27,7 +27,7 @@ conda env create -f environment.yml
 ```
 
 ## Step two: Run ghostparser
-To run ghostparser, we need to first prepare several input files. The file "drosophila.trees" contains the gene trees for the _Drosophila_ dataset, and "species.tree" is the maximum likelihood species tree, both from Suvorov et al. (2022). "triplets.csv" contains every possible triplet combination we can use to test our two competing hypotheses. Each triplet contains _D. hydei_ which is the only representative of one of the clades hypothesized to have been involved in a sampled introgression event; one of _D. arizonae_, _D. mojavensis_, or _D. navojoa_, which are all in the second clade hypothesized to have been involved in a sampled introgression event; and _D. repleta_ which is the hypothesized ghost recipient. If the triplets argument is not provided, ghostparser will automatically test every possible triplet in the species tree. "Out.txt" contains the outgroup taxon which will be used to root every tested triplet.
+To run ghostparser, we first need to prepare several input files. The file "drosophila.trees" contains the gene trees for the _Drosophila_ dataset, and "species.tree" is the maximum likelihood species tree, both from Suvorov et al. (2022). "triplets.csv" contains every possible triplet combination we can use to test our two competing hypotheses. Each triplet contains _D. hydei_, which is the only representative of one of the clades hypothesized to have been involved in a sampled introgression event; one of _D. arizonae_, _D. mojavensis_, or _D. navojoa_, which are all in the second clade hypothesized to have been involved in a sampled introgression event; and _D. repleta_ which is the hypothesized ghost recipient. If the --triplets argument is not provided, ghostparser will automatically test every possible triplet in the species tree. "Out.txt" contains the outgroup taxon which will be used to root every tested triplet.
 
 With these input files prepared, ghostparser can be executed like so:
 
@@ -38,7 +38,7 @@ python ~/ghostparser_final/bin/ghostparser.py --out_taxa Out.txt --input_trees d
 By default, ghostparser will utilize all available threads. This can be changed using the optional --threads option. Using eight threads, this execution should take 1-2 minutes.
 
 ## Step three: Examine the ghostparser output
-Following the completion the ghostparser, the file "ghostparser_output.txt" will have been created. The file is printed below:
+Following the completion of ghostparser, the file "ghostparser_output.txt" will have been created. The file is printed below:
 
 ```bash
 Taxon_C Taxon_B Taxon_A Taxon_out       DCT_statistic   DCT_p_value     AB_count        BC_count        AC_count        THT_statistic   THT_p_value     AB_median       BC_median       Test_conclusion
