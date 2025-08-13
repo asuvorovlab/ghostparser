@@ -65,9 +65,7 @@ Ghostfinder can be run like so:
 ```bash
 python ~/ghostparser_final/bin/ghostfinder.py --ghostparser_output ghostparser_output.txt --species_tree species.tree --gene_trees drosophila.trees --output_file ghostfinder_output.txt --threads 8
 ```
-As the ghostfinder pipeline is testing many more triplets than the first ghostparser run, it should take between 15 and 30 minutes to run on 8 threads. 
-
-The output file is the output of the ghostparser run, tested on triplets where the "C" taxon could possibly be the "ghost" lineage. The first few lines of this output file are copied below. Here, each "C" taxon is the possible "ghost" lineage, and the "Test_conclusion" tells us whether there is evidence that this possible "ghost" lineage introgressed with the ghost introgression recipient (now Taxon_B).
+As the ghostfinder pipeline is testing many more triplets than the first ghostparser run, it should take between 15 and 30 minutes to run on 8 threads. Ghostfinder will output three new files. The first ghostfinder_OUT.txt lists the Out taxon used to root triplets (this is extracted from the ghostparser_output file), and ghostfinder_triplets.csv lists all the triplets which include the potential "ghost" lineages. ghostfinder_output.txt is the output of the ghostparser run, tested on triplets where the "C" taxon could possibly be the "ghost" lineage. The first few lines of this output file are copied below. Here, each "C" taxon is the possible "ghost" lineage, and the "Test_conclusion" tells us whether there is evidence that this possible "ghost" lineage introgressed with the ghost introgression recipient (now Taxon_B).
 
 ```bash
 Taxon_C Taxon_B Taxon_A Taxon_out       DCT_statistic   DCT_p_value     AB_count        BC_count        AC_count        THT_statistic   THT_p_value     AB_median       BC_median       Test_conclusion
