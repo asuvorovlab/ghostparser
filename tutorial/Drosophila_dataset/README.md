@@ -1,7 +1,7 @@
 # _Drosophila_ ghostparser Tutorial
 
 This tutorial tests for ghost introgression in clade seven of the fly genus _Drosophila_. Suvorov et al. (2022) found evidence of introgression between _D. hydei_ and a clade comprised of _D. arizonae_, _D. mojavensis_, and _D. navojoa_ using the Branch Length Test (BLT) and Discordant Count Test (DCT). Here we recreate the "ghostparser" run to test if this is in fact introgression between these two lineages, or introgression involving _D. repleta_ and an unsampled "ghost" lineage. 
-![Figure 1](https://github.com/e-tolman/images/blob/main/Slide1.png?raw=true)
+![Figure 1](https://github.com/e-tolman/images/blob/main/Drosophila_github_figure.png?raw=true)
 
 
 ## Step one: Install ghostparser
