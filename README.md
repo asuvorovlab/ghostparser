@@ -1,4 +1,4 @@
-# GhostParser: GhostParser: A highly scalable phylogenomic approach for the identification of ghost introgression 
+# GhostParser: A highly scalable phylogenomic approach for the identification of ghost introgression 
 
 This respository contains supplementary information for "GhostParser: A highly scalable phylogenomic approach for the identification of ghost introgression" and instructions for running GhostParser, and its follow up analysis, GhostFinder. 
 
