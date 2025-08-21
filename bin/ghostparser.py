@@ -184,6 +184,38 @@ def generate_combinations(args):
             combos.append((C, B, A, out))
     return combos
 
+def _count_ac_bc_on_four_taxa(nw_text, a_taxon, b_taxon, c_taxon, out_taxon):
+    """Count AC vs BC on exactly the 4-taxon pruned lines; root at Out and ignore unresolved cases."""
+    ac = bc = 0
+    for s in nw_text.splitlines():
+        s = s.strip()
+        if not s:
+            continue
+        try:
+            t = Tree(s, format=1)
+        except Exception:
+            continue
+        try:
+            t.set_outgroup(out_taxon)
+            a_node = t & a_taxon
+            b_node = t & b_taxon
+            c_node = t & c_taxon
+        except Exception:
+            continue
+        try:
+            ac_pair = (a_node.up == c_node.up)
+            bc_pair = (b_node.up == c_node.up)
+            if ac_pair ^ bc_pair:
+                if ac_pair:
+                    ac += 1
+                else:
+                    bc += 1
+            else:
+                continue
+        except Exception:
+            continue
+    return ac, bc
+
 def process_combination(line_tuple, args, script_dir):
     c_taxon, b_taxon, a_taxon, out_taxon = line_tuple
     combination_line = f"{c_taxon}\t{b_taxon}\t{a_taxon}\t{out_taxon}"
@@ -199,6 +231,12 @@ def process_combination(line_tuple, args, script_dir):
     if not nw_out.strip():
         sys.stderr.write(f"[skip] No trees contained all of {out_taxon},{a_taxon},{b_taxon},{c_taxon}\n")
         return None
+
+    # Decide B vs A on the exact 4-taxon subset that will be analyzed downstream.
+    pre_ac, pre_bc = _count_ac_bc_on_four_taxa(nw_out, a_taxon, b_taxon, c_taxon, out_taxon)
+    if pre_ac > pre_bc:
+        a_taxon, b_taxon = b_taxon, a_taxon
+        combination_line = f"{c_taxon}\t{b_taxon}\t{a_taxon}\t{out_taxon}"
 
     triplet = exact_replace(
         nw_out,
