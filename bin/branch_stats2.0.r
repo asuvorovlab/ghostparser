@@ -29,9 +29,9 @@ if (!"Topology" %in% colnames(data)) {
 
 # Count occurrences
 # Count each topology
-ac_count <- sum(data$Topology == "AC")
-bc_count <- sum(data$Topology == "BC")
-ab_count <- sum(data$Topology == "AB")
+ac_count <- sum(data$Topology == "AC", na.rm = TRUE)
+bc_count <- sum(data$Topology == "BC", na.rm = TRUE)
+ab_count <- sum(data$Topology == "AB", na.rm = TRUE)
 total_count <- ac_count + bc_count + ab_count
 
 # Check if there's sufficient total data to perform the test

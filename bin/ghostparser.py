@@ -234,9 +234,20 @@ def process_combination(line_tuple, args, script_dir):
 
     # Decide B vs A on the exact 4-taxon subset that will be analyzed downstream.
     pre_ac, pre_bc = _count_ac_bc_on_four_taxa(nw_out, a_taxon, b_taxon, c_taxon, out_taxon)
+    post_bc = pre_bc
     if pre_ac > pre_bc:
         a_taxon, b_taxon = b_taxon, a_taxon
         combination_line = f"{c_taxon}\t{b_taxon}\t{a_taxon}\t{out_taxon}"
+        post_bc = pre_ac
+
+    # NEW: skip if BC count is zero and record the combo
+    if post_bc == 0:                               # NEW
+        skipped_path = args.output_file + ".skipped.txt"  # NEW
+        with lock:                                 # NEW (thread-safe append)
+            with open(skipped_path, "a") as sf:    # NEW
+                sf.write(combination_line + "\n")  # NEW
+        return None                                # NEW
+
 
     triplet = exact_replace(
         nw_out,
@@ -361,6 +372,9 @@ def main():
 
     with open(args.output_file, "w") as out_f:
         out_f.write("Taxon_C\tTaxon_B\tTaxon_A\tTaxon_out\tDCT_statistic\tDCT_p_value\tAB_count\tBC_count\tAC_count\tTHT_statistic\tTHT_p_value\tAB_median\tBC_median\tTest_conclusion\n")
+
+#CREATE skipped 
+    open(args.output_file + ".skipped.txt", "w").close()  # NEW
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     combinations = generate_combinations(args)
