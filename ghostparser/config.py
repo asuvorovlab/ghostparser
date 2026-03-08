@@ -41,12 +41,14 @@ DEFAULT_MIN_SUPPORT_VALUE = 0.5
 DEFAULT_DISCORDANT_TEST = "chi-square"
 DEFAULT_SUMMARY_STATISTIC = "median"
 DEFAULT_STATS_BACKEND = "standard"
+DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY = "AVG"
 DEFAULT_ALPHA_DCT = 0.01
 DEFAULT_ALPHA_KS = 0.05
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
 SUMMARY_STATISTIC_CHOICES = ("mean", "median", "mode")
 STATS_BACKEND_CHOICES = ("custom", "standard")
+TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C")
 
 
 def _load_raw_config(config_file: str) -> dict:
@@ -206,6 +208,12 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
             DEFAULT_STATS_BACKEND,
             STATS_BACKEND_CHOICES,
         ),
+        "tree_height_calculation_strategy": _validate_choice(
+            payload,
+            "tree_height_calculation_strategy",
+            DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+            TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
+        ),
         "alpha_dct": _validate_optional_float(payload, "alpha_dct", DEFAULT_ALPHA_DCT),
         "alpha_ks": _validate_optional_float(payload, "alpha_ks", DEFAULT_ALPHA_KS),
     }
@@ -260,6 +268,12 @@ def normalize_triplet_processor_payload(payload: dict) -> dict:
             "stats_backend",
             DEFAULT_STATS_BACKEND,
             STATS_BACKEND_CHOICES,
+        ),
+        "tree_height_calculation_strategy": _validate_choice(
+            payload,
+            "tree_height_calculation_strategy",
+            DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+            TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
         ),
         "processes": _validate_non_negative_int(payload, "processes", DEFAULT_PROCESSES),
         "no_multiprocessing": _validate_optional_bool(payload, "no_multiprocessing", False),

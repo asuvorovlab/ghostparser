@@ -49,8 +49,10 @@ from .config import (
     DEFAULT_OUTPUT_FOLDER,
     DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
+    DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     SUMMARY_STATISTIC_CHOICES,
     STATS_BACKEND_CHOICES,
+    TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
     load_orchestrator_config,
     normalize_orchestrator_payload,
 )
@@ -86,6 +88,7 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "discordant_test",
     "summary_statistic",
     "stats_backend",
+    "tree_height_calculation_strategy",
     "alpha_dct",
     "alpha_ks",
 ]
@@ -142,6 +145,16 @@ def _build_argument_parser():
         choices=STATS_BACKEND_CHOICES,
         default=None,
         help=f"Statistical backend for DCT/KS (default: {DEFAULT_STATS_BACKEND})",
+    )
+    parser.add_argument(
+        "--tree-height-calculation-strategy",
+        choices=TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
+        default=None,
+        help=(
+            "Tree-height strategy: AVG uses mean root-to-tip distance, "
+            "A/B/C use the selected taxon's root-to-tip distance "
+            f"(default: {DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY})"
+        ),
     )
     parser.add_argument(
         "--alpha-dct",
@@ -205,6 +218,7 @@ def main():
         metrics.log(f"Discordant count test: {args.discordant_test}")
         metrics.log(f"Summary statistic after KS: {args.summary_statistic}")
         metrics.log(f"Statistical backend: {args.stats_backend}")
+        metrics.log(f"Tree height strategy: {args.tree_height_calculation_strategy}")
         metrics.log(f"DCT alpha: {args.alpha_dct}")
         metrics.log(f"KS alpha: {args.alpha_ks}")
         support_threshold = (
@@ -363,6 +377,7 @@ def main():
                 discordant_test=args.discordant_test,
                 summary_statistic=args.summary_statistic,
                 stats_backend=args.stats_backend,
+                tree_height_calculation_strategy=args.tree_height_calculation_strategy,
                 use_multiprocessing=use_multiprocessing,
                 processes=processes,
             )
