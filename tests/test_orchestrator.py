@@ -47,6 +47,7 @@ def test_resolve_runtime_args_cli_defaults(tmp_path, monkeypatch):
         discordant_test=None,
         summary_statistic=None,
         stats_backend=None,
+        tree_height_calculation_strategy=None,
         alpha_dct=None,
         alpha_ks=None,
     )
@@ -63,6 +64,7 @@ def test_resolve_runtime_args_cli_defaults(tmp_path, monkeypatch):
     assert resolved.discordant_test == "chi-square"
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
+    assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.alpha_dct == 0.01
     assert resolved.alpha_ks == 0.05
 
@@ -81,6 +83,7 @@ def test_resolve_runtime_args_cli_custom_processes_preserved(tmp_path, monkeypat
         discordant_test=None,
         summary_statistic=None,
         stats_backend=None,
+        tree_height_calculation_strategy=None,
         alpha_dct=None,
         alpha_ks=None,
     )
@@ -107,6 +110,7 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
         discordant_test="chi-square",
         summary_statistic="mean",
         stats_backend="standard",
+        tree_height_calculation_strategy="C",
         alpha_dct=0.2,
         alpha_ks=0.3,
     )
@@ -123,6 +127,7 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
     assert resolved.discordant_test == "chi-square"
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
+    assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.alpha_dct == 0.01
     assert resolved.alpha_ks == 0.05
 
@@ -145,6 +150,7 @@ def test_resolve_runtime_args_config_processes_preserved_when_set(tmp_path):
         discordant_test=None,
         summary_statistic=None,
         stats_backend=None,
+        tree_height_calculation_strategy=None,
         alpha_dct=None,
         alpha_ks=None,
     )
