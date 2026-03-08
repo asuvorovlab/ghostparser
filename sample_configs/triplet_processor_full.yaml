@@ -6,5 +6,6 @@ alpha_ks: 0.05
 discordant_test: chi-square
 summary_statistic: median
 stats_backend: standard
+tree_height_calculation_strategy: AVG
 processes: 0
 no_multiprocessing: false
