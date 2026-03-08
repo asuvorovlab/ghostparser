@@ -149,6 +149,11 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
   - Allowed values: `standard` (default), `custom`.
   - `custom` uses GhostParser manual statistical implementations.
   - `standard` uses SciPy for chi-square/KS and statsmodels for two-proportion z-test.
+- `tree_height_calculation_strategy` (string)
+  - Tree-height statistic strategy used in the triplet processor stage.
+  - Allowed values: `AVG` (default), `A`, `B`, `C`.
+  - `AVG` uses mean root-to-tip distance across all three taxa.
+  - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
 - `alpha_dct` (number)
   - P-value threshold for the discordant count test.
   - Default: `0.01`.
@@ -228,6 +233,10 @@ See examples in:
   - Allowed values: `standard` (default), `custom`.
   - `custom` uses GhostParser manual statistical implementations.
   - `standard` uses SciPy for chi-square/KS and statsmodels for two-proportion z-test.
+- `tree_height_calculation_strategy` (string)
+  - Allowed values: `AVG` (default), `A`, `B`, `C`.
+  - `AVG` uses mean root-to-tip distance across all three taxa.
+  - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
 - `processes` (integer >= 0)
   - Worker count for triplet inference (`0` = all cores).
 - `no_multiprocessing` (boolean)

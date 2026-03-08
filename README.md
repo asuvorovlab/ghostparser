@@ -130,6 +130,7 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--discordant-test`
 - `--summary-statistic`
 - `--stats-backend`
+- `--tree-height-calculation-strategy`
 - `--alpha-dct`, `--alpha-ks`
 
 #### Primary Outputs
@@ -178,6 +179,7 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 - Runs DCT (`chi-square` or `z-test`)
 - Runs KS tree-height test when DCT is significant
 - Applies summary-statistic comparison (`median`, `mean`, or binned `mode`) for final classification
+- Supports tree-height strategy selection via `tree_height_calculation_strategy`: `AVG` (default) or taxon-specific `A|B|C`
 
 ---
 
@@ -277,6 +279,7 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 - `discordant_test`: `chi-square`
 - `summary_statistic`: `median`
 - `stats_backend`: `standard`
+- `tree_height_calculation_strategy`: `AVG`
 - `alpha_dct`: `0.01`
 - `alpha_ks`: `0.05`
 

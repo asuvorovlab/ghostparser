@@ -38,6 +38,9 @@ Options:
 - `--processes` (optional)
   - Worker processes for both triplet extraction (`tree_parser`) and per-triplet inference (`triplet_processor`).
   - Defaults to `0`, which means all available CPU cores (`cpu_count()`).
+- `--tree-height-calculation-strategy` (optional)
+  - Tree-height strategy used by `triplet_processor`.
+  - Allowed values: `AVG` (default), `A`, `B`, `C`.
 
 CLI mode inputs are normalized into the same key/value payload used by config files, so defaults and validation are consistent across both modes.
 
@@ -125,8 +128,10 @@ If the two discordant topologies tie in frequency, canonical ordering is kept.
 
 Per-gene-tree height uses:
 
-- `compute_tree_height_statistic` = mean root-to-tip distance across 3 leaves
-- for `((X:b2,Y:b3):b4,Z:b1)`: $H(T) = (b1 + b2 + b3 + 2b4)/3$
+- `compute_tree_height_statistic` with selected strategy:
+  - `AVG`: mean root-to-tip distance across 3 leaves
+  - `A`, `B`, or `C`: root-to-tip distance of that taxon
+- for `((X:b2,Y:b3):b4,Z:b1)`, `AVG` gives: $H(T) = (b1 + b2 + b3 + 2b4)/3$
 
 - `ks_statistic`
   - Method: two-sample KS statistic between height samples of `dis1_topology` vs `con_topology`.

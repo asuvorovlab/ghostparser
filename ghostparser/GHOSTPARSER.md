@@ -23,7 +23,7 @@ keeping memory bounded to the active triplet chunk.
 `triplet_processor` consumes `unique_triplets_gene_trees.txt` and applies the GhostParser decision pipeline:
 
 1. Count concordant and discordant topology frequencies, then relabel taxa so concordant is `AB|C` and discordant1 is `BC|A`.
-2. Compute `H(T)` as the average root-to-tip distance.
+2. Compute `H(T)` using a configurable tree-height strategy (`AVG` default, or taxon-specific `A|B|C`).
 3. Run discordant count test (configurable: Pearson chi-square or two-proportion z-test, alpha `alpha_dct`, default `0.01`).
 4. If significant, run two-sample KS tree-height test (alpha `alpha_ks`, default `0.05`).
 5. If significant, compare selected summary statistics (median by default; mean and binned mode optional) to infer outflow vs ghost introgression.
@@ -70,13 +70,15 @@ python -m ghostparser.orchestrator -c <config.yaml>
 
 ### `compute_tree_height_statistic(tree)`
 
-Computes the triplet tree-height statistic:
+Computes the triplet tree-height statistic with a selected strategy:
 
-`H(T) = mean(root-to-tip distances)`.
+`H(T) = mean(root-to-tip distances)` when strategy is `AVG`.
 
 For `((X:b2,Y:b3):b4,Z:b1)`, this is:
 
 `H(T) = (b1 + b2 + b3 + 2*b4) / 3`.
+
+With taxon-specific strategy `A`, `B`, or `C`, `H(T)` is the root-to-tip distance of the selected taxon.
 
 ### `classify_triplet_topology(tree, species_triplet, topology_counts, species_topology=TOPOLOGY_AB)`
 
@@ -91,7 +93,7 @@ Returns:
 
 - `(label, most_frequent_matches_concordant)` where `most_frequent_matches_concordant` is `True` when concordant count is not lower than either discordant count.
 
-### `run_triplet_pipeline(species_triplet, triplet_gene_trees, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard')`
+### `run_triplet_pipeline(species_triplet, triplet_gene_trees, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', tree_height_calculation_strategy='AVG')`
 
 Runs full sequential GhostParser logic and returns counts, p-values, summary values, and final classification.
 
@@ -162,6 +164,7 @@ Optional arguments:
 - `--alpha-ks`: KS threshold (default: `0.05`)
 - `--summary-statistic`: `median` (default), `mean`, or `mode`
 - `--stats-backend`: `standard` (default) or `custom`
+- `--tree-height-calculation-strategy`: `AVG` (default), `A`, `B`, or `C`
 - `--processes`: worker count for triplet inference (`0` = all cores)
 - `--no-multiprocessing`: disable multiprocessing for triplet inference
 
