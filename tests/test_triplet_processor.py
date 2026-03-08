@@ -42,6 +42,29 @@ def test_compute_tree_height_statistic_matches_definition():
     assert observed == pytest.approx(expected)
 
 
+def test_compute_tree_height_statistic_supports_taxon_specific_strategies():
+    tree = _tree("((A:2,B:3):4,C:1);")
+    species_triplet = ("A", "B", "C")
+
+    assert compute_tree_height_statistic(tree, strategy="A", species_triplet=species_triplet) == pytest.approx(6.0)
+    assert compute_tree_height_statistic(tree, strategy="B", species_triplet=species_triplet) == pytest.approx(7.0)
+    assert compute_tree_height_statistic(tree, strategy="C", species_triplet=species_triplet) == pytest.approx(1.0)
+
+
+def test_compute_tree_height_statistic_rejects_unknown_strategy():
+    tree = _tree("((A:2,B:3):4,C:1);")
+
+    with pytest.raises(ValueError, match="Unsupported tree height calculation strategy"):
+        compute_tree_height_statistic(tree, strategy="D", species_triplet=("A", "B", "C"))
+
+
+def test_compute_tree_height_statistic_requires_species_triplet_for_taxon_specific_strategies():
+    tree = _tree("((A:2,B:3):4,C:1);")
+
+    with pytest.raises(ValueError, match="species_triplet is required"):
+        compute_tree_height_statistic(tree, strategy="A")
+
+
 def test_classify_triplet_topology_string_for_all_three_topologies():
     species_triplet = ("A", "B", "C")
 
@@ -444,6 +467,31 @@ def test_run_triplet_pipeline_supports_mode_summary_statistic():
     assert result.summary_dis is not None
 
 
+def test_run_triplet_pipeline_supports_taxon_specific_tree_height_strategy():
+    species_triplet = ("A", "B", "C")
+    con_tree = "((A:5.0,B:0.2):0.1,C:0.3);"
+    dis1_tree = "((B:0.2,C:0.2):0.1,A:0.4);"
+    dis2_tree = "((A:0.2,C:0.2):0.1,B:0.3);"
+    trees = ([con_tree] * 40) + ([dis1_tree] * 30) + ([dis2_tree] * 5)
+
+    result_avg = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        tree_height_calculation_strategy="AVG",
+        rng=random.Random(300),
+    )
+    result_a = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        tree_height_calculation_strategy="A",
+        rng=random.Random(301),
+    )
+
+    assert result_avg.summary_con != result_a.summary_con
+
+
 def test_analyze_triplet_gene_tree_file_rejects_unknown_stats_backend(tmp_path):
     content = """A,B,C\t3\t((A:1,B:1):1,C:1);
 
@@ -456,6 +504,20 @@ def test_analyze_triplet_gene_tree_file_rejects_unknown_stats_backend(tmp_path):
 
     with pytest.raises(ValueError, match="Unsupported stats backend"):
         analyze_triplet_gene_tree_file(str(input_file), stats_backend="numpy")
+
+
+def test_analyze_triplet_gene_tree_file_rejects_unknown_tree_height_strategy(tmp_path):
+    content = """A,B,C\t3\t((A:1,B:1):1,C:1);
+
+((A:1,B:1):1,C:1);
+((B:1,C:1):1,A:1);
+((A:1,C:1):1,B:1);
+"""
+    input_file = tmp_path / "unique_triplets_gene_trees.txt"
+    input_file.write_text(content)
+
+    with pytest.raises(ValueError, match="Unsupported tree height calculation strategy"):
+        analyze_triplet_gene_tree_file(str(input_file), tree_height_calculation_strategy="D")
 
 
 @pytest.mark.reference
@@ -720,6 +782,7 @@ def test_resolve_runtime_args_triplet_processor_cli_defaults():
         discordant_test=None,
         summary_statistic=None,
         stats_backend=None,
+        tree_height_calculation_strategy=None,
         processes=None,
         no_multiprocessing=False,
     )
@@ -732,6 +795,7 @@ def test_resolve_runtime_args_triplet_processor_cli_defaults():
     assert resolved.discordant_test == "chi-square"
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
+    assert resolved.tree_height_calculation_strategy == "AVG"
 
 
 def test_resolve_runtime_args_triplet_processor_cli_custom_processes_preserved():
@@ -745,6 +809,7 @@ def test_resolve_runtime_args_triplet_processor_cli_custom_processes_preserved()
         discordant_test=None,
         summary_statistic=None,
         stats_backend=None,
+        tree_height_calculation_strategy=None,
         processes=8,
         no_multiprocessing=False,
     )
@@ -762,7 +827,8 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
   "output_path": "out.tsv",
   "discordant_test": "z-test",
     "summary_statistic": "median",
-        "stats_backend": "standard"
+    "stats_backend": "standard",
+    "tree_height_calculation_strategy": "B"
 }
 """.strip()
     )
@@ -777,6 +843,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
         discordant_test="chi-square",
         summary_statistic="mean",
         stats_backend="custom",
+        tree_height_calculation_strategy="A",
         processes=None,
         no_multiprocessing=False,
     )
@@ -791,6 +858,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     assert resolved.discordant_test == "z-test"
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
+    assert resolved.tree_height_calculation_strategy == "B"
 
 
 def test_resolve_runtime_args_triplet_processor_config_processes_preserved_when_set(tmp_path):
@@ -814,6 +882,7 @@ def test_resolve_runtime_args_triplet_processor_config_processes_preserved_when_
         discordant_test="chi-square",
         summary_statistic="mean",
         stats_backend="custom",
+        tree_height_calculation_strategy="A",
         processes=None,
         no_multiprocessing=False,
     )
@@ -842,9 +911,11 @@ def test_resolve_runtime_args_triplet_processor_config_defaults_processes_to_zer
         discordant_test="chi-square",
         summary_statistic="mean",
         stats_backend="custom",
+        tree_height_calculation_strategy="A",
         processes=11,
         no_multiprocessing=False,
     )
 
     resolved = _resolve_runtime_args(args)
     assert resolved.processes == 0
+    assert resolved.tree_height_calculation_strategy == "AVG"

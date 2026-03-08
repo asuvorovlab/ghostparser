@@ -1,10 +1,10 @@
 """Triplet processing and GhostParser decision pipeline.
 
-This module implements the sequential hypothesis-testing logic described in
-GhostParser Figure 6 for rooted species triplets:
+This module implements the sequential logic for rooted species triplets:
 
 1. Classify each triplet gene tree as concordant/dis1/dis2.
-2. Compute tree height statistic ``H(T)`` as average root-to-tip distance.
+2. Compute tree height statistic ``H(T)`` using configurable strategy
+    (average root-to-tip distance by default).
 3. Run discordant count test (default: two-proportion z-test, alpha=0.01).
 4. If significant, run tree height test (two-sample KS, alpha=0.05).
 5. If significant, compare selected summary values to classify inflow vs ghost introgression.
@@ -39,9 +39,11 @@ from .config import (
     DEFAULT_DISCORDANT_TEST,
     DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
+    DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     DISCORDANT_TEST_CHOICES,
     STATS_BACKEND_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
+    TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
     load_triplet_processor_config,
     normalize_triplet_processor_payload,
 )
@@ -113,20 +115,42 @@ def _distance_to_root(node):
     return distance
 
 
-def compute_tree_height_statistic(tree):
-    """Compute H(T) as mean root-to-tip distance over the 3 triplet leaves.
+def compute_tree_height_statistic(tree, strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY, species_triplet=None):
+    """Compute H(T) from root-to-tip distances according to selected strategy.
 
     For a rooted triplet ``((X:b2,Y:b3):b4,Z:b1)``, this equals:
 
     ``H(T) = (b1 + b2 + b3 + 2*b4) / 3``.
+
+    Strategy options:
+    - ``AVG``: mean over all three tip distances
+    - ``A``/``B``/``C``: distance of the corresponding taxon in ``species_triplet``
     """
+    if strategy not in TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES:
+        raise ValueError(
+            f"Unsupported tree height calculation strategy: {strategy}. "
+            f"Choose one of: {', '.join(TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES)}"
+        )
+
     leaves = [leaf for leaf in tree.leaf_node_iter() if leaf.taxon and leaf.taxon.label]
     if len(leaves) != 3:
         raise ValueError("Triplet tree must contain exactly 3 terminal taxa")
 
-    distances = [_distance_to_root(leaf) for leaf in leaves]
-    return sum(distances) / 3.0
+    if strategy in {"A", "B", "C"}:
+        if species_triplet is None:
+            raise ValueError("species_triplet is required for tree height strategies A, B, and C")
 
+        strategy_index = {"A": 0, "B": 1, "C": 2}[strategy]
+        selected_taxon_label = species_triplet[strategy_index]
+        for leaf in leaves:
+            if leaf.taxon.label == selected_taxon_label:
+                return _distance_to_root(leaf)
+        raise ValueError(f"Selected taxon {selected_taxon_label} not found in triplet tree")
+
+    total_distance = 0.0
+    for leaf in leaves:
+        total_distance += _distance_to_root(leaf)
+    return total_distance / 3.0
 
 def classify_triplet_topology(
     tree,
@@ -498,7 +522,11 @@ def _species_topology_from_newick(species_tree_newick, abc_triplet):
     return classify_triplet_topology_string(tree, abc_triplet)
 
 
-def _serialize_triplet_gene_trees(species_triplet, triplet_gene_trees):
+def _serialize_triplet_gene_trees(
+    species_triplet,
+    triplet_gene_trees,
+    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+):
     """Parse rooted triplet trees into lightweight (topology, height) observations."""
     observations: list[SerializedTripletObservation] = []
     species_set = set(species_triplet)
@@ -514,7 +542,11 @@ def _serialize_triplet_gene_trees(species_triplet, triplet_gene_trees):
 
         try:
             topology = classify_triplet_topology_string(tree, species_triplet)
-            tree_height = compute_tree_height_statistic(tree)
+            tree_height = compute_tree_height_statistic(
+                tree,
+                strategy=tree_height_calculation_strategy,
+                species_triplet=species_triplet,
+            )
         except ValueError:
             continue
 
@@ -634,6 +666,7 @@ def run_triplet_pipeline(
     discordant_test=DEFAULT_DISCORDANT_TEST,
     summary_statistic=DEFAULT_SUMMARY_STATISTIC,
     stats_backend=DEFAULT_STATS_BACKEND,
+    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     species_topology=TOPOLOGY_AB,
     species_tree_newick=None,
     rng=None,
@@ -647,8 +680,9 @@ def run_triplet_pipeline(
         alpha_dct: Significance threshold for DCT-like Z test.
         alpha_ks: Significance threshold for THT (KS test).
         discordant_test: Discordant count test method (`chi-square` or `z-test`).
-        summary_statistic: Statistic used after KS for con/dis1 distributions (`mean` or `median`).
+        summary_statistic: Statistic used after KS for con/dis1 distributions (`mean`, `median`, or `mode`).
         stats_backend: Statistical backend for DCT/KS (`custom` or `standard`).
+        tree_height_calculation_strategy: Tree-height strategy (`AVG`, `A`, `B`, or `C`).
         species_topology: Species-tree topology string for this triplet.
         species_tree_newick: Species-tree triplet Newick string for this triplet.
         rng: Optional randomizer for tie-breaking topology ranks.
@@ -656,7 +690,11 @@ def run_triplet_pipeline(
     Returns:
         ``TripletPipelineResult``.
     """
-    observations = _serialize_triplet_gene_trees(species_triplet, triplet_gene_trees)
+    observations = _serialize_triplet_gene_trees(
+        species_triplet,
+        triplet_gene_trees,
+        tree_height_calculation_strategy=tree_height_calculation_strategy,
+    )
     return _run_triplet_pipeline_from_observations(
         species_triplet,
         observations,
@@ -751,9 +789,22 @@ def _resolve_processes(processes):
 
 def _analyze_triplet_entry(args):
     """Analyze one triplet map entry in a worker process."""
-    triplet, entry, alpha_dct, alpha_ks, discordant_test, summary_statistic, stats_backend = args
+    (
+        triplet,
+        entry,
+        alpha_dct,
+        alpha_ks,
+        discordant_test,
+        summary_statistic,
+        stats_backend,
+        tree_height_calculation_strategy,
+    ) = args
     species_topology = _species_topology_from_newick(entry.get("species_tree"), triplet)
-    observations = _serialize_triplet_gene_trees(triplet, entry["gene_trees"])
+    observations = _serialize_triplet_gene_trees(
+        triplet,
+        entry["gene_trees"],
+        tree_height_calculation_strategy=tree_height_calculation_strategy,
+    )
     return _run_triplet_pipeline_from_observations(
         triplet,
         observations,
@@ -774,6 +825,7 @@ def analyze_triplet_gene_tree_file(
     discordant_test=DEFAULT_DISCORDANT_TEST,
     summary_statistic=DEFAULT_SUMMARY_STATISTIC,
     stats_backend=DEFAULT_STATS_BACKEND,
+    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     rng=None,
     use_multiprocessing=True,
     processes=None,
@@ -797,6 +849,12 @@ def analyze_triplet_gene_tree_file(
             f"Choose one of: {', '.join(STATS_BACKEND_CHOICES)}"
         )
 
+    if tree_height_calculation_strategy not in TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES:
+        raise ValueError(
+            f"Unsupported tree height calculation strategy: {tree_height_calculation_strategy}. "
+            f"Choose one of: {', '.join(TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES)}"
+        )
+
     triplet_map = parse_triplet_gene_trees_file(filepath)
     items = list(triplet_map.items())
     if not items:
@@ -808,7 +866,16 @@ def analyze_triplet_gene_tree_file(
 
     if use_multiprocessing and worker_count > 1 and rng is None:
         args = [
-            (triplet, entry, alpha_dct, alpha_ks, discordant_test, summary_statistic, stats_backend)
+            (
+                triplet,
+                entry,
+                alpha_dct,
+                alpha_ks,
+                discordant_test,
+                summary_statistic,
+                stats_backend,
+                tree_height_calculation_strategy,
+            )
             for triplet, entry in items
         ]
         chunksize = max(1, len(args) // (worker_count * 4))
@@ -828,6 +895,7 @@ def analyze_triplet_gene_tree_file(
                 discordant_test=discordant_test,
                 summary_statistic=summary_statistic,
                 stats_backend=stats_backend,
+                tree_height_calculation_strategy=tree_height_calculation_strategy,
                 species_topology=species_topology,
                 species_tree_newick=entry.get("species_tree"),
                 rng=rng,
@@ -944,6 +1012,7 @@ def main():
         discordant_test=args.discordant_test,
         summary_statistic=args.summary_statistic,
         stats_backend=args.stats_backend,
+        tree_height_calculation_strategy=args.tree_height_calculation_strategy,
         use_multiprocessing=not args.no_multiprocessing,
         processes=args.processes,
     )
@@ -994,6 +1063,16 @@ def _build_argument_parser():
         default=None,
         help=f"Statistical backend for DCT/KS calculations (default: {DEFAULT_STATS_BACKEND})",
     )
+    parser.add_argument(
+        "--tree-height-calculation-strategy",
+        choices=TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
+        default=None,
+        help=(
+            "Tree-height strategy: AVG uses mean root-to-tip distance, "
+            "A/B/C use the selected taxon's root-to-tip distance "
+            f"(default: {DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY})"
+        ),
+    )
     parser.add_argument("--processes", type=int, default=None, help="Number of worker processes for triplet analysis (0 = all cores)")
     parser.add_argument(
         "--no-multiprocessing",
@@ -1012,6 +1091,7 @@ TRIPLET_PROCESSOR_PAYLOAD_ARG_NAMES = [
     "discordant_test",
     "summary_statistic",
     "stats_backend",
+    "tree_height_calculation_strategy",
     "processes",
     "no_multiprocessing",
 ]
