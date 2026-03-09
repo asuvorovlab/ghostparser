@@ -40,9 +40,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip cache purge || true
           pip install --no-cache-dir \
-            "mkdocs<2.0" \
-            "mkdocs-material>=9,<10" \
-            "mkdocs-awesome-pages-plugin>=2,<3"
+            mkdocs \
+            mkdocs-material \
+            mkdocs-awesome-pages-plugin
 
       - name: Show resolved docs tool versions
         run: |
