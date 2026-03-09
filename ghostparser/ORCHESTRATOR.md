@@ -1,6 +1,6 @@
 # Orchestrator Module Guide
 
-This document describes the end-to-end orchestrator in [ghostparser/orchestrator.py](ghostparser/orchestrator.py):
+This document describes the end-to-end orchestrator in [ghostparser/orchestrator.py](https://github.com/asif256000/ghostparser/blob/main/ghostparser/orchestrator.py):
 
 1. tree preprocessing/triplet extraction (from `tree_parser`)
 2. per-triplet introgression inference (from `triplet_processor`)

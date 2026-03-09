@@ -17,7 +17,7 @@
 4. [Configuration](#configuration)
 5. [Defaults](#defaults-at-a-glance)
 6. [Testing](#testing)
-7. [For Maintainers](#maintainers-triggering-a-release-build)
+7. [For Maintainers](#for-maintainers)
 
 ---
 
