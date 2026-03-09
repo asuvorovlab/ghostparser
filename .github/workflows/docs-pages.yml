@@ -33,13 +33,21 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install MkDocs and docs plugins
+      - name: Install MkDocs and docs plugins in isolated venv
         run: |
+          python -m venv .docs-venv
+          . .docs-venv/bin/activate
           python -m pip install --upgrade pip
-          pip install \
+          python -m pip cache purge || true
+          pip install --no-cache-dir \
             "mkdocs<2.0" \
             "mkdocs-material>=9,<10" \
             "mkdocs-awesome-pages-plugin>=2,<3"
+
+      - name: Show resolved docs tool versions
+        run: |
+          . .docs-venv/bin/activate
+          python -c "import mkdocs, material; print('mkdocs', mkdocs.__version__); print('mkdocs-material', material.__version__)"
 
       - name: Prepare Markdown docs tree
         run: |
@@ -63,7 +71,9 @@ jobs:
           rm -f site_docs/README.md
 
       - name: Build static site
-        run: mkdocs build --clean --strict
+        run: |
+          . .docs-venv/bin/activate
+          mkdocs build --clean --strict
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
