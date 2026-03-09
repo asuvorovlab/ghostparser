@@ -1,0 +1,83 @@
+name: Deploy Docs to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.md"
+      - "**/.pages"
+      - "mkdocs.yml"
+      - ".github/workflows/docs-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install MkDocs and docs plugins
+        run: |
+          python -m pip install --upgrade pip
+          pip install mkdocs mkdocs-material mkdocs-awesome-pages-plugin
+
+      - name: Prepare Markdown docs tree
+        run: |
+          rm -rf site_docs
+          mkdir -p site_docs
+
+          # Home page for the generated docs site.
+          cp README.md site_docs/index.md
+
+          # Copy every markdown file while preserving directory structure.
+          rsync -a --prune-empty-dirs \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude 'site_docs/' \
+            --include '*/' \
+            --include '*.md' \
+            --exclude '*' \
+            ./ site_docs/
+
+          # Avoid duplicate home page entry.
+          rm -f site_docs/README.md
+
+      - name: Build static site
+        run: mkdocs build --clean --strict
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
