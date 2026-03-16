@@ -7,11 +7,13 @@ from pathlib import Path
 import dendropy
 import pytest
 from scipy import stats
+from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportions_ztest
 
 import ghostparser.triplet_processor as triplet_processor_module
 
 from ghostparser.triplet_processor import (
+    _adjust_p_values,
     analyze_triplet_gene_tree_file,
     classify_triplet_topology,
     collect_triplet_statistics,
@@ -520,6 +522,107 @@ def test_analyze_triplet_gene_tree_file_rejects_unknown_tree_height_strategy(tmp
         analyze_triplet_gene_tree_file(str(input_file), tree_height_calculation_strategy="D")
 
 
+def test_analyze_triplet_gene_tree_file_rejects_unknown_p_value_correction(tmp_path):
+    content = """A,B,C\t3\t((A:1,B:1):1,C:1);
+
+((A:1,B:1):1,C:1);
+((B:1,C:1):1,A:1);
+((A:1,C:1):1,B:1);
+"""
+    input_file = tmp_path / "unique_triplets_gene_trees.txt"
+    input_file.write_text(content)
+
+    with pytest.raises(ValueError, match="Unsupported p-value correction method"):
+        analyze_triplet_gene_tree_file(str(input_file), p_value_correction="holm")
+
+
+def test_adjust_p_values_custom_fdr_matches_known_bh_example():
+    p_values = [0.01, 0.04, 0.03, 0.002]
+    adjusted = _adjust_p_values(p_values, method="fdr_bh", stats_backend="custom")
+
+    assert adjusted == pytest.approx([0.02, 0.04, 0.04, 0.008], abs=1e-12)
+
+
+def test_adjust_p_values_standard_matches_statsmodels_for_bonferroni_and_fdr():
+    p_values = [0.01, 0.04, 0.03, 0.002]
+
+    expected_bonferroni = list(multipletests(p_values, method="bonferroni")[1])
+    expected_fdr = list(multipletests(p_values, method="fdr_bh")[1])
+
+    observed_bonferroni = _adjust_p_values(p_values, method="bonferroni", stats_backend="standard")
+    observed_fdr = _adjust_p_values(p_values, method="fdr_bh", stats_backend="standard")
+
+    assert observed_bonferroni == pytest.approx(expected_bonferroni, abs=1e-12)
+    assert observed_fdr == pytest.approx(expected_fdr, abs=1e-12)
+
+
+@pytest.mark.reference
+def test_adjust_p_values_custom_matches_standard_bonferroni_randomized():
+    rng = random.Random(901)
+    for _ in range(500):
+        sample_size = rng.randint(1, 100)
+        p_values = [rng.random() for _ in range(sample_size)]
+
+        custom = _adjust_p_values(p_values, method="bonferroni", stats_backend="custom")
+        standard = _adjust_p_values(p_values, method="bonferroni", stats_backend="standard")
+        assert custom == pytest.approx(standard, abs=1e-12)
+
+
+@pytest.mark.reference
+def test_adjust_p_values_custom_matches_standard_fdr_randomized():
+    rng = random.Random(902)
+    for _ in range(500):
+        sample_size = rng.randint(1, 100)
+        p_values = [rng.random() for _ in range(sample_size)]
+
+        custom = _adjust_p_values(p_values, method="fdr_bh", stats_backend="custom")
+        standard = _adjust_p_values(p_values, method="fdr_bh", stats_backend="standard")
+        assert custom == pytest.approx(standard, abs=1e-12)
+
+
+def test_analyze_triplet_gene_tree_file_applies_selected_correction(tmp_path):
+    content = """A,B,C\t6\t((A:1,B:1):1,C:1);
+
+((A:1,B:1):1,C:1);
+((A:1,B:1):1,C:1);
+((B:1,C:1):1,A:1);
+((B:1,C:1):1,A:1);
+((B:1,C:1):1,A:1);
+((A:1,C:1):1,B:1);
+================================================
+A,B,D\t6\t((A:1,B:1):1,D:1);
+
+((A:1,B:1):1,D:1);
+((A:1,B:1):1,D:1);
+((B:1,D:1):1,A:1);
+((B:1,D:1):1,A:1);
+((B:1,D:1):1,A:1);
+((A:1,D:1):1,B:1);
+"""
+    input_file = tmp_path / "two_triplets.txt"
+    input_file.write_text(content)
+
+    results_none = analyze_triplet_gene_tree_file(
+        str(input_file),
+        alpha_dct=0.25,
+        alpha_ks=0.5,
+        p_value_correction="none",
+        use_multiprocessing=False,
+    )
+    results_bonferroni = analyze_triplet_gene_tree_file(
+        str(input_file),
+        alpha_dct=0.25,
+        alpha_ks=0.5,
+        p_value_correction="bonferroni",
+        use_multiprocessing=False,
+    )
+
+    assert len(results_none) == 2
+    assert len(results_bonferroni) == 2
+    assert results_none[0].dct_p_value == pytest.approx(results_bonferroni[0].dct_p_value)
+    assert results_none[0].dct_p_value_corrected < results_bonferroni[0].dct_p_value_corrected
+
+
 @pytest.mark.reference
 def test_two_sample_ks_test_hybrid_uses_scipy_near_threshold(monkeypatch):
     monkeypatch.setattr(triplet_processor_module, "two_sample_ks_test", lambda *_: (0.12, 0.051))
@@ -645,6 +748,8 @@ def test_write_pipeline_results_uses_dct_chi_stats_column_for_chi_square(tmp_pat
     assert "median_con" in header
     assert "median_dis" in header
     assert chi_idx < header.index("dct_p_value")
+    assert "dct_p_value_bonferroni_corrected" in header
+    assert "ks_p_value_bonferroni_corrected" in header
 
     assert row[chi_idx] != ""
 
@@ -671,6 +776,7 @@ def test_write_pipeline_results_uses_dct_z_score_column_for_z_test(tmp_path):
     z_idx = header.index("dct_z_score")
     assert "median_con" in header
     assert "median_dis" in header
+    assert "dct_p_value_bonferroni_corrected" in header
 
     assert row[z_idx] != ""
 
@@ -692,6 +798,46 @@ def test_write_pipeline_results_uses_mode_summary_columns_for_mode(tmp_path):
     header = output_file.read_text().splitlines()[0]
     assert "mode_con" in header
     assert "mode_dis" in header
+
+
+def test_write_pipeline_results_uses_dynamic_corrected_p_value_column_names(tmp_path):
+    species_triplet = ("A", "B", "C")
+    trees = (["((A:1.0,B:1.0):2.0,C:3.0);"] * 20) + (["((B:0.2,C:0.2):0.3,A:0.5);"] * 15) + (["((A:0.2,C:0.2):0.3,B:0.5);"] * 3)
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        summary_statistic="median",
+        rng=random.Random(40),
+    )
+
+    output_file = tmp_path / "results_dynamic_correction.tsv"
+    write_pipeline_results(
+        [result],
+        str(output_file),
+        dct_method="chi-square",
+        summary_statistic="median",
+        p_value_correction="fdr_bh",
+    )
+
+    header = output_file.read_text().splitlines()[0]
+    assert "dct_p_value_fdr_bh_corrected" in header
+    assert "ks_p_value_fdr_bh_corrected" in header
+
+def test_write_pipeline_results_rejects_unsupported_p_value_correction(tmp_path):
+    species_triplet = ("A", "B", "C")
+    trees = (["((A:1,B:1):1,C:1);"] * 5) + (["((B:1,C:1):1,A:1);"] * 3) + (["((A:1,C:1):1,B:1);"] * 2)
+    result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(41))
+
+    output_file = tmp_path / "bad_correction.tsv"
+    with pytest.raises(ValueError, match="Unsupported p-value correction method"):
+        write_pipeline_results(
+            [result],
+            str(output_file),
+            dct_method="chi-square",
+            summary_statistic="median",
+            p_value_correction="holm",
+        )
 
 
 def test_write_pipeline_results_includes_abc_mapping_column(tmp_path):
@@ -783,6 +929,7 @@ def test_resolve_runtime_args_triplet_processor_cli_defaults():
         summary_statistic=None,
         stats_backend=None,
         tree_height_calculation_strategy=None,
+        p_value_correction=None,
         processes=None,
         no_multiprocessing=False,
     )
@@ -796,6 +943,7 @@ def test_resolve_runtime_args_triplet_processor_cli_defaults():
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "AVG"
+    assert resolved.p_value_correction == "bonferroni"
 
 
 def test_resolve_runtime_args_triplet_processor_cli_custom_processes_preserved():
@@ -810,6 +958,7 @@ def test_resolve_runtime_args_triplet_processor_cli_custom_processes_preserved()
         summary_statistic=None,
         stats_backend=None,
         tree_height_calculation_strategy=None,
+        p_value_correction=None,
         processes=8,
         no_multiprocessing=False,
     )
@@ -828,7 +977,8 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
   "discordant_test": "z-test",
     "summary_statistic": "median",
     "stats_backend": "standard",
-    "tree_height_calculation_strategy": "B"
+    "tree_height_calculation_strategy": "B",
+    "p_value_correction": "bonferroni"
 }
 """.strip()
     )
@@ -844,6 +994,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
         summary_statistic="mean",
         stats_backend="custom",
         tree_height_calculation_strategy="A",
+        p_value_correction="none",
         processes=None,
         no_multiprocessing=False,
     )
@@ -859,6 +1010,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "B"
+    assert resolved.p_value_correction == "bonferroni"
 
 
 def test_resolve_runtime_args_triplet_processor_config_processes_preserved_when_set(tmp_path):
@@ -883,6 +1035,7 @@ def test_resolve_runtime_args_triplet_processor_config_processes_preserved_when_
         summary_statistic="mean",
         stats_backend="custom",
         tree_height_calculation_strategy="A",
+        p_value_correction="none",
         processes=None,
         no_multiprocessing=False,
     )
@@ -912,6 +1065,7 @@ def test_resolve_runtime_args_triplet_processor_config_defaults_processes_to_zer
         summary_statistic="mean",
         stats_backend="custom",
         tree_height_calculation_strategy="A",
+        p_value_correction="none",
         processes=11,
         no_multiprocessing=False,
     )
@@ -919,3 +1073,4 @@ def test_resolve_runtime_args_triplet_processor_config_defaults_processes_to_zer
     resolved = _resolve_runtime_args(args)
     assert resolved.processes == 0
     assert resolved.tree_height_calculation_strategy == "AVG"
+    assert resolved.p_value_correction == "bonferroni"
