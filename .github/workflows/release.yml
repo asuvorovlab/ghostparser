@@ -35,6 +35,41 @@ jobs:
     - name: List built artifacts
       run: |
         ls -lh dist/
+
+    - name: Prepare release notes from changelog
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        set -euo pipefail
+
+        WHEEL_FILE="$(basename "$(ls dist/*.whl | head -n1)")"
+
+        {
+          echo "## Changelog"
+          echo
+          if [ -s CHANGELOG.md ]; then
+            cat CHANGELOG.md
+          else
+            echo "_No changelog entries were provided for this release._"
+          fi
+          echo
+          echo "## Installation"
+          echo
+          echo "Download the wheel file and install:"
+          echo "```bash"
+          echo "pip install ${WHEEL_FILE}"
+          echo '```'
+          echo
+          echo "Or install directly from the release:"
+          echo "```bash"
+          echo "pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${WHEEL_FILE}"
+          echo '```'
+          echo
+          echo "## Usage"
+          echo "After installation, run from anywhere:"
+          echo "```bash"
+          echo "python -m ghostparser.orchestrator -c config.yaml"
+          echo '```'
+        } > RELEASE_BODY.md
         
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
@@ -43,28 +78,39 @@ jobs:
         files: |
           dist/*.whl
           dist/*.tar.gz
-        body: |
-          ## Installation
-          
-          Download the wheel file and install:
-          ```bash
-          pip install ghostparser-*.whl
-          ```
-          
-          Or install directly from the release:
-          ```bash
-          pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ghostparser-${{ github.ref_name }}-py3-none-any.whl
-          ```
-          
-          ## Usage
-          After installation, run from anywhere:
-          ```bash
-          python -m ghostparser.orchestrator -c config.yaml
-          ```
+        body_path: RELEASE_BODY.md
         draft: false
         prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Clear changelog after release
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        set -euo pipefail
+
+        DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        git fetch origin "${DEFAULT_BRANCH}"
+        git checkout -B "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}"
+
+        if [ ! -f CHANGELOG.md ]; then
+          echo "CHANGELOG.md does not exist on ${DEFAULT_BRANCH}; nothing to clear."
+          exit 0
+        fi
+
+        if [ ! -s CHANGELOG.md ]; then
+          echo "CHANGELOG.md is already empty on ${DEFAULT_BRANCH}; nothing to clear."
+          exit 0
+        fi
+
+        : > CHANGELOG.md
+        git add CHANGELOG.md
+        git commit -m "chore: clear changelog after ${GITHUB_REF_NAME} release"
+        git push origin "${DEFAULT_BRANCH}"
         
     # Optional: Upload to PyPI (requires PyPI API token in repository secrets)
     # - name: Publish to PyPI
