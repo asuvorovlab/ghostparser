@@ -20,7 +20,7 @@ Pearson chi-square.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import math
 import multiprocessing as mp
@@ -29,6 +29,7 @@ from pathlib import Path
 
 import dendropy
 from scipy import stats
+from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportions_ztest
 
 from .cli_config import resolve_cli_or_config_args
@@ -37,10 +38,12 @@ from .config import (
     DEFAULT_ALPHA_DCT,
     DEFAULT_ALPHA_KS,
     DEFAULT_DISCORDANT_TEST,
+    DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     DISCORDANT_TEST_CHOICES,
+    P_VALUE_CORRECTION_CHOICES,
     STATS_BACKEND_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
@@ -72,8 +75,10 @@ class TripletPipelineResult:
     n_dis2: int
     dct_statistic: float
     dct_p_value: float
+    dct_p_value_corrected: float
     dct_significant: bool
     ks_p_value: float | None
+    ks_p_value_corrected: float | None
     ks_statistic: float | None
     ks_significant: bool | None
     summary_con: float | None
@@ -92,9 +97,11 @@ class TripletPipelineResult:
             "n_dis2": self.n_dis2,
             "dct_statistic": self.dct_statistic,
             "dct_p_value": self.dct_p_value,
+            "dct_p_value_corrected": self.dct_p_value_corrected,
             "dct_significant": self.dct_significant,
             "ks_statistic": self.ks_statistic,
             "ks_p_value": self.ks_p_value,
+            "ks_p_value_corrected": self.ks_p_value_corrected,
             "ks_significant": self.ks_significant,
             "summary_con": self.summary_con,
             "summary_dis": self.summary_dis,
@@ -428,6 +435,132 @@ def _mode_binned(values, decimals=3):
     return max(modes)
 
 
+def _classify_introgression(dct_significant, ks_significant, summary_con, summary_dis):
+    """Apply GhostParser decision logic to produce final classification."""
+    if not dct_significant:
+        return "no_introgression"
+    if not ks_significant:
+        return "inflow_introgression"
+    if summary_con is None or summary_dis is None:
+        return "unresolved"
+    if summary_con > summary_dis:
+        return "outflow_introgression"
+    if summary_con < summary_dis:
+        return "ghost_introgression"
+    return "unresolved"
+
+
+def _bonferroni_adjust_p_values_custom(p_values):
+    """Apply Bonferroni correction to a p-value list."""
+    m = len(p_values)
+    if m == 0:
+        return []
+    return [min(1.0, float(p_value) * m) for p_value in p_values]
+
+
+def _fdr_bh_adjust_p_values_custom(p_values):
+    """Apply Benjamini-Hochberg FDR correction to a p-value list."""
+    m = len(p_values)
+    if m == 0:
+        return []
+
+    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda item: item[1])
+    adjusted_sorted = [0.0] * m
+
+    prev = 1.0
+    for idx in range(m - 1, -1, -1):
+        _, p_value = indexed[idx]
+        rank = idx + 1
+        adjusted = min(1.0, (p_value * m) / rank)
+        prev = min(prev, adjusted)
+        adjusted_sorted[idx] = prev
+
+    adjusted = [0.0] * m
+    for sorted_idx, (original_idx, _) in enumerate(indexed):
+        adjusted[original_idx] = adjusted_sorted[sorted_idx]
+
+    return adjusted
+
+
+def _adjust_p_values(p_values, method=DEFAULT_P_VALUE_CORRECTION, stats_backend=DEFAULT_STATS_BACKEND):
+    """Adjust p-values using selected correction method and backend."""
+    if method not in P_VALUE_CORRECTION_CHOICES:
+        raise ValueError(
+            f"Unsupported p-value correction method: {method}. "
+            f"Choose one of: {', '.join(P_VALUE_CORRECTION_CHOICES)}"
+        )
+
+    if stats_backend not in STATS_BACKEND_CHOICES:
+        raise ValueError(
+            f"Unsupported stats backend: {stats_backend}. "
+            f"Choose one of: {', '.join(STATS_BACKEND_CHOICES)}"
+        )
+
+    if method == "none":
+        return [float(p_value) for p_value in p_values]
+
+    if stats_backend == "standard":
+        mapped_method = "bonferroni" if method == "bonferroni" else "fdr_bh"
+        _, corrected, _, _ = multipletests([float(p_value) for p_value in p_values], alpha=0.05, method=mapped_method)
+        return [float(p_value) for p_value in corrected]
+
+    if method == "bonferroni":
+        return _bonferroni_adjust_p_values_custom(p_values)
+    return _fdr_bh_adjust_p_values_custom(p_values)
+
+
+def _apply_triplet_result_p_value_correction(
+    results,
+    alpha_dct,
+    alpha_ks,
+    method=DEFAULT_P_VALUE_CORRECTION,
+    stats_backend=DEFAULT_STATS_BACKEND,
+):
+    """Apply selected p-value correction across all triplets for DCT and KS p-values."""
+    if not results:
+        return results
+
+    dct_p_values = [result.dct_p_value for result in results]
+    adjusted_dct = _adjust_p_values(dct_p_values, method=method, stats_backend=stats_backend)
+
+    ks_indices = [idx for idx, result in enumerate(results) if result.ks_p_value is not None]
+    ks_p_values = [results[idx].ks_p_value for idx in ks_indices]
+    adjusted_ks_values = _adjust_p_values(ks_p_values, method=method, stats_backend=stats_backend)
+    adjusted_ks_map = {idx: adjusted_ks_values[pos] for pos, idx in enumerate(ks_indices)}
+
+    adjusted_results = []
+    for idx, result in enumerate(results):
+        dct_p_value_corrected = adjusted_dct[idx]
+        dct_significant = dct_p_value_corrected <= alpha_dct
+
+        if result.ks_p_value is None:
+            ks_p_value_corrected = None
+            ks_significant = None
+        else:
+            ks_p_value_corrected = adjusted_ks_map[idx]
+            ks_significant = ks_p_value_corrected <= alpha_ks
+
+        classification = _classify_introgression(
+            dct_significant,
+            ks_significant,
+            result.summary_con,
+            result.summary_dis,
+        )
+
+        adjusted_results.append(
+            replace(
+                result,
+                dct_p_value_corrected=dct_p_value_corrected,
+                dct_significant=dct_significant,
+                ks_p_value_corrected=ks_p_value_corrected,
+                ks_significant=ks_significant,
+                classification=classification,
+            )
+        )
+
+    return adjusted_results
+
+
 _TOPOLOGY_TO_PAIR = {
     TOPOLOGY_AB: frozenset(("A", "B")),
     TOPOLOGY_BC: frozenset(("B", "C")),
@@ -625,18 +758,12 @@ def _run_triplet_pipeline_from_observations(
         summary_con = _median(canonical_heights[con_topology])
         summary_dis = _median(canonical_heights[dis1_topology])
 
-    if not dct_significant:
-        classification = "no_introgression"
-    elif not ks_significant:
-        classification = "inflow_introgression"
-    elif summary_con is None or summary_dis is None:
-        classification = "unresolved"
-    elif summary_con > summary_dis:
-        classification = "outflow_introgression"
-    elif summary_con < summary_dis:
-        classification = "ghost_introgression"
-    else:
-        classification = "unresolved"
+    classification = _classify_introgression(
+        dct_significant,
+        ks_significant,
+        summary_con,
+        summary_dis,
+    )
 
     return TripletPipelineResult(
         triplet=canonical_triplet,
@@ -647,8 +774,10 @@ def _run_triplet_pipeline_from_observations(
         n_dis2=n_dis2,
         dct_statistic=dct_statistic,
         dct_p_value=dct_p_value,
+        dct_p_value_corrected=dct_p_value,
         dct_significant=dct_significant,
         ks_p_value=ks_p_value,
+        ks_p_value_corrected=ks_p_value,
         ks_statistic=ks_statistic,
         ks_significant=ks_significant,
         summary_con=summary_con,
@@ -826,6 +955,7 @@ def analyze_triplet_gene_tree_file(
     summary_statistic=DEFAULT_SUMMARY_STATISTIC,
     stats_backend=DEFAULT_STATS_BACKEND,
     tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+    p_value_correction=DEFAULT_P_VALUE_CORRECTION,
     rng=None,
     use_multiprocessing=True,
     processes=None,
@@ -855,6 +985,12 @@ def analyze_triplet_gene_tree_file(
             f"Choose one of: {', '.join(TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES)}"
         )
 
+    if p_value_correction not in P_VALUE_CORRECTION_CHOICES:
+        raise ValueError(
+            f"Unsupported p-value correction method: {p_value_correction}. "
+            f"Choose one of: {', '.join(P_VALUE_CORRECTION_CHOICES)}"
+        )
+
     triplet_map = parse_triplet_gene_trees_file(filepath)
     items = list(triplet_map.items())
     if not items:
@@ -881,7 +1017,14 @@ def analyze_triplet_gene_tree_file(
         chunksize = max(1, len(args) // (worker_count * 4))
         ctx = _get_mp_context()
         with ctx.Pool(processes=worker_count) as pool:
-            return list(pool.imap(_analyze_triplet_entry, args, chunksize=chunksize))
+            results = list(pool.imap(_analyze_triplet_entry, args, chunksize=chunksize))
+        return _apply_triplet_result_p_value_correction(
+            results,
+            alpha_dct=alpha_dct,
+            alpha_ks=alpha_ks,
+            method=p_value_correction,
+            stats_backend=stats_backend,
+        )
 
     results = []
     for triplet, entry in items:
@@ -901,7 +1044,13 @@ def analyze_triplet_gene_tree_file(
                 rng=rng,
             )
         )
-    return results
+    return _apply_triplet_result_p_value_correction(
+        results,
+        alpha_dct=alpha_dct,
+        alpha_ks=alpha_ks,
+        method=p_value_correction,
+        stats_backend=stats_backend,
+    )
 
 
 def collect_triplet_statistics(results):
@@ -921,6 +1070,7 @@ def write_pipeline_results(
     output_filepath,
     dct_method=DEFAULT_DISCORDANT_TEST,
     summary_statistic=DEFAULT_SUMMARY_STATISTIC,
+    p_value_correction=DEFAULT_P_VALUE_CORRECTION,
 ):
     """Write pipeline results to TSV file."""
     if dct_method not in DISCORDANT_TEST_CHOICES:
@@ -935,6 +1085,12 @@ def write_pipeline_results(
             f"Choose one of: {', '.join(SUMMARY_STATISTIC_CHOICES)}"
         )
 
+    if p_value_correction not in P_VALUE_CORRECTION_CHOICES:
+        raise ValueError(
+            f"Unsupported p-value correction method: {p_value_correction}. "
+            f"Choose one of: {', '.join(P_VALUE_CORRECTION_CHOICES)}"
+        )
+
     if dct_method == "z-test":
         dct_column = "dct_z_score"
     else:
@@ -942,6 +1098,8 @@ def write_pipeline_results(
 
     summary_con_column = f"{summary_statistic}_con"
     summary_dis_column = f"{summary_statistic}_dis"
+    dct_corrected_column = f"dct_p_value_{p_value_correction}_corrected"
+    ks_corrected_column = f"ks_p_value_{p_value_correction}_corrected"
 
     header = [
         "triplet",
@@ -953,9 +1111,11 @@ def write_pipeline_results(
         "most_frequent_matches_concordant",
         dct_column,
         "dct_p_value",
+        dct_corrected_column,
         "dct_significant",
         "ks_statistic",
         "ks_p_value",
+        ks_corrected_column,
         "ks_significant",
         summary_con_column,
         summary_dis_column,
@@ -978,9 +1138,11 @@ def write_pipeline_results(
                 str(result.most_frequent_matches_concordant),
                 f"{result.dct_statistic:.12g}",
                 f"{result.dct_p_value:.12g}",
+                f"{result.dct_p_value_corrected:.12g}",
                 str(result.dct_significant),
                 "" if result.ks_statistic is None else f"{result.ks_statistic:.12g}",
                 "" if result.ks_p_value is None else f"{result.ks_p_value:.12g}",
+                "" if result.ks_p_value_corrected is None else f"{result.ks_p_value_corrected:.12g}",
                 "" if result.ks_significant is None else str(result.ks_significant),
                 "" if result.summary_con is None else f"{result.summary_con:.12g}",
                 "" if result.summary_dis is None else f"{result.summary_dis:.12g}",
@@ -1013,6 +1175,7 @@ def main():
         summary_statistic=args.summary_statistic,
         stats_backend=args.stats_backend,
         tree_height_calculation_strategy=args.tree_height_calculation_strategy,
+        p_value_correction=args.p_value_correction,
         use_multiprocessing=not args.no_multiprocessing,
         processes=args.processes,
     )
@@ -1021,6 +1184,7 @@ def main():
         str(output_path),
         dct_method=args.discordant_test,
         summary_statistic=args.summary_statistic,
+        p_value_correction=args.p_value_correction,
     )
 
     stats_output = Path(args.stats_output) if args.stats_output else output_path.with_suffix(".json")
@@ -1073,6 +1237,12 @@ def _build_argument_parser():
             f"(default: {DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY})"
         ),
     )
+    parser.add_argument(
+        "--p-value-correction",
+        choices=P_VALUE_CORRECTION_CHOICES,
+        default=None,
+        help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
+    )
     parser.add_argument("--processes", type=int, default=None, help="Number of worker processes for triplet analysis (0 = all cores)")
     parser.add_argument(
         "--no-multiprocessing",
@@ -1092,6 +1262,7 @@ TRIPLET_PROCESSOR_PAYLOAD_ARG_NAMES = [
     "summary_statistic",
     "stats_backend",
     "tree_height_calculation_strategy",
+    "p_value_correction",
     "processes",
     "no_multiprocessing",
 ]
