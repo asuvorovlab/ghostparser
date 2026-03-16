@@ -47,9 +47,11 @@ from .config import (
     DEFAULT_DISCORDANT_TEST,
     DEFAULT_MIN_SUPPORT_VALUE,
     DEFAULT_OUTPUT_FOLDER,
+    DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+    P_VALUE_CORRECTION_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
     STATS_BACKEND_CHOICES,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
@@ -89,6 +91,7 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "summary_statistic",
     "stats_backend",
     "tree_height_calculation_strategy",
+    "p_value_correction",
     "alpha_dct",
     "alpha_ks",
 ]
@@ -157,6 +160,12 @@ def _build_argument_parser():
         ),
     )
     parser.add_argument(
+        "--p-value-correction",
+        choices=P_VALUE_CORRECTION_CHOICES,
+        default=None,
+        help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
+    )
+    parser.add_argument(
         "--alpha-dct",
         type=float,
         default=None,
@@ -219,6 +228,7 @@ def main():
         metrics.log(f"Summary statistic after KS: {args.summary_statistic}")
         metrics.log(f"Statistical backend: {args.stats_backend}")
         metrics.log(f"Tree height strategy: {args.tree_height_calculation_strategy}")
+        metrics.log(f"P-value correction: {args.p_value_correction}")
         metrics.log(f"DCT alpha: {args.alpha_dct}")
         metrics.log(f"KS alpha: {args.alpha_ks}")
         support_threshold = (
@@ -378,6 +388,7 @@ def main():
                 summary_statistic=args.summary_statistic,
                 stats_backend=args.stats_backend,
                 tree_height_calculation_strategy=args.tree_height_calculation_strategy,
+                p_value_correction=args.p_value_correction,
                 use_multiprocessing=use_multiprocessing,
                 processes=processes,
             )
@@ -387,6 +398,7 @@ def main():
                 final_tsv,
                 dct_method=args.discordant_test,
                 summary_statistic=args.summary_statistic,
+                p_value_correction=args.p_value_correction,
             )
 
             inference_time = time.time() - inference_start
