@@ -29,6 +29,7 @@ def test_load_orchestrator_config_json(tmp_path):
                 "summary_statistic": "median",
                 "stats_backend": "standard",
                 "tree_height_calculation_strategy": "B",
+                "p_value_correction": "bonferroni",
                 "alpha_dct": 0.02,
                 "alpha_ks": 0.1,
             }
@@ -49,6 +50,7 @@ def test_load_orchestrator_config_json(tmp_path):
     assert config["summary_statistic"] == "median"
     assert config["stats_backend"] == "standard"
     assert config["tree_height_calculation_strategy"] == "B"
+    assert config["p_value_correction"] == "bonferroni"
     assert config["alpha_dct"] == 0.02
     assert config["alpha_ks"] == 0.1
 
@@ -68,6 +70,22 @@ def test_load_orchestrator_config_yaml(tmp_path):
 
     config = load_orchestrator_config(str(config_path))
     assert config["outgroup"] == ["OutA", "OutB"]
+
+
+def test_load_orchestrator_config_single_outgroup_string_is_single_taxon(tmp_path):
+    config_path = tmp_path / "single_outgroup.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "species_tree_path": "species.nwk",
+                "gene_trees_path": "genes.nwk",
+                "outgroup": "OutA",
+            }
+        )
+    )
+
+    config = load_orchestrator_config(str(config_path))
+    assert config["outgroup"] == ["OutA"]
 
 
 def test_load_orchestrator_config_missing_required(tmp_path):
@@ -239,6 +257,7 @@ def test_load_triplet_processor_config_json(tmp_path):
                 "summary_statistic": "median",
                 "stats_backend": "standard",
                 "tree_height_calculation_strategy": "C",
+                "p_value_correction": "none",
                 "processes": 3,
                 "no_multiprocessing": False,
             }
@@ -257,8 +276,24 @@ def test_load_triplet_processor_config_json(tmp_path):
     assert config["summary_statistic"] == "median"
     assert config["stats_backend"] == "standard"
     assert config["tree_height_calculation_strategy"] == "C"
+    assert config["p_value_correction"] == "none"
     assert config["processes"] == 3
     assert config["no_multiprocessing"] is False
+
+
+def test_load_triplet_processor_config_invalid_p_value_correction(tmp_path):
+    config_path = tmp_path / "triplet_processor_bad_p_value_correction.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "input_path": "unique_triplets_gene_trees.txt",
+                "p_value_correction": "holm",
+            }
+        )
+    )
+
+    with pytest.raises(ConfigError, match="p_value_correction"):
+        load_triplet_processor_config(str(config_path))
 
 
 def test_load_triplet_processor_config_invalid_stats_backend(tmp_path):
@@ -306,6 +341,7 @@ def test_load_triplet_processor_config_defaults_processes_to_zero(tmp_path):
     config = load_triplet_processor_config(str(config_path))
     assert config["processes"] == 0
     assert config["tree_height_calculation_strategy"] == "AVG"
+    assert config["p_value_correction"] == "bonferroni"
 
 
 def test_path_resolution_absolute_paths(tmp_path):
