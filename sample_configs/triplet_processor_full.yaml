@@ -7,5 +7,6 @@ discordant_test: chi-square
 summary_statistic: median
 stats_backend: standard
 tree_height_calculation_strategy: AVG
+p_value_correction: bonferroni
 processes: 0
 no_multiprocessing: false
