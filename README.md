@@ -131,6 +131,7 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--summary-statistic`
 - `--stats-backend`
 - `--tree-height-calculation-strategy`
+- `--p-value-correction`
 - `--alpha-dct`, `--alpha-ks`
 
 #### Primary Outputs
@@ -280,6 +281,7 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 - `summary_statistic`: `median`
 - `stats_backend`: `standard`
 - `tree_height_calculation_strategy`: `AVG`
+- `p_value_correction`: `bonferroni`
 - `alpha_dct`: `0.01`
 - `alpha_ks`: `0.05`
 

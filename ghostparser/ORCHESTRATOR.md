@@ -41,6 +41,9 @@ Options:
 - `--tree-height-calculation-strategy` (optional)
   - Tree-height strategy used by `triplet_processor`.
   - Allowed values: `AVG` (default), `A`, `B`, `C`.
+- `--p-value-correction` (optional)
+  - Multiple-testing correction applied across triplets for DCT and KS p-values.
+  - Allowed values: `bonferroni` (default), `fdr_bh`, `none`.
 
 CLI mode inputs are normalized into the same key/value payload used by config files, so defaults and validation are consistent across both modes.
 
@@ -117,12 +120,15 @@ If the two discordant topologies tie in frequency, canonical ordering is kept.
   - Method: included only when `--discordant-test z-test` is used for the run.
 
 - `dct_p_value`
-  - Method: configurable discordant test on (`n_dis1`, `n_dis2`), using selected backend (`standard` default, `custom` optional):
+  - Method: original (uncorrected) discordant-test p-value from (`n_dis1`, `n_dis2`), using selected backend (`standard` default, `custom` optional):
     - `chi-square` (default): custom chi-square in `custom`, SciPy chi-square in `standard`
     - `z-test`: custom manual z-test in `custom`, statsmodels two-proportion z-test in `standard`
 
+- `dct_p_value_<correction>_corrected`
+  - Method: corrected DCT p-value after applying selected `--p-value-correction` across triplets (`bonferroni` default; also `fdr_bh` or `none`).
+
 - `dct_significant`
-  - Method: `dct_p_value <= alpha_dct` (`alpha_dct` default `0.01`).
+  - Method: `dct_p_value_<correction>_corrected <= alpha_dct` (`alpha_dct` default `0.01`).
 
 ### Tree-Height Test Outputs
 
@@ -137,10 +143,13 @@ Per-gene-tree height uses:
   - Method: two-sample KS statistic between height samples of `dis1_topology` vs `con_topology`.
 
 - `ks_p_value`
-  - Method: p-value from selected backend (`standard` default, `custom` optional) for two-sided KS.
+  - Method: original (uncorrected) p-value from selected backend (`standard` default, `custom` optional) for two-sided KS.
+
+- `ks_p_value_<correction>_corrected`
+  - Method: corrected KS p-value after applying selected `--p-value-correction` across triplets (`bonferroni` default; also `fdr_bh` or `none`).
 
 - `ks_significant`
-  - Method: `ks_p_value <= alpha_ks` (`alpha_ks` default `0.05`).
+  - Method: `ks_p_value_<correction>_corrected <= alpha_ks` (`alpha_ks` default `0.05`).
 
 ### Height Summary Values and Final Classification
 

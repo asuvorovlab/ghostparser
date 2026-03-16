@@ -62,7 +62,7 @@ python -m ghostparser.orchestrator -c configs/run.yaml
 
 ---
 
-## Orchestrator-First Usage
+## Orchestrator Usage
 
 Run orchestrator with a config file:
 
@@ -115,12 +115,20 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
   - Path to species tree file.
 - `gene_trees_path` (string)
   - Path to gene trees file.
-- `outgroups` (list of strings)
-  - Example:
+- `outgroups` (list of strings) or `outgroup` (string)
+  - A single string is parsed as one taxon.
+  - A comma-separated string is parsed as multiple taxa.
+  - Examples:
     ```yaml
     outgroups:
       - Taxon1
       - Taxon2
+    ```
+    ```yaml
+    outgroup: Taxon1
+    ```
+    ```yaml
+    outgroup: Taxon1,Taxon2
     ```
 
 ### Optional
@@ -154,6 +162,14 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
   - Allowed values: `AVG` (default), `A`, `B`, `C`.
   - `AVG` uses mean root-to-tip distance across all three taxa.
   - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
+- `p_value_correction` (string)
+  - Multiple-testing correction applied across triplets for DCT and KS p-values.
+  - Allowed values: `bonferroni` (default), `fdr_bh`, `none`.
+  - Method details:
+    - `bonferroni` (single-step family-wise error control): for $m$ tests, corrected value is $p_i' = \min(1, m\cdot p_i)$.
+    - `fdr_bh` (single-stage FDR Benjamini-Hochberg): sort p-values, scale by rank using $p_{(i)}' = p_{(i)}\cdot m / i$, then enforce monotonicity from largest to smallest rank.
+    - `none`: no correction; corrected values are identical to original p-values.
+  - `none` disables p-value correction.
 - `alpha_dct` (number)
   - P-value threshold for the discordant count test.
   - Default: `0.01`.
@@ -176,13 +192,9 @@ See examples in:
 
 - `species_tree_path` (string)
 - `gene_trees_path` (string)
-- `outgroups` (list of strings)
-  - Example:
-    ```yaml
-    outgroups:
-      - Taxon1
-      - Taxon2
-    ```
+- `outgroups` (list of strings) or `outgroup` (string)
+  - A single string is parsed as one taxon.
+  - A comma-separated string is parsed as multiple taxa.
 
 ### Optional
 
@@ -237,6 +249,9 @@ See examples in:
   - Allowed values: `AVG` (default), `A`, `B`, `C`.
   - `AVG` uses mean root-to-tip distance across all three taxa.
   - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
+- `p_value_correction` (string)
+  - Multiple-testing correction applied across triplets for DCT and KS p-values.
+  - Allowed values: `bonferroni` (default), `fdr_bh`, `none`.
 - `processes` (integer >= 0)
   - Worker count for triplet inference (`0` = all cores).
 - `no_multiprocessing` (boolean)
