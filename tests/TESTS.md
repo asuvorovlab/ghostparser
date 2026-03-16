@@ -40,6 +40,8 @@ Reference-marked tests in `tests/test_triplet_processor.py`:
 - `test_custom_ks_matches_scipy_asymptotic_reference_randomized`
 - `test_standard_z_test_matches_statsmodels_reference_randomized`
 - `test_two_sample_ks_test_hybrid_uses_scipy_near_threshold`
+- `test_adjust_p_values_custom_matches_standard_bonferroni_randomized`
+- `test_adjust_p_values_custom_matches_standard_fdr_randomized`
 
 ## Pipeline-First Coverage Map
 
@@ -55,6 +57,7 @@ Reference-marked tests in `tests/test_triplet_processor.py`:
 ### Triplet Processor (Submodule)
 
 - `tests/test_triplet_processor.py` covers DCT/KS/statistics logic, classification outputs, TSV/JSON writing, backend parity checks, and runtime argument resolution.
+- Includes correction-method coverage for `none`, `bonferroni`, and `fdr_bh`, with randomized parity checks between custom and standard correction implementations.
 
 ### Config Loading (Cross-Cutting)
 
@@ -172,6 +175,7 @@ Reference-marked tests in `tests/test_triplet_processor.py`:
 - `test_parse_analyze_and_write_pipeline_roundtrip_with_species_header`
 
 These tests cover topology classification, discordant-count statistics, KS behavior, and final introgression classification outputs.
+They also validate preservation of original p-values alongside corrected p-values in outputs, and dynamic corrected-column naming by correction method.
 
 ## Runtime Argument Resolution and Process Defaults
 
@@ -203,7 +207,7 @@ These tests cover topology classification, discordant-count statistics, KS behav
 - `test_path_resolution_home_directory`
 
 These tests confirm omitted `processes` defaults to `0`, explicit values are preserved, and config mode precedence is enforced.
-They also validate centralized default behavior resolved through normalization (including `discordant_test=chi-square`, `summary_statistic=median`, and `stats_backend=standard`).
+They also validate centralized default behavior resolved through normalization (including `discordant_test=chi-square`, `summary_statistic=median`, `stats_backend=standard`, and `p_value_correction=bonferroni`).
 Additionally, they validate OS-style path resolution in config values: absolute paths (`/`), relative paths (from current working directory), and home paths (`~`).
 
 ### Path-resolution behavior in runtime-arg tests
