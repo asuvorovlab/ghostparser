@@ -43,7 +43,7 @@ Options:
   - Allowed values: `AVG` (default), `A`, `B`, `C`.
 - `--p-value-correction` (optional)
   - Multiple-testing correction applied across triplets for DCT and KS p-values.
-  - Allowed values: `bonferroni` (default), `fdr_bh`, `none`.
+  - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
 
 CLI mode inputs are normalized into the same key/value payload used by config files, so defaults and validation are consistent across both modes.
 
@@ -124,11 +124,11 @@ If the two discordant topologies tie in frequency, canonical ordering is kept.
     - `chi-square` (default): custom chi-square in `custom`, SciPy chi-square in `standard`
     - `z-test`: custom manual z-test in `custom`, statsmodels two-proportion z-test in `standard`
 
-- `dct_p_value_<correction>_corrected`
-  - Method: corrected DCT p-value after applying selected `--p-value-correction` across triplets (`bonferroni` default; also `fdr_bh` or `none`).
+- `dct_p_val_<correction>_corr`
+  - Method: corrected DCT p-value after applying selected `--p-value-correction` across triplets (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
 
 - `dct_significant`
-  - Method: `dct_p_value_<correction>_corrected <= alpha_dct` (`alpha_dct` default `0.01`).
+  - Method: `dct_p_val_<correction>_corr <= alpha_dct` (`alpha_dct` default `0.01`).
 
 ### Tree-Height Test Outputs
 
@@ -145,11 +145,11 @@ Per-gene-tree height uses:
 - `ks_p_value`
   - Method: original (uncorrected) p-value from selected backend (`standard` default, `custom` optional) for two-sided KS.
 
-- `ks_p_value_<correction>_corrected`
-  - Method: corrected KS p-value after applying selected `--p-value-correction` across triplets (`bonferroni` default; also `fdr_bh` or `none`).
+- `ks_p_val_<correction>_corr`
+  - Method: corrected KS p-value after applying selected `--p-value-correction` across triplets (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
 
 - `ks_significant`
-  - Method: `ks_p_value_<correction>_corrected <= alpha_ks` (`alpha_ks` default `0.05`).
+  - Method: `ks_p_val_<correction>_corr <= alpha_ks` (`alpha_ks` default `0.05`).
 
 ### Height Summary Values and Final Classification
 

@@ -164,12 +164,15 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
   - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
 - `p_value_correction` (string)
   - Multiple-testing correction applied across triplets for DCT and KS p-values.
-  - Allowed values: `bonferroni` (default), `fdr_bh`, `none`.
+  - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
   - Method details:
-    - `bonferroni` (single-step family-wise error control): for $m$ tests, corrected value is $p_i' = \min(1, m\cdot p_i)$.
+    - `bfn` (Bonferroni, single-step family-wise error control): for $m$ tests, corrected value is $p_i' = \min(1, m\cdot p_i)$.
+    - `holm` (Holm-Bonferroni, step-down family-wise error control): sort p-values ascending and scale each by remaining hypotheses, enforcing monotonicity.
     - `fdr_bh` (single-stage FDR Benjamini-Hochberg): sort p-values, scale by rank using $p_{(i)}' = p_{(i)}\cdot m / i$, then enforce monotonicity from largest to smallest rank.
-    - `none`: no correction; corrected values are identical to original p-values.
-  - `none` disables p-value correction.
+    - `fdr_by` (Benjamini-Yekutieli): BH-style scaling with an additional harmonic-factor multiplier for dependence robustness.
+    - `fdr_tsbh` (two-stage BH): performs BH with an adaptive estimate of true nulls using the selected alpha.
+    - `no`: no correction; corrected values are identical to original p-values.
+  - `no` disables p-value correction.
 - `alpha_dct` (number)
   - P-value threshold for the discordant count test.
   - Default: `0.01`.
@@ -251,7 +254,7 @@ See examples in:
   - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
 - `p_value_correction` (string)
   - Multiple-testing correction applied across triplets for DCT and KS p-values.
-  - Allowed values: `bonferroni` (default), `fdr_bh`, `none`.
+  - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
 - `processes` (integer >= 0)
   - Worker count for triplet inference (`0` = all cores).
 - `no_multiprocessing` (boolean)

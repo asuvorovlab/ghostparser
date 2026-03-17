@@ -26,7 +26,7 @@ keeping memory bounded to the active triplet chunk.
 2. Compute `H(T)` using a configurable tree-height strategy (`AVG` default, or taxon-specific `A|B|C`).
 3. Run discordant count test (configurable: Pearson chi-square or two-proportion z-test, alpha `alpha_dct`, default `0.01`).
 4. If significant, run two-sample KS tree-height test (alpha `alpha_ks`, default `0.05`).
-5. Apply selected multiple-testing correction across triplets for DCT and KS p-values (`bonferroni` default, `fdr_bh`, or `none`).
+5. Apply selected multiple-testing correction across triplets for DCT and KS p-values (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
 6. If significant, compare selected summary statistics (median by default; mean and binned mode optional) to infer outflow vs ghost introgression.
 
 This is a configurable pipeline: users can choose supported statistical methods and thresholds while preserving the same core stage order.
@@ -138,13 +138,13 @@ Parses `unique_triplets_gene_trees.txt` into a dictionary:
 
 - triplet -> `{count, species_tree, gene_trees}`
 
-### `analyze_triplet_gene_tree_file(filepath, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', p_value_correction='bonferroni', rng=None, use_multiprocessing=True, processes=None)`
+### `analyze_triplet_gene_tree_file(filepath, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', p_value_correction='bfn', rng=None, use_multiprocessing=True, processes=None)`
 
 Runs the pipeline for all triplets in an input file with configurable discordant test and summary statistic.
 
 ### `write_pipeline_results(results, output_filepath)`
 
-Writes per-triplet results to a TSV file with counts, DCT/KS statistics, raw and corrected p-values (`dct_p_value`, `ks_p_value`, plus dynamic corrected columns like `dct_p_value_bonferroni_corrected`), dynamic summary columns (`median_con`/`median_dis`, `mean_con`/`mean_dis`, or `mode_con`/`mode_dis`), and classification.
+Writes per-triplet results to a TSV file with counts, DCT/KS statistics, raw and corrected p-values (`dct_p_value`, `ks_p_value`, plus dynamic corrected columns like `dct_p_val_bfn_corr`), dynamic summary columns (`median_con`/`median_dis`, `mean_con`/`mean_dis`, or `mode_con`/`mode_dis`), and classification.
 
 ### CLI usage
 
@@ -166,7 +166,7 @@ Optional arguments:
 - `--summary-statistic`: `median` (default), `mean`, or `mode`
 - `--stats-backend`: `standard` (default) or `custom`
 - `--tree-height-calculation-strategy`: `AVG` (default), `A`, `B`, or `C`
-- `--p-value-correction`: `bonferroni` (default), `fdr_bh`, or `none`
+- `--p-value-correction`: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`
 - `--processes`: worker count for triplet inference (`0` = all cores)
 - `--no-multiprocessing`: disable multiprocessing for triplet inference
 

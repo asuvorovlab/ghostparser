@@ -281,7 +281,7 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 - `summary_statistic`: `median`
 - `stats_backend`: `standard`
 - `tree_height_calculation_strategy`: `AVG`
-- `p_value_correction`: `bonferroni`
+- `p_value_correction`: `no`
 - `alpha_dct`: `0.01`
 - `alpha_ks`: `0.05`
 
