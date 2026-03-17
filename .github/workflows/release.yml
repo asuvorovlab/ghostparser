@@ -10,6 +10,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
@@ -55,18 +58,18 @@ jobs:
           echo "## Installation"
           echo
           echo "Download the wheel file and install:"
-          echo "```bash"
+          echo '```bash'
           echo "pip install ${WHEEL_FILE}"
           echo '```'
           echo
           echo "Or install directly from the release:"
-          echo "```bash"
+          echo '```bash'
           echo "pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${WHEEL_FILE}"
           echo '```'
           echo
           echo "## Usage"
           echo "After installation, run from anywhere:"
-          echo "```bash"
+          echo '```bash'
           echo "python -m ghostparser.orchestrator -c config.yaml"
           echo '```'
         } > RELEASE_BODY.md
