@@ -1,357 +1,288 @@
 # Test Suite Documentation
 
-This suite provides canonical (non-redundant) coverage grouped by functional area.
+This document lists the current tests, fixtures, and marker-based slices, with function-level input/output expectations.
 
 ## Running Tests
 
-### Run all tests
+Run all tests:
 
 ```bash
 pytest
 ```
 
-### Run one test file
+Run one file:
 
 ```bash
-pytest tests/test_tree_parser.py
+pytest tests/test_triplet_processor.py
 ```
 
-### Run one test
+Run one function:
 
 ```bash
-pytest tests/test_tree_parser.py::test_extract_triplet_subtree_all_taxa_present
+pytest tests/test_triplet_processor.py::test_adjust_p_values_standard_matches_statsmodels_for_supported_methods
 ```
 
-### Run reference tests (external parity checks)
+Run backend parity tests only:
 
 ```bash
-pytest -m reference
+pytest -m backend_parity
 ```
 
-Run non-reference tests:
+Run only config tests:
 
 ```bash
-pytest -m "not reference"
+pytest tests/test_config.py
 ```
 
-Reference-marked tests in `tests/test_triplet_processor.py`:
-- `test_custom_chi_square_matches_scipy_reference_randomized`
-- `test_custom_z_test_matches_statsmodels_reference_randomized`
-- `test_custom_ks_matches_scipy_asymptotic_reference_randomized`
-- `test_standard_z_test_matches_statsmodels_reference_randomized`
-- `test_two_sample_ks_test_hybrid_uses_scipy_near_threshold`
-- `test_adjust_p_values_custom_matches_standard_bonferroni_randomized`
-- `test_adjust_p_values_custom_matches_standard_fdr_randomized`
+## Fixtures In Use
 
-## Pipeline-First Coverage Map
-
-### Orchestrator (Primary Pipeline)
-
-- `tests/test_orchestrator.py` covers process resolution and unified CLI/config runtime argument behavior for the end-to-end pipeline entry point.
-- End-to-end orchestrator behavior is also exercised via integrated tree parsing + triplet inference flows covered in module tests.
-
-### Tree Parser (Submodule)
-
-- `tests/test_tree_parser.py` covers tree normalization, support filtering, outgroup handling, triplet extraction, and streaming/multiprocessing writers.
-
-### Triplet Processor (Submodule)
-
-- `tests/test_triplet_processor.py` covers DCT/KS/statistics logic, classification outputs, TSV/JSON writing, backend parity checks, and runtime argument resolution.
-- Includes correction-method coverage for `none`, `bonferroni`, and `fdr_bh`, with randomized parity checks between custom and standard correction implementations.
-
-### Config Loading (Cross-Cutting)
-
-- `tests/test_config.py` covers config parsing, required fields, defaults, and validation for orchestrator and both submodules.
-
-## Shared Fixtures (`tests/fixtures.py`)
+Shared fixtures are exported via `tests/conftest.py` from `tests/fixtures.py`.
 
 - `simple_newick_file`
-  - Input fixture content:
-    - `(TaxaA:0.001,(TaxaB:0.098,(((TaxaC:0.001,TaxaD:0.001):0.001,TaxaE:0.001):0.086,(TaxaF:0.001,TaxaG:0.001):0.032):0.001):0.012,OutGroup:0.558);`
-  - Used in:
-    - `test_read_tree_file_single_tree`
-    - `test_calculate_average_support_no_values`
-    - `test_standardize_tree_preserves_branch_lengths`
-    - `test_format_newick_with_precision_trailing_zeros`
-    - `test_format_newick_with_precision_default_places`
-    - `test_format_newick_with_custom_precision`
-    - `test_write_clean_trees`
-    - `test_clean_and_save_trees_no_filters`
-    - `test_clean_and_save_trees_creates_output_file`
-    - `test_get_taxa_from_tree_correct_names`
-    - `test_integration_full_workflow`
-    - `test_integration_triplets_workflow`
-  - Expectations:
-    - parsing returns one valid tree
-    - average support is `None` when no support labels are present
-    - branch lengths are preserved through standardization
-    - formatted Newick remains valid and precision behavior is respected
-    - cleaned output files are created and non-empty
-    - extracted taxa match the expected sorted taxa set
-    - integration workflows produce expected counts and output rows
+Inputs: one rooted Newick with branch lengths and one outgroup.
+Expected usage: tree read/format/clean path, no support labels present.
 
 - `newick_with_support_file`
-  - Input fixture content:
-    - `(((TaxaC,TaxaD)0.95:0.110599,(TaxaF,TaxaG)0.99:1.860334)0.98:0.500000,OutGroup)0.85;`
-  - Used in:
-    - `test_calculate_average_support_with_values`
-    - `test_remove_support_values`
-    - `test_standardize_tree_removes_support`
-  - Expectations:
-    - average support is computed in the expected range
-    - support labels are removed by cleaning/standardization
-    - tree remains parseable after support removal
+Inputs: Newick containing internal support labels.
+Expected usage: support extraction/removal and support-aware cleaning checks.
 
 - `multiple_trees_file`
-  - Input fixture content:
-    - 3 Newick trees (one per line) with shared taxa set and varying topology
-  - Used in:
-    - `test_read_tree_file_multiple_trees`
-    - `test_write_clean_trees_multiple`
-  - Expectations:
-    - parser returns all trees in the file
-    - cleaned write/read roundtrip preserves tree count
+Inputs: file containing 3 trees.
+Expected usage: multi-tree read/write and count-preservation checks.
 
 - `low_support_tree_file`
-  - Input fixture content:
-    - one high-support tree and one low-support tree
-  - Used in:
-    - `test_clean_and_save_trees_filters_low_support`
-  - Expectations:
-    - low-support tree is dropped
-    - dropped index metadata is reported correctly
+Inputs: mixed high-support and low-support trees.
+Expected usage: support-threshold filtering checks.
+
+- `simple_species_tree`, `simple_gene_trees`
+Inputs: minimal species/gene trees for integration-style parser workflows.
+Expected usage: end-to-end triplet extraction paths.
 
 - `triplet_comparison_cases`
-  - Input fixture content:
-    - list of `(newick_str, triplet)` pairs for cross-library triplet checks
-  - Used in:
-    - `test_triplet_branch_lengths_match`
-    - `test_triplet_collapse_consistency_dendropy_vs_biopython`
-  - Expectations:
-    - pairwise patristic distances match between DendroPy and BioPython-derived triplet subtrees
-    - DendroPy triplet extraction remains numerically consistent with BioPython prune/collapse behavior
+Inputs: `(newick, triplet)` cases for DendroPy vs BioPython consistency checks.
+Expected usage: numeric branch-length/partristic-distance parity checks.
 
-## Triplet Utilities (`tests/test_tree_parser.py`)
+Local fixture in `tests/test_tree_parser.py`:
 
-- `test_generate_triplets_multiple_outgroups`
-  - Confirms list-form outgroups are excluded.
-- `test_generate_triplets_outgroup_comma_separated_with_spaces`
-  - Confirms comma-separated outgroups with whitespace are excluded.
-- `test_read_triplet_filter_file_parses_valid_and_skips_invalid`
-  - Confirms valid triplets are parsed and malformed lines are reported.
-- `test_filter_triplets_by_taxa_skips_missing_taxa`
-  - Confirms triplets with taxa outside available set are skipped.
-- `test_write_triplets_to_file`
-  - Confirms ordered comma-separated output formatting.
-- `test_write_triplet_gene_trees_streaming`
-  - Confirms streaming writer emits valid triplet sections.
-- `test_write_triplet_gene_trees_multiprocess_triplets_single_worker`
-  - Confirms triplet-parallel path with one worker works.
-- `test_write_triplet_gene_trees_multiprocess_accepts_list`
-  - Confirms list input support and chunk cleanup behavior.
-- `test_format_newick_with_precision_triplet_parser`
-  - Confirms formatted Newick terminates with `;`.
+- `gene_trees_missing_outgroup_file`
+Inputs: one valid gene tree plus one missing required outgroup.
+Expected output: missing-outgroup tree is discarded during cleaning.
 
-## Triplet Equivalence (`tests/test_tree_parser.py`)
-
-- `test_triplet_branch_lengths_match` (parametrized)
-  - Confirms pairwise patristic distances match between DendroPy-extracted subtree and BioPython distance evaluation.
-- `test_triplet_collapse_consistency_dendropy_vs_biopython`
-  - Confirms DendroPy triplet extraction is numerically consistent with an independent BioPython prune/collapse path for all three pairwise distances in each triplet.
-
-## Triplet Processing Pipeline (`tests/test_triplet_processor.py`)
-
-- `test_compute_tree_height_statistic_matches_definition`
-- `test_classify_triplet_topology_string_for_all_three_topologies`
-- `test_pearson_discordant_chi_square_balanced_counts_not_significant`
-- `test_two_proportion_discordant_z_test_balanced_counts_not_significant`
-- `test_custom_chi_square_matches_scipy_reference_randomized`
-- `test_custom_z_test_matches_statsmodels_reference_randomized`
-- `test_custom_ks_matches_scipy_asymptotic_reference_randomized`
-- `test_run_triplet_pipeline_no_introgression_when_dct_not_significant`
-- `test_run_triplet_pipeline_inflow_when_ks_not_significant`
-- `test_run_triplet_pipeline_outflow_when_con_summary_higher`
-- `test_run_triplet_pipeline_ghost_when_dis_summary_higher`
-- `test_parse_analyze_and_write_pipeline_roundtrip_with_species_header`
-
-These tests cover topology classification, discordant-count statistics, KS behavior, and final introgression classification outputs.
-They also validate preservation of original p-values alongside corrected p-values in outputs, and dynamic corrected-column naming by correction method.
-
-## Runtime Argument Resolution and Process Defaults
-
-### Orchestrator (`tests/test_orchestrator.py`)
-
-- `test_resolve_runtime_args_cli_custom_processes_preserved`
-- `test_resolve_runtime_args_config_processes_preserved_when_set`
-- `test_resolve_runtime_args_config_with_cli_warns_and_ignores`
-
-### Tree Parser (`tests/test_tree_parser.py`)
-
-- `test_resolve_runtime_args_tree_parser_cli_custom_processes_preserved`
-- `test_resolve_runtime_args_tree_parser_config_warns_and_ignores`
-- `test_resolve_runtime_args_tree_parser_config_defaults_processes_to_zero`
-
-### Triplet Processor (`tests/test_triplet_processor.py`)
-
-- `test_resolve_runtime_args_triplet_processor_cli_custom_processes_preserved`
-- `test_resolve_runtime_args_triplet_processor_config_processes_preserved_when_set`
-- `test_resolve_runtime_args_triplet_processor_config_defaults_processes_to_zero`
-
-### Config loaders (`tests/test_config.py`)
-
-- `test_load_orchestrator_config_defaults_processes_to_zero`
-- `test_load_tree_parser_config_defaults_processes_to_zero`
-- `test_load_triplet_processor_config_defaults_processes_to_zero`
-- `test_path_resolution_absolute_paths`
-- `test_path_resolution_relative_paths`
-- `test_path_resolution_home_directory`
-
-These tests confirm omitted `processes` defaults to `0`, explicit values are preserved, and config mode precedence is enforced.
-They also validate centralized default behavior resolved through normalization (including `discordant_test=chi-square`, `summary_statistic=median`, `stats_backend=standard`, and `p_value_correction=bonferroni`).
-Additionally, they validate OS-style path resolution in config values: absolute paths (`/`), relative paths (from current working directory), and home paths (`~`).
-
-### Path-resolution behavior in runtime-arg tests
-
-- Runtime argument resolution tests in `test_orchestrator.py`, `test_tree_parser.py`, and `test_triplet_processor.py` now assert resolved absolute paths for path fields.
-- This aligns CLI/config normalization with OS semantics and centralized path handling in `ghostparser.config`.
-
-## Complete Test Function Index
+## Function-Level Coverage
 
 ### `tests/test_config.py`
 
 - `test_load_orchestrator_config_json`
+Inputs: full orchestrator JSON config (paths, methods, thresholds).
+Expected outputs: normalized absolute paths, parsed outgroups list, preserved explicit values.
+
 - `test_load_orchestrator_config_yaml`
+Inputs: minimal YAML config with comma-separated outgroup string.
+Expected outputs: `outgroup` normalized to list.
+
+- `test_load_orchestrator_config_single_outgroup_string_is_single_taxon`
+Inputs: single outgroup string.
+Expected outputs: one-element outgroup list.
+
 - `test_load_orchestrator_config_missing_required`
-- `test_load_orchestrator_config_invalid_discordant_test`
-- `test_load_orchestrator_config_invalid_summary_statistic`
-- `test_load_orchestrator_config_invalid_stats_backend`
+Inputs: config missing required fields.
+Expected outputs: `ConfigError` with missing-field message.
+
+- `test_load_orchestrator_config_invalid_choice_fields` (parametrized)
+Inputs: invalid values for `discordant_test`, `summary_statistic`, `stats_backend`, `tree_height_calculation_strategy`.
+Expected outputs: `ConfigError` referencing offending field.
+
 - `test_load_orchestrator_config_defaults_processes_to_zero`
+Inputs: no `processes` key.
+Expected outputs: `processes == 0`.
+
 - `test_load_tree_parser_config_json`
+Inputs: full tree parser JSON config including `no_multiprocessing`.
+Expected outputs: normalized paths and preserved explicit values.
+
 - `test_load_tree_parser_config_invalid_no_multiprocessing`
+Inputs: non-boolean `no_multiprocessing`.
+Expected outputs: `ConfigError`.
+
 - `test_load_tree_parser_config_defaults_processes_to_zero`
+Inputs: no `processes`.
+Expected outputs: `processes == 0`.
+
 - `test_load_triplet_processor_config_json`
-- `test_load_triplet_processor_config_invalid_stats_backend`
+Inputs: full triplet-processor JSON config.
+Expected outputs: normalized paths and preserved explicit methods/thresholds.
+
+- `test_load_triplet_processor_config_invalid_choice_fields` (parametrized)
+Inputs: invalid `p_value_correction`, `stats_backend`, `tree_height_calculation_strategy`.
+Expected outputs: `ConfigError` referencing offending field.
+
 - `test_load_triplet_processor_config_missing_input`
+Inputs: config without `input_path`.
+Expected outputs: `ConfigError` on required input.
+
 - `test_load_triplet_processor_config_defaults_processes_to_zero`
-- `test_path_resolution_absolute_paths`
-- `test_path_resolution_relative_paths`
-- `test_path_resolution_home_directory`
+Inputs: minimal config.
+Expected outputs: `processes == 0`, `tree_height_calculation_strategy == "AVG"`, `p_value_correction == "no"`.
+
+- `test_path_resolution_for_absolute_relative_and_home_paths` (parametrized)
+Inputs: absolute paths, relative paths, and `~` paths.
+Expected outputs: all normalized to resolved absolute paths.
 
 ### `tests/test_orchestrator.py`
 
 - `test_resolve_processes_zero_uses_all_cores`
+Inputs: `processes` in `{0, None, 4}` with monkeypatched CPU count.
+Expected outputs: `0 -> cpu_count`, `None -> None`, explicit value preserved.
+
 - `test_resolve_parallel_mode`
+Inputs: `{0, 1, 4}` with monkeypatched CPU count.
+Expected outputs: `(processes, use_multiprocessing)` toggles correctly (`1` disables multiprocessing).
+
 - `test_resolve_runtime_args_cli_defaults`
+Inputs: CLI args without config file and many optional values omitted.
+Expected outputs: default statistical settings applied and paths resolved.
+
 - `test_resolve_runtime_args_cli_custom_processes_preserved`
+Inputs: CLI `processes=5`.
+Expected outputs: resolved `processes == 5`.
+
 - `test_resolve_runtime_args_config_with_cli_warns_and_ignores`
+Inputs: config file + conflicting CLI args.
+Expected outputs: warning emitted; config values/defaults win over CLI extras.
+
 - `test_resolve_runtime_args_config_processes_preserved_when_set`
+Inputs: config with explicit `processes`.
+Expected outputs: resolved `processes` equals config value.
 
 ### `tests/test_tree_parser.py`
 
+Runtime-arg resolution:
+
 - `test_resolve_runtime_args_tree_parser_cli_defaults`
+Inputs: CLI defaults with outgroup string.
+Expected outputs: path resolution, outgroup list parsing, default `min_support_value`.
+
 - `test_resolve_runtime_args_tree_parser_cli_custom_processes_preserved`
+Inputs: CLI `processes=6`.
+Expected outputs: `processes == 6`.
+
 - `test_resolve_runtime_args_tree_parser_config_warns_and_ignores`
+Inputs: config mode + extra CLI args.
+Expected outputs: warning + config precedence.
+
 - `test_resolve_runtime_args_tree_parser_config_defaults_processes_to_zero`
-- `test_read_tree_file_single_tree`
-- `test_read_tree_file_multiple_trees`
+Inputs: config without `processes`.
+Expected outputs: `processes == 0`.
+
+Tree IO and cleaning:
+
+- `test_read_tree_file_single_tree`, `test_read_tree_file_multiple_trees`
+Inputs: one-tree and multi-tree files.
+Expected outputs: correct tree counts and tree object types.
+
 - `test_read_tree_file_not_found`
-- `test_read_tree_file_invalid_newick`
-- `test_read_tree_file_random_text`
-- `test_read_tree_file_empty_file`
-- `test_calculate_average_support_with_values`
-- `test_calculate_average_support_no_values`
-- `test_remove_support_values`
-- `test_standardize_tree_removes_support`
+Inputs: nonexistent file path.
+Expected outputs: `FileNotFoundError`.
+
+- `test_read_tree_file_invalid_inputs_raise_value_error` (parametrized)
+Inputs: malformed Newick, random invalid text, empty file.
+Expected outputs: `ValueError("Invalid Newick format")`.
+
+- `test_calculate_average_support_with_values` / `test_calculate_average_support_no_values`
+Inputs: tree with support labels vs tree without labels.
+Expected outputs: numeric average support vs `None`.
+
+- `test_remove_support_values`, `test_standardize_tree_removes_support`
+Inputs: supported tree.
+Expected outputs: supports removed (`None` average support afterwards).
+
 - `test_standardize_tree_preserves_branch_lengths`
-- `test_format_newick_with_precision_trailing_zeros`
-- `test_format_newick_with_precision_default_places`
-- `test_format_newick_with_custom_precision`
-- `test_write_clean_trees`
-- `test_write_clean_trees_multiple`
-- `test_clean_and_save_trees_filters_low_support`
-- `test_clean_and_save_trees_no_filters`
-- `test_clean_and_save_trees_creates_output_file`
-- `test_clean_and_save_gene_trees_discards_missing_outgroup`
-- `test_get_taxa_from_tree_correct_names`
-- `test_generate_triplets_count`
-- `test_generate_triplets_excludes_outgroup`
-- `test_generate_triplets_content`
-- `test_generate_triplets_large_set`
-- `test_write_triplets_to_file`
-- `test_write_triplets_to_file_empty`
-- `test_get_clean_filename_simple`
-- `test_get_clean_filename_different_extension`
-- `test_get_clean_filename_no_extension`
-- `test_integration_full_workflow`
-- `test_integration_triplets_workflow`
-- `test_extract_triplet_subtree_all_taxa_present`
-- `test_extract_triplet_subtree_missing_taxa`
-- `test_extract_triplet_subtree_preserves_branch_lengths`
-- `test_process_gene_trees_for_triplets`
-- `test_process_gene_trees_for_triplets_empty`
-- `test_write_triplet_gene_trees`
-- `test_write_triplet_gene_trees_includes_species_tree_header`
-- `test_write_triplet_gene_trees_empty_triplet`
-- `test_integration_full_triplet_extraction_workflow`
-- `test_write_triplet_gene_trees_multiprocess_with_workers`
-- `test_write_triplet_gene_trees_multiprocess_includes_species_header`
-- `test_metrics_logger_context_manager`
-- `test_metrics_logger_file_not_opened_before_enter`
-- `test_triplet_gene_trees_separator_format`
-- `test_multiprocessing_triplet_writer_handles_empty_triplets`
-- `test_generate_triplets_multiple_outgroups`
-- `test_generate_triplets_outgroup_comma_separated_with_spaces`
-- `test_read_triplet_filter_file_parses_valid_and_skips_invalid`
-- `test_filter_triplets_by_taxa_skips_missing_taxa`
-- `test_write_triplet_gene_trees_streaming`
-- `test_write_triplet_gene_trees_multiprocess_triplets_single_worker`
-- `test_write_triplet_gene_trees_multiprocess_accepts_list`
-- `test_build_species_triplet_metadata_normalizes_abc`
-- `test_format_newick_with_precision_triplet_parser`
-- `test_triplet_branch_lengths_match`
-- `test_triplet_collapse_consistency_dendropy_vs_biopython`
+Inputs: branch-length tree.
+Expected outputs: branch lengths unchanged within tolerance.
+
+Triplet generation/writer/integration tests:
+
+- Covers `generate_triplets`, filter parsing, taxa filtering, and triplet writing.
+Inputs: taxa sets, outgroup forms (single/list/comma-separated), optional filter files.
+Expected outputs: correct triplet counts/content, outgroup exclusion, valid sectioned output formats.
+
+- Covers single-process, streaming, and multiprocess triplet writers.
+Inputs: triplet collections with varying sizes/empties.
+Expected outputs: stable output shape, correct separators/headers, no crashes on edge cases.
+
+- Cross-library consistency tests (`test_triplet_branch_lengths_match`, `test_triplet_collapse_consistency_dendropy_vs_biopython`).
+Inputs: fixture case set from `triplet_comparison_cases`.
+Expected outputs: pairwise distances agree across implementations.
 
 ### `tests/test_triplet_processor.py`
 
+Core statistic helpers:
+
 - `test_compute_tree_height_statistic_matches_definition`
-- `test_classify_triplet_topology_string_for_all_three_topologies`
-- `test_classify_triplet_topology_labels_concordant_and_discordants`
-- `test_pearson_discordant_chi_square_balanced_counts_not_significant`
-- `test_two_proportion_discordant_z_test_balanced_counts_not_significant`
+Inputs: known tree with explicit branch lengths.
+Expected outputs: exact formula match for AVG strategy.
+
+- `test_compute_tree_height_statistic_supports_taxon_specific_strategies`
+Inputs: strategies `A/B/C` with known distances.
+Expected outputs: strategy-specific expected distances.
+
+- `test_compute_tree_height_statistic_rejects_unknown_strategy`
+Inputs: invalid strategy.
+Expected outputs: `ValueError`.
+
+- `test_compute_tree_height_statistic_requires_species_triplet_for_taxon_specific_strategies`
+Inputs: taxon-specific strategy without `species_triplet`.
+Expected outputs: `ValueError`.
+
+Topology classification and pipeline behavior:
+
+- Tests cover concordant/discordant label mapping, tie behavior, relabeling under canonicalization, and the 5 output classes (`no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, `unresolved` where applicable).
+Inputs: controlled synthetic topology distributions and tree-height profiles.
+Expected outputs: deterministic role counts, significance states, and final classification strings.
+
+Parser/writer behavior:
+
+- Roundtrip parsing/writing and dynamic column tests.
+Inputs: sectioned `unique_triplets_gene_trees.txt` test content and generated pipeline results.
+Expected outputs: header validation, dynamic summary columns, dynamic corrected columns (`dct_p_val_<method>_corr`, `ks_p_val_<method>_corr`), required error paths for unsupported settings.
+
+P-value correction behavior:
+
+- `test_adjust_p_values_custom_fdr_matches_known_bh_example`
+Inputs: fixed BH example p-values.
+Expected outputs: known corrected values.
+
+- `test_adjust_p_values_standard_matches_statsmodels_for_supported_methods`
+Inputs: same p-values for `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
+Expected outputs: exact match to `statsmodels.multipletests` outputs.
+
+- `test_adjust_p_values_custom_matches_standard_randomized` (parametrized)
+Inputs: randomized p-values across correction methods and optional alpha.
+Expected outputs: custom backend equals standard backend within tight tolerance.
+
+Runtime-arg resolution:
+
+- Covers CLI defaults, config precedence, and `processes` default/preservation behavior.
+Inputs: CLI-only args and config-file mode args.
+Expected outputs: resolved defaults and correct precedence semantics.
+
+## Backend Parity Tests (`@pytest.mark.backend_parity`)
+
+These tests can be run as a dedicated slice with:
+
+```bash
+pytest -m backend_parity
+```
+
+Currently marked tests:
+
 - `test_custom_chi_square_matches_scipy_reference_randomized`
+- `test_custom_z_test_matches_statsmodels_reference_randomized`
 - `test_custom_ks_matches_scipy_asymptotic_reference_randomized`
-- `test_run_triplet_pipeline_uses_species_concordant_and_frequency_ranked_discordants`
-- `test_run_triplet_pipeline_supports_z_test_for_discordant_counts`
-- `test_run_triplet_pipeline_supports_standard_stats_backend`
 - `test_standard_z_test_matches_statsmodels_reference_randomized`
-- `test_run_triplet_pipeline_supports_median_summary_statistic`
-- `test_run_triplet_pipeline_breaks_discordant_ties_by_first_topology`
-- `test_run_triplet_pipeline_no_introgression_when_dct_not_significant`
-- `test_run_triplet_pipeline_inflow_when_ks_not_significant`
-- `test_run_triplet_pipeline_outflow_when_con_summary_higher`
-- `test_run_triplet_pipeline_ghost_when_dis_summary_higher`
-- `test_parse_analyze_and_write_pipeline_roundtrip_with_species_header`
-- `test_analyze_triplet_gene_tree_file_with_multiprocessing`
-- `test_analyze_triplet_gene_tree_file_rejects_unknown_discordant_test`
-- `test_analyze_triplet_gene_tree_file_rejects_unknown_summary_statistic`
-- `test_run_triplet_pipeline_supports_mode_summary_statistic`
-- `test_analyze_triplet_gene_tree_file_rejects_unknown_stats_backend`
-- `test_two_sample_ks_test_hybrid_uses_scipy_near_threshold`
-- `test_two_sample_ks_test_hybrid_keeps_custom_when_not_borderline`
-- `test_two_sample_ks_test_hybrid_rejects_negative_margin`
-- `test_parse_triplet_gene_trees_file_requires_species_tree_column`
-- `test_parse_triplet_gene_trees_file_rejects_empty_species_tree`
-- `test_write_pipeline_results_omits_removed_topology_columns`
-- `test_write_pipeline_results_uses_dynamic_summary_column_names`
-- `test_collect_triplet_statistics_returns_dict_list`
-- `test_write_pipeline_results_uses_dct_chi_statistic_column_for_chi_square`
-- `test_write_pipeline_results_uses_dct_z_score_column_for_z_test`
-- `test_write_pipeline_results_uses_mode_summary_columns_for_mode`
-- `test_write_pipeline_statistics_json`
-- `test_write_pipeline_results_rejects_mixed_discordant_test_outputs`
-- `test_write_pipeline_results_rejects_unsupported_summary_statistic`
-- `test_resolve_runtime_args_triplet_processor_cli_defaults`
-- `test_resolve_runtime_args_triplet_processor_cli_custom_processes_preserved`
-- `test_resolve_runtime_args_triplet_processor_config_warns_and_ignores`
-- `test_resolve_runtime_args_triplet_processor_config_processes_preserved_when_set`
-- `test_resolve_runtime_args_triplet_processor_config_defaults_processes_to_zero`
+- `test_adjust_p_values_custom_matches_standard_randomized`
+
+Expected behavior for this slice:
+
+- Numeric agreement between custom and reference/standard implementations.
+- Stable tolerance-bounded parity across randomized samples.

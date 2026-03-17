@@ -28,5 +28,5 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 markers = [
-	"reference: tests that compare custom statistical helpers against SciPy reference behavior",
+	"backend_parity: tests that compare custom and standard backends for equivalent behavior",
 ]
