@@ -25,6 +25,40 @@ jobs:
       uses: actions/setup-python@v6
       with:
         python-version: '3.10'
+
+    - name: Set package version from tag
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        set -euo pipefail
+
+        TAG_NAME="${GITHUB_REF_NAME}"
+        VERSION="${TAG_NAME#v}"
+
+        if [ "${VERSION}" = "${TAG_NAME}" ] || [ -z "${VERSION}" ]; then
+          echo "Expected tag format vX.Y.Z, got '${TAG_NAME}'"
+          exit 1
+        fi
+
+        export VERSION
+        python - <<'PY'
+        import os
+        import re
+        from pathlib import Path
+
+        version = os.environ["VERSION"]
+        pyproject = Path("pyproject.toml")
+        content = pyproject.read_text(encoding="utf-8")
+        updated, count = re.subn(
+          r'(?m)^version\s*=\s*"[^"]+"\s*$',
+          f'version = "{version}"',
+          content,
+          count=1,
+        )
+        if count != 1:
+          raise SystemExit("Could not find a single project version field in pyproject.toml")
+        pyproject.write_text(updated, encoding="utf-8")
+        print(f"Set package version to {version}")
+        PY
         
     - name: Install build dependencies
       run: |
@@ -45,14 +79,47 @@ jobs:
         set -euo pipefail
 
         WHEEL_FILE="$(basename "$(ls dist/*.whl | head -n1)")"
+        TAG_NAME="${GITHUB_REF_NAME}"
+
+        CHANGELOG_SECTION_FILE="$(mktemp)"
+        if [ -s CHANGELOG.md ]; then
+          if ! awk -v tag="${TAG_NAME}" '
+            BEGIN {
+              capture = 0
+              found = 0
+            }
+            /^##[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+/ {
+              if (capture) {
+                exit
+              }
+              if (match($0, /^##[[:space:]]+(v[0-9]+\.[0-9]+\.[0-9]+)/, m) && m[1] == tag) {
+                capture = 1
+                found = 1
+                next
+              }
+            }
+            capture {
+              print
+            }
+            END {
+              if (!found) {
+                exit 1
+              }
+            }
+          ' CHANGELOG.md > "${CHANGELOG_SECTION_FILE}"; then
+            : > "${CHANGELOG_SECTION_FILE}"
+          fi
+        else
+          : > "${CHANGELOG_SECTION_FILE}"
+        fi
 
         {
           echo "## Changelog"
           echo
-          if [ -s CHANGELOG.md ]; then
-            cat CHANGELOG.md
+          if [ -s "${CHANGELOG_SECTION_FILE}" ]; then
+            cat "${CHANGELOG_SECTION_FILE}"
           else
-            echo "_No changelog entries were provided for this release._"
+            echo "_No changelog entry was found for ${TAG_NAME} in CHANGELOG.md._"
           fi
           echo
           echo "## Installation"
@@ -73,6 +140,8 @@ jobs:
           echo "python -m ghostparser.orchestrator -c config.yaml"
           echo '```'
         } > RELEASE_BODY.md
+
+        rm -f "${CHANGELOG_SECTION_FILE}"
         
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
@@ -87,11 +156,13 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Clear changelog after release
+    - name: Sync package version to main
       if: startsWith(github.ref, 'refs/tags/')
       run: |
         set -euo pipefail
 
+        TAG_NAME="${GITHUB_REF_NAME}"
+        VERSION="${TAG_NAME#v}"
         DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
 
         git config user.name "github-actions[bot]"
@@ -100,21 +171,36 @@ jobs:
         git fetch origin "${DEFAULT_BRANCH}"
         git checkout -B "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}"
 
-        if [ ! -f CHANGELOG.md ]; then
-          echo "CHANGELOG.md does not exist on ${DEFAULT_BRANCH}; nothing to clear."
+        export VERSION
+        python - <<'PY'
+        import os
+        import re
+        from pathlib import Path
+
+        version = os.environ["VERSION"]
+        pyproject = Path("pyproject.toml")
+        content = pyproject.read_text(encoding="utf-8")
+        updated, count = re.subn(
+          r'(?m)^version\s*=\s*"[^"]+"\s*$',
+          f'version = "{version}"',
+          content,
+          count=1,
+        )
+        if count != 1:
+          raise SystemExit("Could not find a single project version field in pyproject.toml")
+        pyproject.write_text(updated, encoding="utf-8")
+        print(f"Prepared pyproject.toml with version {version}")
+        PY
+
+        if git diff --quiet -- pyproject.toml; then
+          echo "pyproject.toml already has version ${VERSION} on ${DEFAULT_BRANCH}; nothing to commit."
           exit 0
         fi
 
-        if [ ! -s CHANGELOG.md ]; then
-          echo "CHANGELOG.md is already empty on ${DEFAULT_BRANCH}; nothing to clear."
-          exit 0
-        fi
-
-        : > CHANGELOG.md
-        git add CHANGELOG.md
-        git commit -m "chore: clear changelog after ${GITHUB_REF_NAME} release"
+        git add pyproject.toml
+        git commit -m "chore: bump package version to ${VERSION} for ${TAG_NAME} release"
         git push origin "${DEFAULT_BRANCH}"
-        
+
     # Optional: Upload to PyPI (requires PyPI API token in repository secrets)
     # - name: Publish to PyPI
     #   if: startsWith(github.ref, 'refs/tags/')
