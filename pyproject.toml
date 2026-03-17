@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ghostparser"
-version = "0.1.0"
-description = "A module for processing user input and generating responses based on predefined pipeline and logic"
+version = "0.0.3"
+description = "Module to infer introgression patterns from species triplets using gene tree topologies and branch lengths."
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
