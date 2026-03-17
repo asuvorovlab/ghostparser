@@ -148,49 +148,6 @@ def test_resolve_runtime_args_tree_parser_config_defaults_processes_to_zero(tmp_
 
 
 @pytest.fixture
-def simple_newick_file(tmp_path):
-    """Create a temporary file with a simple Newick tree."""
-    newick_str = "(TaxaA:0.001,(TaxaB:0.098,(((TaxaC:0.001,TaxaD:0.001):0.001,TaxaE:0.001):0.086,(TaxaF:0.001,TaxaG:0.001):0.032):0.001):0.012,OutGroup:0.558);"
-    tree_file = tmp_path / "simple_tree.nwk"
-    tree_file.write_text(newick_str)
-    return tree_file
-
-
-@pytest.fixture
-def newick_with_support_file(tmp_path):
-    """Create a temporary file with Newick tree containing support values."""
-    newick_str = "(((TaxaC,TaxaD)0.95:0.110599,(TaxaF,TaxaG)0.99:1.860334)0.98:0.500000,OutGroup)0.85;"
-    tree_file = tmp_path / "tree_with_support.nwk"
-    tree_file.write_text(newick_str)
-    return tree_file
-
-
-@pytest.fixture
-def multiple_trees_file(tmp_path):
-    """Create a temporary file with multiple Newick trees."""
-    newick_lines = [
-        "(TaxaA:0.001,(TaxaB:0.098,(TaxaC:0.001,TaxaD:0.001):0.001):0.012,OutGroup:0.558);",
-        "(TaxaB:0.098,(TaxaC:0.001,TaxaD:0.001):0.001,OutGroup:0.558);",
-        "((TaxaC:0.001,TaxaD:0.001):0.001,(TaxaB:0.098,TaxaA:0.001):0.012,OutGroup:0.558);",
-    ]
-    tree_file = tmp_path / "multiple_trees.nwk"
-    tree_file.write_text("\n".join(newick_lines))
-    return tree_file
-
-
-@pytest.fixture
-def low_support_tree_file(tmp_path):
-    """Create a temporary file with trees having low average support."""
-    newick_lines = [
-        "(((TaxaC,TaxaD)0.95:0.110599,(TaxaF,TaxaG)0.99:1.860334)0.98:0.500000,OutGroup);",
-        "(((TaxaC,TaxaD)0.3:0.110599,(TaxaF,TaxaG)0.2:1.860334)0.4:0.500000,OutGroup);",  # Low support
-    ]
-    tree_file = tmp_path / "low_support_trees.nwk"
-    tree_file.write_text("\n".join(newick_lines))
-    return tree_file
-
-
-@pytest.fixture
 def gene_trees_missing_outgroup_file(tmp_path):
     """Create a temporary file with one tree missing the outgroup taxon."""
     newick_lines = [
@@ -227,32 +184,20 @@ def test_read_tree_file_not_found():
         read_tree_file("nonexistent_file.nwk")
 
 
-def test_read_tree_file_invalid_newick(tmp_path):
-    """Test error handling for invalid Newick format."""
-    invalid_file = tmp_path / "invalid.nwk"
-    # Unbalanced parentheses should cause parsing error
-    invalid_file.write_text("((TaxaA,TaxaB),TaxaC")
+@pytest.mark.parametrize(
+    "filename,content",
+    [
+        ("invalid.nwk", "((TaxaA,TaxaB),TaxaC"),
+        ("random.nwk", "(((,("),
+        ("empty.nwk", ""),
+    ],
+)
+def test_read_tree_file_invalid_inputs_raise_value_error(tmp_path, filename, content):
+    invalid_file = tmp_path / filename
+    invalid_file.write_text(content)
 
     with pytest.raises(ValueError, match="Invalid Newick format"):
         read_tree_file(str(invalid_file))
-
-
-def test_read_tree_file_random_text(tmp_path):
-    """Test error handling for random text that's not Newick format."""
-    invalid_file = tmp_path / "random.nwk"
-    invalid_file.write_text("(((,(")  # Unbalanced parentheses
-
-    with pytest.raises(ValueError, match="Invalid Newick format"):
-        read_tree_file(str(invalid_file))
-
-
-def test_read_tree_file_empty_file(tmp_path):
-    """Test error handling for empty file."""
-    empty_file = tmp_path / "empty.nwk"
-    empty_file.write_text("")
-
-    with pytest.raises(ValueError, match="Invalid Newick format"):
-        read_tree_file(str(empty_file))
 
 
 # ============================================================================
