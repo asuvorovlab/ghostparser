@@ -42,7 +42,7 @@ DEFAULT_DISCORDANT_TEST = "chi-square"
 DEFAULT_SUMMARY_STATISTIC = "median"
 DEFAULT_STATS_BACKEND = "standard"
 DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY = "AVG"
-DEFAULT_P_VALUE_CORRECTION = "bonferroni"
+DEFAULT_P_VALUE_CORRECTION = "no"
 DEFAULT_ALPHA_DCT = 0.01
 DEFAULT_ALPHA_KS = 0.05
 
@@ -50,7 +50,7 @@ DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
 SUMMARY_STATISTIC_CHOICES = ("mean", "median", "mode")
 STATS_BACKEND_CHOICES = ("custom", "standard")
 TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C")
-P_VALUE_CORRECTION_CHOICES = ("none", "bonferroni", "fdr_bh")
+P_VALUE_CORRECTION_CHOICES = ("no", "bfn", "holm", "fdr_bh", "fdr_by", "fdr_tsbh")
 
 
 def _load_raw_config(config_file: str) -> dict:

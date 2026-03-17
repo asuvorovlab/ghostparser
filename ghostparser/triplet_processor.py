@@ -304,6 +304,7 @@ def two_sample_ks_test(sample_a, sample_b):
     if not sample_a or not sample_b:
         return 0.0, 1.0
 
+    # TODO: NumPy optimization: cast sample_a/sample_b to float64 arrays and use vectorized unique/sort/CDF-diff operations for KS D-stat computation.
     data_a = sorted(float(value) for value in sample_a)
     data_b = sorted(float(value) for value in sample_b)
     n1 = len(data_a)
@@ -401,6 +402,7 @@ def _median(values):
     """Compute median of numeric iterable."""
     if not values:
         return None
+    # TODO: NumPy optimization: store tree-height vectors as np.ndarray and use np.median(values) directly.
     sorted_vals = sorted(float(v) for v in values)
     n = len(sorted_vals)
     mid = n // 2
@@ -413,6 +415,7 @@ def _mean(values):
     """Compute mean of numeric iterable."""
     if not values:
         return None
+    # TODO: NumPy optimization: keep values in np.ndarray[float64] and compute mean via np.mean(values).
     values_float = [float(value) for value in values]
     return sum(values_float) / len(values_float)
 
@@ -425,6 +428,7 @@ def _mode_binned(values, decimals=3):
     if not values:
         return None
 
+    # TODO: NumPy optimization: use np.round + np.unique(return_counts=True) to compute binned mode without Python dict loops.
     counts = {}
     for value in values:
         rounded = round(float(value), decimals)
@@ -455,7 +459,29 @@ def _bonferroni_adjust_p_values_custom(p_values):
     m = len(p_values)
     if m == 0:
         return []
+    # TODO: NumPy optimization: compute corrected p-values with np.minimum(1.0, p_values_array * m).
     return [min(1.0, float(p_value) * m) for p_value in p_values]
+
+
+def _holm_adjust_p_values_custom(p_values):
+    """Apply Holm step-down FWER correction to a p-value list."""
+    m = len(p_values)
+    if m == 0:
+        return []
+
+    # TODO: NumPy optimization: use np.argsort + vectorized Holm scaling + np.maximum.accumulate for the step-down monotonic pass.
+    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda item: item[1])
+    adjusted_sorted = [0.0] * m
+    running_max = 0.0
+    for idx, (_, p_value) in enumerate(indexed):
+        scaled = min(1.0, (m - idx) * p_value)
+        running_max = max(running_max, scaled)
+        adjusted_sorted[idx] = running_max
+
+    adjusted = [0.0] * m
+    for sorted_idx, (original_idx, _) in enumerate(indexed):
+        adjusted[original_idx] = adjusted_sorted[sorted_idx]
+    return adjusted
 
 
 def _fdr_bh_adjust_p_values_custom(p_values):
@@ -464,6 +490,7 @@ def _fdr_bh_adjust_p_values_custom(p_values):
     if m == 0:
         return []
 
+    # TODO: NumPy optimization: replace indexed Python loops with np.argsort + vectorized rank scaling + reverse cumulative minimum.
     indexed = sorted(enumerate(float(p) for p in p_values), key=lambda item: item[1])
     adjusted_sorted = [0.0] * m
 
@@ -482,7 +509,72 @@ def _fdr_bh_adjust_p_values_custom(p_values):
     return adjusted
 
 
-def _adjust_p_values(p_values, method=DEFAULT_P_VALUE_CORRECTION, stats_backend=DEFAULT_STATS_BACKEND):
+def _fdr_by_adjust_p_values_custom(p_values):
+    """Apply Benjamini-Yekutieli FDR correction to a p-value list."""
+    m = len(p_values)
+    if m == 0:
+        return []
+
+    # TODO: NumPy optimization: compute harmonic factor and BY rank scaling with vectorized arrays instead of Python loops.
+    c_m = sum(1.0 / j for j in range(1, m + 1))
+    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda item: item[1])
+    adjusted_sorted = [0.0] * m
+
+    prev = 1.0
+    for idx in range(m - 1, -1, -1):
+        _, p_value = indexed[idx]
+        rank = idx + 1
+        adjusted = min(1.0, (p_value * m * c_m) / rank)
+        prev = min(prev, adjusted)
+        adjusted_sorted[idx] = prev
+
+    adjusted = [0.0] * m
+    for sorted_idx, (original_idx, _) in enumerate(indexed):
+        adjusted[original_idx] = adjusted_sorted[sorted_idx]
+    return adjusted
+
+
+def _fdr_tsbh_adjust_p_values_custom(p_values, alpha=0.05):
+    """Apply two-stage Benjamini-Hochberg (TSBH) FDR correction to a p-value list."""
+    m = len(p_values)
+    if m == 0:
+        return []
+
+    if alpha <= 0 or alpha >= 1:
+        raise ValueError("alpha must be in (0, 1) for fdr_tsbh")
+
+    # TODO: NumPy optimization: vectorize both TSBH stages (rank-threshold rejection scan and reverse cumulative-min adjustment) on sorted arrays.
+    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda item: item[1])
+    p_sorted = [p_value for _, p_value in indexed]
+
+    alpha_stage1 = alpha / (1.0 + alpha)
+    rejects_stage1 = 0
+    for idx, p_value in enumerate(p_sorted):
+        rank = idx + 1
+        if p_value <= (rank / m) * alpha_stage1:
+            rejects_stage1 = rank
+
+    m0_hat = max(1, m - rejects_stage1)
+    adjusted_sorted = [0.0] * m
+    prev = 1.0
+    for idx in range(m - 1, -1, -1):
+        rank = idx + 1
+        adjusted = min(1.0, (p_sorted[idx] * m0_hat) / rank)
+        prev = min(prev, adjusted)
+        adjusted_sorted[idx] = prev
+
+    adjusted = [0.0] * m
+    for sorted_idx, (original_idx, _) in enumerate(indexed):
+        adjusted[original_idx] = adjusted_sorted[sorted_idx]
+    return adjusted
+
+
+def _adjust_p_values(
+    p_values,
+    method=DEFAULT_P_VALUE_CORRECTION,
+    stats_backend=DEFAULT_STATS_BACKEND,
+    alpha=0.05,
+):
     """Adjust p-values using selected correction method and backend."""
     if method not in P_VALUE_CORRECTION_CHOICES:
         raise ValueError(
@@ -496,17 +588,34 @@ def _adjust_p_values(p_values, method=DEFAULT_P_VALUE_CORRECTION, stats_backend=
             f"Choose one of: {', '.join(STATS_BACKEND_CHOICES)}"
         )
 
-    if method == "none":
+    if method == "no":
         return [float(p_value) for p_value in p_values]
 
     if stats_backend == "standard":
-        mapped_method = "bonferroni" if method == "bonferroni" else "fdr_bh"
-        _, corrected, _, _ = multipletests([float(p_value) for p_value in p_values], alpha=0.05, method=mapped_method)
+        method_map = {
+            "bfn": "bonferroni",
+            "holm": "holm",
+            "fdr_bh": "fdr_bh",
+            "fdr_by": "fdr_by",
+            "fdr_tsbh": "fdr_tsbh",
+        }
+        mapped_method = method_map[method]
+        _, corrected, _, _ = multipletests(
+            [float(p_value) for p_value in p_values],
+            alpha=alpha,
+            method=mapped_method,
+        )
         return [float(p_value) for p_value in corrected]
 
-    if method == "bonferroni":
+    if method == "bfn":
         return _bonferroni_adjust_p_values_custom(p_values)
-    return _fdr_bh_adjust_p_values_custom(p_values)
+    if method == "holm":
+        return _holm_adjust_p_values_custom(p_values)
+    if method == "fdr_bh":
+        return _fdr_bh_adjust_p_values_custom(p_values)
+    if method == "fdr_by":
+        return _fdr_by_adjust_p_values_custom(p_values)
+    return _fdr_tsbh_adjust_p_values_custom(p_values, alpha=alpha)
 
 
 def _apply_triplet_result_p_value_correction(
@@ -521,11 +630,21 @@ def _apply_triplet_result_p_value_correction(
         return results
 
     dct_p_values = [result.dct_p_value for result in results]
-    adjusted_dct = _adjust_p_values(dct_p_values, method=method, stats_backend=stats_backend)
+    adjusted_dct = _adjust_p_values(
+        dct_p_values,
+        method=method,
+        stats_backend=stats_backend,
+        alpha=alpha_dct,
+    )
 
     ks_indices = [idx for idx, result in enumerate(results) if result.ks_p_value is not None]
     ks_p_values = [results[idx].ks_p_value for idx in ks_indices]
-    adjusted_ks_values = _adjust_p_values(ks_p_values, method=method, stats_backend=stats_backend)
+    adjusted_ks_values = _adjust_p_values(
+        ks_p_values,
+        method=method,
+        stats_backend=stats_backend,
+        alpha=alpha_ks,
+    )
     adjusted_ks_map = {idx: adjusted_ks_values[pos] for pos, idx in enumerate(ks_indices)}
 
     adjusted_results = []
@@ -1098,8 +1217,8 @@ def write_pipeline_results(
 
     summary_con_column = f"{summary_statistic}_con"
     summary_dis_column = f"{summary_statistic}_dis"
-    dct_corrected_column = f"dct_p_value_{p_value_correction}_corrected"
-    ks_corrected_column = f"ks_p_value_{p_value_correction}_corrected"
+    dct_corrected_column = f"dct_p_val_{p_value_correction}_corr"
+    ks_corrected_column = f"ks_p_val_{p_value_correction}_corr"
 
     header = [
         "triplet",
