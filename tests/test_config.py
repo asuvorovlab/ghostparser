@@ -29,7 +29,7 @@ def test_load_orchestrator_config_json(tmp_path):
                 "summary_statistic": "median",
                 "stats_backend": "standard",
                 "tree_height_calculation_strategy": "B",
-                "p_value_correction": "bonferroni",
+                "p_value_correction": "bfn",
                 "alpha_dct": 0.02,
                 "alpha_ks": 0.1,
             }
@@ -50,7 +50,7 @@ def test_load_orchestrator_config_json(tmp_path):
     assert config["summary_statistic"] == "median"
     assert config["stats_backend"] == "standard"
     assert config["tree_height_calculation_strategy"] == "B"
-    assert config["p_value_correction"] == "bonferroni"
+    assert config["p_value_correction"] == "bfn"
     assert config["alpha_dct"] == 0.02
     assert config["alpha_ks"] == 0.1
 
@@ -96,71 +96,26 @@ def test_load_orchestrator_config_missing_required(tmp_path):
         load_orchestrator_config(str(config_path))
 
 
-def test_load_orchestrator_config_invalid_discordant_test(tmp_path):
-    config_path = tmp_path / "bad_test_method.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "species_tree_path": "species.nwk",
-                "gene_trees_path": "genes.nwk",
-                "outgroup": "OutA",
-                "discordant_test": "invalid",
-            }
-        )
-    )
+@pytest.mark.parametrize(
+    "field,bad_value",
+    [
+        ("discordant_test", "invalid"),
+        ("summary_statistic", "invalid-summary"),
+        ("stats_backend", "numpy"),
+        ("tree_height_calculation_strategy", "D"),
+    ],
+)
+def test_load_orchestrator_config_invalid_choice_fields(tmp_path, field, bad_value):
+    config_path = tmp_path / f"bad_{field}.json"
+    payload = {
+        "species_tree_path": "species.nwk",
+        "gene_trees_path": "genes.nwk",
+        "outgroup": "OutA",
+        field: bad_value,
+    }
+    config_path.write_text(json.dumps(payload))
 
-    with pytest.raises(ConfigError, match="discordant_test"):
-        load_orchestrator_config(str(config_path))
-
-
-def test_load_orchestrator_config_invalid_summary_statistic(tmp_path):
-    config_path = tmp_path / "bad_summary.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "species_tree_path": "species.nwk",
-                "gene_trees_path": "genes.nwk",
-                "outgroup": "OutA",
-                "summary_statistic": "invalid-summary",
-            }
-        )
-    )
-
-    with pytest.raises(ConfigError, match="summary_statistic"):
-        load_orchestrator_config(str(config_path))
-
-
-def test_load_orchestrator_config_invalid_stats_backend(tmp_path):
-    config_path = tmp_path / "bad_stats_backend.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "species_tree_path": "species.nwk",
-                "gene_trees_path": "genes.nwk",
-                "outgroup": "OutA",
-                "stats_backend": "numpy",
-            }
-        )
-    )
-
-    with pytest.raises(ConfigError, match="stats_backend"):
-        load_orchestrator_config(str(config_path))
-
-
-def test_load_orchestrator_config_invalid_tree_height_calculation_strategy(tmp_path):
-    config_path = tmp_path / "bad_tree_height_strategy.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "species_tree_path": "species.nwk",
-                "gene_trees_path": "genes.nwk",
-                "outgroup": "OutA",
-                "tree_height_calculation_strategy": "D",
-            }
-        )
-    )
-
-    with pytest.raises(ConfigError, match="tree_height_calculation_strategy"):
+    with pytest.raises(ConfigError, match=field):
         load_orchestrator_config(str(config_path))
 
 
@@ -257,7 +212,7 @@ def test_load_triplet_processor_config_json(tmp_path):
                 "summary_statistic": "median",
                 "stats_backend": "standard",
                 "tree_height_calculation_strategy": "C",
-                "p_value_correction": "none",
+                "p_value_correction": "no",
                 "processes": 3,
                 "no_multiprocessing": False,
             }
@@ -276,53 +231,28 @@ def test_load_triplet_processor_config_json(tmp_path):
     assert config["summary_statistic"] == "median"
     assert config["stats_backend"] == "standard"
     assert config["tree_height_calculation_strategy"] == "C"
-    assert config["p_value_correction"] == "none"
+    assert config["p_value_correction"] == "no"
     assert config["processes"] == 3
     assert config["no_multiprocessing"] is False
 
 
-def test_load_triplet_processor_config_invalid_p_value_correction(tmp_path):
-    config_path = tmp_path / "triplet_processor_bad_p_value_correction.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "input_path": "unique_triplets_gene_trees.txt",
-                "p_value_correction": "holm",
-            }
-        )
-    )
+@pytest.mark.parametrize(
+    "field,bad_value",
+    [
+        ("p_value_correction", "sidak"),
+        ("stats_backend", "numpy"),
+        ("tree_height_calculation_strategy", "D"),
+    ],
+)
+def test_load_triplet_processor_config_invalid_choice_fields(tmp_path, field, bad_value):
+    config_path = tmp_path / f"triplet_processor_bad_{field}.json"
+    payload = {
+        "input_path": "unique_triplets_gene_trees.txt",
+        field: bad_value,
+    }
+    config_path.write_text(json.dumps(payload))
 
-    with pytest.raises(ConfigError, match="p_value_correction"):
-        load_triplet_processor_config(str(config_path))
-
-
-def test_load_triplet_processor_config_invalid_stats_backend(tmp_path):
-    config_path = tmp_path / "triplet_processor_bad_stats_backend.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "input_path": "unique_triplets_gene_trees.txt",
-                "stats_backend": "numpy",
-            }
-        )
-    )
-
-    with pytest.raises(ConfigError, match="stats_backend"):
-        load_triplet_processor_config(str(config_path))
-
-
-def test_load_triplet_processor_config_invalid_tree_height_calculation_strategy(tmp_path):
-    config_path = tmp_path / "triplet_processor_bad_tree_height_strategy.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "input_path": "unique_triplets_gene_trees.txt",
-                "tree_height_calculation_strategy": "D",
-            }
-        )
-    )
-
-    with pytest.raises(ConfigError, match="tree_height_calculation_strategy"):
+    with pytest.raises(ConfigError, match=field):
         load_triplet_processor_config(str(config_path))
 
 
@@ -341,71 +271,32 @@ def test_load_triplet_processor_config_defaults_processes_to_zero(tmp_path):
     config = load_triplet_processor_config(str(config_path))
     assert config["processes"] == 0
     assert config["tree_height_calculation_strategy"] == "AVG"
-    assert config["p_value_correction"] == "bonferroni"
+    assert config["p_value_correction"] == "no"
 
 
-def test_path_resolution_absolute_paths(tmp_path):
-    """Test that absolute paths are preserved as-is."""
-    config_path = tmp_path / "absolute_paths.json"
-    abs_species = "/absolute/path/to/species.nwk"
-    abs_genes = "/absolute/path/to/genes.nwk"
-    abs_output = "/absolute/path/to/output"
-    
-    config_path.write_text(
-        json.dumps(
-            {
-                "species_tree_path": abs_species,
-                "gene_trees_path": abs_genes,
-                "outgroup": "OutA",
-                "output_folder": abs_output,
-            }
-        )
-    )
-    
+@pytest.mark.parametrize(
+    "species_path,genes_path,output_path",
+    [
+        ("/absolute/path/to/species.nwk", "/absolute/path/to/genes.nwk", "/absolute/path/to/output"),
+        ("data/species.nwk", "./genes.nwk", "results"),
+        ("~/data/species.nwk", "~/data/genes.nwk", None),
+    ],
+)
+def test_path_resolution_for_absolute_relative_and_home_paths(tmp_path, species_path, genes_path, output_path):
+    config_path = tmp_path / "path_resolution.json"
+    payload = {
+        "species_tree_path": species_path,
+        "gene_trees_path": genes_path,
+        "outgroup": "OutA",
+    }
+    if output_path is not None:
+        payload["output_folder"] = output_path
+
+    config_path.write_text(json.dumps(payload))
     config = load_orchestrator_config(str(config_path))
-    assert config["species_tree"] == abs_species
-    assert config["gene_trees"] == abs_genes
-    assert config["output"] == abs_output
 
-
-def test_path_resolution_relative_paths(tmp_path):
-    """Test that relative paths are resolved from current working directory."""
-    config_path = tmp_path / "relative_paths.json"
-    
-    config_path.write_text(
-        json.dumps(
-            {
-                "species_tree_path": "data/species.nwk",
-                "gene_trees_path": "./genes.nwk",
-                "outgroup": "OutA",
-                "output_folder": "results",
-            }
-        )
-    )
-    
-    config = load_orchestrator_config(str(config_path))
-    # Relative paths should be resolved from current working directory
-    assert config["species_tree"] == str(Path("data/species.nwk").resolve())
-    assert config["gene_trees"] == str(Path("./genes.nwk").resolve())
-    assert config["output"] == str(Path("results").resolve())
-
-
-def test_path_resolution_home_directory(tmp_path):
-    """Test that ~ is expanded to user home directory."""
-    config_path = tmp_path / "home_paths.json"
-    
-    config_path.write_text(
-        json.dumps(
-            {
-                "species_tree_path": "~/data/species.nwk",
-                "gene_trees_path": "~/data/genes.nwk",
-                "outgroup": "OutA",
-            }
-        )
-    )
-    
-    config = load_orchestrator_config(str(config_path))
-    # ~ should be expanded to home directory
-    assert config["species_tree"] == str(Path("~/data/species.nwk").expanduser().resolve())
-    assert config["gene_trees"] == str(Path("~/data/genes.nwk").expanduser().resolve())
+    assert config["species_tree"] == str(Path(species_path).expanduser().resolve())
+    assert config["gene_trees"] == str(Path(genes_path).expanduser().resolve())
+    if output_path is not None:
+        assert config["output"] == str(Path(output_path).expanduser().resolve())
 
