@@ -108,19 +108,20 @@ def test_classify_triplet_topology_labels_concordant_and_discordants():
     assert most_frequent_matches_concordant is False
 
 
-def test_pearson_discordant_chi_square_balanced_counts_not_significant():
-    chi2_stat, p_value = pearson_discordant_chi_square_test(10, 10)
-    assert chi2_stat == pytest.approx(0.0)
+@pytest.mark.parametrize(
+    "test_fn",
+    [
+        pearson_discordant_chi_square_test,
+        two_proportion_discordant_z_test,
+    ],
+)
+def test_balanced_discordant_count_tests_are_not_significant(test_fn):
+    stat, p_value = test_fn(10, 10)
+    assert stat == pytest.approx(0.0)
     assert p_value == pytest.approx(1.0)
 
 
-def test_two_proportion_discordant_z_test_balanced_counts_not_significant():
-    z_stat, p_value = two_proportion_discordant_z_test(10, 10)
-    assert z_stat == pytest.approx(0.0)
-    assert p_value == pytest.approx(1.0)
-
-
-@pytest.mark.reference
+@pytest.mark.backend_parity
 def test_custom_chi_square_matches_scipy_reference_randomized():
     rng = random.Random(123)
     for _ in range(1000):
@@ -134,7 +135,7 @@ def test_custom_chi_square_matches_scipy_reference_randomized():
         assert custom_p == pytest.approx(float(scipy_result.pvalue), rel=0.0, abs=1e-12)
 
 
-@pytest.mark.reference
+@pytest.mark.backend_parity
 def test_custom_z_test_matches_statsmodels_reference_randomized():
     rng = random.Random(234)
     for _ in range(1000):
@@ -159,7 +160,7 @@ def test_custom_z_test_matches_statsmodels_reference_randomized():
         assert custom_p == pytest.approx(float(ref_p), rel=0.0, abs=1e-12)
 
 
-@pytest.mark.reference
+@pytest.mark.backend_parity
 def test_custom_ks_matches_scipy_asymptotic_reference_randomized():
     rng = random.Random(456)
     p_diffs = []
@@ -231,7 +232,7 @@ def test_run_triplet_pipeline_supports_standard_stats_backend():
     assert result.dct_statistic is not None
 
 
-@pytest.mark.reference
+@pytest.mark.backend_parity
 def test_standard_z_test_matches_statsmodels_reference_randomized():
     rng = random.Random(789)
     for _ in range(1000):
@@ -533,7 +534,7 @@ def test_analyze_triplet_gene_tree_file_rejects_unknown_p_value_correction(tmp_p
     input_file.write_text(content)
 
     with pytest.raises(ValueError, match="Unsupported p-value correction method"):
-        analyze_triplet_gene_tree_file(str(input_file), p_value_correction="holm")
+        analyze_triplet_gene_tree_file(str(input_file), p_value_correction="sidak")
 
 
 def test_adjust_p_values_custom_fdr_matches_known_bh_example():
@@ -543,40 +544,48 @@ def test_adjust_p_values_custom_fdr_matches_known_bh_example():
     assert adjusted == pytest.approx([0.02, 0.04, 0.04, 0.008], abs=1e-12)
 
 
-def test_adjust_p_values_standard_matches_statsmodels_for_bonferroni_and_fdr():
+def test_adjust_p_values_standard_matches_statsmodels_for_supported_methods():
     p_values = [0.01, 0.04, 0.03, 0.002]
 
-    expected_bonferroni = list(multipletests(p_values, method="bonferroni")[1])
-    expected_fdr = list(multipletests(p_values, method="fdr_bh")[1])
+    expected_bfn = list(multipletests(p_values, method="bonferroni")[1])
+    expected_holm = list(multipletests(p_values, method="holm")[1])
+    expected_fdr_bh = list(multipletests(p_values, method="fdr_bh")[1])
+    expected_fdr_by = list(multipletests(p_values, method="fdr_by")[1])
+    expected_fdr_tsbh = list(multipletests(p_values, alpha=0.01, method="fdr_tsbh")[1])
 
-    observed_bonferroni = _adjust_p_values(p_values, method="bonferroni", stats_backend="standard")
-    observed_fdr = _adjust_p_values(p_values, method="fdr_bh", stats_backend="standard")
+    observed_bfn = _adjust_p_values(p_values, method="bfn", stats_backend="standard")
+    observed_holm = _adjust_p_values(p_values, method="holm", stats_backend="standard")
+    observed_fdr_bh = _adjust_p_values(p_values, method="fdr_bh", stats_backend="standard")
+    observed_fdr_by = _adjust_p_values(p_values, method="fdr_by", stats_backend="standard")
+    observed_fdr_tsbh = _adjust_p_values(p_values, method="fdr_tsbh", stats_backend="standard", alpha=0.01)
 
-    assert observed_bonferroni == pytest.approx(expected_bonferroni, abs=1e-12)
-    assert observed_fdr == pytest.approx(expected_fdr, abs=1e-12)
+    assert observed_bfn == pytest.approx(expected_bfn, abs=1e-12)
+    assert observed_holm == pytest.approx(expected_holm, abs=1e-12)
+    assert observed_fdr_bh == pytest.approx(expected_fdr_bh, abs=1e-12)
+    assert observed_fdr_by == pytest.approx(expected_fdr_by, abs=1e-12)
+    assert observed_fdr_tsbh == pytest.approx(expected_fdr_tsbh, abs=1e-12)
 
 
-@pytest.mark.reference
-def test_adjust_p_values_custom_matches_standard_bonferroni_randomized():
-    rng = random.Random(901)
+@pytest.mark.backend_parity
+@pytest.mark.parametrize(
+    "method,seed,alpha",
+    [
+        ("bfn", 901, None),
+        ("fdr_bh", 902, None),
+        ("holm", 903, None),
+        ("fdr_by", 904, None),
+        ("fdr_tsbh", 905, 0.01),
+    ],
+)
+def test_adjust_p_values_custom_matches_standard_randomized(method, seed, alpha):
+    rng = random.Random(seed)
     for _ in range(500):
         sample_size = rng.randint(1, 100)
         p_values = [rng.random() for _ in range(sample_size)]
 
-        custom = _adjust_p_values(p_values, method="bonferroni", stats_backend="custom")
-        standard = _adjust_p_values(p_values, method="bonferroni", stats_backend="standard")
-        assert custom == pytest.approx(standard, abs=1e-12)
-
-
-@pytest.mark.reference
-def test_adjust_p_values_custom_matches_standard_fdr_randomized():
-    rng = random.Random(902)
-    for _ in range(500):
-        sample_size = rng.randint(1, 100)
-        p_values = [rng.random() for _ in range(sample_size)]
-
-        custom = _adjust_p_values(p_values, method="fdr_bh", stats_backend="custom")
-        standard = _adjust_p_values(p_values, method="fdr_bh", stats_backend="standard")
+        kwargs = {"alpha": alpha} if alpha is not None else {}
+        custom = _adjust_p_values(p_values, method=method, stats_backend="custom", **kwargs)
+        standard = _adjust_p_values(p_values, method=method, stats_backend="standard", **kwargs)
         assert custom == pytest.approx(standard, abs=1e-12)
 
 
@@ -602,28 +611,27 @@ A,B,D\t6\t((A:1,B:1):1,D:1);
     input_file = tmp_path / "two_triplets.txt"
     input_file.write_text(content)
 
-    results_none = analyze_triplet_gene_tree_file(
+    results_no = analyze_triplet_gene_tree_file(
         str(input_file),
         alpha_dct=0.25,
         alpha_ks=0.5,
-        p_value_correction="none",
+        p_value_correction="no",
         use_multiprocessing=False,
     )
-    results_bonferroni = analyze_triplet_gene_tree_file(
+    results_bfn = analyze_triplet_gene_tree_file(
         str(input_file),
         alpha_dct=0.25,
         alpha_ks=0.5,
-        p_value_correction="bonferroni",
+        p_value_correction="bfn",
         use_multiprocessing=False,
     )
 
-    assert len(results_none) == 2
-    assert len(results_bonferroni) == 2
-    assert results_none[0].dct_p_value == pytest.approx(results_bonferroni[0].dct_p_value)
-    assert results_none[0].dct_p_value_corrected < results_bonferroni[0].dct_p_value_corrected
+    assert len(results_no) == 2
+    assert len(results_bfn) == 2
+    assert results_no[0].dct_p_value == pytest.approx(results_bfn[0].dct_p_value)
+    assert results_no[0].dct_p_value_corrected < results_bfn[0].dct_p_value_corrected
 
 
-@pytest.mark.reference
 def test_two_sample_ks_test_hybrid_uses_scipy_near_threshold(monkeypatch):
     monkeypatch.setattr(triplet_processor_module, "two_sample_ks_test", lambda *_: (0.12, 0.051))
     monkeypatch.setattr(triplet_processor_module, "_two_sample_ks_test_scipy", lambda *_: (0.13, 0.049))
@@ -748,8 +756,8 @@ def test_write_pipeline_results_uses_dct_chi_stats_column_for_chi_square(tmp_pat
     assert "median_con" in header
     assert "median_dis" in header
     assert chi_idx < header.index("dct_p_value")
-    assert "dct_p_value_bonferroni_corrected" in header
-    assert "ks_p_value_bonferroni_corrected" in header
+    assert "dct_p_val_no_corr" in header
+    assert "ks_p_val_no_corr" in header
 
     assert row[chi_idx] != ""
 
@@ -776,7 +784,7 @@ def test_write_pipeline_results_uses_dct_z_score_column_for_z_test(tmp_path):
     z_idx = header.index("dct_z_score")
     assert "median_con" in header
     assert "median_dis" in header
-    assert "dct_p_value_bonferroni_corrected" in header
+    assert "dct_p_val_no_corr" in header
 
     assert row[z_idx] != ""
 
@@ -821,8 +829,8 @@ def test_write_pipeline_results_uses_dynamic_corrected_p_value_column_names(tmp_
     )
 
     header = output_file.read_text().splitlines()[0]
-    assert "dct_p_value_fdr_bh_corrected" in header
-    assert "ks_p_value_fdr_bh_corrected" in header
+    assert "dct_p_val_fdr_bh_corr" in header
+    assert "ks_p_val_fdr_bh_corr" in header
 
 def test_write_pipeline_results_rejects_unsupported_p_value_correction(tmp_path):
     species_triplet = ("A", "B", "C")
@@ -836,7 +844,7 @@ def test_write_pipeline_results_rejects_unsupported_p_value_correction(tmp_path)
             str(output_file),
             dct_method="chi-square",
             summary_statistic="median",
-            p_value_correction="holm",
+            p_value_correction="sidak",
         )
 
 
@@ -943,7 +951,7 @@ def test_resolve_runtime_args_triplet_processor_cli_defaults():
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "AVG"
-    assert resolved.p_value_correction == "bonferroni"
+    assert resolved.p_value_correction == "no"
 
 
 def test_resolve_runtime_args_triplet_processor_cli_custom_processes_preserved():
@@ -978,7 +986,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     "summary_statistic": "median",
     "stats_backend": "standard",
     "tree_height_calculation_strategy": "B",
-    "p_value_correction": "bonferroni"
+        "p_value_correction": "bfn"
 }
 """.strip()
     )
@@ -994,7 +1002,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
         summary_statistic="mean",
         stats_backend="custom",
         tree_height_calculation_strategy="A",
-        p_value_correction="none",
+        p_value_correction="no",
         processes=None,
         no_multiprocessing=False,
     )
@@ -1010,7 +1018,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "B"
-    assert resolved.p_value_correction == "bonferroni"
+    assert resolved.p_value_correction == "bfn"
 
 
 def test_resolve_runtime_args_triplet_processor_config_processes_preserved_when_set(tmp_path):
@@ -1035,7 +1043,7 @@ def test_resolve_runtime_args_triplet_processor_config_processes_preserved_when_
         summary_statistic="mean",
         stats_backend="custom",
         tree_height_calculation_strategy="A",
-        p_value_correction="none",
+        p_value_correction="no",
         processes=None,
         no_multiprocessing=False,
     )
@@ -1065,7 +1073,7 @@ def test_resolve_runtime_args_triplet_processor_config_defaults_processes_to_zer
         summary_statistic="mean",
         stats_backend="custom",
         tree_height_calculation_strategy="A",
-        p_value_correction="none",
+        p_value_correction="no",
         processes=11,
         no_multiprocessing=False,
     )
@@ -1073,4 +1081,4 @@ def test_resolve_runtime_args_triplet_processor_config_defaults_processes_to_zer
     resolved = _resolve_runtime_args(args)
     assert resolved.processes == 0
     assert resolved.tree_height_calculation_strategy == "AVG"
-    assert resolved.p_value_correction == "bonferroni"
+    assert resolved.p_value_correction == "no"
