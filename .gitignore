@@ -30,8 +30,9 @@ venv/
 *.tsv
 *.out
 
-# Scripts
-ghostparser*.sh
+# Scripts and Test Notebooks
+ghost*.sh
+test*.ipynb
 
 # Documents
 *.pdf
