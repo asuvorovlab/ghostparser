@@ -141,51 +141,74 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 ### Optional
 
 - `output_folder` (string)
-  - Output directory path.
-  - Default: `./results` from the current working directory.
+
+    - Output directory path.
+    - Default: `./results` from the current working directory.
+
 - `processes` (integer >= 0)
-  - Worker count for extraction and inference.
-  - `0` means all available CPU cores.
-  - `1` means single-worker execution (no multiprocessing).
+
+    - Worker count for extraction and inference.
+    - `0` means all available CPU cores.
+    - `1` means single-worker execution (no multiprocessing).
+
 - `triplet_filter` (string)
-  - Path to triplet filter file (comma-separated taxa per line).
+
+    - Path to triplet filter file (comma-separated taxa per line).
+
 - `min_support_value` (number)
-  - Support filtering threshold for species and gene tree cleaning.
-  - Default behavior when omitted is equivalent to `0.5`.
+
+    - Support filtering threshold for species and gene tree cleaning.
+    - Default behavior when omitted is equivalent to `0.5`.
+
 - `discordant_test` (string)
-  - Discordant count test method used by `triplet_processor` stage.
-  - Allowed values: `chi-square` (default), `z-test`.
+
+    - Discordant count test method used by `triplet_processor` stage.
+    - Allowed values: `chi-square` (default), `z-test`.
+
 - `summary_statistic` (string)
-  - Statistic used for con/dis1 distributions after KS test.
-  - Allowed values: `median` (default), `mean`, `mode`.
-  - `mode` bins heights to 3 decimal places before computing the mode; ties keep the maximum mode value.
+
+    - Statistic used for con/dis1 distributions after KS test.
+    - Allowed values: `median` (default), `mean`, `mode`.
+    - `mode` bins heights to 3 decimal places before computing the mode; ties keep the maximum mode value.
+
 - `stats_backend` (string)
-  - Statistical backend used for DCT and KS computations.
-  - Allowed values: `standard` (default), `custom`.
-  - `custom` uses GhostParser manual statistical implementations.
-  - `standard` uses SciPy for chi-square/KS and statsmodels for two-proportion z-test.
+
+    - Statistical backend used for DCT and KS computations.
+    - Allowed values: `standard` (default), `custom`.
+    - `custom` uses GhostParser manual statistical implementations.
+    - `standard` uses SciPy for chi-square/KS and statsmodels for two-proportion z-test.
+
 - `tree_height_calculation_strategy` (string)
-  - Tree-height statistic strategy used in the triplet processor stage.
-  - Allowed values: `AVG` (default), `A`, `B`, `C`.
-  - `AVG` uses mean root-to-tip distance across all three taxa.
-  - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
+
+    - Tree-height statistic strategy used in the triplet processor stage.
+    - Allowed values: `AVG` (default), `A`, `B`, `C`.
+    - `AVG` uses mean root-to-tip distance across all three taxa.
+    - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
+
 - `p_value_correction` (string)
-  - Multiple-testing correction applied across triplets for DCT and KS p-values.
-  - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
-  - Method details:
-    - `bfn` (Bonferroni, single-step family-wise error control): for $m$ tests, corrected value is $p_i' = \min(1, m\cdot p_i)$.
-    - `holm` (Holm-Bonferroni, step-down family-wise error control): sort p-values ascending and scale each by remaining hypotheses, enforcing monotonicity.
-    - `fdr_bh` (single-stage FDR Benjamini-Hochberg): sort p-values, scale by rank using $p_{(i)}' = p_{(i)}\cdot m / i$, then enforce monotonicity from largest to smallest rank.
-    - `fdr_by` (Benjamini-Yekutieli): BH-style scaling with an additional harmonic-factor multiplier for dependence robustness.
-    - `fdr_tsbh` (two-stage BH): performs BH with an adaptive estimate of true nulls using the selected alpha.
-    - `no`: no correction; corrected values are identical to original p-values.
-  - `no` disables p-value correction.
+
+    - Multiple-testing correction applied across triplets for DCT and KS p-values.
+    - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
+    - Method details:
+
+        - `bfn` (Bonferroni, single-step family-wise error control): for $m$ tests, corrected value is $p_i' = \min(1, m\cdot p_i)$.
+        - `holm` (Holm-Bonferroni, step-down family-wise error control): sort p-values ascending and scale each by remaining hypotheses, enforcing monotonicity.
+        - `fdr_bh` (single-stage FDR Benjamini-Hochberg): sort p-values, scale by rank using $p_{(i)}' = p_{(i)}\cdot m / i$, then enforce monotonicity from largest to smallest rank.
+        - `fdr_by` (Benjamini-Yekutieli): BH-style scaling with an additional harmonic-factor multiplier for dependence robustness.
+        - `fdr_tsbh` (two-stage BH): performs BH with an adaptive estimate of true nulls using the selected alpha.
+        - `no`: no correction; corrected values are identical to original p-values.
+
+    - `no` disables p-value correction.
+
 - `alpha_dct` (number)
-  - P-value threshold for the discordant count test.
-  - Default: `0.01`.
+
+    - P-value threshold for the discordant count test.
+    - Default: `0.01`.
+
 - `alpha_ks` (number)
-  - P-value threshold for KS tree-height test.
-  - Default: `0.05`.
+
+    - P-value threshold for KS tree-height test.
+    - Default: `0.05`.
 
 ### Sample Configs
 
@@ -209,16 +232,25 @@ See examples in:
 ### Optional
 
 - `output_folder` (string)
-  - Output folder relative to the input species-tree folder.
+
+    - Output folder relative to the input species-tree folder.
+
 - `processes` (integer >= 0)
-  - Worker count for triplet extraction (`0` = all cores).
+
+    - Worker count for triplet extraction (`0` = all cores).
+
 - `triplet_filter` (string)
-  - Path to optional triplet filter file.
+
+    - Path to optional triplet filter file.
+
 - `min_support_value` (number)
-  - Support filtering threshold for species and gene tree cleaning.
-  - Default: `0.5`.
+
+    - Support filtering threshold for species and gene tree cleaning.
+    - Default: `0.5`.
+
 - `no_multiprocessing` (boolean)
-  - `true` forces single-worker extraction.
+
+    - `true` forces single-worker extraction.
 
 ### Sample Configs
 
@@ -236,36 +268,57 @@ See examples in:
 ### Optional
 
 - `output_path` (string)
-  - Output TSV path.
-  - Default: `<input_dir>/triplet_introgression_results.tsv`.
+
+    - Output TSV path.
+    - Default: `<input_dir>/triplet_introgression_results.tsv`.
+
 - `stats_output` (string)
-  - Optional JSON statistics output path.
-  - Default: same path as output TSV with `.json` extension.
+
+    - Optional JSON statistics output path.
+    - Default: same path as output TSV with `.json` extension.
+
 - `alpha_dct` (number)
-  - Default: `0.01`.
+
+    - Default: `0.01`.
+
 - `alpha_ks` (number)
-  - Default: `0.05`.
+
+    - Default: `0.05`.
+
 - `discordant_test` (string)
-  - Allowed values: `chi-square` (default), `z-test`.
+
+    - Allowed values: `chi-square` (default), `z-test`.
+
 - `summary_statistic` (string)
-  - Allowed values: `median` (default), `mean`, `mode`.
-  - `mode` bins heights to 3 decimal places before computing the mode; ties keep the maximum mode value.
+
+    - Allowed values: `median` (default), `mean`, `mode`.
+    - `mode` bins heights to 3 decimal places before computing the mode; ties keep the maximum mode value.
+
 - `stats_backend` (string)
-  - Statistical backend used for DCT and KS computations.
-  - Allowed values: `standard` (default), `custom`.
-  - `custom` uses GhostParser manual statistical implementations.
-  - `standard` uses SciPy for chi-square/KS and statsmodels for two-proportion z-test.
+
+    - Statistical backend used for DCT and KS computations.
+    - Allowed values: `standard` (default), `custom`.
+    - `custom` uses GhostParser manual statistical implementations.
+    - `standard` uses SciPy for chi-square/KS and statsmodels for two-proportion z-test.
+
 - `tree_height_calculation_strategy` (string)
-  - Allowed values: `AVG` (default), `A`, `B`, `C`.
-  - `AVG` uses mean root-to-tip distance across all three taxa.
-  - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
+
+    - Allowed values: `AVG` (default), `A`, `B`, `C`.
+    - `AVG` uses mean root-to-tip distance across all three taxa.
+    - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
+
 - `p_value_correction` (string)
-  - Multiple-testing correction applied across triplets for DCT and KS p-values.
-  - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
+
+    - Multiple-testing correction applied across triplets for DCT and KS p-values.
+    - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
+
 - `processes` (integer >= 0)
-  - Worker count for triplet inference (`0` = all cores).
+
+    - Worker count for triplet inference (`0` = all cores).
+
 - `no_multiprocessing` (boolean)
-  - `true` forces single-worker analysis.
+
+    - `true` forces single-worker analysis.
 
 ### Sample Configs
 
