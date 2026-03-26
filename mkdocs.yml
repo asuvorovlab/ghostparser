@@ -22,5 +22,8 @@ plugins:
 markdown_extensions:
   - toc
   - tables
+  - fenced_code
+  - sane_lists
+  - pymdownx.superfences
 
 use_directory_urls: true
