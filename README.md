@@ -277,6 +277,7 @@ See the **[Configuration Guide](CONFIG.md)** for complete details on:
 Core defaults are centralized and applied consistently in both CLI mode and config-file mode:
 
 **Statistical and Processing Defaults:**
+
 - `discordant_test`: `chi-square`
 - `summary_statistic`: `median`
 - `stats_backend`: `standard`
@@ -286,14 +287,17 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 - `alpha_ks`: `0.05`
 
 **Execution Defaults:**
+
 - `processes`: `0` (all available CPU cores)
 - `output_folder` (orchestrator/tree_parser): `./results`
 - `min_support_value`: `0.5`
 
 **Backend Details:**
+
 - `stats_backend`: `standard` (Uses `scipy.stats` and `statsmodels` for DCT and KS tests)
 
 **Configuration Precedence:**
+
 When `-c/--config-file` is provided, other CLI flags are ignored with a warning.
 
 ---
