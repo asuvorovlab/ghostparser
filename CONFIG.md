@@ -119,24 +119,32 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 ### Required
 
 - `species_tree_path` (string)
-  - Path to species tree file.
+
+        - Path to species tree file.
+
 - `gene_trees_path` (string)
-  - Path to gene trees file.
+
+        - Path to gene trees file.
+
 - `outgroups` (list of strings) or `outgroup` (string)
-  - A single string is parsed as one taxon.
-  - A comma-separated string is parsed as multiple taxa.
-  - Examples:
-    ```yaml
-    outgroups:
-      - Taxon1
-      - Taxon2
-    ```
-    ```yaml
-    outgroup: Taxon1
-    ```
-    ```yaml
-    outgroup: Taxon1,Taxon2
-    ```
+
+        - A single string is parsed as one taxon.
+        - A comma-separated string is parsed as multiple taxa.
+        - Examples:
+
+                ```yaml
+                outgroups:
+                    - Taxon1
+                    - Taxon2
+                ```
+
+                ```yaml
+                outgroup: Taxon1
+                ```
+
+                ```yaml
+                outgroup: Taxon1,Taxon2
+                ```
 
 ### Optional
 
@@ -224,10 +232,13 @@ See examples in:
 ### Required
 
 - `species_tree_path` (string)
+
 - `gene_trees_path` (string)
+
 - `outgroups` (list of strings) or `outgroup` (string)
-  - A single string is parsed as one taxon.
-  - A comma-separated string is parsed as multiple taxa.
+
+        - A single string is parsed as one taxon.
+        - A comma-separated string is parsed as multiple taxa.
 
 ### Optional
 
@@ -263,7 +274,8 @@ See examples in:
 ### Required
 
 - `input_path` (string)
-  - Path to `unique_triplets_gene_trees.txt`.
+
+        - Path to `unique_triplets_gene_trees.txt`.
 
 ### Optional
 
