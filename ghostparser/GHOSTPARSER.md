@@ -590,6 +590,7 @@ python -m ghostparser.tree_parser \
    - Write results to triplet gene trees file
 
 6. **Statistics and Reporting**
+
    - Total triplets generated
    - Triplets with matching gene trees
    - Total subtrees extracted

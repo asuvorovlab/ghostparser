@@ -191,15 +191,42 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 ### Input Expectations
 
 **Required Arguments:**
-- `--species-tree-path` (alias `-st`): Path to the species tree file in Newick format
-- `--gene-trees-path` (alias `-gt`): Path to the gene trees file in Newick format
-- `--outgroups` (alias `-og`): Outgroup species identifier(s). Use comma-separated taxa for multiple outgroups.
+
+- `--species-tree-path` (alias `-st`)
+
+   - Path to the species tree file in Newick format.
+
+- `--gene-trees-path` (alias `-gt`)
+
+   - Path to the gene trees file in Newick format.
+
+- `--outgroups` (alias `-og`)
+
+   - Outgroup species identifier(s). Use comma-separated taxa for multiple outgroups.
 
 **Optional Arguments:**
-- `--output-folder`: Output folder relative to the input data folder (default: same folder as input data).
-- `--triplet-filter`: Path to a triplet filter file (comma-separated taxa per line). When provided, only those triplets are processed. Triplets containing taxa missing from the species tree are skipped with a warning.
-- `--processes`: Number of worker processes for multiprocessing. Defaults to `0` (all cores). Ignored if `--no-multiprocessing` is set.
-- `--no-multiprocessing`: Disable multiprocessing. Processes triplets sequentially using a single worker. Useful for debugging or on systems with limited resources.
+
+- `--output-folder`
+
+   - Output folder relative to the input data folder (default: same folder as input data).
+
+- `--triplet-filter`
+
+   - Path to a triplet filter file (comma-separated taxa per line).
+   - When provided, only those triplets are processed.
+   - Triplets containing taxa missing from the species tree are skipped with a warning.
+
+- `--processes`
+
+   - Number of worker processes for multiprocessing.
+   - Defaults to `0` (all cores).
+   - Ignored if `--no-multiprocessing` is set.
+
+- `--no-multiprocessing`
+
+   - Disable multiprocessing.
+   - Processes triplets sequentially using a single worker.
+   - Useful for debugging or on systems with limited resources.
 
 ### Output Files
 
