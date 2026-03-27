@@ -1,0 +1,46 @@
+# Helper Scripts
+
+The scripts in this folder are lightweight utilities for repetitive data-prep and analysis support tasks that are separate from the main GhostParser pipeline.
+
+## Current Helper Scripts
+
+- `consolidate_tabular_files.py`
+
+    - Recursively finds tabular files by name pattern and extension.
+    - Consolidates all rows into one output file.
+    - Adds a source-folder column to track where each row came from.
+
+- `profile_stats_methods.py`
+
+  - Benchmarks GhostParser custom statistical helpers vs SciPy-backed versions.
+  - Reports per-call timing summaries for chi-square and KS helper methods.
+
+## Quick Usage
+
+```bash
+python scripts/consolidate_tabular_files.py \
+  --input-folder /path/to/root \
+  --file-starts-with orchestrator_triplet_results \
+  --file-ends-with "" \
+  --extension tsv \
+  --output-folder /path/to/output \
+  --output-file-name consolidated_orchestrator_triplet_results.tsv
+```
+
+Use `--help` for full options:
+
+```bash
+python scripts/consolidate_tabular_files.py --help
+```
+
+## Profiling Helper Usage
+
+```bash
+python scripts/profile_stats_methods.py
+```
+
+For custom benchmark settings, run:
+
+```bash
+python scripts/profile_stats_methods.py --help
+```
