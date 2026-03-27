@@ -23,27 +23,44 @@ python -m ghostparser.orchestrator -c <config.yaml>
 Options:
 
 - `-st`, `--species-tree-path` (required)
-  - Path to species tree file (Newick).
+
+    - Path to species tree file (Newick).
+
 - `-gt`, `--gene-trees-path` (required)
-  - Path to gene trees file (Newick, one tree per line).
+
+    - Path to gene trees file (Newick, one tree per line).
+
 - `-og`, `--outgroups` (required)
-  - Outgroup taxon name(s). Multiple outgroups are comma-separated.
+
+    - Outgroup taxon name(s). Multiple outgroups are comma-separated.
+
 - `-c`, `--config-file` (optional)
-  - Path to JSON/YAML config file.
-  - When provided, other CLI options are ignored and a warning is printed.
+
+    - Path to JSON/YAML config file.
+    - When provided, other CLI options are ignored and a warning is printed.
+
 - `--triplet-filter` (optional)
-  - Path to triplet file (`taxon1,taxon2,taxon3` per line). If omitted, triplets are generated from species-tree ingroup taxa.
+
+    - Path to triplet file (`taxon1,taxon2,taxon3` per line). If omitted, triplets are generated from species-tree ingroup taxa.
+
 - `--output-folder` (optional)
-  - Output folder path. Default is `./results` (from the current working directory).
+
+    - Output folder path. Default is `./results` (from the current working directory).
+
 - `--processes` (optional)
-  - Worker processes for both triplet extraction (`tree_parser`) and per-triplet inference (`triplet_processor`).
-  - Defaults to `0`, which means all available CPU cores (`cpu_count()`).
+
+    - Worker processes for both triplet extraction (`tree_parser`) and per-triplet inference (`triplet_processor`).
+    - Defaults to `0`, which means all available CPU cores (`cpu_count()`).
+
 - `--tree-height-calculation-strategy` (optional)
-  - Tree-height strategy used by `triplet_processor`.
-  - Allowed values: `AVG` (default), `A`, `B`, `C`.
+
+    - Tree-height strategy used by `triplet_processor`.
+    - Allowed values: `AVG` (default), `A`, `B`, `C`.
+
 - `--p-value-correction` (optional)
-  - Multiple-testing correction applied across triplets for DCT and KS p-values.
-  - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
+
+    - Multiple-testing correction applied across triplets for DCT and KS p-values.
+    - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
 
 CLI mode inputs are normalized into the same key/value payload used by config files, so defaults and validation are consistent across both modes.
 
@@ -71,8 +88,9 @@ The final file is `orchestrator_triplet_results.tsv`.
 ### Identity and Mapping
 
 - `triplet`
-  - Source: `row["triplet"]` from `TripletPipelineResult.to_dict()`.
-  - Method: tuple `(A, B, C)` joined as `A,B,C`.
+
+    - Source: `row["triplet"]` from `TripletPipelineResult.to_dict()`.
+    - Method: tuple `(A, B, C)` joined as `A,B,C`.
 
 ### Topology Labels
 
@@ -83,8 +101,9 @@ Canonical topology strings:
 - `((A,C),B)`
 
 - `species_tree`
-  - Source: species-triplet subtree header passed into `run_triplet_pipeline`.
-  - Method: exact extracted species-triplet Newick string for that triplet.
+
+    - Source: species-triplet subtree header passed into `run_triplet_pipeline`.
+    - Method: exact extracted species-triplet Newick string for that triplet.
 
 Triplet labeling is canonicalized after topology-frequency counting so that:
 
@@ -97,84 +116,106 @@ If the two discordant topologies tie in frequency, canonical ordering is kept.
 ### Frequency Metadata
 
 - `most_frequent_matches_concordant`
-  - Source: `run_triplet_pipeline`.
-  - Method: `True` when `n_con >= n_dis1` and `n_con >= n_dis2`; otherwise `False`.
+
+    - Source: `run_triplet_pipeline`.
+    - Method: `True` when `n_con >= n_dis1` and `n_con >= n_dis2`; otherwise `False`.
 
 ### Inference Group Counts
 
 - `n_con`
-  - Method: count for species-matching topology.
+
+    - Method: count for species-matching topology.
 
 - `n_dis1`
-  - Method: count for more frequent discordant topology.
+
+    - Method: count for more frequent discordant topology.
 
 - `n_dis2`
-  - Method: count for less frequent discordant topology.
+
+    - Method: count for less frequent discordant topology.
 
 ### DCT-like Test Outputs
 
 - `dct_chi_stats`
-  - Method: included only when `--discordant-test chi-square` is used for the run.
+
+    - Method: included only when `--discordant-test chi-square` is used for the run.
 
 - `dct_z_score`
-  - Method: included only when `--discordant-test z-test` is used for the run.
+
+    - Method: included only when `--discordant-test z-test` is used for the run.
 
 - `dct_p_value`
-  - Method: original (uncorrected) discordant-test p-value from (`n_dis1`, `n_dis2`), using selected backend (`standard` default, `custom` optional):
-    - `chi-square` (default): custom chi-square in `custom`, SciPy chi-square in `standard`
-    - `z-test`: custom manual z-test in `custom`, statsmodels two-proportion z-test in `standard`
+
+    - Method: original (uncorrected) discordant-test p-value from (`n_dis1`, `n_dis2`), using selected backend (`standard` default, `custom` optional):
+
+        - `chi-square` (default): custom chi-square in `custom`, SciPy chi-square in `standard`
+        - `z-test`: custom manual z-test in `custom`, statsmodels two-proportion z-test in `standard`
 
 - `dct_p_val_<correction>_corr`
-  - Method: corrected DCT p-value after applying selected `--p-value-correction` across triplets (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
+
+    - Method: corrected DCT p-value after applying selected `--p-value-correction` across triplets (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
 
 - `dct_significant`
-  - Method: `dct_p_val_<correction>_corr <= alpha_dct` (`alpha_dct` default `0.01`).
+
+    - Method: `dct_p_val_<correction>_corr <= alpha_dct` (`alpha_dct` default `0.01`).
 
 ### Tree-Height Test Outputs
 
 Per-gene-tree height uses:
 
 - `compute_tree_height_statistic` with selected strategy:
-  - `AVG`: mean root-to-tip distance across 3 leaves
-  - `A`, `B`, or `C`: root-to-tip distance of that taxon
+
+    - `AVG`: mean root-to-tip distance across 3 leaves
+    - `A`, `B`, or `C`: root-to-tip distance of that taxon
 - for `((X:b2,Y:b3):b4,Z:b1)`, `AVG` gives: $H(T) = (b1 + b2 + b3 + 2b4)/3$
 
 - `ks_statistic`
-  - Method: two-sample KS statistic between height samples of `dis1_topology` vs `con_topology`.
+
+    - Method: two-sample KS statistic between height samples of `dis1_topology` vs `con_topology`.
 
 - `ks_p_value`
-  - Method: original (uncorrected) p-value from selected backend (`standard` default, `custom` optional) for two-sided KS.
+
+    - Method: original (uncorrected) p-value from selected backend (`standard` default, `custom` optional) for two-sided KS.
 
 - `ks_p_val_<correction>_corr`
-  - Method: corrected KS p-value after applying selected `--p-value-correction` across triplets (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
+
+    - Method: corrected KS p-value after applying selected `--p-value-correction` across triplets (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
 
 - `ks_significant`
-  - Method: `ks_p_val_<correction>_corr <= alpha_ks` (`alpha_ks` default `0.05`).
+
+    - Method: `ks_p_val_<correction>_corr <= alpha_ks` (`alpha_ks` default `0.05`).
 
 ### Height Summary Values and Final Classification
 
 - Dynamic summary columns in TSV:
-  - `median_con` / `median_dis` when `summary_statistic=median`
-  - `mean_con` / `mean_dis` when `summary_statistic=mean`
-  - `mode_con` / `mode_dis` when `summary_statistic=mode`
+
+    - `median_con` / `median_dis` when `summary_statistic=median`
+    - `mean_con` / `mean_dis` when `summary_statistic=mean`
+    - `mode_con` / `mode_dis` when `summary_statistic=mode`
 
 `mode` uses 3-decimal binning before mode selection; if multiple modes remain, the maximum mode value is used.
 
 - `classification`
-  - Decision path:
-    - `no_introgression` if DCT is not significant
-    - `inflow_introgression` if DCT significant but KS not significant
-    - if KS significant:
-      - `outflow_introgression` if `<summary>_con > <summary>_dis`
-      - `ghost_introgression` if `<summary>_con < <summary>_dis`
-      - `unresolved` if equal/undefined.
+
+    - Decision path:
+
+        - `no_introgression` if DCT is not significant
+        - `inflow_introgression` if DCT significant but KS not significant
+        - if KS significant:
+
+            - `outflow_introgression` if `<summary>_con > <summary>_dis`
+            - `ghost_introgression` if `<summary>_con < <summary>_dis`
+            - `unresolved` if equal/undefined.
 
 ### Data Coverage Tracking
 
 - `analyzed_trees`
-  - Method (orchestrator output):
-    - number of extracted triplet gene trees that are actually used in per-triplet inference.
-  - This is the direct denominator behind per-triplet topology counts and statistics.
+
+    - Method (orchestrator output):
+
+        - number of extracted triplet gene trees that are actually used in per-triplet inference.
+
+    - This is the direct denominator behind per-triplet topology counts and statistics.
 
 ## Example TSV Representation
 
