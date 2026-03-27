@@ -24,6 +24,7 @@ venv/
 
 # Phylogenetic analysis outputs
 *.nwk
+*.tre
 *.tree
 *.trees
 *.txt
