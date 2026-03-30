@@ -33,10 +33,12 @@ def find_matching_files(
     extension: str,
     file_starts_with: str,
     file_ends_with: str,
+    match_subfolder: str,
 ) -> list[Path]:
     """Find files recursively matching stem start/end and extension."""
     start = file_starts_with.lower()
     end = file_ends_with.lower()
+    subfolder_fragment = match_subfolder.strip().strip("/").lower()
 
     matches: list[Path] = []
     for path in root_dir.rglob("*"):
@@ -44,6 +46,15 @@ def find_matching_files(
             continue
         if path.suffix.lower() != extension:
             continue
+
+        if subfolder_fragment:
+            # Match against relative parent path so filtering is scoped under input-folder.
+            relative_parent = path.parent.resolve().relative_to(root_dir.resolve()).as_posix().lower()
+            wrapped_parent = f"/{relative_parent}/"
+            wrapped_fragment = f"/{subfolder_fragment}/"
+            if wrapped_fragment not in wrapped_parent:
+                continue
+
         stem = path.stem.lower()
         if start and not stem.startswith(start):
             continue
@@ -135,13 +146,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only include files whose stem ends with this value.",
     )
     parser.add_argument(
+        "--match-subfolder",
+        default="",
+        help=(
+            "Optional subfolder path fragment to restrict search scope "
+            "(e.g. 'fdr_corrected'). Only files under matching subfolders are considered."
+        ),
+    )
+    parser.add_argument(
         "--output-folder",
         required=True,
         help="Folder where the consolidated output file will be written.",
     )
     parser.add_argument(
         "--output-file-name",
-        default="consolidated.tsv",
+        default="",
         help=(
             "Optional output file name. Defaults to 'consolidated<extension>' "
             "(e.g. consolidated.tsv)."
@@ -172,12 +191,14 @@ def main() -> None:
         extension=extension,
         file_starts_with=args.file_starts_with,
         file_ends_with=args.file_ends_with,
+        match_subfolder=args.match_subfolder,
     )
     if not matching_files:
         raise FileNotFoundError(
             "No files matched the requested pattern under "
             f"{input_folder}. extension={extension}, "
-            f"starts_with='{args.file_starts_with}', ends_with='{args.file_ends_with}'"
+            f"starts_with='{args.file_starts_with}', ends_with='{args.file_ends_with}', "
+            f"match_subfolder='{args.match_subfolder}'"
         )
 
     output_file_name = args.output_file_name or f"consolidated{extension}"
@@ -193,7 +214,13 @@ def main() -> None:
     )
 
     print(f"Scanned folder: {input_folder}")
-    print(f"Pattern: starts_with='{args.file_starts_with}', ends_with='{args.file_ends_with}', extension='{extension}'")
+    print(
+        "Pattern: "
+        f"starts_with='{args.file_starts_with}', "
+        f"ends_with='{args.file_ends_with}', "
+        f"match_subfolder='{args.match_subfolder}', "
+        f"extension='{extension}'"
+    )
     print(f"Matched files: {len(matching_files)}")
     print(f"Files consolidated: {files_used}")
     print(f"Data rows written: {rows_written}")

@@ -6,20 +6,21 @@ The scripts in this folder are lightweight utilities for repetitive data-prep an
 
 - `consolidate_tabular_files.py`
 
-    - Recursively finds tabular files by name pattern and extension.
+  - Recursively finds tabular files by subfolder + name pattern + extension.
     - Consolidates all rows into one output file.
     - Adds a source-folder column to track where each row came from.
 
 - `profile_stats_methods.py`
 
-  - Benchmarks GhostParser custom statistical helpers vs SciPy-backed versions.
-  - Reports per-call timing summaries for chi-square and KS helper methods.
+    - Benchmarks GhostParser custom statistical helpers vs SciPy-backed versions.
+    - Reports per-call timing summaries for chi-square and KS helper methods.
 
 ## Quick Usage
 
 ```bash
-python scripts/consolidate_tabular_files.py \
+conda run -n ghostparser python scripts/consolidate_tabular_files.py \
   --input-folder /path/to/root \
+  --match-subfolder fdr_corrected \
   --file-starts-with orchestrator_triplet_results \
   --file-ends-with "" \
   --extension tsv \
@@ -30,17 +31,24 @@ python scripts/consolidate_tabular_files.py \
 Use `--help` for full options:
 
 ```bash
-python scripts/consolidate_tabular_files.py --help
+conda run -n ghostparser python scripts/consolidate_tabular_files.py --help
 ```
+
+Notes:
+
+- Use `--match-subfolder` to restrict matching to files inside specific subfolders.
+- `--file-starts-with` and `--file-ends-with` are matched against the file name stem (not full path).
+- If `--output-file-name` is omitted, the script writes `consolidated<extension>` (for example, `consolidated.tsv`).
+- `--source-column-name` can rename the source tracking column (default: `source_folder`).
 
 ## Profiling Helper Usage
 
 ```bash
-python scripts/profile_stats_methods.py
+conda run -n ghostparser python scripts/profile_stats_methods.py
 ```
 
 For custom benchmark settings, run:
 
 ```bash
-python scripts/profile_stats_methods.py --help
+conda run -n ghostparser python scripts/profile_stats_methods.py --help
 ```
