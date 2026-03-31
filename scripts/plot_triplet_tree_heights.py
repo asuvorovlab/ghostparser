@@ -1,9 +1,4 @@
 """Compute and plot triplet tree heights by topology class.
-
-This helper reads a species tree and gene trees, extracts all species triplets,
-classifies each extracted gene-triplet subtree as concordant/discordant1/
-discordant2 using GhostParser topology logic, computes default AVG tree heights,
-prints the resulting arrays, and saves an overlaid histogram plot.
 """
 
 from __future__ import annotations
@@ -318,7 +313,7 @@ def compute_height_arrays(
     gene_trees_path: Path,
     outgroup_taxa: list[str],
     max_triplets: int | None = None,
-) -> dict[str, list[float] | dict[str, int]]:
+) -> dict[str, list[float] | dict[str, int | str]]:
     """Compute global concordant/discordant height arrays from input files."""
     species_tree, species_rooting_meta = _read_and_root_species_tree(species_tree_path, outgroup_taxa)
     gene_trees, gene_trees_discarded = _read_and_root_gene_trees(gene_trees_path, outgroup_taxa)
@@ -333,8 +328,10 @@ def compute_height_arrays(
         normalized_triplets = normalized_triplets[: max(0, int(max_triplets))]
 
     concordant_heights: list[float] = []
-    discordant1_heights: list[float] = []
-    discordant2_heights: list[float] = []
+    topology_heights = {
+        TOPOLOGY_BC: [],
+        TOPOLOGY_AC: [],
+    }
 
     for triplet in normalized_triplets:
         triplet_set = set(triplet)
@@ -364,15 +361,23 @@ def compute_height_arrays(
 
             by_topology[topology].append(float(height))
 
-        # Match GhostParser convention: discordant1 is the more frequent discordant topology.
-        dis1 = by_topology[TOPOLOGY_BC]
-        dis2 = by_topology[TOPOLOGY_AC]
-        if len(dis2) > len(dis1):
-            dis1, dis2 = dis2, dis1
-
         concordant_heights.extend(by_topology[TOPOLOGY_AB])
-        discordant1_heights.extend(dis1)
-        discordant2_heights.extend(dis2)
+        topology_heights[TOPOLOGY_BC].extend(by_topology[TOPOLOGY_BC])
+        topology_heights[TOPOLOGY_AC].extend(by_topology[TOPOLOGY_AC])
+
+    # Assign discordant1/2 as globally more/less frequent discordant topology.
+    bc_heights = topology_heights[TOPOLOGY_BC]
+    ac_heights = topology_heights[TOPOLOGY_AC]
+    if len(ac_heights) > len(bc_heights):
+        disc1_topology = "AC"
+        disc2_topology = "BC"
+        discordant1_heights = ac_heights
+        discordant2_heights = bc_heights
+    else:
+        disc1_topology = "BC"
+        disc2_topology = "AC"
+        discordant1_heights = bc_heights
+        discordant2_heights = ac_heights
 
     return {
         "concordant": concordant_heights,
@@ -382,6 +387,8 @@ def compute_height_arrays(
             "n_concordant": len(concordant_heights),
             "n_discordant1": len(discordant1_heights),
             "n_discordant2": len(discordant2_heights),
+            "disc1_topology": disc1_topology,
+            "disc2_topology": disc2_topology,
             "species_taxa_count": len(species_taxa),
             "gene_tree_count": len(gene_trees),
             "gene_trees_discarded_missing_outgroup": gene_trees_discarded,
@@ -530,6 +537,7 @@ def main() -> None:
     outgroup_taxa = _parse_outgroup_arg(args.outgroup)
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_plot = output_dir / "triplet_tree_heights_distribution.png"
+    output_arrays_json = output_dir / "triplet_tree_heights_arrays.json"
     output_log = output_dir / "triplet_tree_heights_output.txt"
 
     if not species_tree_path.exists():
@@ -574,16 +582,26 @@ def main() -> None:
         f"discordant1={metadata['n_discordant1']}, "
         f"discordant2={metadata['n_discordant2']}"
     )
+    print(
+        "Discordant topology mapping: "
+        f"disc1_topology={metadata['disc1_topology']}, "
+        f"disc2_topology={metadata['disc2_topology']}"
+    )
     print(json.dumps(metadata, indent=2))
 
+    with output_arrays_json.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(heights, indent=2))
+        handle.write("\n")
+
     with output_log.open("w", encoding="utf-8") as handle:
-        handle.write("Tree height arrays and metadata (JSON)\n")
-        handle.write(json.dumps(results, indent=2))
+        handle.write("Tree height metadata (JSON)\n")
+        handle.write(json.dumps(metadata, indent=2))
         handle.write("\n")
 
     _plot_height_arrays(heights, output_plot=output_plot, alpha=args.alpha, bins=args.bins)
 
     print(f"Saved plot: {output_plot}")
+    print(f"Saved arrays JSON: {output_arrays_json}")
     print(f"Saved text output: {output_log}")
 
 
