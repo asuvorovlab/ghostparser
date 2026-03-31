@@ -33,7 +33,9 @@ The scripts in this folder are lightweight utilities for repetitive data-prep an
 - `plot_triplet_tree_heights.py`
     - Roots species and gene trees using outgroup logic consistent with `tree_parser`.
     - Computes triplet tree-height arrays for `concordant`, `discordant1`, and `discordant2` topologies.
-    - Writes a histogram+KDE overlay plot and a text dump (arrays + exact topology counts + metadata).
+    - Writes a histogram+KDE overlay plot.
+    - Writes topology height arrays to `triplet_tree_heights_arrays.json`.
+    - Writes metadata to `triplet_tree_heights_output.txt`, including exact topology counts and discordant mapping (`disc1_topology`, `disc2_topology`).
     - Example usage:
 
       ```bash
@@ -41,7 +43,8 @@ The scripts in this folder are lightweight utilities for repetitive data-prep an
         --species-tree-path /path/to/species.tree \
         --gene-trees-path /path/to/genes.tre \
         --outgroup O \
-        --output-dir /path/to/output
+        --output-dir /path/to/output \
+        --bins 100
       ```
 
 For full CLI options and argument descriptions, run `--help` for any helper script:
