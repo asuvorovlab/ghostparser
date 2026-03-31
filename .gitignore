@@ -31,6 +31,7 @@ venv/
 *.tsv
 *.out
 *.png
+*.json
 
 # Scripts and Test Notebooks
 ghost*.sh
