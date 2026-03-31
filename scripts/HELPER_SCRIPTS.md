@@ -15,6 +15,22 @@ The scripts in this folder are lightweight utilities for repetitive data-prep an
     - Benchmarks GhostParser custom statistical helpers vs SciPy-backed versions.
     - Reports per-call timing summaries for chi-square and KS helper methods.
 
+- `plot_triplet_tree_heights.py`
+
+    - Roots species and gene trees using outgroup logic consistent with `tree_parser`.
+    - Computes triplet tree-height arrays for `concordant`, `discordant1`, and `discordant2` topologies.
+    - Writes a histogram+KDE overlay plot and a text dump (arrays + exact topology counts + metadata).
+
+Example:
+
+```bash
+python3 scripts/plot_triplet_tree_heights.py \
+  --species-tree-path /path/to/species.tree \
+  --gene-trees-path /path/to/genes.tre \
+  --outgroup O \
+  --output-dir /path/to/output
+```
+
 ## Quick Usage
 
 ```bash
