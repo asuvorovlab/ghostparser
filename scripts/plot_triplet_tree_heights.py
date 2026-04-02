@@ -8,7 +8,6 @@ import io
 from itertools import combinations
 import json
 from pathlib import Path
-import matplotlib.pyplot as plt
 
 from Bio.Phylo.BaseTree import Clade, Tree
 from Bio.Phylo._io import parse as phylo_parse
@@ -21,6 +20,7 @@ import numpy as np
 TOPOLOGY_AB = "((A,B),C)"
 TOPOLOGY_BC = "((B,C),A)"
 TOPOLOGY_AC = "((A,C),B)"
+BRANCH_STRATEGY_CHOICES = ("avg_height", "internal_branch", "sister_distance", "external_branch")
 
 
 def _triplet_taxa_labels(tree: dendropy.Tree) -> list[str]:
@@ -95,6 +95,21 @@ def _distance_to_root(node: dendropy.Node) -> float:
     return distance
 
 
+def _distance_to_ancestor(node: dendropy.Node, ancestor: dendropy.Node) -> float:
+    """Compute node-to-ancestor path distance using edge lengths."""
+    distance = 0.0
+    current = node
+    while current is not None and current is not ancestor:
+        edge_length = current.edge_length
+        if edge_length is not None:
+            distance += float(edge_length)
+        current = current.parent_node
+
+    if current is not ancestor:
+        raise ValueError("Specified ancestor is not on node's ancestry path")
+    return distance
+
+
 def compute_tree_height_statistic(
     tree: dendropy.Tree,
     strategy: str = "AVG",
@@ -123,6 +138,52 @@ def compute_tree_height_statistic(
     for leaf in leaves:
         total_distance += _distance_to_root(leaf)
     return total_distance / 3.0
+
+
+def compute_branch_metric(tree: dendropy.Tree, branch_strategy: str) -> float:
+    """Compute selected branch metric on a rooted 3-tip triplet tree."""
+    if branch_strategy not in BRANCH_STRATEGY_CHOICES:
+        raise ValueError(
+            "Unsupported branch strategy. "
+            f"Choose one of: {', '.join(BRANCH_STRATEGY_CHOICES)}"
+        )
+
+    labels = _triplet_taxa_labels(tree)
+    label_to_leaf = {
+        leaf.taxon.label: leaf
+        for leaf in tree.leaf_node_iter()
+        if leaf.taxon is not None and leaf.taxon.label
+    }
+    sister_pair = _find_sister_pair(tree)
+    sister_labels = sorted(sister_pair)
+    sister_mrca = tree.mrca(taxon_labels=sister_labels)
+    if sister_mrca is None:
+        raise ValueError("Could not determine sister MRCA for triplet tree")
+
+    root = tree.seed_node
+    if root is None:
+        raise ValueError("Triplet tree is missing root node")
+
+    if branch_strategy == "avg_height":
+        return compute_tree_height_statistic(tree, strategy="AVG")
+
+    if branch_strategy == "internal_branch":
+        return _distance_to_ancestor(sister_mrca, root)
+
+    if branch_strategy == "sister_distance":
+        left = label_to_leaf[sister_labels[0]]
+        right = label_to_leaf[sister_labels[1]]
+        return _distance_to_ancestor(left, sister_mrca) + _distance_to_ancestor(right, sister_mrca)
+
+    if branch_strategy == "external_branch":
+        external_label = next(iter(set(labels) - sister_pair))
+        external_leaf = label_to_leaf[external_label]
+        return _distance_to_ancestor(external_leaf, root)
+
+    raise ValueError(
+        "Unsupported branch strategy. "
+        f"Choose one of: {', '.join(BRANCH_STRATEGY_CHOICES)}"
+    )
 
 
 def extract_triplet_subtree(tree: dendropy.Tree, triplet_taxa: tuple[str, str, str]) -> dendropy.Tree | None:
@@ -312,6 +373,7 @@ def compute_height_arrays(
     species_tree_path: Path,
     gene_trees_path: Path,
     outgroup_taxa: list[str],
+    branch_strategy: str,
     max_triplets: int | None = None,
 ) -> dict[str, list[float] | dict[str, int | str]]:
     """Compute global concordant/discordant height arrays from input files."""
@@ -351,11 +413,7 @@ def compute_height_arrays(
 
             try:
                 topology = classify_triplet_topology_string(subtree, triplet)
-                height = compute_tree_height_statistic(
-                    subtree,
-                    strategy="AVG",
-                    species_triplet=triplet,
-                )
+                height = compute_branch_metric(subtree, branch_strategy=branch_strategy)
             except ValueError:
                 continue
 
@@ -395,6 +453,7 @@ def compute_height_arrays(
             "triplets_total": len(raw_triplets),
             "triplets_used": len(normalized_triplets),
             "triplets_skipped": len(skipped_triplets),
+            "branch_strategy": branch_strategy,
             **species_rooting_meta,
         },
     }
@@ -424,8 +483,11 @@ def _plot_height_arrays(
     output_plot: Path,
     alpha: float,
     bins: int,
+    branch_strategy: str,
 ):
     """Plot overlaid histograms with NumPy-based KDE curves for each topology class."""
+    import matplotlib.pyplot as plt
+
     output_plot.parent.mkdir(parents=True, exist_ok=True)
 
     datasets = {
@@ -477,9 +539,16 @@ def _plot_height_arrays(
             x_val = float(values[0])
             plt.axvline(x=x_val, color=colors[label], alpha=0.9, linewidth=2, label=f"{label} (single point)")
 
-    plt.xlabel("Tree height H(T) [AVG strategy]")
+    axis_label_map = {
+        "avg_height": "Average Root-to-Tip Height",
+        "internal_branch": "Internal Branch Length",
+        "sister_distance": "Sister Pair Distance",
+        "external_branch": "External Branch to Root",
+    }
+
+    plt.xlabel(axis_label_map.get(branch_strategy, "Branch Metric Value"))
     plt.ylabel("Count")
-    plt.title("Triplet Tree Heights by Topology Class (Histogram + KDE)")
+    plt.title(f"Triplet Topology Distributions ({branch_strategy})")
     plt.legend()
     plt.tight_layout()
     plt.savefig(output_plot, dpi=150)
@@ -500,6 +569,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--outgroup",
         required=True,
         help="Outgroup taxon name(s), comma-separated (same behavior as tree_parser).",
+    )
+    parser.add_argument(
+        "--branch-strategy",
+        default="avg_height",
+        choices=BRANCH_STRATEGY_CHOICES,
+        help=(
+            "Metric used for concordant/discordant arrays: "
+            "avg_height (default), internal_branch, sister_distance, external_branch."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -535,6 +613,7 @@ def main() -> None:
     species_tree_path = Path(args.species_tree_path).expanduser().resolve()
     gene_trees_path = Path(args.gene_trees_path).expanduser().resolve()
     outgroup_taxa = _parse_outgroup_arg(args.outgroup)
+    branch_strategy = args.branch_strategy
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_plot = output_dir / "triplet_tree_heights_distribution.png"
     output_arrays_json = output_dir / "triplet_tree_heights_arrays.json"
@@ -557,6 +636,7 @@ def main() -> None:
         species_tree_path=species_tree_path,
         gene_trees_path=gene_trees_path,
         outgroup_taxa=outgroup_taxa,
+        branch_strategy=branch_strategy,
         max_triplets=args.max_triplets,
     )
     concordant = results["concordant"]
@@ -598,7 +678,13 @@ def main() -> None:
         handle.write(json.dumps(metadata, indent=2))
         handle.write("\n")
 
-    _plot_height_arrays(heights, output_plot=output_plot, alpha=args.alpha, bins=args.bins)
+    _plot_height_arrays(
+        heights,
+        output_plot=output_plot,
+        alpha=args.alpha,
+        bins=args.bins,
+        branch_strategy=branch_strategy,
+    )
 
     print(f"Saved plot: {output_plot}")
     print(f"Saved arrays JSON: {output_arrays_json}")
