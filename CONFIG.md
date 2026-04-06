@@ -106,6 +106,30 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 
 ## Orchestrator Configuration (Primary)
 
+### Consolidated CLI Example (Non-Default Values)
+
+```bash
+python -m ghostparser.orchestrator \
+    --species-tree-path data/asuv21/species.tree \
+    --gene-trees-path data/asuv21/gene_trees.tree \
+    --outgroups Ephemera_danica,Isonychia_kiangsinensis \
+    --triplet-filter data/asuv21/asuv_all/triplet_filter.txt \
+    --output-folder results \
+    --processes 8 \
+    --min-support-value 0.6 \
+    --discordant-test z-test \
+    --summary-statistic mean \
+    --stats-backend custom \
+    --tree-height-calculation-strategy B \
+    --p-value-correction fdr_bh \
+    --alpha-dct 0.02 \
+    --alpha-ks 0.1 \
+    --bootstrap \
+    --bootstrap-iterations 250 \
+    --bootstrap-seed 42 \
+    --bootstrap-full-output
+```
+
 ### Supported Formats
 
 - `.json`
@@ -120,13 +144,19 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 
 - `species_tree_path` (string)
 
+    - CLI flag: `--species-tree-path` (alias: `-st`)
+
         - Path to species tree file.
 
 - `gene_trees_path` (string)
 
+    - CLI flag: `--gene-trees-path` (alias: `-gt`)
+
         - Path to gene trees file.
 
 - `outgroups` (list of strings) or `outgroup` (string)
+
+    - CLI flag: `--outgroups` (alias: `-og`)
 
         - A single string is parsed as one taxon.
         - A comma-separated string is parsed as multiple taxa.
@@ -150,10 +180,14 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 
 - `output_folder` (string)
 
+    - CLI flag: `--output-folder`
+
     - Output directory path.
     - Default: `./results` from the current working directory.
 
 - `processes` (integer >= 0)
+
+    - CLI flag: `--processes`
 
     - Worker count for extraction and inference.
     - `0` means all available CPU cores.
@@ -161,25 +195,35 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 
 - `triplet_filter` (string)
 
+    - CLI flag: `--triplet-filter`
+
     - Path to triplet filter file (comma-separated taxa per line).
 
 - `min_support_value` (number)
+
+    - CLI flag: `--min-support-value`
 
     - Support filtering threshold for species and gene tree cleaning.
     - Default behavior when omitted is equivalent to `0.5`.
 
 - `discordant_test` (string)
 
+    - CLI flag: `--discordant-test`
+
     - Discordant count test method used by `triplet_processor` stage.
     - Allowed values: `chi-square` (default), `z-test`.
 
 - `summary_statistic` (string)
+
+    - CLI flag: `--summary-statistic`
 
     - Statistic used for con/dis1 distributions after KS test.
     - Allowed values: `median` (default), `mean`, `mode`.
     - `mode` bins heights to 3 decimal places before computing the mode; ties keep the maximum mode value.
 
 - `stats_backend` (string)
+
+    - CLI flag: `--stats-backend`
 
     - Statistical backend used for DCT and KS computations.
     - Allowed values: `standard` (default), `custom`.
@@ -188,12 +232,16 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 
 - `tree_height_calculation_strategy` (string)
 
+    - CLI flag: `--tree-height-calculation-strategy`
+
     - Tree-height statistic strategy used in the triplet processor stage.
     - Allowed values: `AVG` (default), `A`, `B`, `C`.
     - `AVG` uses mean root-to-tip distance across all three taxa.
     - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
 
 - `p_value_correction` (string)
+
+    - CLI flag: `--p-value-correction`
 
     - Multiple-testing correction applied across triplets for DCT and KS p-values.
     - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
@@ -210,13 +258,49 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 
 - `alpha_dct` (number)
 
+    - CLI flag: `--alpha-dct`
+
     - P-value threshold for the discordant count test.
     - Default: `0.01`.
 
 - `alpha_ks` (number)
 
+    - CLI flag: `--alpha-ks`
+
     - P-value threshold for KS tree-height test.
     - Default: `0.05`.
+
+- `bootstrap` (boolean)
+
+    - CLI flag: `--bootstrap`
+
+    - Enables bootstrap sampling-with-replacement per triplet.
+    - Default: `false`.
+
+- `bootstrap_options` (object)
+
+    - CLI flags for nested keys:
+        - `iterations` -> `--bootstrap-iterations`
+        - `seed` -> `--bootstrap-seed`
+        - `summary_only` -> `--bootstrap-summary-only` or `--bootstrap-full-output`
+
+    - Bootstrap runtime options.
+    - Supported keys:
+        - `iterations` (integer >= 1): number of bootstrap iterations per triplet. Default: `100`.
+        - `seed` (integer, optional): enables reproducible bootstrap sampling when provided.
+        - `summary_only` (boolean): when `true` (default), bootstrap metric columns store compact summaries; when `false`, they store full per-iteration lists.
+
+    - When bootstrap is enabled, the final TSV includes additional columns:
+        - `bootstrap_value`
+        - `bootstrap_classification`
+        - `all_bootstrap`
+        - `bootstrap_dct_stats`
+        - `bootstrap_dct_p_value`
+        - `bootstrap_ks_stats`
+        - `bootstrap_ks_p_value`
+        - `bootstrap_con_<mean|median|mode>`
+        - `bootstrap_dis_<mean|median|mode>`
+        - `bootstrap_gene_tree_heights`
 
 ### Sample Configs
 
@@ -233,9 +317,15 @@ See examples in:
 
 - `species_tree_path` (string)
 
+    - CLI flag: `--species-tree-path` (alias: `-st`)
+
 - `gene_trees_path` (string)
 
+    - CLI flag: `--gene-trees-path` (alias: `-gt`)
+
 - `outgroups` (list of strings) or `outgroup` (string)
+
+    - CLI flag: `--outgroups` (alias: `-og`)
 
         - A single string is parsed as one taxon.
         - A comma-separated string is parsed as multiple taxa.
@@ -244,22 +334,32 @@ See examples in:
 
 - `output_folder` (string)
 
+    - CLI flag: `--output-folder`
+
     - Output folder relative to the input species-tree folder.
 
 - `processes` (integer >= 0)
+
+    - CLI flag: `--processes`
 
     - Worker count for triplet extraction (`0` = all cores).
 
 - `triplet_filter` (string)
 
+    - CLI flag: `--triplet-filter`
+
     - Path to optional triplet filter file.
 
 - `min_support_value` (number)
+
+    - CLI flag: `--min-support-value`
 
     - Support filtering threshold for species and gene tree cleaning.
     - Default: `0.5`.
 
 - `no_multiprocessing` (boolean)
+
+    - CLI flag: `--no-multiprocessing`
 
     - `true` forces single-worker extraction.
 
@@ -275,38 +375,54 @@ See examples in:
 
 - `input_path` (string)
 
+    - CLI flag: `--input-path`
+
         - Path to `unique_triplets_gene_trees.txt`.
 
 ### Optional
 
 - `output_path` (string)
 
+    - CLI flag: `--output-path`
+
     - Output TSV path.
     - Default: `<input_dir>/triplet_introgression_results.tsv`.
 
 - `stats_output` (string)
+
+    - CLI flag: `--stats-output`
 
     - Optional JSON statistics output path.
     - Default: same path as output TSV with `.json` extension.
 
 - `alpha_dct` (number)
 
+    - CLI flag: `--alpha-dct`
+
     - Default: `0.01`.
 
 - `alpha_ks` (number)
+
+    - CLI flag: `--alpha-ks`
 
     - Default: `0.05`.
 
 - `discordant_test` (string)
 
+    - CLI flag: `--discordant-test`
+
     - Allowed values: `chi-square` (default), `z-test`.
 
 - `summary_statistic` (string)
+
+    - CLI flag: `--summary-statistic`
 
     - Allowed values: `median` (default), `mean`, `mode`.
     - `mode` bins heights to 3 decimal places before computing the mode; ties keep the maximum mode value.
 
 - `stats_backend` (string)
+
+    - CLI flag: `--stats-backend`
 
     - Statistical backend used for DCT and KS computations.
     - Allowed values: `standard` (default), `custom`.
@@ -315,22 +431,62 @@ See examples in:
 
 - `tree_height_calculation_strategy` (string)
 
+    - CLI flag: `--tree-height-calculation-strategy`
+
     - Allowed values: `AVG` (default), `A`, `B`, `C`.
     - `AVG` uses mean root-to-tip distance across all three taxa.
     - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
 
 - `p_value_correction` (string)
 
+    - CLI flag: `--p-value-correction`
+
     - Multiple-testing correction applied across triplets for DCT and KS p-values.
     - Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
 
 - `processes` (integer >= 0)
 
+    - CLI flag: `--processes`
+
     - Worker count for triplet inference (`0` = all cores).
 
 - `no_multiprocessing` (boolean)
 
+    - CLI flag: `--no-multiprocessing`
+
     - `true` forces single-worker analysis.
+
+- `bootstrap` (boolean)
+
+    - CLI flag: `--bootstrap`
+
+    - Enables bootstrap sampling-with-replacement per triplet.
+    - Default: `false`.
+
+- `bootstrap_options` (object)
+
+    - CLI flags for nested keys:
+        - `iterations` -> `--bootstrap-iterations`
+        - `seed` -> `--bootstrap-seed`
+        - `summary_only` -> `--bootstrap-summary-only` or `--bootstrap-full-output`
+
+    - Bootstrap runtime options.
+    - Supported keys:
+        - `iterations` (integer >= 1): number of bootstrap iterations per triplet. Default: `100`.
+        - `seed` (integer, optional): enables reproducible bootstrap sampling when provided.
+        - `summary_only` (boolean): when `true` (default), bootstrap metric columns store compact summaries; when `false`, they store full per-iteration lists.
+
+    - When bootstrap is enabled, the TSV writer appends:
+        - `bootstrap_value`
+        - `bootstrap_classification`
+        - `all_bootstrap`
+        - `bootstrap_dct_stats`
+        - `bootstrap_dct_p_value`
+        - `bootstrap_ks_stats`
+        - `bootstrap_ks_p_value`
+        - `bootstrap_con_<mean|median|mode>`
+        - `bootstrap_dis_<mean|median|mode>`
+        - `bootstrap_gene_tree_heights`
 
 ### Sample Configs
 
