@@ -124,6 +124,10 @@ Expected outputs: `ConfigError` on required input.
 Inputs: minimal config.
 Expected outputs: `processes == 0`, `tree_height_calculation_strategy == "AVG"`, `p_value_correction == "no"`.
 
+- `test_load_triplet_processor_config_invalid_bootstrap_fields` (parametrized)
+Inputs: invalid bootstrap payload variants (`bootstrap` non-bool, invalid `iterations`, invalid `seed`, invalid `summary_only`).
+Expected outputs: `ConfigError` references the offending bootstrap field.
+
 - `test_path_resolution_for_absolute_relative_and_home_paths` (parametrized)
 Inputs: absolute paths, relative paths, and `~` paths.
 Expected outputs: all normalized to resolved absolute paths.
@@ -240,11 +244,27 @@ Topology classification and pipeline behavior:
 Inputs: controlled synthetic topology distributions and tree-height profiles.
 Expected outputs: deterministic role counts, significance states, and final classification strings.
 
+- `test_run_triplet_pipeline_bootstrap_unresolved_when_metrics_missing`
+Inputs: concordant-only synthetic trees with bootstrap enabled.
+Expected outputs: bootstrap classification resolves to `unresolved` with bootstrap support 1.0.
+
+- `test_run_bootstrap_iterations_joins_tied_classes`
+Inputs: monkeypatched per-iteration classifications split evenly across two classes.
+Expected outputs: tied winners are comma-joined and bootstrap support equals the tied fraction.
+
 Parser/writer behavior:
 
 - Roundtrip parsing/writing and dynamic column tests.
 Inputs: sectioned `unique_triplets_gene_trees.txt` test content and generated pipeline results.
 Expected outputs: header validation, dynamic summary columns, dynamic corrected columns (`dct_p_val_<method>_corr`, `ks_p_val_<method>_corr`), required error paths for unsupported settings.
+
+- `test_write_pipeline_results_adds_bootstrap_columns_when_enabled`
+Inputs: bootstrap-enabled triplet result written to TSV.
+Expected outputs: bootstrap columns are present, summary-statistic-specific bootstrap columns are present, `bootstrap_gene_tree_heights` is present, and summary-mode payload cells use JSON-style object strings.
+
+- `test_write_pipeline_results_adds_bootstrap_gene_tree_heights_when_summary_only_false`
+Inputs: bootstrap-enabled result written with full-output mode (`summary_only=false`).
+Expected outputs: TSV includes `bootstrap_gene_tree_heights` and stores the raw per-triplet tree-height list.
 
 P-value correction behavior:
 
