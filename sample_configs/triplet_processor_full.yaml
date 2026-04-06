@@ -10,3 +10,8 @@ tree_height_calculation_strategy: AVG
 p_value_correction: bfn
 processes: 0
 no_multiprocessing: false
+bootstrap: true
+bootstrap_options:
+  iterations: 100
+  seed: 42
+  summary_only: true

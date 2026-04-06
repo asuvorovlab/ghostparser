@@ -12,5 +12,11 @@
   "tree_height_calculation_strategy": "AVG",
   "p_value_correction": "bfn",
   "alpha_dct": 0.01,
-  "alpha_ks": 0.05
+  "alpha_ks": 0.05,
+  "bootstrap": true,
+  "bootstrap_options": {
+    "iterations": 100,
+    "seed": 42,
+    "summary_only": true
+  }
 }
