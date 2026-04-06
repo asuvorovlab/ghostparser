@@ -94,6 +94,10 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "p_value_correction",
     "alpha_dct",
     "alpha_ks",
+    "bootstrap",
+    "bootstrap_iterations",
+    "bootstrap_seed",
+    "bootstrap_summary_only",
 ]
 
 
@@ -177,6 +181,38 @@ def _build_argument_parser():
         default=None,
         help=f"KS significance threshold (default: {DEFAULT_ALPHA_KS})",
     )
+    parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Enable bootstrap sampling-with-replacement during triplet inference",
+    )
+    parser.add_argument(
+        "--bootstrap-iterations",
+        type=int,
+        default=None,
+        help="Number of bootstrap iterations per triplet (default: 100)",
+    )
+    parser.add_argument(
+        "--bootstrap-seed",
+        type=int,
+        default=None,
+        help="Optional bootstrap random seed for reproducibility",
+    )
+    summary_group = parser.add_mutually_exclusive_group()
+    summary_group.add_argument(
+        "--bootstrap-summary-only",
+        dest="bootstrap_summary_only",
+        action="store_true",
+        default=None,
+        help="Emit compact bootstrap summaries instead of per-iteration lists",
+    )
+    summary_group.add_argument(
+        "--bootstrap-full-output",
+        dest="bootstrap_summary_only",
+        action="store_false",
+        default=None,
+        help="Emit full per-iteration bootstrap metric lists",
+    )
     return parser
 
 
@@ -231,6 +267,10 @@ def main():
         metrics.log(f"P-value correction: {args.p_value_correction}")
         metrics.log(f"DCT alpha: {args.alpha_dct}")
         metrics.log(f"KS alpha: {args.alpha_ks}")
+        metrics.log(f"Bootstrap enabled: {args.bootstrap}")
+        metrics.log(f"Bootstrap iterations: {args.bootstrap_options['iterations']}")
+        metrics.log(f"Bootstrap seed: {args.bootstrap_options['seed']}")
+        metrics.log(f"Bootstrap summary-only: {args.bootstrap_options['summary_only']}")
         support_threshold = (
             args.min_support_value
             if args.min_support_value is not None
@@ -389,6 +429,8 @@ def main():
                 stats_backend=args.stats_backend,
                 tree_height_calculation_strategy=args.tree_height_calculation_strategy,
                 p_value_correction=args.p_value_correction,
+                bootstrap=args.bootstrap,
+                bootstrap_options=args.bootstrap_options,
                 use_multiprocessing=use_multiprocessing,
                 processes=processes,
             )
@@ -399,6 +441,7 @@ def main():
                 dct_method=args.discordant_test,
                 summary_statistic=args.summary_statistic,
                 p_value_correction=args.p_value_correction,
+                bootstrap=args.bootstrap,
             )
 
             inference_time = time.time() - inference_start

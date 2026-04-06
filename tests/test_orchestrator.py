@@ -69,6 +69,8 @@ def test_resolve_runtime_args_cli_defaults(tmp_path, monkeypatch):
     assert resolved.p_value_correction == "no"
     assert resolved.alpha_dct == 0.01
     assert resolved.alpha_ks == 0.05
+    assert resolved.bootstrap is False
+    assert resolved.bootstrap_options == {"iterations": 100, "seed": None, "summary_only": True}
 
 
 def test_resolve_runtime_args_cli_custom_processes_preserved(tmp_path, monkeypatch):
@@ -89,10 +91,16 @@ def test_resolve_runtime_args_cli_custom_processes_preserved(tmp_path, monkeypat
         p_value_correction=None,
         alpha_dct=None,
         alpha_ks=None,
+        bootstrap=True,
+        bootstrap_iterations=25,
+        bootstrap_seed=99,
+        bootstrap_summary_only=False,
     )
 
     resolved = _resolve_runtime_args(args)
     assert resolved.processes == 5
+    assert resolved.bootstrap is True
+    assert resolved.bootstrap_options == {"iterations": 25, "seed": 99, "summary_only": False}
 
 
 def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys):
@@ -117,6 +125,10 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
             p_value_correction="no",
         alpha_dct=0.2,
         alpha_ks=0.3,
+        bootstrap=True,
+        bootstrap_iterations=20,
+        bootstrap_seed=1,
+        bootstrap_summary_only=False,
     )
 
     resolved = _resolve_runtime_args(args)
@@ -135,6 +147,8 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
     assert resolved.p_value_correction == "no"
     assert resolved.alpha_dct == 0.01
     assert resolved.alpha_ks == 0.05
+    assert resolved.bootstrap is False
+    assert resolved.bootstrap_options == {"iterations": 100, "seed": None, "summary_only": True}
 
 
 def test_resolve_runtime_args_config_processes_preserved_when_set(tmp_path):
@@ -159,6 +173,10 @@ def test_resolve_runtime_args_config_processes_preserved_when_set(tmp_path):
         p_value_correction=None,
         alpha_dct=None,
         alpha_ks=None,
+        bootstrap=None,
+        bootstrap_iterations=None,
+        bootstrap_seed=None,
+        bootstrap_summary_only=None,
     )
 
     resolved = _resolve_runtime_args(args)
