@@ -133,6 +133,8 @@ def test_load_orchestrator_config_defaults_processes_to_zero(tmp_path):
 
     config = load_orchestrator_config(str(config_path))
     assert config["processes"] == 0
+    assert config["bootstrap"] is False
+    assert config["bootstrap_options"] == {"iterations": 100, "seed": None, "summary_only": True}
 
 
 def test_load_tree_parser_config_json(tmp_path):
@@ -215,6 +217,12 @@ def test_load_triplet_processor_config_json(tmp_path):
                 "p_value_correction": "no",
                 "processes": 3,
                 "no_multiprocessing": False,
+                "bootstrap": True,
+                "bootstrap_options": {
+                    "iterations": 15,
+                    "seed": 42,
+                    "summary_only": False,
+                },
             }
         )
     )
@@ -234,6 +242,27 @@ def test_load_triplet_processor_config_json(tmp_path):
     assert config["p_value_correction"] == "no"
     assert config["processes"] == 3
     assert config["no_multiprocessing"] is False
+    assert config["bootstrap"] is True
+    assert config["bootstrap_options"] == {"iterations": 15, "seed": 42, "summary_only": False}
+
+
+@pytest.mark.parametrize(
+    "payload,match",
+    [
+        ({"bootstrap": "yes"}, "bootstrap"),
+        ({"bootstrap_options": {"iterations": 0}}, "iterations"),
+        ({"bootstrap_options": {"seed": "abc"}}, "seed"),
+        ({"bootstrap_options": {"summary_only": "no"}}, "summary_only"),
+    ],
+)
+def test_load_triplet_processor_config_invalid_bootstrap_fields(tmp_path, payload, match):
+    config_path = tmp_path / "triplet_processor_bad_bootstrap.json"
+    base = {"input_path": "unique_triplets_gene_trees.txt"}
+    base.update(payload)
+    config_path.write_text(json.dumps(base))
+
+    with pytest.raises(ConfigError, match=match):
+        load_triplet_processor_config(str(config_path))
 
 
 @pytest.mark.parametrize(
