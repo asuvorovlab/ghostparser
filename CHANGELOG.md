@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+- Added bootstrap sampling-with-replacement controls for orchestrator and triplet processor configs:
+	- `bootstrap` (default `false`)
+	- `bootstrap_options.iterations` (default `100`)
+	- `bootstrap_options.seed` (optional reproducibility)
+	- `bootstrap_options.summary_only` (default `true`)
+- Bootstrap processing reuses per-triplet serialized gene-tree observations and runs per-iteration reanalysis over sampled observations.
+- Iterations with incomplete required metrics are classified as `unresolved` and do not stop processing.
+- Final classification uses bootstrap majority class; ties are reported as comma-joined class labels.
+- Added bootstrap output columns to TSV output when bootstrap is enabled:
+	- `bootstrap_value`
+	- `bootstrap_classification`
+	- `all_bootstrap`
+	- `bootstrap_dct_stats`
+	- `bootstrap_dct_p_value`
+	- `bootstrap_ks_stats`
+	- `bootstrap_ks_p_value`
+	- `bootstrap_con_<mean|median|mode>`
+	- `bootstrap_dis_<mean|median|mode>`
+	- `bootstrap_gene_tree_heights`
+- Bootstrap payload columns are serialized as JSON strings by default with compact key:value fallback.
+
 ## v0.0.3 (alpha)
 
 - Added `--p-value-correction` option for all p-values used in summary statistics across triplets.
