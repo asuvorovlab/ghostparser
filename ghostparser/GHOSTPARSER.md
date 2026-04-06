@@ -28,6 +28,7 @@ keeping memory bounded to the active triplet chunk.
 4. If significant, run two-sample KS tree-height test (alpha `alpha_ks`, default `0.05`).
 5. Apply selected multiple-testing correction across triplets for DCT and KS p-values (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
 6. If significant, compare selected summary statistics (median by default; mean and binned mode optional) to infer outflow vs ghost introgression.
+7. When bootstrap is enabled, resample valid per-triplet observations with replacement and aggregate per-iteration classifications into bootstrap support values.
 
 This is a configurable pipeline: users can choose supported statistical methods and thresholds while preserving the same core stage order.
 
@@ -94,7 +95,7 @@ Returns:
 
 - `(label, most_frequent_matches_concordant)` where `most_frequent_matches_concordant` is `True` when concordant count is not lower than either discordant count.
 
-### `run_triplet_pipeline(species_triplet, triplet_gene_trees, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', tree_height_calculation_strategy='AVG')`
+### `run_triplet_pipeline(species_triplet, triplet_gene_trees, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', tree_height_calculation_strategy='AVG', bootstrap=False, bootstrap_options=None)`
 
 Runs full sequential GhostParser logic and returns counts, p-values, summary values, and final classification.
 
@@ -124,6 +125,14 @@ Topology convention:
 
 Output includes `species_tree` (the extracted species-tree Newick for the triplet).
 
+Bootstrap behavior in `run_triplet_pipeline`:
+
+- The standard non-bootstrap pipeline is always evaluated once per triplet.
+- If bootstrap is enabled, observations are sampled with replacement for each iteration.
+- Iterations that cannot compute required metrics are counted as `unresolved`.
+- Final bootstrap classification uses highest support; ties are comma-joined labels.
+- `classification` remains the full-pipeline call; bootstrap results are written to `bootstrap_classification`.
+
 Possible `classification` values:
 
 - `no_introgression`
@@ -138,13 +147,28 @@ Parses `unique_triplets_gene_trees.txt` into a dictionary:
 
 - triplet -> `{count, species_tree, gene_trees}`
 
-### `analyze_triplet_gene_tree_file(filepath, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', p_value_correction='bfn', rng=None, use_multiprocessing=True, processes=None)`
+### `analyze_triplet_gene_tree_file(filepath, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', p_value_correction='bfn', bootstrap=False, bootstrap_options=None, rng=None, use_multiprocessing=True, processes=None)`
 
 Runs the pipeline for all triplets in an input file with configurable discordant test and summary statistic.
 
-### `write_pipeline_results(results, output_filepath)`
+### `write_pipeline_results(results, output_filepath, dct_method='chi-square', summary_statistic='median', p_value_correction='no', bootstrap=False)`
 
 Writes per-triplet results to a TSV file with counts, DCT/KS statistics, raw and corrected p-values (`dct_p_value`, `ks_p_value`, plus dynamic corrected columns like `dct_p_val_bfn_corr`), dynamic summary columns (`median_con`/`median_dis`, `mean_con`/`mean_dis`, or `mode_con`/`mode_dis`), and classification.
+
+When `bootstrap=True`, output also includes:
+
+- `bootstrap_value`
+- `bootstrap_classification`
+- `all_bootstrap`
+- `bootstrap_dct_stats`
+- `bootstrap_dct_p_value`
+- `bootstrap_ks_stats`
+- `bootstrap_ks_p_value`
+- `bootstrap_con_<mean|median|mode>`
+- `bootstrap_dis_<mean|median|mode>`
+- `bootstrap_gene_tree_heights`
+
+Bootstrap payload fields are serialized as JSON strings by default.
 
 ### CLI usage
 
@@ -167,6 +191,11 @@ Optional arguments:
 - `--stats-backend`: `standard` (default) or `custom`
 - `--tree-height-calculation-strategy`: `AVG` (default), `A`, `B`, or `C`
 - `--p-value-correction`: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`
+- `--bootstrap`: enable bootstrap sampling-with-replacement
+- `--bootstrap-iterations`: number of iterations (default: `100`)
+- `--bootstrap-seed`: optional reproducibility seed
+- `--bootstrap-summary-only`: compact bootstrap metric summaries (default behavior)
+- `--bootstrap-full-output`: full per-iteration bootstrap metric lists
 - `--processes`: worker count for triplet inference (`0` = all cores)
 - `--no-multiprocessing`: disable multiprocessing for triplet inference
 
