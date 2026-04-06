@@ -133,6 +133,10 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--tree-height-calculation-strategy`
 - `--p-value-correction`
 - `--alpha-dct`, `--alpha-ks`
+- `--bootstrap`
+- `--bootstrap-iterations`
+- `--bootstrap-seed`
+- `--bootstrap-summary-only` or `--bootstrap-full-output`
 
 #### Primary Outputs
 
@@ -181,6 +185,18 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 - Runs KS tree-height test when DCT is significant
 - Applies summary-statistic comparison (`median`, `mean`, or binned `mode`) for final classification
 - Supports tree-height strategy selection via `tree_height_calculation_strategy`: `AVG` (default) or taxon-specific `A|B|C`
+- Optionally runs bootstrap sampling-with-replacement per triplet using reusable per-gene-tree observations
+
+#### Bootstrap Behavior
+
+- `--bootstrap` enables bootstrap classification support.
+- `--bootstrap-iterations` sets iteration count (default: `100`).
+- `--bootstrap-seed` enables reproducible per-triplet sampling; if omitted, sampling is non-deterministic.
+- `--bootstrap-summary-only` stores compact bootstrap metric summaries (default behavior).
+- `--bootstrap-full-output` stores per-iteration metric lists.
+- Iterations with incomplete required metrics are counted as `unresolved` and processing continues.
+- Final bootstrap class is the highest-support class; ties are written as comma-joined class labels.
+- The `classification` column keeps the full-pipeline triplet call; `bootstrap_classification` reports the bootstrap winner.
 
 ---
 
@@ -237,6 +253,21 @@ The orchestrator generates these output files:
 3. **`unique_triplets_gene_trees.txt`** - Triplets normalized to `A,B,C` (with `A,B` as species sisters), with required header format `triplet<TAB>count<TAB>species_tree` (non-empty species subtree)
 4. **`metrics.txt`** - Metrics log with warnings, timings, and counts
 5. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
+
+When bootstrap is enabled, the TSV adds:
+
+- `bootstrap_value`
+- `bootstrap_classification`
+- `all_bootstrap`
+- `bootstrap_dct_stats`
+- `bootstrap_dct_p_value`
+- `bootstrap_ks_stats`
+- `bootstrap_ks_p_value`
+- `bootstrap_con_<mean|median|mode>`
+- `bootstrap_dis_<mean|median|mode>`
+- `bootstrap_gene_tree_heights`
+
+Bootstrap payload columns are serialized as JSON strings by default.
 
 ### Example Usage
 
@@ -318,6 +349,10 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 - `processes`: `0` (all available CPU cores)
 - `output_folder` (orchestrator/tree_parser): `./results`
 - `min_support_value`: `0.5`
+- `bootstrap`: `false`
+- `bootstrap_options.iterations`: `100`
+- `bootstrap_options.seed`: unset
+- `bootstrap_options.summary_only`: `true`
 
 **Backend Details:**
 
