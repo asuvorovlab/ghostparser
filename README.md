@@ -136,7 +136,8 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--bootstrap`
 - `--bootstrap-iterations`
 - `--bootstrap-seed`
-- `--bootstrap-summary-only` or `--bootstrap-full-output`
+- `--bootstrap-debug-mode`
+- `--bootstrap-summary-only`
 
 #### Primary Outputs
 
@@ -189,14 +190,13 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 
 #### Bootstrap Behavior
 
-- `--bootstrap` enables bootstrap classification support.
+- `--bootstrap` enables bootstrap sampling-with-replacement.
 - `--bootstrap-iterations` sets iteration count (default: `100`).
 - `--bootstrap-seed` enables reproducible per-triplet sampling; if omitted, sampling is non-deterministic.
-- `--bootstrap-summary-only` stores compact bootstrap metric summaries (default behavior).
-- `--bootstrap-full-output` stores per-iteration metric lists.
+- `--bootstrap-debug-mode` enables detailed bootstrap metric columns in TSV output.
+- `--bootstrap-summary-only` is used only when debug mode is enabled; it stores compact summaries instead of per-iteration lists.
 - Iterations with incomplete required metrics are counted as `unresolved` and processing continues.
-- Final bootstrap class is the highest-support class; ties are written as comma-joined class labels.
-- The `classification` column keeps the full-pipeline triplet call; `bootstrap_classification` reports the bootstrap winner.
+- `bootstrap_value` reports the bootstrap fraction for the final `classification` value after correction.
 
 ---
 
@@ -254,11 +254,15 @@ The orchestrator generates these output files:
 4. **`metrics.txt`** - Metrics log with warnings, timings, and counts
 5. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
 
+Base TSV output includes `dis1_topology` and a topology-only `species_tree` value for each triplet.
+
 When bootstrap is enabled, the TSV adds:
 
 - `bootstrap_value`
-- `bootstrap_classification`
 - `all_bootstrap`
+
+When bootstrap debug mode is enabled, the TSV also adds:
+
 - `bootstrap_dct_stats`
 - `bootstrap_dct_p_value`
 - `bootstrap_ks_stats`

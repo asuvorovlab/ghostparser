@@ -127,7 +127,7 @@ python -m ghostparser.orchestrator \
     --bootstrap \
     --bootstrap-iterations 250 \
     --bootstrap-seed 42 \
-    --bootstrap-full-output
+    --bootstrap-debug-mode
 ```
 
 ### Supported Formats
@@ -282,18 +282,21 @@ python -m ghostparser.orchestrator \
     - CLI flags for nested keys:
         - `iterations` -> `--bootstrap-iterations`
         - `seed` -> `--bootstrap-seed`
-        - `summary_only` -> `--bootstrap-summary-only` or `--bootstrap-full-output`
+        - `debug_mode` -> `--bootstrap-debug-mode`
+        - `summary_only` -> `--bootstrap-summary-only`
 
     - Bootstrap runtime options.
     - Supported keys:
         - `iterations` (integer >= 1): number of bootstrap iterations per triplet. Default: `100`.
         - `seed` (integer, optional): enables reproducible bootstrap sampling when provided.
-        - `summary_only` (boolean): when `true` (default), bootstrap metric columns store compact summaries; when `false`, they store full per-iteration lists.
+        - `debug_mode` (boolean): when `true`, detailed bootstrap metric columns are written. Default: `false`.
+        - `summary_only` (boolean): when `true` and debug mode is enabled, detailed metric columns store compact summaries; otherwise they store full per-iteration lists. Default: `false`.
 
     - When bootstrap is enabled, the final TSV includes additional columns:
         - `bootstrap_value`
-        - `bootstrap_classification`
         - `all_bootstrap`
+
+    - When bootstrap debug mode is enabled, the final TSV also includes:
         - `bootstrap_dct_stats`
         - `bootstrap_dct_p_value`
         - `bootstrap_ks_stats`
@@ -468,18 +471,21 @@ See examples in:
     - CLI flags for nested keys:
         - `iterations` -> `--bootstrap-iterations`
         - `seed` -> `--bootstrap-seed`
-        - `summary_only` -> `--bootstrap-summary-only` or `--bootstrap-full-output`
+        - `debug_mode` -> `--bootstrap-debug-mode`
+        - `summary_only` -> `--bootstrap-summary-only`
 
     - Bootstrap runtime options.
     - Supported keys:
         - `iterations` (integer >= 1): number of bootstrap iterations per triplet. Default: `100`.
         - `seed` (integer, optional): enables reproducible bootstrap sampling when provided.
-        - `summary_only` (boolean): when `true` (default), bootstrap metric columns store compact summaries; when `false`, they store full per-iteration lists.
+        - `debug_mode` (boolean): when `true`, detailed bootstrap metric columns are written. Default: `false`.
+        - `summary_only` (boolean): when `true` and debug mode is enabled, detailed metric columns store compact summaries; otherwise they store full per-iteration lists. Default: `false`.
 
     - When bootstrap is enabled, the TSV writer appends:
         - `bootstrap_value`
-        - `bootstrap_classification`
         - `all_bootstrap`
+
+    - When bootstrap debug mode is enabled, the TSV writer also appends:
         - `bootstrap_dct_stats`
         - `bootstrap_dct_p_value`
         - `bootstrap_ks_stats`

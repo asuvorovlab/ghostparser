@@ -123,15 +123,14 @@ Topology convention:
 - ties between discordants keep canonical ordering
 - `most_frequent_matches_concordant`: `True` when concordant frequency is not lower than either discordant frequency
 
-Output includes `species_tree` (the extracted species-tree Newick for the triplet).
+Output includes `species_tree` as topology-only Newick for the triplet.
 
 Bootstrap behavior in `run_triplet_pipeline`:
 
 - The standard non-bootstrap pipeline is always evaluated once per triplet.
 - If bootstrap is enabled, observations are sampled with replacement for each iteration.
 - Iterations that cannot compute required metrics are counted as `unresolved`.
-- Final bootstrap classification uses highest support; ties are comma-joined labels.
-- `classification` remains the full-pipeline call; bootstrap results are written to `bootstrap_classification`.
+- `bootstrap_value` is reported for the final `classification` value.
 
 Possible `classification` values:
 
@@ -158,8 +157,10 @@ Writes per-triplet results to a TSV file with counts, DCT/KS statistics, raw and
 When `bootstrap=True`, output also includes:
 
 - `bootstrap_value`
-- `bootstrap_classification`
 - `all_bootstrap`
+
+When bootstrap debug mode is enabled, output also includes:
+
 - `bootstrap_dct_stats`
 - `bootstrap_dct_p_value`
 - `bootstrap_ks_stats`
@@ -194,8 +195,8 @@ Optional arguments:
 - `--bootstrap`: enable bootstrap sampling-with-replacement
 - `--bootstrap-iterations`: number of iterations (default: `100`)
 - `--bootstrap-seed`: optional reproducibility seed
-- `--bootstrap-summary-only`: compact bootstrap metric summaries (default behavior)
-- `--bootstrap-full-output`: full per-iteration bootstrap metric lists
+- `--bootstrap-debug-mode`: enable detailed bootstrap metric output columns
+- `--bootstrap-summary-only`: when debug mode is enabled, write compact summaries instead of full per-iteration lists
 - `--processes`: worker count for triplet inference (`0` = all cores)
 - `--no-multiprocessing`: disable multiprocessing for triplet inference
 
