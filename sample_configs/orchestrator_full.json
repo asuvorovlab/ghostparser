@@ -17,6 +17,7 @@
   "bootstrap_options": {
     "iterations": 100,
     "seed": 42,
+    "debug_mode": true,
     "summary_only": true
   }
 }
