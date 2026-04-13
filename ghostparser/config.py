@@ -47,7 +47,8 @@ DEFAULT_ALPHA_DCT = 0.01
 DEFAULT_ALPHA_KS = 0.05
 DEFAULT_BOOTSTRAP = False
 DEFAULT_BOOTSTRAP_ITERATIONS = 100
-DEFAULT_BOOTSTRAP_SUMMARY_ONLY = True
+DEFAULT_BOOTSTRAP_DEBUG_MODE = False
+DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
 SUMMARY_STATISTIC_CHOICES = ("mean", "median", "mode")
@@ -162,10 +163,11 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
         bootstrap_options:
           iterations: int >= 1
           seed: int | null
+                    debug_mode: bool
           summary_only: bool
 
     CLI payloads may provide flat keys (`bootstrap_iterations`, `bootstrap_seed`,
-    `bootstrap_summary_only`), which are merged into `bootstrap_options`.
+    `bootstrap_debug_mode`, `bootstrap_summary_only`), which are merged into `bootstrap_options`.
     """
     bootstrap = _validate_optional_bool(payload, "bootstrap", DEFAULT_BOOTSTRAP)
 
@@ -185,6 +187,15 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
     if seed is not None and not isinstance(seed, int):
         raise ConfigError("Config field bootstrap_options.seed must be an integer when provided")
 
+    debug_mode = payload.get(
+        "bootstrap_debug_mode",
+        raw_options.get("debug_mode", DEFAULT_BOOTSTRAP_DEBUG_MODE),
+    )
+    if debug_mode is None:
+        debug_mode = DEFAULT_BOOTSTRAP_DEBUG_MODE
+    if not isinstance(debug_mode, bool):
+        raise ConfigError("Config field bootstrap_options.debug_mode must be a boolean when provided")
+
     summary_only = payload.get(
         "bootstrap_summary_only",
         raw_options.get("summary_only", DEFAULT_BOOTSTRAP_SUMMARY_ONLY),
@@ -197,6 +208,7 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
     return bootstrap, {
         "iterations": iterations,
         "seed": seed,
+        "debug_mode": debug_mode,
         "summary_only": summary_only,
     }
 
