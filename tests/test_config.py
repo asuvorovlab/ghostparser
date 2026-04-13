@@ -134,7 +134,12 @@ def test_load_orchestrator_config_defaults_processes_to_zero(tmp_path):
     config = load_orchestrator_config(str(config_path))
     assert config["processes"] == 0
     assert config["bootstrap"] is False
-    assert config["bootstrap_options"] == {"iterations": 100, "seed": None, "summary_only": True}
+    assert config["bootstrap_options"] == {
+        "iterations": 100,
+        "seed": None,
+        "debug_mode": False,
+        "summary_only": False,
+    }
 
 
 def test_load_tree_parser_config_json(tmp_path):
@@ -221,6 +226,7 @@ def test_load_triplet_processor_config_json(tmp_path):
                 "bootstrap_options": {
                     "iterations": 15,
                     "seed": 42,
+                    "debug_mode": True,
                     "summary_only": False,
                 },
             }
@@ -243,7 +249,12 @@ def test_load_triplet_processor_config_json(tmp_path):
     assert config["processes"] == 3
     assert config["no_multiprocessing"] is False
     assert config["bootstrap"] is True
-    assert config["bootstrap_options"] == {"iterations": 15, "seed": 42, "summary_only": False}
+    assert config["bootstrap_options"] == {
+        "iterations": 15,
+        "seed": 42,
+        "debug_mode": True,
+        "summary_only": False,
+    }
 
 
 @pytest.mark.parametrize(
@@ -252,6 +263,7 @@ def test_load_triplet_processor_config_json(tmp_path):
         ({"bootstrap": "yes"}, "bootstrap"),
         ({"bootstrap_options": {"iterations": 0}}, "iterations"),
         ({"bootstrap_options": {"seed": "abc"}}, "seed"),
+        ({"bootstrap_options": {"debug_mode": "no"}}, "debug_mode"),
         ({"bootstrap_options": {"summary_only": "no"}}, "summary_only"),
     ],
 )
