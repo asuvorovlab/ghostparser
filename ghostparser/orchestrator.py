@@ -97,6 +97,7 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "bootstrap",
     "bootstrap_iterations",
     "bootstrap_seed",
+    "bootstrap_debug_mode",
     "bootstrap_summary_only",
 ]
 
@@ -198,20 +199,19 @@ def _build_argument_parser():
         default=None,
         help="Optional bootstrap random seed for reproducibility",
     )
-    summary_group = parser.add_mutually_exclusive_group()
-    summary_group.add_argument(
+    parser.add_argument(
+        "--bootstrap-debug-mode",
+        dest="bootstrap_debug_mode",
+        action="store_true",
+        default=None,
+        help="Enable bootstrap debug outputs (detailed bootstrap metric columns)",
+    )
+    parser.add_argument(
         "--bootstrap-summary-only",
         dest="bootstrap_summary_only",
         action="store_true",
         default=None,
-        help="Emit compact bootstrap summaries instead of per-iteration lists",
-    )
-    summary_group.add_argument(
-        "--bootstrap-full-output",
-        dest="bootstrap_summary_only",
-        action="store_false",
-        default=None,
-        help="Emit full per-iteration bootstrap metric lists",
+        help="When bootstrap debug mode is enabled, emit compact summaries instead of full per-iteration lists",
     )
     return parser
 
@@ -270,6 +270,7 @@ def main():
         metrics.log(f"Bootstrap enabled: {args.bootstrap}")
         metrics.log(f"Bootstrap iterations: {args.bootstrap_options['iterations']}")
         metrics.log(f"Bootstrap seed: {args.bootstrap_options['seed']}")
+        metrics.log(f"Bootstrap debug mode: {args.bootstrap_options['debug_mode']}")
         metrics.log(f"Bootstrap summary-only: {args.bootstrap_options['summary_only']}")
         support_threshold = (
             args.min_support_value
@@ -442,6 +443,7 @@ def main():
                 summary_statistic=args.summary_statistic,
                 p_value_correction=args.p_value_correction,
                 bootstrap=args.bootstrap,
+                bootstrap_debug_mode=args.bootstrap_options["debug_mode"],
             )
 
             inference_time = time.time() - inference_start
