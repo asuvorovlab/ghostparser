@@ -42,4 +42,5 @@
 
 - Bootstrap payload columns are serialized as JSON strings by default with compact key:value fallback.
 - Species-tree triplet output in TSV is now topology-only Newick (branch lengths omitted).
+- Added tree-height strategies `SIS` (sister-taxon distance) and `INT` (sister-MRCA to triplet-root internal branch).
 - Added `dis1_topology` as a base TSV output column for all runs.

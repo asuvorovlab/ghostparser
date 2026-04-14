@@ -55,7 +55,7 @@ Options:
 - `--tree-height-calculation-strategy` (optional)
 
     - Tree-height strategy used by `triplet_processor`.
-    - Allowed values: `AVG` (default), `A`, `B`, `C`.
+    - Allowed values: `AVG` (default), `A`, `B`, `C`, `SIS`, `INT`.
 
 - `--p-value-correction` (optional)
 
@@ -167,6 +167,8 @@ Per-gene-tree height uses:
 
     - `AVG`: mean root-to-tip distance across 3 leaves
     - `A`, `B`, or `C`: root-to-tip distance of that taxon
+    - `SIS`: distance between sister taxa in the rooted topology
+    - `INT`: internal branch from sister-pair MRCA to triplet root
 - for `((X:b2,Y:b3):b4,Z:b1)`, `AVG` gives: $H(T) = (b1 + b2 + b3 + 2b4)/3$
 
 - `ks_statistic`

@@ -235,9 +235,11 @@ python -m ghostparser.orchestrator \
     - CLI flag: `--tree-height-calculation-strategy`
 
     - Tree-height statistic strategy used in the triplet processor stage.
-    - Allowed values: `AVG` (default), `A`, `B`, `C`.
+    - Allowed values: `AVG` (default), `A`, `B`, `C`, `SIS`, `INT`.
     - `AVG` uses mean root-to-tip distance across all three taxa.
     - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
+    - `SIS` uses the pairwise distance between the two sister taxa in each gene-tree topology.
+    - `INT` uses the internal branch length from the sister-pair MRCA to the triplet root.
 
 - `p_value_correction` (string)
 
@@ -436,9 +438,11 @@ See examples in:
 
     - CLI flag: `--tree-height-calculation-strategy`
 
-    - Allowed values: `AVG` (default), `A`, `B`, `C`.
+    - Allowed values: `AVG` (default), `A`, `B`, `C`, `SIS`, `INT`.
     - `AVG` uses mean root-to-tip distance across all three taxa.
     - `A`, `B`, and `C` use only the corresponding taxon's root-to-tip distance.
+    - `SIS` uses the pairwise distance between the two sister taxa in each gene-tree topology.
+    - `INT` uses the internal branch length from the sister-pair MRCA to the triplet root.
 
 - `p_value_correction` (string)
 

@@ -185,7 +185,7 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 - Runs DCT (`chi-square` or `z-test`)
 - Runs KS tree-height test when DCT is significant
 - Applies summary-statistic comparison (`median`, `mean`, or binned `mode`) for final classification
-- Supports tree-height strategy selection via `tree_height_calculation_strategy`: `AVG` (default) or taxon-specific `A|B|C`
+- Supports tree-height strategy selection via `tree_height_calculation_strategy`: `AVG` (default), taxon-specific `A|B|C`, sister-distance `SIS`, or internal-branch `INT`
 - Optionally runs bootstrap sampling-with-replacement per triplet using reusable per-gene-tree observations
 
 #### Bootstrap Behavior

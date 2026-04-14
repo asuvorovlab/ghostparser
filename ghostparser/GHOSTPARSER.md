@@ -23,7 +23,7 @@ keeping memory bounded to the active triplet chunk.
 `triplet_processor` consumes `unique_triplets_gene_trees.txt` and applies the GhostParser decision pipeline:
 
 1. Count concordant and discordant topology frequencies, then relabel taxa so concordant is `AB|C` and discordant1 is `BC|A`.
-2. Compute `H(T)` using a configurable tree-height strategy (`AVG` default, or taxon-specific `A|B|C`).
+2. Compute `H(T)` using a configurable tree-height strategy (`AVG` default, taxon-specific `A|B|C`, sister-distance `SIS`, or internal-branch `INT`).
 3. Run discordant count test (configurable: Pearson chi-square or two-proportion z-test, alpha `alpha_dct`, default `0.01`).
 4. If significant, run two-sample KS tree-height test (alpha `alpha_ks`, default `0.05`).
 5. Apply selected multiple-testing correction across triplets for DCT and KS p-values (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
@@ -190,7 +190,7 @@ Optional arguments:
 - `--alpha-ks`: KS threshold (default: `0.05`)
 - `--summary-statistic`: `median` (default), `mean`, or `mode`
 - `--stats-backend`: `standard` (default) or `custom`
-- `--tree-height-calculation-strategy`: `AVG` (default), `A`, `B`, or `C`
+- `--tree-height-calculation-strategy`: `AVG` (default), `A`, `B`, `C`, `SIS`, or `INT`
 - `--p-value-correction`: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`
 - `--bootstrap`: enable bootstrap sampling-with-replacement
 - `--bootstrap-iterations`: number of iterations (default: `100`)
