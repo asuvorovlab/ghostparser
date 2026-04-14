@@ -89,8 +89,12 @@ Inputs: config missing required fields.
 Expected outputs: `ConfigError` with missing-field message.
 
 - `test_load_orchestrator_config_invalid_choice_fields` (parametrized)
-Inputs: invalid values for `discordant_test`, `summary_statistic`, `stats_backend`, `tree_height_calculation_strategy`.
+Inputs: invalid values for `discordant_test`, `summary_statistic`, `stats_backend`.
 Expected outputs: `ConfigError` referencing offending field.
+
+- `test_load_orchestrator_config_tree_height_strategy_validation` (parametrized)
+Inputs: supported values (`AVG`, `A`, `B`, `C`, `SIS`, `INT`) and an invalid value (`D`).
+Expected outputs: supported values load successfully; invalid value raises `ConfigError`.
 
 - `test_load_orchestrator_config_defaults_processes_to_zero`
 Inputs: no `processes` key.
@@ -113,8 +117,12 @@ Inputs: full triplet-processor JSON config.
 Expected outputs: normalized paths and preserved explicit methods/thresholds.
 
 - `test_load_triplet_processor_config_invalid_choice_fields` (parametrized)
-Inputs: invalid `p_value_correction`, `stats_backend`, `tree_height_calculation_strategy`.
+Inputs: invalid `p_value_correction`, `stats_backend`.
 Expected outputs: `ConfigError` referencing offending field.
+
+- `test_load_triplet_processor_config_tree_height_strategy_validation` (parametrized)
+Inputs: supported values (`AVG`, `A`, `B`, `C`, `SIS`, `INT`) and an invalid value (`D`).
+Expected outputs: supported values load successfully; invalid value raises `ConfigError`.
 
 - `test_load_triplet_processor_config_missing_input`
 Inputs: config without `input_path`.
@@ -142,41 +150,33 @@ Expected outputs: `0 -> cpu_count`, `None -> None`, explicit value preserved.
 Inputs: `{0, 1, 4}` with monkeypatched CPU count.
 Expected outputs: `(processes, use_multiprocessing)` toggles correctly (`1` disables multiprocessing).
 
-- `test_resolve_runtime_args_cli_defaults`
-Inputs: CLI args without config file and many optional values omitted.
-Expected outputs: default statistical settings applied and paths resolved.
-
-- `test_resolve_runtime_args_cli_custom_processes_preserved`
-Inputs: CLI `processes=5`.
-Expected outputs: resolved `processes == 5`.
+- `test_resolve_runtime_args_cli_defaults_and_overrides` (parametrized)
+Inputs: CLI defaults and a CLI override scenario (`processes`, bootstrap options).
+Expected outputs: default statistical settings/path resolution and preserved CLI overrides.
 
 - `test_resolve_runtime_args_config_with_cli_warns_and_ignores`
 Inputs: config file + conflicting CLI args.
 Expected outputs: warning emitted; config values/defaults win over CLI extras.
 
-- `test_resolve_runtime_args_config_processes_preserved_when_set`
-Inputs: config with explicit `processes`.
-Expected outputs: resolved `processes` equals config value.
+- `test_resolve_runtime_args_config_processes_behavior` (parametrized)
+Inputs: config with explicit `processes` and config without `processes`.
+Expected outputs: preserves configured value or defaults to `0`.
 
 ### `tests/test_tree_parser.py`
 
 Runtime-arg resolution:
 
-- `test_resolve_runtime_args_tree_parser_cli_defaults`
-Inputs: CLI defaults with outgroup string.
-Expected outputs: path resolution, outgroup list parsing, default `min_support_value`.
-
-- `test_resolve_runtime_args_tree_parser_cli_custom_processes_preserved`
-Inputs: CLI `processes=6`.
-Expected outputs: `processes == 6`.
+- `test_resolve_runtime_args_tree_parser_cli_processes` (parametrized)
+Inputs: CLI defaults and explicit `processes=6`.
+Expected outputs: path resolution, outgroup parsing, default `min_support_value`, and expected process behavior.
 
 - `test_resolve_runtime_args_tree_parser_config_warns_and_ignores`
 Inputs: config mode + extra CLI args.
 Expected outputs: warning + config precedence.
 
-- `test_resolve_runtime_args_tree_parser_config_defaults_processes_to_zero`
-Inputs: config without `processes`.
-Expected outputs: `processes == 0`.
+- `test_resolve_runtime_args_tree_parser_config_processes_behavior` (parametrized)
+Inputs: config with explicit `processes` and config without `processes`.
+Expected outputs: preserves configured value or defaults to `0`.
 
 Tree IO and cleaning:
 
@@ -226,9 +226,9 @@ Core statistic helpers:
 Inputs: known tree with explicit branch lengths.
 Expected outputs: exact formula match for AVG strategy.
 
-- `test_compute_tree_height_statistic_supports_taxon_specific_strategies`
-Inputs: strategies `A/B/C` with known distances.
-Expected outputs: strategy-specific expected distances.
+- `test_compute_tree_height_statistic_supports_extended_strategies` (parametrized)
+Inputs: rooted triplets with expected values for `A`, `B`, `C`, `SIS`, and `INT`.
+Expected outputs: each strategy returns its expected branch-length-based statistic.
 
 - `test_compute_tree_height_statistic_rejects_unknown_strategy`
 Inputs: invalid strategy.

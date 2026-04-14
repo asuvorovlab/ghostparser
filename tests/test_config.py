@@ -102,7 +102,6 @@ def test_load_orchestrator_config_missing_required(tmp_path):
         ("discordant_test", "invalid"),
         ("summary_statistic", "invalid-summary"),
         ("stats_backend", "numpy"),
-        ("tree_height_calculation_strategy", "D"),
     ],
 )
 def test_load_orchestrator_config_invalid_choice_fields(tmp_path, field, bad_value):
@@ -117,6 +116,36 @@ def test_load_orchestrator_config_invalid_choice_fields(tmp_path, field, bad_val
 
     with pytest.raises(ConfigError, match=field):
         load_orchestrator_config(str(config_path))
+
+
+@pytest.mark.parametrize(
+    "strategy,should_raise",
+    [
+        ("AVG", False),
+        ("A", False),
+        ("B", False),
+        ("C", False),
+        ("SIS", False),
+        ("INT", False),
+        ("D", True),
+    ],
+)
+def test_load_orchestrator_config_tree_height_strategy_validation(tmp_path, strategy, should_raise):
+    config_path = tmp_path / f"orchestrator_tree_height_{strategy}.json"
+    payload = {
+        "species_tree_path": "species.nwk",
+        "gene_trees_path": "genes.nwk",
+        "outgroup": "OutA",
+        "tree_height_calculation_strategy": strategy,
+    }
+    config_path.write_text(json.dumps(payload))
+
+    if should_raise:
+        with pytest.raises(ConfigError, match="tree_height_calculation_strategy"):
+            load_orchestrator_config(str(config_path))
+    else:
+        config = load_orchestrator_config(str(config_path))
+        assert config["tree_height_calculation_strategy"] == strategy
 
 
 def test_load_orchestrator_config_defaults_processes_to_zero(tmp_path):
@@ -282,7 +311,6 @@ def test_load_triplet_processor_config_invalid_bootstrap_fields(tmp_path, payloa
     [
         ("p_value_correction", "sidak"),
         ("stats_backend", "numpy"),
-        ("tree_height_calculation_strategy", "D"),
     ],
 )
 def test_load_triplet_processor_config_invalid_choice_fields(tmp_path, field, bad_value):
@@ -295,6 +323,34 @@ def test_load_triplet_processor_config_invalid_choice_fields(tmp_path, field, ba
 
     with pytest.raises(ConfigError, match=field):
         load_triplet_processor_config(str(config_path))
+
+
+@pytest.mark.parametrize(
+    "strategy,should_raise",
+    [
+        ("AVG", False),
+        ("A", False),
+        ("B", False),
+        ("C", False),
+        ("SIS", False),
+        ("INT", False),
+        ("D", True),
+    ],
+)
+def test_load_triplet_processor_config_tree_height_strategy_validation(tmp_path, strategy, should_raise):
+    config_path = tmp_path / f"triplet_processor_tree_height_{strategy}.json"
+    payload = {
+        "input_path": "input.tsv",
+        "tree_height_calculation_strategy": strategy,
+    }
+    config_path.write_text(json.dumps(payload))
+
+    if should_raise:
+        with pytest.raises(ConfigError, match="tree_height_calculation_strategy"):
+            load_triplet_processor_config(str(config_path))
+    else:
+        config = load_triplet_processor_config(str(config_path))
+        assert config["tree_height_calculation_strategy"] == strategy
 
 
 def test_load_triplet_processor_config_missing_input(tmp_path):
