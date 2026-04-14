@@ -27,6 +27,7 @@ from ghostparser.triplet_processor import (
     two_proportion_discordant_z_test,
     write_pipeline_statistics_json,
     write_pipeline_results,
+    write_summary_statistics_tsv,
     _resolve_runtime_args,
 )
 from ghostparser.triplet_utils import TOPOLOGY_AB, TOPOLOGY_AC, TOPOLOGY_BC
@@ -1031,6 +1032,68 @@ def test_write_pipeline_statistics_json(tmp_path):
     assert "classification" in out
 
 
+def test_write_summary_statistics_tsv_includes_expected_columns_and_counts(tmp_path):
+    species_triplet = ("A", "B", "C")
+    trees = ([("((A:1,B:1):1,C:1);")] * 5) + ([("((B:1,C:1):1,A:1);")] * 3) + ([("((A:1,C:1):1,B:1);")] * 2)
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        rng=random.Random(101),
+    )
+
+    output_file = tmp_path / "summary_statistics.tsv"
+    write_summary_statistics_tsv([result], str(output_file), bootstrap=False)
+
+    lines = output_file.read_text().splitlines()
+    header = lines[0].split("\t")
+    row = lines[1].split("\t")
+
+    assert "triplet" in header
+    assert "abc_mapping" in header
+    assert "dis1_topology" in header
+    assert "n_con" in header
+    assert "n_dis1" in header
+    assert "n_dis2" in header
+    assert "classification" in header
+    assert "bootstrap_value" not in header
+
+    summary_columns = [
+        column_name
+        for column_name in header
+        if column_name.startswith("concordant_")
+        or column_name.startswith("discordant1_")
+        or column_name.startswith("discordant2_")
+    ]
+    assert len(summary_columns) == 63
+    assert "concordant_avg_tree_height_mean" in header
+    assert "discordant1_internal_branch_variance" in header
+    assert "discordant2_sister_distance_entropy" in header
+
+    assert row[header.index("n_con")] == "5"
+    assert row[header.index("n_dis1")] == "3"
+    assert row[header.index("n_dis2")] == "2"
+    assert row[header.index("concordant_avg_tree_height_mean")] != ""
+
+
+def test_write_summary_statistics_tsv_includes_bootstrap_value_when_enabled(tmp_path):
+    species_triplet = ("A", "B", "C")
+    trees = ([("((A:1,B:1):1,C:1);")] * 6) + ([("((B:1,C:1):1,A:1);")] * 4)
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        bootstrap=True,
+        bootstrap_options={"iterations": 2, "seed": 1, "debug_mode": False, "summary_only": False},
+    )
+
+    output_file = tmp_path / "summary_statistics_bootstrap.tsv"
+    write_summary_statistics_tsv([result], str(output_file), bootstrap=True)
+
+    header = output_file.read_text().splitlines()[0].split("\t")
+    assert "bootstrap_value" in header
+
+
 def test_write_pipeline_results_rejects_mixed_discordant_test_outputs(tmp_path):
     species_triplet = ("A", "B", "C")
     trees = (["((B:1,C:1):1,A:1);"] * 12) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 2)
@@ -1092,6 +1155,7 @@ def _triplet_processor_args(**overrides):
         "bootstrap_debug_mode": None,
         "bootstrap_summary_only": None,
         "processes": None,
+        "generate_summary_stats": None,
         "no_multiprocessing": False,
     }
     base.update(overrides)
@@ -1148,6 +1212,7 @@ def test_resolve_runtime_args_triplet_processor_cli_defaults_and_overrides(
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.p_value_correction == "no"
+    assert resolved.generate_summary_stats is False
     assert resolved.processes == expected_processes
     assert resolved.bootstrap is expected_bootstrap
     assert resolved.bootstrap_options == expected_bootstrap_options
@@ -1164,7 +1229,8 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     "summary_statistic": "median",
     "stats_backend": "standard",
     "tree_height_calculation_strategy": "B",
-        "p_value_correction": "bfn"
+    "p_value_correction": "bfn",
+    "generate_summary_stats": true
 }
 """.strip()
     )
@@ -1187,6 +1253,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
         bootstrap_debug_mode=True,
         bootstrap_summary_only=False,
         processes=None,
+        generate_summary_stats=False,
         no_multiprocessing=False,
     )
 
@@ -1202,6 +1269,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "B"
     assert resolved.p_value_correction == "bfn"
+    assert resolved.generate_summary_stats is True
     assert resolved.bootstrap is False
     assert resolved.bootstrap_options == {
         "iterations": 100,
@@ -1248,8 +1316,10 @@ def test_resolve_runtime_args_triplet_processor_config_processes_behavior(tmp_pa
             p_value_correction="no",
             bootstrap=None,
             processes=11,
+            generate_summary_stats=True,
         )
     )
     assert resolved.processes == expected_processes
     assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.p_value_correction == "no"
+    assert resolved.generate_summary_stats is False
