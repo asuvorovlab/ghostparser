@@ -13,7 +13,7 @@
 
 - Corrected versioning of releases for consistency between setup.py and GitHub tags.
 
-## v0.0.5 - Unreleased
+## v0.1.0 - Unreleased
 
 - Added bootstrap sampling-with-replacement controls for orchestrator and triplet processor configs:
 
@@ -44,3 +44,5 @@
 - Species-tree triplet output in TSV is now topology-only Newick (branch lengths omitted).
 - Added tree-height strategies `SIS` (sister-taxon distance) and `INT` (sister-MRCA to triplet-root internal branch).
 - Added `dis1_topology` as a base TSV output column for all runs.
+- Orchestrator now defaults to in-memory triplet mapping/inference (no `unique_triplets_gene_trees.txt` written by default). Full mapping output is opt-in via `write_full_triplet_gene_trees_mapping` / `--write-full-triplet-gene-trees-mapping` for debugging, with potential large-file I/O overhead on large triplet sets.
+- Added CPU-process timing alongside wall-clock timing in logs and `metrics.txt` for species processing, gene processing, triplet extraction, inference, and total runtime.
