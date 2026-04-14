@@ -41,40 +41,36 @@ def _species_triplet_map(triplets):
     return {triplet: f"(({triplet[0]}:1,{triplet[1]}:1):1,{triplet[2]}:1);" for triplet in triplets}
 
 
-def test_resolve_runtime_args_tree_parser_cli_defaults():
-    args = argparse.Namespace(
-        config_file=None,
-        species_tree_path="species.nwk",
-        gene_trees_path="genes.nwk",
-        outgroups="Out1,Out2",
-        triplet_filter=None,
-        output_folder=None,
-        processes=None,
-        no_multiprocessing=False,
-    )
+def _tree_parser_args(**overrides):
+    base = {
+        "config_file": None,
+        "species_tree_path": "species.nwk",
+        "gene_trees_path": "genes.nwk",
+        "outgroups": "Out1,Out2",
+        "triplet_filter": None,
+        "output_folder": None,
+        "processes": None,
+        "no_multiprocessing": False,
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
 
-    resolved = _resolve_runtime_args(args)
+
+@pytest.mark.parametrize(
+    "processes,expected_processes",
+    [
+        (None, 0),
+        (6, 6),
+    ],
+)
+def test_resolve_runtime_args_tree_parser_cli_processes(processes, expected_processes):
+    resolved = _resolve_runtime_args(_tree_parser_args(processes=processes))
     # Paths are resolved to absolute paths
     assert resolved.species_tree == str(Path("species.nwk").resolve())
     assert resolved.gene_trees == str(Path("genes.nwk").resolve())
     assert resolved.outgroup == ["Out1", "Out2"]
     assert resolved.min_support_value == 0.5
-
-
-def test_resolve_runtime_args_tree_parser_cli_custom_processes_preserved():
-    args = argparse.Namespace(
-        config_file=None,
-        species_tree_path="species.nwk",
-        gene_trees_path="genes.nwk",
-        outgroups="Out1,Out2",
-        triplet_filter=None,
-        output_folder=None,
-        processes=6,
-        no_multiprocessing=False,
-    )
-
-    resolved = _resolve_runtime_args(args)
-    assert resolved.processes == 6
+    assert resolved.processes == expected_processes
 
 
 def test_resolve_runtime_args_tree_parser_config_warns_and_ignores(tmp_path, capsys):
@@ -116,31 +112,48 @@ def test_resolve_runtime_args_tree_parser_config_warns_and_ignores(tmp_path, cap
     assert resolved.min_support_value == 0.7
 
 
-def test_resolve_runtime_args_tree_parser_config_defaults_processes_to_zero(tmp_path):
-    config_path = tmp_path / "tree_parser_config_default_processes.json"
-    config_path.write_text(
-        """
+@pytest.mark.parametrize(
+    "config_body,expected_processes",
+    [
+        (
+            """
+{
+  "species_tree_path": "s.nwk",
+  "gene_trees_path": "g.nwk",
+  "outgroup": "OutA",
+  "processes": 3,
+  "no_multiprocessing": true,
+  "min_support_value": 0.7
+}
+""".strip(),
+            3,
+        ),
+        (
+            """
 {
   "species_tree_path": "s.nwk",
   "gene_trees_path": "g.nwk",
   "outgroup": "OutA"
 }
-""".strip()
-    )
+""".strip(),
+            0,
+        ),
+    ],
+)
+def test_resolve_runtime_args_tree_parser_config_processes_behavior(tmp_path, config_body, expected_processes):
+    config_path = tmp_path / "tree_parser_config_processes.json"
+    config_path.write_text(config_body)
 
-    args = argparse.Namespace(
-        config_file=str(config_path),
-        species_tree_path=None,
-        gene_trees_path=None,
-        outgroups=None,
-        triplet_filter=None,
-        output_folder=None,
-        processes=9,
-        no_multiprocessing=False,
+    resolved = _resolve_runtime_args(
+        _tree_parser_args(
+            config_file=str(config_path),
+            species_tree_path=None,
+            gene_trees_path=None,
+            outgroups=None,
+            processes=9,
+        )
     )
-
-    resolved = _resolve_runtime_args(args)
-    assert resolved.processes == 0
+    assert resolved.processes == expected_processes
 
 # ============================================================================
 # Fixtures

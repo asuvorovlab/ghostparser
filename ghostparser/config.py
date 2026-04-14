@@ -45,11 +45,15 @@ DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY = "AVG"
 DEFAULT_P_VALUE_CORRECTION = "no"
 DEFAULT_ALPHA_DCT = 0.01
 DEFAULT_ALPHA_KS = 0.05
+DEFAULT_BOOTSTRAP = False
+DEFAULT_BOOTSTRAP_ITERATIONS = 100
+DEFAULT_BOOTSTRAP_DEBUG_MODE = False
+DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
 SUMMARY_STATISTIC_CHOICES = ("mean", "median", "mode")
 STATS_BACKEND_CHOICES = ("custom", "standard")
-TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C")
+TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C", "SIS", "INT")
 P_VALUE_CORRECTION_CHOICES = ("no", "bfn", "holm", "fdr_bh", "fdr_by", "fdr_tsbh")
 
 
@@ -151,6 +155,64 @@ def _validate_choice(payload: dict, key: str, default: str, choices: tuple[str, 
     return value
 
 
+def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
+    """Validate bootstrap toggle and nested options.
+
+    The canonical shape is:
+        bootstrap: bool
+        bootstrap_options:
+          iterations: int >= 1
+          seed: int | null
+                    debug_mode: bool
+          summary_only: bool
+
+    CLI payloads may provide flat keys (`bootstrap_iterations`, `bootstrap_seed`,
+    `bootstrap_debug_mode`, `bootstrap_summary_only`), which are merged into `bootstrap_options`.
+    """
+    bootstrap = _validate_optional_bool(payload, "bootstrap", DEFAULT_BOOTSTRAP)
+
+    raw_options = payload.get("bootstrap_options")
+    if raw_options is None:
+        raw_options = {}
+    if not isinstance(raw_options, dict):
+        raise ConfigError("Config field bootstrap_options must be a key/value object when provided")
+
+    iterations = payload.get("bootstrap_iterations", raw_options.get("iterations", DEFAULT_BOOTSTRAP_ITERATIONS))
+    if iterations is None:
+        iterations = DEFAULT_BOOTSTRAP_ITERATIONS
+    if not isinstance(iterations, int) or iterations < 1:
+        raise ConfigError("Config field bootstrap_options.iterations must be an integer >= 1")
+
+    seed = payload.get("bootstrap_seed", raw_options.get("seed"))
+    if seed is not None and not isinstance(seed, int):
+        raise ConfigError("Config field bootstrap_options.seed must be an integer when provided")
+
+    debug_mode = payload.get(
+        "bootstrap_debug_mode",
+        raw_options.get("debug_mode", DEFAULT_BOOTSTRAP_DEBUG_MODE),
+    )
+    if debug_mode is None:
+        debug_mode = DEFAULT_BOOTSTRAP_DEBUG_MODE
+    if not isinstance(debug_mode, bool):
+        raise ConfigError("Config field bootstrap_options.debug_mode must be a boolean when provided")
+
+    summary_only = payload.get(
+        "bootstrap_summary_only",
+        raw_options.get("summary_only", DEFAULT_BOOTSTRAP_SUMMARY_ONLY),
+    )
+    if summary_only is None:
+        summary_only = DEFAULT_BOOTSTRAP_SUMMARY_ONLY
+    if not isinstance(summary_only, bool):
+        raise ConfigError("Config field bootstrap_options.summary_only must be a boolean when provided")
+
+    return bootstrap, {
+        "iterations": iterations,
+        "seed": seed,
+        "debug_mode": debug_mode,
+        "summary_only": summary_only,
+    }
+
+
 def _parse_outgroups(value) -> list[str]:
     """Parse outgroup(s) value from payload.
 
@@ -183,6 +245,8 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
     output = _validate_optional_path(payload, "output_folder")
     if output is None:
         output = _resolve_path(DEFAULT_OUTPUT_FOLDER)
+
+    bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
 
     return {
         "species_tree": species_tree,
@@ -224,6 +288,8 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         ),
         "alpha_dct": _validate_optional_float(payload, "alpha_dct", DEFAULT_ALPHA_DCT),
         "alpha_ks": _validate_optional_float(payload, "alpha_ks", DEFAULT_ALPHA_KS),
+        "bootstrap": bootstrap,
+        "bootstrap_options": bootstrap_options,
     }
 
 
@@ -252,6 +318,8 @@ def normalize_tree_parser_payload(payload: dict) -> dict:
 def normalize_triplet_processor_payload(payload: dict) -> dict:
     """Normalize triplet_processor config/CLI payload to internal runtime keys with defaults."""
     input_path = _validate_required_path(payload, "input_path")
+
+    bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
 
     return {
         "input": input_path,
@@ -291,6 +359,8 @@ def normalize_triplet_processor_payload(payload: dict) -> dict:
         ),
         "processes": _validate_non_negative_int(payload, "processes", DEFAULT_PROCESSES),
         "no_multiprocessing": _validate_optional_bool(payload, "no_multiprocessing", False),
+        "bootstrap": bootstrap,
+        "bootstrap_options": bootstrap_options,
     }
 
 

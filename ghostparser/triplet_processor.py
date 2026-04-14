@@ -26,6 +26,7 @@ import math
 import multiprocessing as mp
 from multiprocessing import cpu_count
 from pathlib import Path
+import random
 
 import dendropy
 from scipy import stats
@@ -37,6 +38,10 @@ from .config import (
     ConfigError,
     DEFAULT_ALPHA_DCT,
     DEFAULT_ALPHA_KS,
+    DEFAULT_BOOTSTRAP,
+    DEFAULT_BOOTSTRAP_DEBUG_MODE,
+    DEFAULT_BOOTSTRAP_ITERATIONS,
+    DEFAULT_BOOTSTRAP_SUMMARY_ONLY,
     DEFAULT_DISCORDANT_TEST,
     DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_STATS_BACKEND,
@@ -56,6 +61,7 @@ from .triplet_utils import (
     TOPOLOGY_AC,
     TOPOLOGY_BC,
     classify_triplet_topology_string,
+    find_sister_pair,
 )
 
 
@@ -73,6 +79,7 @@ class TripletPipelineResult:
     n_con: int
     n_dis1: int
     n_dis2: int
+    dis1_topology: str | None
     dct_statistic: float
     dct_p_value: float
     dct_p_value_corrected: float
@@ -85,6 +92,15 @@ class TripletPipelineResult:
     summary_dis: float | None
     classification: Classification
     analyzed_trees: int = 0
+    bootstrap_value: float | None = None
+    all_bootstrap: dict | None = None
+    bootstrap_dct_stats: dict | list | None = None
+    bootstrap_dct_p_value: dict | list | None = None
+    bootstrap_ks_stats: dict | list | None = None
+    bootstrap_ks_p_value: dict | list | None = None
+    bootstrap_con_summary: dict | list | None = None
+    bootstrap_dis_summary: dict | list | None = None
+    bootstrap_gene_tree_heights: list[float] | None = None
 
     def to_dict(self):
         """Serialize all relevant triplet statistics to a dictionary."""
@@ -95,6 +111,7 @@ class TripletPipelineResult:
             "n_con": self.n_con,
             "n_dis1": self.n_dis1,
             "n_dis2": self.n_dis2,
+            "dis1_topology": self.dis1_topology,
             "dct_statistic": self.dct_statistic,
             "dct_p_value": self.dct_p_value,
             "dct_p_value_corrected": self.dct_p_value_corrected,
@@ -107,6 +124,15 @@ class TripletPipelineResult:
             "summary_dis": self.summary_dis,
             "classification": self.classification,
             "analyzed_trees": self.analyzed_trees,
+            "bootstrap_value": self.bootstrap_value,
+            "all_bootstrap": self.all_bootstrap,
+            "bootstrap_dct_stats": self.bootstrap_dct_stats,
+            "bootstrap_dct_p_value": self.bootstrap_dct_p_value,
+            "bootstrap_ks_stats": self.bootstrap_ks_stats,
+            "bootstrap_ks_p_value": self.bootstrap_ks_p_value,
+            "bootstrap_con_summary": self.bootstrap_con_summary,
+            "bootstrap_dis_summary": self.bootstrap_dis_summary,
+            "bootstrap_gene_tree_heights": self.bootstrap_gene_tree_heights,
         }
 
 
@@ -132,6 +158,8 @@ def compute_tree_height_statistic(tree, strategy=DEFAULT_TREE_HEIGHT_CALCULATION
     Strategy options:
     - ``AVG``: mean over all three tip distances
     - ``A``/``B``/``C``: distance of the corresponding taxon in ``species_triplet``
+    - ``SIS``: pairwise distance between the rooted sister taxa in the current topology
+    - ``INT``: internal branch from sister-pair MRCA to triplet root
     """
     if strategy not in TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES:
         raise ValueError(
@@ -143,16 +171,41 @@ def compute_tree_height_statistic(tree, strategy=DEFAULT_TREE_HEIGHT_CALCULATION
     if len(leaves) != 3:
         raise ValueError("Triplet tree must contain exactly 3 terminal taxa")
 
+    leaf_by_label = {leaf.taxon.label: leaf for leaf in leaves}
+
+    def _sister_mrca_and_labels():
+        sister_pair = find_sister_pair(tree)
+        left_label, right_label = tuple(sister_pair)
+        sister_mrca = tree.mrca(taxon_labels=[left_label, right_label])
+        if sister_mrca is None:
+            raise ValueError("Could not determine sister-pair MRCA for triplet tree")
+        return sister_mrca, left_label, right_label
+
     if strategy in {"A", "B", "C"}:
         if species_triplet is None:
             raise ValueError("species_triplet is required for tree height strategies A, B, and C")
 
         strategy_index = {"A": 0, "B": 1, "C": 2}[strategy]
         selected_taxon_label = species_triplet[strategy_index]
-        for leaf in leaves:
-            if leaf.taxon.label == selected_taxon_label:
-                return _distance_to_root(leaf)
-        raise ValueError(f"Selected taxon {selected_taxon_label} not found in triplet tree")
+        selected_leaf = leaf_by_label.get(selected_taxon_label)
+        if selected_leaf is None:
+            raise ValueError(f"Selected taxon {selected_taxon_label} not found in triplet tree")
+        return _distance_to_root(selected_leaf)
+
+    if strategy == "SIS":
+        sister_mrca, left_label, right_label = _sister_mrca_and_labels()
+        left_leaf = leaf_by_label[left_label]
+        right_leaf = leaf_by_label[right_label]
+        # Patristic distance between sisters = dist(root,left) + dist(root,right) - 2*dist(root,mrca).
+        return (
+            _distance_to_root(left_leaf)
+            + _distance_to_root(right_leaf)
+            - 2.0 * _distance_to_root(sister_mrca)
+        )
+
+    if strategy == "INT":
+        sister_mrca, _, _ = _sister_mrca_and_labels()
+        return _distance_to_root(sister_mrca)
 
     total_distance = 0.0
     for leaf in leaves:
@@ -454,6 +507,173 @@ def _classify_introgression(dct_significant, ks_significant, summary_con, summar
     return "unresolved"
 
 
+_BOOTSTRAP_CLASSES = [
+    "ghost_introgression",
+    "inflow_introgression",
+    "outflow_introgression",
+    "no_introgression",
+    "unresolved",
+]
+
+
+def _build_triplet_rng(seed, triplet):
+    """Build a deterministic per-triplet RNG when a base seed is provided."""
+    if seed is None:
+        return random.Random()
+
+    triplet_key = "|".join(triplet)
+    # Keep this simple: one stable string seed per (global seed, triplet).
+    return random.Random(f"{seed}|{triplet_key}")
+
+
+def _bootstrap_iteration_classification(iteration_result):
+    """Apply unresolved fallback rule for bootstrap iterations."""
+    if (
+        iteration_result.analyzed_trees == 0
+        or iteration_result.summary_con is None
+        or iteration_result.summary_dis is None
+        or iteration_result.ks_statistic is None
+        or iteration_result.ks_p_value is None
+    ):
+        return "unresolved"
+    return iteration_result.classification
+
+
+def _numeric_summary(values):
+    """Build compact summary statistics for an iterable with possible null values."""
+    cleaned = [float(value) for value in values if value is not None]
+    if not cleaned:
+        return {
+            "count": len(values),
+            "non_null_count": 0,
+            "mean": None,
+            "median": None,
+            "min": None,
+            "max": None,
+        }
+
+    return {
+        "count": len(values),
+        "non_null_count": len(cleaned),
+        "mean": _mean(cleaned),
+        "median": _median(cleaned),
+        "min": min(cleaned),
+        "max": max(cleaned),
+    }
+
+
+def _finalize_bootstrap_metric(values, summary_only):
+    if summary_only:
+        return _numeric_summary(values)
+    return values
+
+
+def _run_bootstrap_iterations(
+    species_triplet,
+    observations,
+    iterations,
+    alpha_dct,
+    alpha_ks,
+    discordant_test,
+    summary_statistic,
+    stats_backend,
+    species_topology,
+    species_tree_newick,
+    debug_mode,
+    summary_only,
+    rng,
+):
+    """Run bootstrap iterations and return aggregate bootstrap outputs."""
+    valid_count = len(observations)
+    class_counts = {label: 0 for label in _BOOTSTRAP_CLASSES}
+
+    dct_stats = [] if debug_mode else None
+    dct_p_values = [] if debug_mode else None
+    ks_stats = [] if debug_mode else None
+    ks_p_values = [] if debug_mode else None
+    con_summaries = [] if debug_mode else None
+    dis_summaries = [] if debug_mode else None
+
+    for _ in range(iterations):
+        if valid_count == 0:
+            sampled_observations = []
+        else:
+            sampled_observations = [observations[rng.randrange(valid_count)] for _ in range(valid_count)]
+
+        iter_result = _run_triplet_pipeline_from_observations(
+            species_triplet,
+            sampled_observations,
+            alpha_dct=alpha_dct,
+            alpha_ks=alpha_ks,
+            discordant_test=discordant_test,
+            summary_statistic=summary_statistic,
+            stats_backend=stats_backend,
+            species_topology=species_topology,
+            species_tree_newick=species_tree_newick,
+        )
+
+        iter_classification = _bootstrap_iteration_classification(iter_result)
+        if iter_classification not in class_counts:
+            class_counts[iter_classification] = 0
+        class_counts[iter_classification] += 1
+
+        if debug_mode:
+            dct_stats.append(iter_result.dct_statistic)
+            dct_p_values.append(iter_result.dct_p_value)
+            ks_stats.append(iter_result.ks_statistic)
+            ks_p_values.append(iter_result.ks_p_value)
+            con_summaries.append(iter_result.summary_con)
+            dis_summaries.append(iter_result.summary_dis)
+
+    if iterations <= 0:
+        fractions = {label: 0.0 for label in sorted(class_counts)}
+        return {
+            "bootstrap_value": 0.0,
+            "all_bootstrap": fractions,
+            "bootstrap_dct_stats": _finalize_bootstrap_metric(dct_stats, summary_only) if debug_mode else None,
+            "bootstrap_dct_p_value": _finalize_bootstrap_metric(dct_p_values, summary_only) if debug_mode else None,
+            "bootstrap_ks_stats": _finalize_bootstrap_metric(ks_stats, summary_only) if debug_mode else None,
+            "bootstrap_ks_p_value": _finalize_bootstrap_metric(ks_p_values, summary_only) if debug_mode else None,
+            "bootstrap_con_summary": _finalize_bootstrap_metric(con_summaries, summary_only) if debug_mode else None,
+            "bootstrap_dis_summary": _finalize_bootstrap_metric(dis_summaries, summary_only) if debug_mode else None,
+        }
+
+    fractions = {
+        label: class_counts.get(label, 0) / float(iterations)
+        for label in sorted(class_counts)
+    }
+    top_fraction = max(fractions.values()) if fractions else 0.0
+
+    return {
+        "bootstrap_value": top_fraction,
+        "all_bootstrap": fractions,
+        "bootstrap_dct_stats": _finalize_bootstrap_metric(dct_stats, summary_only) if debug_mode else None,
+        "bootstrap_dct_p_value": _finalize_bootstrap_metric(dct_p_values, summary_only) if debug_mode else None,
+        "bootstrap_ks_stats": _finalize_bootstrap_metric(ks_stats, summary_only) if debug_mode else None,
+        "bootstrap_ks_p_value": _finalize_bootstrap_metric(ks_p_values, summary_only) if debug_mode else None,
+        "bootstrap_con_summary": _finalize_bootstrap_metric(con_summaries, summary_only) if debug_mode else None,
+        "bootstrap_dis_summary": _finalize_bootstrap_metric(dis_summaries, summary_only) if debug_mode else None,
+    }
+
+
+def _serialize_bootstrap_value(value):
+    """Serialize bootstrap structures for TSV output.
+
+    Uses JSON strings by default and falls back to key:value compact strings.
+    """
+    if value is None:
+        return ""
+
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        if isinstance(value, dict):
+            return ",".join(f"{key}:{value[key]}" for key in sorted(value))
+        if isinstance(value, list):
+            return ",".join("" if item is None else str(item) for item in value)
+        return str(value)
+
+
 def _bonferroni_adjust_p_values_custom(p_values):
     """Apply Bonferroni correction to a p-value list."""
     m = len(p_values)
@@ -665,6 +885,9 @@ def _apply_triplet_result_p_value_correction(
             result.summary_con,
             result.summary_dis,
         )
+        bootstrap_value = result.bootstrap_value
+        if result.all_bootstrap is not None:
+            bootstrap_value = float(result.all_bootstrap.get(classification, 0.0))
 
         adjusted_results.append(
             replace(
@@ -674,6 +897,7 @@ def _apply_triplet_result_p_value_correction(
                 ks_p_value_corrected=ks_p_value_corrected,
                 ks_significant=ks_significant,
                 classification=classification,
+                bootstrap_value=bootstrap_value,
             )
         )
 
@@ -719,7 +943,7 @@ def _canonicalize_triplet_labels(species_triplet, species_topology, topology_cou
     discordant counts tie, keep the base ordering.
 
     Returns:
-        Tuple ``(canonical_triplet, canonical_counts, canonical_to_original_topology)``
+        Tuple ``(canonical_triplet, canonical_counts, canonical_to_original_topology, reported_dis1_topology)``
         where ``canonical_to_original_topology`` maps canonical topology keys
         (AB/BC/AC) to the source topology keys in the original observation space.
     """
@@ -749,6 +973,7 @@ def _canonicalize_triplet_labels(species_triplet, species_topology, topology_cou
         topology: int(topology_counts.get(canonical_to_original_topology[topology], 0))
         for topology in ALL_TOPOLOGIES
     }
+    reported_dis1_topology = TOPOLOGY_BC if canonical_counts[TOPOLOGY_BC] >= canonical_counts[TOPOLOGY_AC] else TOPOLOGY_AC
 
     # Swapping A and B preserves concordant AB|C but swaps BC|A and AC|B.
     if canonical_counts[TOPOLOGY_AC] > canonical_counts[TOPOLOGY_BC]:
@@ -762,7 +987,7 @@ def _canonicalize_triplet_labels(species_triplet, species_topology, topology_cou
             canonical_to_original_topology[TOPOLOGY_BC],
         )
 
-    return canonical_triplet, canonical_counts, canonical_to_original_topology
+    return canonical_triplet, canonical_counts, canonical_to_original_topology, reported_dis1_topology
 
 
 def _species_topology_from_newick(species_tree_newick, abc_triplet):
@@ -772,6 +997,15 @@ def _species_topology_from_newick(species_tree_newick, abc_triplet):
 
     tree = dendropy.Tree.get(data=species_tree_newick, schema="newick", preserve_underscores=True)
     return classify_triplet_topology_string(tree, abc_triplet)
+
+
+def _species_tree_topology_only_newick(species_tree_newick):
+    """Return species tree Newick with topology only (no branch lengths)."""
+    if not species_tree_newick:
+        return species_tree_newick
+
+    tree = dendropy.Tree.get(data=species_tree_newick, schema="newick", preserve_underscores=True)
+    return tree.as_string(schema="newick", suppress_edge_lengths=True).strip()
 
 
 def _serialize_triplet_gene_trees(
@@ -827,7 +1061,7 @@ def _run_triplet_pipeline_from_observations(
     topology_counts = {topology: len(heights[topology]) for topology in ALL_TOPOLOGIES}
     analyzed_trees = sum(topology_counts.values())
 
-    canonical_triplet, canonical_counts, canonical_to_original_topology = _canonicalize_triplet_labels(
+    canonical_triplet, canonical_counts, canonical_to_original_topology, reported_dis1_topology = _canonicalize_triplet_labels(
         species_triplet,
         species_topology,
         topology_counts,
@@ -891,6 +1125,7 @@ def _run_triplet_pipeline_from_observations(
         n_con=n_con,
         n_dis1=n_dis1,
         n_dis2=n_dis2,
+        dis1_topology="BC" if reported_dis1_topology == TOPOLOGY_BC else "AC",
         dct_statistic=dct_statistic,
         dct_p_value=dct_p_value,
         dct_p_value_corrected=dct_p_value,
@@ -917,6 +1152,8 @@ def run_triplet_pipeline(
     tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     species_topology=TOPOLOGY_AB,
     species_tree_newick=None,
+    bootstrap=DEFAULT_BOOTSTRAP,
+    bootstrap_options=None,
     rng=None,
 ):
     """Run GhostParser pipeline for one rooted species triplet.
@@ -943,7 +1180,7 @@ def run_triplet_pipeline(
         triplet_gene_trees,
         tree_height_calculation_strategy=tree_height_calculation_strategy,
     )
-    return _run_triplet_pipeline_from_observations(
+    base_result = _run_triplet_pipeline_from_observations(
         species_triplet,
         observations,
         alpha_dct=alpha_dct,
@@ -954,6 +1191,49 @@ def run_triplet_pipeline(
         species_topology=species_topology,
         species_tree_newick=species_tree_newick,
         rng=rng,
+    )
+
+    if not bootstrap:
+        return base_result
+
+    options = bootstrap_options or {}
+    iterations = int(options.get("iterations", DEFAULT_BOOTSTRAP_ITERATIONS))
+    debug_mode = bool(options.get("debug_mode", DEFAULT_BOOTSTRAP_DEBUG_MODE))
+    summary_only = bool(options.get("summary_only", DEFAULT_BOOTSTRAP_SUMMARY_ONLY)) if debug_mode else False
+    bootstrap_rng = rng if rng is not None else random.Random()
+
+    bootstrap_payload = _run_bootstrap_iterations(
+        species_triplet,
+        observations,
+        iterations=iterations,
+        alpha_dct=alpha_dct,
+        alpha_ks=alpha_ks,
+        discordant_test=discordant_test,
+        summary_statistic=summary_statistic,
+        stats_backend=stats_backend,
+        species_topology=species_topology,
+        species_tree_newick=None,
+        debug_mode=debug_mode,
+        summary_only=summary_only,
+        rng=bootstrap_rng,
+    )
+
+    bootstrap_gene_tree_heights = None
+    if debug_mode:
+        raw_heights = [tree_height for _, tree_height in observations]
+        bootstrap_gene_tree_heights = _finalize_bootstrap_metric(raw_heights, summary_only)
+
+    return replace(
+        base_result,
+        bootstrap_value=bootstrap_payload["bootstrap_value"],
+        all_bootstrap=bootstrap_payload["all_bootstrap"],
+        bootstrap_dct_stats=bootstrap_payload["bootstrap_dct_stats"],
+        bootstrap_dct_p_value=bootstrap_payload["bootstrap_dct_p_value"],
+        bootstrap_ks_stats=bootstrap_payload["bootstrap_ks_stats"],
+        bootstrap_ks_p_value=bootstrap_payload["bootstrap_ks_p_value"],
+        bootstrap_con_summary=bootstrap_payload["bootstrap_con_summary"],
+        bootstrap_dis_summary=bootstrap_payload["bootstrap_dis_summary"],
+        bootstrap_gene_tree_heights=bootstrap_gene_tree_heights,
     )
 
 
@@ -1046,14 +1326,18 @@ def _analyze_triplet_entry(args):
         summary_statistic,
         stats_backend,
         tree_height_calculation_strategy,
+        bootstrap,
+        bootstrap_options,
+        triplet_seed,
     ) = args
+    species_tree_topology = _species_tree_topology_only_newick(entry.get("species_tree"))
     species_topology = _species_topology_from_newick(entry.get("species_tree"), triplet)
     observations = _serialize_triplet_gene_trees(
         triplet,
         entry["gene_trees"],
         tree_height_calculation_strategy=tree_height_calculation_strategy,
     )
-    return _run_triplet_pipeline_from_observations(
+    base_result = _run_triplet_pipeline_from_observations(
         triplet,
         observations,
         alpha_dct=alpha_dct,
@@ -1062,7 +1346,50 @@ def _analyze_triplet_entry(args):
         summary_statistic=summary_statistic,
         stats_backend=stats_backend,
         species_topology=species_topology,
-        species_tree_newick=entry.get("species_tree"),
+        species_tree_newick=species_tree_topology,
+    )
+
+    if not bootstrap:
+        return base_result
+
+    options = dict(bootstrap_options or {})
+    iterations = int(options.get("iterations", DEFAULT_BOOTSTRAP_ITERATIONS))
+    debug_mode = bool(options.get("debug_mode", DEFAULT_BOOTSTRAP_DEBUG_MODE))
+    summary_only = bool(options.get("summary_only", DEFAULT_BOOTSTRAP_SUMMARY_ONLY)) if debug_mode else False
+    rng = _build_triplet_rng(triplet_seed, triplet)
+
+    bootstrap_payload = _run_bootstrap_iterations(
+        triplet,
+        observations,
+        iterations=iterations,
+        alpha_dct=alpha_dct,
+        alpha_ks=alpha_ks,
+        discordant_test=discordant_test,
+        summary_statistic=summary_statistic,
+        stats_backend=stats_backend,
+        species_topology=species_topology,
+        species_tree_newick=None,
+        debug_mode=debug_mode,
+        summary_only=summary_only,
+        rng=rng,
+    )
+
+    bootstrap_gene_tree_heights = None
+    if debug_mode:
+        raw_heights = [tree_height for _, tree_height in observations]
+        bootstrap_gene_tree_heights = _finalize_bootstrap_metric(raw_heights, summary_only)
+
+    return replace(
+        base_result,
+        bootstrap_value=bootstrap_payload["bootstrap_value"],
+        all_bootstrap=bootstrap_payload["all_bootstrap"],
+        bootstrap_dct_stats=bootstrap_payload["bootstrap_dct_stats"],
+        bootstrap_dct_p_value=bootstrap_payload["bootstrap_dct_p_value"],
+        bootstrap_ks_stats=bootstrap_payload["bootstrap_ks_stats"],
+        bootstrap_ks_p_value=bootstrap_payload["bootstrap_ks_p_value"],
+        bootstrap_con_summary=bootstrap_payload["bootstrap_con_summary"],
+        bootstrap_dis_summary=bootstrap_payload["bootstrap_dis_summary"],
+        bootstrap_gene_tree_heights=bootstrap_gene_tree_heights,
     )
 
 
@@ -1075,6 +1402,8 @@ def analyze_triplet_gene_tree_file(
     stats_backend=DEFAULT_STATS_BACKEND,
     tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     p_value_correction=DEFAULT_P_VALUE_CORRECTION,
+    bootstrap=DEFAULT_BOOTSTRAP,
+    bootstrap_options=None,
     rng=None,
     use_multiprocessing=True,
     processes=None,
@@ -1110,6 +1439,16 @@ def analyze_triplet_gene_tree_file(
             f"Choose one of: {', '.join(P_VALUE_CORRECTION_CHOICES)}"
         )
 
+    options = dict(bootstrap_options or {})
+    if "iterations" not in options:
+        options["iterations"] = DEFAULT_BOOTSTRAP_ITERATIONS
+    if "summary_only" not in options:
+        options["summary_only"] = DEFAULT_BOOTSTRAP_SUMMARY_ONLY
+    if "debug_mode" not in options:
+        options["debug_mode"] = DEFAULT_BOOTSTRAP_DEBUG_MODE
+    if "seed" not in options:
+        options["seed"] = None
+
     triplet_map = parse_triplet_gene_trees_file(filepath)
     items = list(triplet_map.items())
     if not items:
@@ -1130,6 +1469,9 @@ def analyze_triplet_gene_tree_file(
                 summary_statistic,
                 stats_backend,
                 tree_height_calculation_strategy,
+                bootstrap,
+                options,
+                options.get("seed"),
             )
             for triplet, entry in items
         ]
@@ -1147,7 +1489,11 @@ def analyze_triplet_gene_tree_file(
 
     results = []
     for triplet, entry in items:
+        species_tree_topology = _species_tree_topology_only_newick(entry.get("species_tree"))
         species_topology = _species_topology_from_newick(entry.get("species_tree"), triplet)
+        triplet_rng = None
+        if bootstrap:
+            triplet_rng = _build_triplet_rng(options.get("seed"), triplet)
         results.append(
             run_triplet_pipeline(
                 triplet,
@@ -1159,8 +1505,10 @@ def analyze_triplet_gene_tree_file(
                 stats_backend=stats_backend,
                 tree_height_calculation_strategy=tree_height_calculation_strategy,
                 species_topology=species_topology,
-                species_tree_newick=entry.get("species_tree"),
-                rng=rng,
+                species_tree_newick=species_tree_topology,
+                bootstrap=bootstrap,
+                bootstrap_options=options,
+                rng=triplet_rng if triplet_rng is not None else rng,
             )
         )
     return _apply_triplet_result_p_value_correction(
@@ -1190,6 +1538,8 @@ def write_pipeline_results(
     dct_method=DEFAULT_DISCORDANT_TEST,
     summary_statistic=DEFAULT_SUMMARY_STATISTIC,
     p_value_correction=DEFAULT_P_VALUE_CORRECTION,
+    bootstrap=DEFAULT_BOOTSTRAP,
+    bootstrap_debug_mode=DEFAULT_BOOTSTRAP_DEBUG_MODE,
 ):
     """Write pipeline results to TSV file."""
     if dct_method not in DISCORDANT_TEST_CHOICES:
@@ -1217,6 +1567,8 @@ def write_pipeline_results(
 
     summary_con_column = f"{summary_statistic}_con"
     summary_dis_column = f"{summary_statistic}_dis"
+    bootstrap_con_column = f"bootstrap_con_{summary_statistic}"
+    bootstrap_dis_column = f"bootstrap_dis_{summary_statistic}"
     dct_corrected_column = f"dct_p_val_{p_value_correction}_corr"
     ks_corrected_column = f"ks_p_val_{p_value_correction}_corr"
 
@@ -1227,6 +1579,7 @@ def write_pipeline_results(
         "n_con",
         "n_dis1",
         "n_dis2",
+        "dis1_topology",
         "most_frequent_matches_concordant",
         dct_column,
         "dct_p_value",
@@ -1242,6 +1595,26 @@ def write_pipeline_results(
         "analyzed_trees",
     ]
 
+    if bootstrap:
+        header.extend(
+            [
+                "bootstrap_value",
+                "all_bootstrap",
+            ]
+        )
+        if bootstrap_debug_mode:
+            header.extend(
+                [
+                    "bootstrap_dct_stats",
+                    "bootstrap_dct_p_value",
+                    "bootstrap_ks_stats",
+                    "bootstrap_ks_p_value",
+                    bootstrap_con_column,
+                    bootstrap_dis_column,
+                    "bootstrap_gene_tree_heights",
+                ]
+            )
+
     with open(output_filepath, "w") as out_f:
         out_f.write("\t".join(header) + "\n")
         for result in results:
@@ -1254,6 +1627,7 @@ def write_pipeline_results(
                 str(result.n_con),
                 str(result.n_dis1),
                 str(result.n_dis2),
+                "" if result.dis1_topology is None else result.dis1_topology,
                 str(result.most_frequent_matches_concordant),
                 f"{result.dct_statistic:.12g}",
                 f"{result.dct_p_value:.12g}",
@@ -1268,6 +1642,26 @@ def write_pipeline_results(
                 result.classification,
                 str(result.analyzed_trees),
             ]
+
+            if bootstrap:
+                row.extend(
+                    [
+                        "" if result.bootstrap_value is None else f"{result.bootstrap_value:.12g}",
+                        _serialize_bootstrap_value(result.all_bootstrap),
+                    ]
+                )
+                if bootstrap_debug_mode:
+                    row.extend(
+                        [
+                            _serialize_bootstrap_value(result.bootstrap_dct_stats),
+                            _serialize_bootstrap_value(result.bootstrap_dct_p_value),
+                            _serialize_bootstrap_value(result.bootstrap_ks_stats),
+                            _serialize_bootstrap_value(result.bootstrap_ks_p_value),
+                            _serialize_bootstrap_value(result.bootstrap_con_summary),
+                            _serialize_bootstrap_value(result.bootstrap_dis_summary),
+                            _serialize_bootstrap_value(result.bootstrap_gene_tree_heights),
+                        ]
+                    )
 
             out_f.write("\t".join(row) + "\n")
 
@@ -1295,6 +1689,8 @@ def main():
         stats_backend=args.stats_backend,
         tree_height_calculation_strategy=args.tree_height_calculation_strategy,
         p_value_correction=args.p_value_correction,
+        bootstrap=args.bootstrap,
+        bootstrap_options=args.bootstrap_options,
         use_multiprocessing=not args.no_multiprocessing,
         processes=args.processes,
     )
@@ -1304,6 +1700,8 @@ def main():
         dct_method=args.discordant_test,
         summary_statistic=args.summary_statistic,
         p_value_correction=args.p_value_correction,
+        bootstrap=args.bootstrap,
+        bootstrap_debug_mode=args.bootstrap_options["debug_mode"],
     )
 
     stats_output = Path(args.stats_output) if args.stats_output else output_path.with_suffix(".json")
@@ -1352,7 +1750,8 @@ def _build_argument_parser():
         default=None,
         help=(
             "Tree-height strategy: AVG uses mean root-to-tip distance, "
-            "A/B/C use the selected taxon's root-to-tip distance "
+            "A/B/C use the selected taxon's root-to-tip distance, "
+            "SIS uses sister-taxon distance, and INT uses internal branch length "
             f"(default: {DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY})"
         ),
     )
@@ -1361,6 +1760,37 @@ def _build_argument_parser():
         choices=P_VALUE_CORRECTION_CHOICES,
         default=None,
         help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
+    )
+    parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Enable bootstrap sampling-with-replacement during triplet analysis",
+    )
+    parser.add_argument(
+        "--bootstrap-iterations",
+        type=int,
+        default=None,
+        help="Number of bootstrap iterations per triplet (default: 100)",
+    )
+    parser.add_argument(
+        "--bootstrap-seed",
+        type=int,
+        default=None,
+        help="Optional bootstrap random seed for reproducibility",
+    )
+    parser.add_argument(
+        "--bootstrap-debug-mode",
+        dest="bootstrap_debug_mode",
+        action="store_true",
+        default=None,
+        help="Enable bootstrap debug output columns",
+    )
+    parser.add_argument(
+        "--bootstrap-summary-only",
+        dest="bootstrap_summary_only",
+        action="store_true",
+        default=None,
+        help="When bootstrap debug mode is enabled, emit compact summaries instead of full per-iteration lists",
     )
     parser.add_argument("--processes", type=int, default=None, help="Number of worker processes for triplet analysis (0 = all cores)")
     parser.add_argument(
@@ -1382,6 +1812,11 @@ TRIPLET_PROCESSOR_PAYLOAD_ARG_NAMES = [
     "stats_backend",
     "tree_height_calculation_strategy",
     "p_value_correction",
+    "bootstrap",
+    "bootstrap_iterations",
+    "bootstrap_seed",
+    "bootstrap_debug_mode",
+    "bootstrap_summary_only",
     "processes",
     "no_multiprocessing",
 ]

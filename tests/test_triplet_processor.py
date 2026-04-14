@@ -44,13 +44,23 @@ def test_compute_tree_height_statistic_matches_definition():
     assert observed == pytest.approx(expected)
 
 
-def test_compute_tree_height_statistic_supports_taxon_specific_strategies():
-    tree = _tree("((A:2,B:3):4,C:1);")
-    species_triplet = ("A", "B", "C")
-
-    assert compute_tree_height_statistic(tree, strategy="A", species_triplet=species_triplet) == pytest.approx(6.0)
-    assert compute_tree_height_statistic(tree, strategy="B", species_triplet=species_triplet) == pytest.approx(7.0)
-    assert compute_tree_height_statistic(tree, strategy="C", species_triplet=species_triplet) == pytest.approx(1.0)
+@pytest.mark.parametrize(
+    "newick,strategy,species_triplet,expected",
+    [
+        ("((A:2,B:3):4,C:1);", "A", ("A", "B", "C"), 6.0),
+        ("((A:2,B:3):4,C:1);", "B", ("A", "B", "C"), 7.0),
+        ("((A:2,B:3):4,C:1);", "C", ("A", "B", "C"), 1.0),
+        ("((A:2,B:3):4,C:1);", "SIS", None, 5.0),
+        ("((B:2,C:3):4,A:1);", "SIS", None, 5.0),
+        ("((A:2,C:3):4,B:1);", "SIS", None, 5.0),
+        ("((A:2,B:3):4,C:1);", "INT", None, 4.0),
+        ("((B:2,C:3):4,A:1);", "INT", None, 4.0),
+        ("((A:2,C:3):4,B:1);", "INT", None, 4.0),
+    ],
+)
+def test_compute_tree_height_statistic_supports_extended_strategies(newick, strategy, species_triplet, expected):
+    tree = _tree(newick)
+    assert compute_tree_height_statistic(tree, strategy=strategy, species_triplet=species_triplet) == pytest.approx(expected)
 
 
 def test_compute_tree_height_statistic_rejects_unknown_strategy():
@@ -495,6 +505,76 @@ def test_run_triplet_pipeline_supports_taxon_specific_tree_height_strategy():
     assert result_avg.summary_con != result_a.summary_con
 
 
+def test_run_triplet_pipeline_bootstrap_unresolved_when_metrics_missing():
+    species_triplet = ("A", "B", "C")
+    trees = ["((A:1,B:1):1,C:1);"] * 6
+
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        bootstrap=True,
+        bootstrap_options={"iterations": 5, "seed": 123, "debug_mode": False, "summary_only": True},
+    )
+
+    assert result.classification == "no_introgression"
+    assert result.bootstrap_value == pytest.approx(1.0)
+    assert result.all_bootstrap["unresolved"] == pytest.approx(1.0)
+
+
+def test_run_bootstrap_iterations_joins_tied_classes(monkeypatch):
+    sequence = [
+        "ghost_introgression",
+        "inflow_introgression",
+        "ghost_introgression",
+        "inflow_introgression",
+    ]
+
+    def _fake_pipeline(*_args, **_kwargs):
+        cls = sequence.pop(0)
+        return triplet_processor_module.TripletPipelineResult(
+            triplet=("A", "B", "C"),
+            species_tree=None,
+            most_frequent_matches_concordant=True,
+            n_con=2,
+            n_dis1=1,
+            n_dis2=1,
+            dis1_topology="BC",
+            dct_statistic=1.0,
+            dct_p_value=0.01,
+            dct_p_value_corrected=0.01,
+            dct_significant=True,
+            ks_p_value=0.01,
+            ks_p_value_corrected=0.01,
+            ks_statistic=0.2,
+            ks_significant=True,
+            summary_con=1.0,
+            summary_dis=0.5,
+            classification=cls,
+            analyzed_trees=4,
+        )
+
+    monkeypatch.setattr(triplet_processor_module, "_run_triplet_pipeline_from_observations", _fake_pipeline)
+
+    payload = triplet_processor_module._run_bootstrap_iterations(
+        species_triplet=("A", "B", "C"),
+        observations=[(TOPOLOGY_AB, 1.0)],
+        iterations=4,
+        alpha_dct=0.01,
+        alpha_ks=0.05,
+        discordant_test="chi-square",
+        summary_statistic="median",
+        stats_backend="custom",
+        species_topology=TOPOLOGY_AB,
+        species_tree_newick=None,
+        debug_mode=False,
+        summary_only=True,
+        rng=random.Random(1),
+    )
+
+    assert payload["bootstrap_value"] == pytest.approx(0.5)
+
+
 def test_analyze_triplet_gene_tree_file_rejects_unknown_stats_backend(tmp_path):
     content = """A,B,C\t3\t((A:1,B:1):1,C:1);
 
@@ -679,7 +759,7 @@ def test_parse_triplet_gene_trees_file_rejects_empty_species_tree(tmp_path):
         parse_triplet_gene_trees_file(str(input_file))
 
 
-def test_write_pipeline_results_omits_removed_topology_columns(tmp_path):
+def test_write_pipeline_results_includes_dis1_topology_and_omits_removed_topology_columns(tmp_path):
     species_triplet = ("A", "B", "C")
     trees = (["((B:1,C:1):1,A:1);"] * 10) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 2)
     result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(6))
@@ -688,7 +768,7 @@ def test_write_pipeline_results_omits_removed_topology_columns(tmp_path):
     write_pipeline_results([result], str(output_file), dct_method="chi-square")
 
     out = output_file.read_text()
-    assert "dis1_topology" not in out
+    assert "dis1_topology" in out
     assert "dis2_topology" not in out
     assert "highest_freq_topologies" not in out
     assert "n_dis1" in out
@@ -715,6 +795,74 @@ def test_write_pipeline_results_uses_dynamic_summary_column_names(tmp_path):
     assert "summary_statistic" not in header
     assert "summary_con" not in header
     assert "summary_dis" not in header
+
+
+def test_write_pipeline_results_adds_bootstrap_columns_when_enabled(tmp_path):
+    species_triplet = ("A", "B", "C")
+    trees = ([("((A:1.0,B:1.0):2.0,C:3.0);")] * 40) + ([("((B:0.2,C:0.2):0.3,A:0.5);")] * 30) + ([("((A:0.2,C:0.2):0.3,B:0.5);")] * 5)
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        summary_statistic="median",
+        bootstrap=True,
+        bootstrap_options={"iterations": 4, "seed": 7, "debug_mode": True, "summary_only": True},
+    )
+
+    output_file = tmp_path / "results_bootstrap.tsv"
+    write_pipeline_results(
+        [result],
+        str(output_file),
+        dct_method="chi-square",
+        summary_statistic="median",
+        bootstrap=True,
+        bootstrap_debug_mode=True,
+    )
+
+    lines = output_file.read_text().splitlines()
+    header = lines[0].split("\t")
+    row = lines[1].split("\t")
+
+    assert "bootstrap_value" in header
+    assert "all_bootstrap" in header
+    assert "bootstrap_con_median" in header
+    assert "bootstrap_dis_median" in header
+    assert "bootstrap_gene_tree_heights" in header
+    all_bootstrap_idx = header.index("all_bootstrap")
+    heights_idx = header.index("bootstrap_gene_tree_heights")
+    assert row[all_bootstrap_idx].startswith("{")
+    assert row[heights_idx].startswith("{")
+
+
+def test_write_pipeline_results_adds_bootstrap_gene_tree_heights_when_summary_only_false(tmp_path):
+    species_triplet = ("A", "B", "C")
+    trees = (["((A:1.0,B:1.0):2.0,C:3.0);"] * 6) + (["((B:0.2,C:0.2):0.3,A:0.5);"] * 4)
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        summary_statistic="median",
+        bootstrap=True,
+        bootstrap_options={"iterations": 4, "seed": 7, "debug_mode": True, "summary_only": False},
+    )
+
+    output_file = tmp_path / "results_bootstrap_full.tsv"
+    write_pipeline_results(
+        [result],
+        str(output_file),
+        dct_method="chi-square",
+        summary_statistic="median",
+        bootstrap=True,
+        bootstrap_debug_mode=True,
+    )
+
+    lines = output_file.read_text().splitlines()
+    header = lines[0].split("\t")
+    row = lines[1].split("\t")
+
+    assert "bootstrap_gene_tree_heights" in header
+    heights_idx = header.index("bootstrap_gene_tree_heights")
+    assert row[heights_idx].startswith("[")
 
 
 def test_collect_triplet_statistics_returns_dict_list():
@@ -925,24 +1073,72 @@ def test_write_pipeline_results_rejects_unsupported_summary_statistic(tmp_path):
         write_pipeline_results([result], str(output_file), dct_method="chi-square", summary_statistic="bad-summary")
 
 
-def test_resolve_runtime_args_triplet_processor_cli_defaults():
-    args = argparse.Namespace(
-        config_file=None,
-        input_path="unique_triplets_gene_trees.txt",
-        output_path=None,
-        stats_output=None,
-        alpha_dct=None,
-        alpha_ks=None,
-        discordant_test=None,
-        summary_statistic=None,
-        stats_backend=None,
-        tree_height_calculation_strategy=None,
-        p_value_correction=None,
-        processes=None,
-        no_multiprocessing=False,
-    )
+def _triplet_processor_args(**overrides):
+    base = {
+        "config_file": None,
+        "input_path": "unique_triplets_gene_trees.txt",
+        "output_path": None,
+        "stats_output": None,
+        "alpha_dct": None,
+        "alpha_ks": None,
+        "discordant_test": None,
+        "summary_statistic": None,
+        "stats_backend": None,
+        "tree_height_calculation_strategy": None,
+        "p_value_correction": None,
+        "bootstrap": False,
+        "bootstrap_iterations": None,
+        "bootstrap_seed": None,
+        "bootstrap_debug_mode": None,
+        "bootstrap_summary_only": None,
+        "processes": None,
+        "no_multiprocessing": False,
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
 
-    resolved = _resolve_runtime_args(args)
+
+@pytest.mark.parametrize(
+    "cli_overrides,expected_processes,expected_bootstrap,expected_bootstrap_options",
+    [
+        (
+            {},
+            0,
+            False,
+            {
+                "iterations": 100,
+                "seed": None,
+                "debug_mode": False,
+                "summary_only": False,
+            },
+        ),
+        (
+            {
+                "bootstrap": True,
+                "bootstrap_iterations": 22,
+                "bootstrap_seed": 555,
+                "bootstrap_debug_mode": True,
+                "bootstrap_summary_only": False,
+                "processes": 8,
+            },
+            8,
+            True,
+            {
+                "iterations": 22,
+                "seed": 555,
+                "debug_mode": True,
+                "summary_only": False,
+            },
+        ),
+    ],
+)
+def test_resolve_runtime_args_triplet_processor_cli_defaults_and_overrides(
+    cli_overrides,
+    expected_processes,
+    expected_bootstrap,
+    expected_bootstrap_options,
+):
+    resolved = _resolve_runtime_args(_triplet_processor_args(**cli_overrides))
     # Paths are resolved to absolute paths
     assert resolved.input == str(Path("unique_triplets_gene_trees.txt").resolve())
     assert resolved.alpha_dct == 0.01
@@ -952,27 +1148,9 @@ def test_resolve_runtime_args_triplet_processor_cli_defaults():
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.p_value_correction == "no"
-
-
-def test_resolve_runtime_args_triplet_processor_cli_custom_processes_preserved():
-    args = argparse.Namespace(
-        config_file=None,
-        input_path="unique_triplets_gene_trees.txt",
-        output_path=None,
-        stats_output=None,
-        alpha_dct=None,
-        alpha_ks=None,
-        discordant_test=None,
-        summary_statistic=None,
-        stats_backend=None,
-        tree_height_calculation_strategy=None,
-        p_value_correction=None,
-        processes=8,
-        no_multiprocessing=False,
-    )
-
-    resolved = _resolve_runtime_args(args)
-    assert resolved.processes == 8
+    assert resolved.processes == expected_processes
+    assert resolved.bootstrap is expected_bootstrap
+    assert resolved.bootstrap_options == expected_bootstrap_options
 
 
 def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_path, capsys):
@@ -1003,6 +1181,11 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
         stats_backend="custom",
         tree_height_calculation_strategy="A",
         p_value_correction="no",
+        bootstrap=True,
+        bootstrap_iterations=20,
+        bootstrap_seed=9,
+        bootstrap_debug_mode=True,
+        bootstrap_summary_only=False,
         processes=None,
         no_multiprocessing=False,
     )
@@ -1019,66 +1202,54 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "B"
     assert resolved.p_value_correction == "bfn"
+    assert resolved.bootstrap is False
+    assert resolved.bootstrap_options == {
+        "iterations": 100,
+        "seed": None,
+        "debug_mode": False,
+        "summary_only": False,
+    }
 
 
-def test_resolve_runtime_args_triplet_processor_config_processes_preserved_when_set(tmp_path):
-    config_path = tmp_path / "triplet_processor_with_processes.json"
-    config_path.write_text(
-        """
+@pytest.mark.parametrize(
+    "config_body,expected_processes",
+    [
+        (
+            """
 {
-  "input_path": "input.tsv",
-  "processes": 3
+    "input_path": "input.tsv",
+    "processes": 3
 }
-""".strip()
-    )
-
-    args = argparse.Namespace(
-        config_file=str(config_path),
-        input_path=None,
-        output_path=None,
-        stats_output=None,
-        alpha_dct=None,
-        alpha_ks=None,
-        discordant_test="chi-square",
-        summary_statistic="mean",
-        stats_backend="custom",
-        tree_height_calculation_strategy="A",
-        p_value_correction="no",
-        processes=None,
-        no_multiprocessing=False,
-    )
-
-    resolved = _resolve_runtime_args(args)
-    assert resolved.processes == 3
-
-
-def test_resolve_runtime_args_triplet_processor_config_defaults_processes_to_zero(tmp_path):
-    config_path = tmp_path / "triplet_processor_default_processes.json"
-    config_path.write_text(
-        """
+""".strip(),
+            3,
+        ),
+        (
+            """
 {
-  "input_path": "input.tsv"
+    "input_path": "input.tsv"
 }
-""".strip()
-    )
+""".strip(),
+            0,
+        ),
+    ],
+)
+def test_resolve_runtime_args_triplet_processor_config_processes_behavior(tmp_path, config_body, expected_processes):
+    config_path = tmp_path / "triplet_processor_processes.json"
+    config_path.write_text(config_body)
 
-    args = argparse.Namespace(
-        config_file=str(config_path),
-        input_path=None,
-        output_path=None,
-        stats_output=None,
-        alpha_dct=None,
-        alpha_ks=None,
-        discordant_test="chi-square",
-        summary_statistic="mean",
-        stats_backend="custom",
-        tree_height_calculation_strategy="A",
-        p_value_correction="no",
-        processes=11,
-        no_multiprocessing=False,
+    resolved = _resolve_runtime_args(
+        _triplet_processor_args(
+            config_file=str(config_path),
+            input_path=None,
+            discordant_test="chi-square",
+            summary_statistic="mean",
+            stats_backend="custom",
+            tree_height_calculation_strategy="A",
+            p_value_correction="no",
+            bootstrap=None,
+            processes=11,
+        )
     )
-
-    resolved = _resolve_runtime_args(args)
-    assert resolved.processes == 0
+    assert resolved.processes == expected_processes
     assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.p_value_correction == "no"
