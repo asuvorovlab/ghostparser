@@ -904,6 +904,23 @@ def _apply_triplet_result_p_value_correction(
     return adjusted_results
 
 
+def apply_triplet_result_p_value_correction(
+    results,
+    alpha_dct,
+    alpha_ks,
+    method=DEFAULT_P_VALUE_CORRECTION,
+    stats_backend=DEFAULT_STATS_BACKEND,
+):
+    """Public wrapper for applying global p-value correction to triplet results."""
+    return _apply_triplet_result_p_value_correction(
+        results,
+        alpha_dct=alpha_dct,
+        alpha_ks=alpha_ks,
+        method=method,
+        stats_backend=stats_backend,
+    )
+
+
 _TOPOLOGY_TO_PAIR = {
     TOPOLOGY_AB: frozenset(("A", "B")),
     TOPOLOGY_BC: frozenset(("B", "C")),
@@ -1330,6 +1347,35 @@ def _analyze_triplet_entry(args):
         bootstrap_options,
         triplet_seed,
     ) = args
+    return analyze_triplet_entry(
+        triplet,
+        entry,
+        alpha_dct=alpha_dct,
+        alpha_ks=alpha_ks,
+        discordant_test=discordant_test,
+        summary_statistic=summary_statistic,
+        stats_backend=stats_backend,
+        tree_height_calculation_strategy=tree_height_calculation_strategy,
+        bootstrap=bootstrap,
+        bootstrap_options=bootstrap_options,
+        triplet_seed=triplet_seed,
+    )
+
+
+def analyze_triplet_entry(
+    triplet,
+    entry,
+    alpha_dct=DEFAULT_ALPHA_DCT,
+    alpha_ks=DEFAULT_ALPHA_KS,
+    discordant_test=DEFAULT_DISCORDANT_TEST,
+    summary_statistic=DEFAULT_SUMMARY_STATISTIC,
+    stats_backend=DEFAULT_STATS_BACKEND,
+    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+    bootstrap=DEFAULT_BOOTSTRAP,
+    bootstrap_options=None,
+    triplet_seed=None,
+):
+    """Analyze one triplet entry payload and return a pipeline result."""
     species_tree_topology = _species_tree_topology_only_newick(entry.get("species_tree"))
     species_topology = _species_topology_from_newick(entry.get("species_tree"), triplet)
     observations = _serialize_triplet_gene_trees(
