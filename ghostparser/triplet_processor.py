@@ -61,6 +61,7 @@ from .triplet_utils import (
     TOPOLOGY_AC,
     TOPOLOGY_BC,
     classify_triplet_topology_string,
+    find_sister_pair,
 )
 
 
@@ -157,6 +158,8 @@ def compute_tree_height_statistic(tree, strategy=DEFAULT_TREE_HEIGHT_CALCULATION
     Strategy options:
     - ``AVG``: mean over all three tip distances
     - ``A``/``B``/``C``: distance of the corresponding taxon in ``species_triplet``
+    - ``SIS``: pairwise distance between the rooted sister taxa in the current topology
+    - ``INT``: internal branch from sister-pair MRCA to triplet root
     """
     if strategy not in TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES:
         raise ValueError(
@@ -168,16 +171,41 @@ def compute_tree_height_statistic(tree, strategy=DEFAULT_TREE_HEIGHT_CALCULATION
     if len(leaves) != 3:
         raise ValueError("Triplet tree must contain exactly 3 terminal taxa")
 
+    leaf_by_label = {leaf.taxon.label: leaf for leaf in leaves}
+
+    def _sister_mrca_and_labels():
+        sister_pair = find_sister_pair(tree)
+        left_label, right_label = tuple(sister_pair)
+        sister_mrca = tree.mrca(taxon_labels=[left_label, right_label])
+        if sister_mrca is None:
+            raise ValueError("Could not determine sister-pair MRCA for triplet tree")
+        return sister_mrca, left_label, right_label
+
     if strategy in {"A", "B", "C"}:
         if species_triplet is None:
             raise ValueError("species_triplet is required for tree height strategies A, B, and C")
 
         strategy_index = {"A": 0, "B": 1, "C": 2}[strategy]
         selected_taxon_label = species_triplet[strategy_index]
-        for leaf in leaves:
-            if leaf.taxon.label == selected_taxon_label:
-                return _distance_to_root(leaf)
-        raise ValueError(f"Selected taxon {selected_taxon_label} not found in triplet tree")
+        selected_leaf = leaf_by_label.get(selected_taxon_label)
+        if selected_leaf is None:
+            raise ValueError(f"Selected taxon {selected_taxon_label} not found in triplet tree")
+        return _distance_to_root(selected_leaf)
+
+    if strategy == "SIS":
+        sister_mrca, left_label, right_label = _sister_mrca_and_labels()
+        left_leaf = leaf_by_label[left_label]
+        right_leaf = leaf_by_label[right_label]
+        # Patristic distance between sisters = dist(root,left) + dist(root,right) - 2*dist(root,mrca).
+        return (
+            _distance_to_root(left_leaf)
+            + _distance_to_root(right_leaf)
+            - 2.0 * _distance_to_root(sister_mrca)
+        )
+
+    if strategy == "INT":
+        sister_mrca, _, _ = _sister_mrca_and_labels()
+        return _distance_to_root(sister_mrca)
 
     total_distance = 0.0
     for leaf in leaves:
@@ -1722,7 +1750,8 @@ def _build_argument_parser():
         default=None,
         help=(
             "Tree-height strategy: AVG uses mean root-to-tip distance, "
-            "A/B/C use the selected taxon's root-to-tip distance "
+            "A/B/C use the selected taxon's root-to-tip distance, "
+            "SIS uses sister-taxon distance, and INT uses internal branch length "
             f"(default: {DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY})"
         ),
     )
