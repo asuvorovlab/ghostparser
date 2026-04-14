@@ -1,6 +1,7 @@
 # Test Suite Documentation
 
 This document lists the current tests, fixtures, and marker-based slices, with function-level input/output expectations.
+Each test is documented either as an individual entry or inside a grouped entry that provides inputs, expected behavior, and test purpose for that set of tests.
 
 ## Running Tests
 
@@ -285,6 +286,106 @@ Runtime-arg resolution:
 - Covers CLI defaults, config precedence, and `processes` default/preservation behavior.
 Inputs: CLI-only args and config-file mode args.
 Expected outputs: resolved defaults and correct precedence semantics.
+
+### Explicit Grouped Test Names
+
+This addendum lists tests that are intentionally grouped in the narrative sections above but were not previously named explicitly.
+
+#### tests/test_orchestrator.py
+
+- Tests: `test_main_uses_in_memory_branch_by_default`, `test_main_uses_file_backed_branch_when_enabled`
+Inputs: orchestrator runtime with write-full-triplet-gene-trees-mapping disabled vs enabled.
+Expected outputs/behavior: default path uses in-memory extraction + inference; enabled flag selects file-backed mapping path.
+Purpose: verify branch selection and regression-proof orchestration flow.
+
+#### tests/test_tree_parser.py
+
+- Tests: `test_write_clean_trees`, `test_write_clean_trees_multiple`, `test_clean_and_save_trees_filters_low_support`, `test_clean_and_save_trees_no_filters`, `test_clean_and_save_trees_creates_output_file`, `test_clean_and_save_gene_trees_discards_missing_outgroup`
+Inputs: single/multiple trees, low-support trees, gene trees missing outgroup.
+Expected outputs/behavior: clean outputs are written, support filtering behaves correctly, invalid/missing-outgroup trees are excluded where required.
+Purpose: validate cleaned-tree persistence and support/outgroup filtering behavior.
+
+- Tests: `test_get_taxa_from_tree_correct_names`, `test_generate_triplets_count`, `test_generate_triplets_excludes_outgroup`, `test_generate_triplets_content`, `test_generate_triplets_large_set`, `test_generate_triplets_multiple_outgroups`, `test_generate_triplets_outgroup_comma_separated_with_spaces`
+Inputs: rooted species trees with varying taxa sets and outgroup forms.
+Expected outputs/behavior: taxa extraction is correct; triplets are generated with correct count/content and outgroup exclusions.
+Purpose: verify triplet generation semantics across small and larger taxa sets.
+
+- Tests: `test_write_triplets_to_file`, `test_write_triplets_to_file_empty`, `test_read_triplet_filter_file_parses_valid_and_skips_invalid`, `test_filter_triplets_by_taxa_skips_missing_taxa`
+Inputs: generated triplet collections, empty collections, valid/invalid triplet-filter file lines, taxa-subset filters.
+Expected outputs/behavior: triplet files are written in expected format; empty handling is stable; filter parsing and taxa-based filtering are correct.
+Purpose: validate triplet-file IO and filter utility behavior.
+
+- Tests: `test_format_newick_with_precision_trailing_zeros`, `test_format_newick_with_precision_default_places`, `test_format_newick_with_custom_precision`, `test_format_newick_with_precision_triplet_parser`
+Inputs: branch-length Newick trees with precision options.
+Expected outputs/behavior: formatted Newick strings preserve intended precision and representation.
+Purpose: ensure deterministic and configurable Newick formatting.
+
+- Tests: `test_extract_triplet_subtree_all_taxa_present`, `test_extract_triplet_subtree_missing_taxa`, `test_extract_triplet_subtree_preserves_branch_lengths`, `test_process_gene_trees_for_triplets`, `test_process_gene_trees_for_triplets_empty`, `test_build_species_triplet_metadata_normalizes_abc`
+Inputs: gene-tree triplet extraction requests with complete/missing taxa and species-triplet metadata setup.
+Expected outputs/behavior: extraction succeeds only when all taxa are present, preserves branch lengths, handles empty cases, and normalizes species metadata to A/B/C conventions.
+Purpose: validate extraction core and metadata normalization used by downstream inference.
+
+- Tests: `test_write_triplet_gene_trees`, `test_write_triplet_gene_trees_includes_species_tree_header`, `test_write_triplet_gene_trees_empty_triplet`, `test_triplet_gene_trees_separator_format`, `test_write_triplet_gene_trees_streaming`
+Inputs: triplet-to-gene-tree mappings in normal, empty, and streaming write modes.
+Expected outputs/behavior: mapping file sections, species-tree header, and separators are correctly serialized.
+Purpose: verify canonical serialization format for triplet gene-tree mapping output.
+
+- Tests: `test_write_triplet_gene_trees_multiprocess_with_workers`, `test_write_triplet_gene_trees_multiprocess_includes_species_header`, `test_multiprocessing_triplet_writer_handles_empty_triplets`, `test_write_triplet_gene_trees_multiprocess_triplets_single_worker`, `test_write_triplet_gene_trees_multiprocess_accepts_list`
+Inputs: multiprocess writer invocations across worker-count and input-shape variants.
+Expected outputs/behavior: output format remains valid; species header persists; empty and list-based inputs are handled safely.
+Purpose: validate robust multiprocess mapping-file writer behavior.
+
+- Tests: `test_get_clean_filename_simple`, `test_get_clean_filename_different_extension`, `test_get_clean_filename_no_extension`, `test_metrics_logger_context_manager`, `test_metrics_logger_file_not_opened_before_enter`
+Inputs: filename variants and metrics-logger lifecycle usage.
+Expected outputs/behavior: cleaned output filenames are formed correctly; logger opens/writes only in expected context-manager lifecycle.
+Purpose: verify utility helpers that support parser CLI workflows.
+
+- Tests: `test_integration_full_workflow`, `test_integration_triplets_workflow`, `test_integration_full_triplet_extraction_workflow`
+Inputs: integration-style species/gene tree fixtures and output destinations.
+Expected outputs/behavior: end-to-end parsing, triplet generation/extraction, and file outputs complete successfully.
+Purpose: ensure combined parser workflow remains functional.
+
+#### tests/test_triplet_processor.py
+
+- Tests: `test_classify_triplet_topology_string_for_all_three_topologies`, `test_classify_triplet_topology_labels_concordant_and_discordants`, `test_balanced_discordant_count_tests_are_not_significant`
+Inputs: representative topology strings and balanced discordant count scenarios.
+Expected outputs/behavior: topology labels map correctly and balanced discordant tests remain non-significant.
+Purpose: validate baseline topology classification and count-test behavior.
+
+- Tests: `test_run_triplet_pipeline_uses_species_concordant_and_frequency_ranked_discordants`, `test_run_triplet_pipeline_supports_z_test_for_discordant_counts`, `test_run_triplet_pipeline_supports_standard_stats_backend`, `test_run_triplet_pipeline_supports_median_summary_statistic`, `test_run_triplet_pipeline_supports_mode_summary_statistic`, `test_run_triplet_pipeline_supports_taxon_specific_tree_height_strategy`, `test_run_triplet_pipeline_breaks_discordant_ties_by_first_topology`, `test_run_triplet_pipeline_relabels_a_b_when_ac_is_more_frequent_discordant`, `test_run_triplet_pipeline_no_introgression_when_dct_not_significant`, `test_run_triplet_pipeline_inflow_when_ks_not_significant`, `test_run_triplet_pipeline_outflow_when_con_summary_higher`, `test_run_triplet_pipeline_ghost_when_dis_summary_higher`
+Inputs: synthetic per-triplet topology/tree-height distributions, configurable test/stat backends, and strategy variants.
+Expected outputs/behavior: discordant role assignment, statistical backend selection, summary-stat selection, and final classification outcomes match expected logic.
+Purpose: validate triplet inference decision logic across major branches.
+
+- Tests: `test_analyze_triplet_gene_tree_file_with_multiprocessing`, `test_parse_analyze_and_write_pipeline_roundtrip_with_species_header`, `test_collect_triplet_statistics_returns_dict_list`
+Inputs: mapping files and pipeline run settings, including multiprocessing.
+Expected outputs/behavior: analyze/parse/write pipeline roundtrips successfully and statistics collection returns expected dictionary-list structures.
+Purpose: validate end-to-end processing API behavior.
+
+- Tests: `test_analyze_triplet_gene_tree_file_rejects_unknown_discordant_test`, `test_analyze_triplet_gene_tree_file_rejects_unknown_summary_statistic`, `test_analyze_triplet_gene_tree_file_rejects_unknown_stats_backend`, `test_analyze_triplet_gene_tree_file_rejects_unknown_tree_height_strategy`, `test_analyze_triplet_gene_tree_file_rejects_unknown_p_value_correction`, `test_parse_triplet_gene_trees_file_requires_species_tree_column`, `test_parse_triplet_gene_trees_file_rejects_empty_species_tree`
+Inputs: invalid configuration values and malformed mapping-file headers/content.
+Expected outputs/behavior: parser/analyzer rejects invalid inputs with explicit error paths.
+Purpose: verify input validation and defensive error handling.
+
+- Tests: `test_analyze_triplet_gene_tree_file_applies_selected_correction`, `test_two_sample_ks_test_hybrid_uses_scipy_near_threshold`, `test_two_sample_ks_test_hybrid_keeps_custom_when_not_borderline`, `test_two_sample_ks_test_hybrid_rejects_negative_margin`
+Inputs: p-value correction selections and KS hybrid-mode threshold conditions.
+Expected outputs/behavior: selected correction is applied; KS hybrid dispatches to expected backend and validates margin constraints.
+Purpose: validate statistical-dispatch control flow.
+
+- Tests: `test_write_pipeline_results_includes_dis1_topology_and_omits_removed_topology_columns`, `test_write_pipeline_results_uses_dynamic_summary_column_names`, `test_write_pipeline_results_uses_dct_chi_stats_column_for_chi_square`, `test_write_pipeline_results_uses_dct_z_score_column_for_z_test`, `test_write_pipeline_results_uses_mode_summary_columns_for_mode`, `test_write_pipeline_results_uses_dynamic_corrected_p_value_column_names`, `test_write_pipeline_results_includes_abc_mapping_column`, `test_write_pipeline_results_rejects_mixed_discordant_test_outputs`, `test_write_pipeline_results_rejects_unsupported_p_value_correction`, `test_write_pipeline_results_rejects_unsupported_summary_statistic`, `test_write_pipeline_statistics_json`
+Inputs: synthetic pipeline result rows across discordant-test/summary-stat/correction settings and serialization targets.
+Expected outputs/behavior: TSV/JSON outputs contain expected dynamic columns and reject unsupported or mixed output states.
+Purpose: validate output-schema stability and writer safeguards.
+
+- Tests: `test_write_summary_statistics_tsv_includes_expected_columns_and_counts`, `test_write_summary_statistics_tsv_includes_bootstrap_value_when_enabled`
+Inputs: summary-statistics payloads with bootstrap disabled/enabled.
+Expected outputs/behavior: summary TSV includes required 63-stat topology metrics plus identity/count/classification fields and bootstrap_value when enabled.
+Purpose: verify summary-statistics file schema and conditional bootstrap column behavior.
+
+- Tests: `test_resolve_runtime_args_triplet_processor_cli_defaults_and_overrides`, `test_resolve_runtime_args_triplet_processor_config_warns_and_ignores`, `test_resolve_runtime_args_triplet_processor_config_processes_behavior`
+Inputs: CLI-mode and config-mode argument combinations, including processes handling.
+Expected outputs/behavior: runtime args resolve defaults/overrides correctly and apply config precedence warnings/semantics.
+Purpose: validate triplet-processor runtime argument resolution behavior.
 
 ## Backend Parity Tests (`@pytest.mark.backend_parity`)
 
