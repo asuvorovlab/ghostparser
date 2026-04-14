@@ -25,6 +25,7 @@ def _orchestrator_args(tmp_path, **overrides):
         "output_folder": str(tmp_path / "results"),
         "processes": 0,
         "write_full_triplet_gene_trees_mapping": None,
+        "generate_summary_stats": None,
         "min_support_value": None,
         "discordant_test": None,
         "summary_statistic": None,
@@ -118,6 +119,7 @@ def test_resolve_runtime_args_cli_defaults_and_overrides(
     assert resolved.output == str(tmp_path / "results")
     assert resolved.processes == expected_processes
     assert resolved.write_full_triplet_gene_trees_mapping is False
+    assert resolved.generate_summary_stats is False
     assert resolved.min_support_value == 0.5
     assert resolved.discordant_test == "chi-square"
     assert resolved.summary_statistic == "median"
@@ -145,6 +147,7 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
         output_folder=str(tmp_path / "results"),
         processes=7,
         write_full_triplet_gene_trees_mapping=True,
+        generate_summary_stats=True,
         min_support_value=0.9,
         discordant_test="chi-square",
         summary_statistic="mean",
@@ -170,6 +173,7 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
     assert resolved.outgroup == ["OutA"]
     assert resolved.processes == 0
     assert resolved.write_full_triplet_gene_trees_mapping is False
+    assert resolved.generate_summary_stats is False
     assert resolved.discordant_test == "chi-square"
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
@@ -230,6 +234,7 @@ def _runtime_args(tmp_path, *, write_full_triplet_gene_trees_mapping):
         output=str(tmp_path / "results"),
         processes=1,
         write_full_triplet_gene_trees_mapping=write_full_triplet_gene_trees_mapping,
+        generate_summary_stats=False,
         min_support_value=0.5,
         discordant_test="chi-square",
         summary_statistic="median",
@@ -279,6 +284,7 @@ def _patch_orchestrator_runtime_dependencies(monkeypatch):
         lambda *_args, **_kwargs: (["gene_tree"], {}, 1, []),
     )
     monkeypatch.setattr(orchestrator_module, "write_pipeline_results", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(orchestrator_module, "write_summary_statistics_tsv", lambda *_args, **_kwargs: None)
 
 
 def test_main_uses_in_memory_branch_by_default(tmp_path, monkeypatch):

@@ -24,6 +24,7 @@ def test_load_orchestrator_config_json(tmp_path):
                 "output_folder": "out",
                 "processes": 4,
                 "write_full_triplet_gene_trees_mapping": True,
+                "generate_summary_stats": True,
                 "triplet_filter": "triplets.txt",
                 "min_support_value": 0.7,
                 "discordant_test": "z-test",
@@ -46,6 +47,7 @@ def test_load_orchestrator_config_json(tmp_path):
     assert config["output"] == str(Path("out").resolve())
     assert config["processes"] == 4
     assert config["write_full_triplet_gene_trees_mapping"] is True
+    assert config["generate_summary_stats"] is True
     assert config["triplet_filter"] == str(Path("triplets.txt").resolve())
     assert config["min_support_value"] == 0.7
     assert config["discordant_test"] == "z-test"
@@ -165,6 +167,7 @@ def test_load_orchestrator_config_defaults_processes_to_zero(tmp_path):
     config = load_orchestrator_config(str(config_path))
     assert config["processes"] == 0
     assert config["write_full_triplet_gene_trees_mapping"] is False
+    assert config["generate_summary_stats"] is False
     assert config["bootstrap"] is False
     assert config["bootstrap_options"] == {
         "iterations": 100,
@@ -252,6 +255,7 @@ def test_load_triplet_processor_config_json(tmp_path):
                 "stats_backend": "standard",
                 "tree_height_calculation_strategy": "C",
                 "p_value_correction": "no",
+                "generate_summary_stats": True,
                 "processes": 3,
                 "no_multiprocessing": False,
                 "bootstrap": True,
@@ -278,6 +282,7 @@ def test_load_triplet_processor_config_json(tmp_path):
     assert config["stats_backend"] == "standard"
     assert config["tree_height_calculation_strategy"] == "C"
     assert config["p_value_correction"] == "no"
+    assert config["generate_summary_stats"] is True
     assert config["processes"] == 3
     assert config["no_multiprocessing"] is False
     assert config["bootstrap"] is True
@@ -372,6 +377,7 @@ def test_load_triplet_processor_config_defaults_processes_to_zero(tmp_path):
     assert config["processes"] == 0
     assert config["tree_height_calculation_strategy"] == "AVG"
     assert config["p_value_correction"] == "no"
+    assert config["generate_summary_stats"] is False
 
 
 @pytest.mark.parametrize(
