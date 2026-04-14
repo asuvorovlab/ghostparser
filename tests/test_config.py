@@ -23,6 +23,7 @@ def test_load_orchestrator_config_json(tmp_path):
                 "outgroups": ["OutA", "OutB"],
                 "output_folder": "out",
                 "processes": 4,
+                "write_full_triplet_gene_trees_mapping": True,
                 "triplet_filter": "triplets.txt",
                 "min_support_value": 0.7,
                 "discordant_test": "z-test",
@@ -44,6 +45,7 @@ def test_load_orchestrator_config_json(tmp_path):
     assert config["outgroup"] == ["OutA", "OutB"]
     assert config["output"] == str(Path("out").resolve())
     assert config["processes"] == 4
+    assert config["write_full_triplet_gene_trees_mapping"] is True
     assert config["triplet_filter"] == str(Path("triplets.txt").resolve())
     assert config["min_support_value"] == 0.7
     assert config["discordant_test"] == "z-test"
@@ -162,6 +164,7 @@ def test_load_orchestrator_config_defaults_processes_to_zero(tmp_path):
 
     config = load_orchestrator_config(str(config_path))
     assert config["processes"] == 0
+    assert config["write_full_triplet_gene_trees_mapping"] is False
     assert config["bootstrap"] is False
     assert config["bootstrap_options"] == {
         "iterations": 100,
