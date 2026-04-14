@@ -139,6 +139,7 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--triplet-filter`
 - `--processes`
 - `--write-full-triplet-gene-trees-mapping`
+- `--generate-summary-stats`
 - `--min-support-value`
 - `--discordant-test`
 - `--summary-statistic`
@@ -156,7 +157,8 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 
 1. `unique_triplets_gene_trees.txt` (only when `--write-full-triplet-gene-trees-mapping` is enabled)
 2. `orchestrator_triplet_results.tsv`
-3. `metrics.txt`
+3. `summary_statistics.tsv` (only when `--generate-summary-stats` is enabled)
+4. `metrics.txt`
 
 ### Tree Parser (Submodule)
 
@@ -266,6 +268,11 @@ The orchestrator generates these output files:
 3. **`unique_triplets_gene_trees.txt`** - Optional full triplet-to-gene-tree mapping output, written only when `--write-full-triplet-gene-trees-mapping` is enabled
 4. **`metrics.txt`** - Metrics log with warnings, timings, and counts
 5. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
+6. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `--generate-summary-stats` is enabled, including:
+   - identity columns (`triplet`, `abc_mapping`, `species_tree`, `dis1_topology`)
+   - topology counts (`n_con`, `n_dis1`, `n_dis2`)
+   - 63 topology/metric summary columns (7 statistics × 3 topology classes × 3 metric types)
+   - final `classification` and `bootstrap_value` (when bootstrap is enabled)
 
 Base TSV output includes `dis1_topology` and a topology-only `species_tree` value for each triplet.
 

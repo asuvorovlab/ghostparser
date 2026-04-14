@@ -202,6 +202,13 @@ python -m ghostparser.orchestrator \
     - For large numbers of triplets, this file can become very large and may add noticeable I/O overhead.
     - Default: `false` (in-memory streaming mode, no intermediate full mapping file).
 
+- `generate_summary_stats` (boolean)
+
+    - CLI flag: `--generate-summary-stats`
+
+    - When `true`, writes `summary_statistics.tsv`.
+    - Default: `false` (skips summary statistics TSV generation to reduce runtime overhead).
+
 - `triplet_filter` (string)
 
     - CLI flag: `--triplet-filter`
@@ -408,6 +415,13 @@ See examples in:
 
     - Optional JSON statistics output path.
     - Default: same path as output TSV with `.json` extension.
+
+- `generate_summary_stats` (boolean)
+
+    - CLI flag: `--generate-summary-stats`
+
+    - When `true`, writes `summary_statistics.tsv` alongside main outputs.
+    - Default: `false`.
 
 - `alpha_dct` (number)
 
