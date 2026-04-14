@@ -67,6 +67,16 @@ from .triplet_utils import (
 
 Classification = str
 SerializedTripletObservation = tuple[str, float]
+MetricBuckets = dict[str, dict[str, list[float]]]
+
+SUMMARY_STATISTICS = ("mean", "median", "mode", "variance", "entropy", "min", "max")
+SUMMARY_TOPOLOGY_LABELS = ("concordant", "discordant1", "discordant2")
+SUMMARY_METRIC_LABELS = ("avg_tree_height", "internal_branch", "sister_distance")
+SUMMARY_TOPOLOGY_TO_CANONICAL = {
+    "concordant": TOPOLOGY_AB,
+    "discordant1": TOPOLOGY_BC,
+    "discordant2": TOPOLOGY_AC,
+}
 
 
 @dataclass(frozen=True)
@@ -101,6 +111,7 @@ class TripletPipelineResult:
     bootstrap_con_summary: dict | list | None = None
     bootstrap_dis_summary: dict | list | None = None
     bootstrap_gene_tree_heights: list[float] | None = None
+    topology_metric_statistics: dict[str, float | None] | None = None
 
     def to_dict(self):
         """Serialize all relevant triplet statistics to a dictionary."""
@@ -133,6 +144,7 @@ class TripletPipelineResult:
             "bootstrap_con_summary": self.bootstrap_con_summary,
             "bootstrap_dis_summary": self.bootstrap_dis_summary,
             "bootstrap_gene_tree_heights": self.bootstrap_gene_tree_heights,
+            "topology_metric_statistics": self.topology_metric_statistics,
         }
 
 
@@ -490,6 +502,109 @@ def _mode_binned(values, decimals=3):
     max_frequency = max(counts.values())
     modes = [value for value, count in counts.items() if count == max_frequency]
     return max(modes)
+
+
+def _variance(values):
+    """Compute population variance of numeric iterable."""
+    if not values:
+        return None
+    # TODO: NumPy optimization: compute variance using np.var on float64 arrays to reduce Python-loop overhead.
+    values_float = [float(value) for value in values]
+    mean_value = _mean(values_float)
+    if mean_value is None:
+        return None
+    return sum((value - mean_value) ** 2 for value in values_float) / len(values_float)
+
+
+def _entropy_binned(values, decimals=3):
+    """Compute Shannon entropy (base 2) on rounded value frequencies."""
+    if not values:
+        return None
+
+    # TODO: NumPy optimization: use np.round + np.unique(return_counts=True) for binning and
+    # compute entropy from normalized counts (or pass probabilities to scipy.stats.entropy).
+    counts = {}
+    for value in values:
+        rounded = round(float(value), decimals)
+        counts[rounded] = counts.get(rounded, 0) + 1
+
+    total = sum(counts.values())
+    if total <= 0:
+        return None
+
+    entropy = 0.0
+    for count in counts.values():
+        probability = count / total
+        if probability > 0.0:
+            entropy -= probability * math.log2(probability)
+    return entropy
+
+
+def _compute_summary_statistic(values, statistic_name):
+    """Compute one summary statistic by name."""
+    if statistic_name == "mean":
+        return _mean(values)
+    if statistic_name == "median":
+        return _median(values)
+    if statistic_name == "mode":
+        return _mode_binned(values, decimals=3)
+    if statistic_name == "variance":
+        return _variance(values)
+    if statistic_name == "entropy":
+        return _entropy_binned(values, decimals=3)
+    if statistic_name == "min":
+        return min(values) if values else None
+    if statistic_name == "max":
+        return max(values) if values else None
+    raise ValueError(f"Unsupported summary statistic name: {statistic_name}")
+
+
+def _summary_statistics_column_names():
+    """Return stable ordered column names for topology/metric summary statistics."""
+    columns = []
+    for topology_label in SUMMARY_TOPOLOGY_LABELS:
+        for metric_label in SUMMARY_METRIC_LABELS:
+            for statistic_name in SUMMARY_STATISTICS:
+                columns.append(f"{topology_label}_{metric_label}_{statistic_name}")
+    return columns
+
+
+def _build_empty_metric_buckets():
+    """Build empty metric buckets keyed by canonical topology and metric type."""
+    return {
+        topology: {
+            "avg_tree_height": [],
+            "internal_branch": [],
+            "sister_distance": [],
+        }
+        for topology in ALL_TOPOLOGIES
+    }
+
+
+def _build_topology_metric_statistics(species_triplet, species_topology, metric_buckets):
+    """Build canonical topology/metric summary statistics for one triplet."""
+    topology_counts = {
+        topology: len(metric_buckets[topology]["avg_tree_height"])
+        for topology in ALL_TOPOLOGIES
+    }
+
+    _, _, canonical_to_original_topology, _ = _canonicalize_triplet_labels(
+        species_triplet,
+        species_topology,
+        topology_counts,
+    )
+
+    statistics = {}
+    for topology_label in SUMMARY_TOPOLOGY_LABELS:
+        canonical_topology = SUMMARY_TOPOLOGY_TO_CANONICAL[topology_label]
+        original_topology = canonical_to_original_topology[canonical_topology]
+        for metric_label in SUMMARY_METRIC_LABELS:
+            values = metric_buckets[original_topology][metric_label]
+            for statistic_name in SUMMARY_STATISTICS:
+                key = f"{topology_label}_{metric_label}_{statistic_name}"
+                statistics[key] = _compute_summary_statistic(values, statistic_name)
+
+    return statistics
 
 
 def _classify_introgression(dct_significant, ks_significant, summary_con, summary_dis):
@@ -1030,8 +1145,9 @@ def _serialize_triplet_gene_trees(
     triplet_gene_trees,
     tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
 ):
-    """Parse rooted triplet trees into lightweight (topology, height) observations."""
+    """Parse rooted triplet trees into observations and metric buckets."""
     observations: list[SerializedTripletObservation] = []
+    metric_buckets = _build_empty_metric_buckets()
     species_set = set(species_triplet)
 
     for newick_str in triplet_gene_trees:
@@ -1045,6 +1161,21 @@ def _serialize_triplet_gene_trees(
 
         try:
             topology = classify_triplet_topology_string(tree, species_triplet)
+            avg_tree_height = compute_tree_height_statistic(
+                tree,
+                strategy="AVG",
+                species_triplet=species_triplet,
+            )
+            internal_branch = compute_tree_height_statistic(
+                tree,
+                strategy="INT",
+                species_triplet=species_triplet,
+            )
+            sister_distance = compute_tree_height_statistic(
+                tree,
+                strategy="SIS",
+                species_triplet=species_triplet,
+            )
             tree_height = compute_tree_height_statistic(
                 tree,
                 strategy=tree_height_calculation_strategy,
@@ -1053,9 +1184,12 @@ def _serialize_triplet_gene_trees(
         except ValueError:
             continue
 
+        metric_buckets[topology]["avg_tree_height"].append(avg_tree_height)
+        metric_buckets[topology]["internal_branch"].append(internal_branch)
+        metric_buckets[topology]["sister_distance"].append(sister_distance)
         observations.append((topology, tree_height))
 
-    return observations
+    return observations, metric_buckets
 
 
 def _run_triplet_pipeline_from_observations(
@@ -1197,6 +1331,7 @@ def run_triplet_pipeline(
         triplet_gene_trees,
         tree_height_calculation_strategy=tree_height_calculation_strategy,
     )
+    observations, metric_buckets = observations
     base_result = _run_triplet_pipeline_from_observations(
         species_triplet,
         observations,
@@ -1209,6 +1344,12 @@ def run_triplet_pipeline(
         species_tree_newick=species_tree_newick,
         rng=rng,
     )
+    topology_metric_statistics = _build_topology_metric_statistics(
+        species_triplet,
+        species_topology,
+        metric_buckets,
+    )
+    base_result = replace(base_result, topology_metric_statistics=topology_metric_statistics)
 
     if not bootstrap:
         return base_result
@@ -1383,6 +1524,7 @@ def analyze_triplet_entry(
         entry["gene_trees"],
         tree_height_calculation_strategy=tree_height_calculation_strategy,
     )
+    observations, metric_buckets = observations
     base_result = _run_triplet_pipeline_from_observations(
         triplet,
         observations,
@@ -1394,6 +1536,12 @@ def analyze_triplet_entry(
         species_topology=species_topology,
         species_tree_newick=species_tree_topology,
     )
+    topology_metric_statistics = _build_topology_metric_statistics(
+        triplet,
+        species_topology,
+        metric_buckets,
+    )
+    base_result = replace(base_result, topology_metric_statistics=topology_metric_statistics)
 
     if not bootstrap:
         return base_result
@@ -1712,6 +1860,52 @@ def write_pipeline_results(
             out_f.write("\t".join(row) + "\n")
 
 
+def write_summary_statistics_tsv(results, output_filepath, bootstrap=DEFAULT_BOOTSTRAP):
+    """Write per-triplet topology/metric summary statistics to TSV."""
+    include_bootstrap_value = bootstrap or any(result.bootstrap_value is not None for result in results)
+
+    header = [
+        "triplet",
+        "abc_mapping",
+        "species_tree",
+        "dis1_topology",
+        "n_con",
+        "n_dis1",
+        "n_dis2",
+    ]
+    header.extend(_summary_statistics_column_names())
+    header.append("classification")
+    if include_bootstrap_value:
+        header.append("bootstrap_value")
+
+    with open(output_filepath, "w") as out_f:
+        out_f.write("\t".join(header) + "\n")
+        for result in results:
+            a_taxon, b_taxon, c_taxon = result.triplet
+            abc_mapping = f"A={a_taxon};B={b_taxon};C={c_taxon}"
+
+            row = [
+                ",".join(result.triplet),
+                abc_mapping,
+                "" if result.species_tree is None else result.species_tree,
+                "" if result.dis1_topology is None else result.dis1_topology,
+                str(result.n_con),
+                str(result.n_dis1),
+                str(result.n_dis2),
+            ]
+
+            topology_metric_statistics = result.topology_metric_statistics or {}
+            for column_name in _summary_statistics_column_names():
+                value = topology_metric_statistics.get(column_name)
+                row.append("" if value is None else f"{value:.12g}")
+
+            row.append(result.classification)
+            if include_bootstrap_value:
+                row.append("" if result.bootstrap_value is None else f"{result.bootstrap_value:.12g}")
+
+            out_f.write("\t".join(row) + "\n")
+
+
 def main():
     """CLI entry point for triplet processing pipeline."""
     parser = _build_argument_parser()
@@ -1750,11 +1944,23 @@ def main():
         bootstrap_debug_mode=args.bootstrap_options["debug_mode"],
     )
 
+    summary_output = output_path.parent / "summary_statistics.tsv"
+    if args.generate_summary_stats:
+        write_summary_statistics_tsv(
+            results,
+            str(summary_output),
+            bootstrap=args.bootstrap,
+        )
+
     stats_output = Path(args.stats_output) if args.stats_output else output_path.with_suffix(".json")
     write_pipeline_statistics_json(results, str(stats_output))
 
     print(f"Processed {len(results)} triplets")
     print(f"Results written to: {output_path}")
+    if args.generate_summary_stats:
+        print(f"Summary statistics written to: {summary_output}")
+    else:
+        print("Summary statistics written to: skipped")
     print(f"Statistics JSON written to: {stats_output}")
 
 
@@ -1840,6 +2046,13 @@ def _build_argument_parser():
     )
     parser.add_argument("--processes", type=int, default=None, help="Number of worker processes for triplet analysis (0 = all cores)")
     parser.add_argument(
+        "--generate-summary-stats",
+        dest="generate_summary_stats",
+        action="store_true",
+        default=None,
+        help="Generate summary_statistics.tsv output (default: False)",
+    )
+    parser.add_argument(
         "--no-multiprocessing",
         action="store_true",
         help="Disable multiprocessing for triplet analysis",
@@ -1864,6 +2077,7 @@ TRIPLET_PROCESSOR_PAYLOAD_ARG_NAMES = [
     "bootstrap_debug_mode",
     "bootstrap_summary_only",
     "processes",
+    "generate_summary_stats",
     "no_multiprocessing",
 ]
 
