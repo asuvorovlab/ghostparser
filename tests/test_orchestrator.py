@@ -2,8 +2,11 @@
 
 import argparse
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+import ghostparser.orchestrator as orchestrator_module
 
 from ghostparser.orchestrator import (
     _resolve_parallel_mode,
@@ -21,6 +24,7 @@ def _orchestrator_args(tmp_path, **overrides):
         "triplet_filter": None,
         "output_folder": str(tmp_path / "results"),
         "processes": 0,
+        "write_full_triplet_gene_trees_mapping": None,
         "min_support_value": None,
         "discordant_test": None,
         "summary_statistic": None,
@@ -113,6 +117,7 @@ def test_resolve_runtime_args_cli_defaults_and_overrides(
     assert resolved.outgroup == ["Out1", "Out2"]
     assert resolved.output == str(tmp_path / "results")
     assert resolved.processes == expected_processes
+    assert resolved.write_full_triplet_gene_trees_mapping is False
     assert resolved.min_support_value == 0.5
     assert resolved.discordant_test == "chi-square"
     assert resolved.summary_statistic == "median"
@@ -139,6 +144,7 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
         triplet_filter=None,
         output_folder=str(tmp_path / "results"),
         processes=7,
+        write_full_triplet_gene_trees_mapping=True,
         min_support_value=0.9,
         discordant_test="chi-square",
         summary_statistic="mean",
@@ -163,6 +169,7 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
     assert resolved.gene_trees == str(Path("g.nwk").resolve())
     assert resolved.outgroup == ["OutA"]
     assert resolved.processes == 0
+    assert resolved.write_full_triplet_gene_trees_mapping is False
     assert resolved.discordant_test == "chi-square"
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
@@ -207,3 +214,136 @@ def test_resolve_runtime_args_config_processes_behavior(tmp_path, config_payload
         )
     )
     assert resolved.processes == expected_processes
+
+
+def _runtime_args(tmp_path, *, write_full_triplet_gene_trees_mapping):
+    species_path = tmp_path / "species.nwk"
+    genes_path = tmp_path / "genes.nwk"
+    species_path.write_text("(A:1,B:1);\n")
+    genes_path.write_text("(A:1,B:1);\n")
+
+    return SimpleNamespace(
+        species_tree=str(species_path),
+        gene_trees=str(genes_path),
+        outgroup=["Out1"],
+        triplet_filter=None,
+        output=str(tmp_path / "results"),
+        processes=1,
+        write_full_triplet_gene_trees_mapping=write_full_triplet_gene_trees_mapping,
+        min_support_value=0.5,
+        discordant_test="chi-square",
+        summary_statistic="median",
+        stats_backend="standard",
+        tree_height_calculation_strategy="AVG",
+        p_value_correction="no",
+        alpha_dct=0.01,
+        alpha_ks=0.05,
+        bootstrap=False,
+        bootstrap_options={
+            "iterations": 100,
+            "seed": None,
+            "debug_mode": False,
+            "summary_only": False,
+        },
+    )
+
+
+def _patch_orchestrator_runtime_dependencies(monkeypatch):
+    class _DummyParser:
+        def parse_args(self):
+            return SimpleNamespace()
+
+    monkeypatch.setattr(orchestrator_module, "_build_argument_parser", lambda: _DummyParser())
+
+    monkeypatch.setattr(orchestrator_module, "_parse_outgroup_arg", lambda outgroup: ["Out1"])
+    monkeypatch.setattr(orchestrator_module, "clean_and_save_trees", lambda *args, **kwargs: (["species_tree"], {}))
+    monkeypatch.setattr(orchestrator_module, "read_tree_file", lambda *_args, **_kwargs: ["species_tree"])
+    monkeypatch.setattr(orchestrator_module, "get_taxa_from_tree", lambda *_args, **_kwargs: ["A", "B", "C", "Out1"])
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_root_tree_on_outgroup",
+        lambda *_args, **_kwargs: ("pruned_tree", set(), set(), {"A", "B", "C"}),
+    )
+    monkeypatch.setattr(orchestrator_module, "write_clean_trees", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(orchestrator_module, "generate_triplets", lambda *_args, **_kwargs: [("A", "B", "C")])
+    monkeypatch.setattr(orchestrator_module, "format_newick_with_precision", lambda *_args, **_kwargs: "((A:1,B:1):1,C:1);")
+    monkeypatch.setattr(orchestrator_module.dendropy.Tree, "get", lambda *_args, **_kwargs: "species_dendro_tree")
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_build_species_triplet_metadata",
+        lambda *_args, **_kwargs: ([("A", "B", "C")], {("A", "B", "C"): "((A:1,B:1):1,C:1);"}, []),
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "clean_and_save_gene_trees",
+        lambda *_args, **_kwargs: (["gene_tree"], {}, 1, []),
+    )
+    monkeypatch.setattr(orchestrator_module, "write_pipeline_results", lambda *_args, **_kwargs: None)
+
+
+def test_main_uses_in_memory_branch_by_default(tmp_path, monkeypatch):
+    args = _runtime_args(tmp_path, write_full_triplet_gene_trees_mapping=False)
+    _patch_orchestrator_runtime_dependencies(monkeypatch)
+    monkeypatch.setattr(orchestrator_module, "_resolve_runtime_args", lambda _parsed: args)
+
+    calls = {"in_memory": 0, "file_extract": 0, "file_infer": 0}
+
+    def _in_memory_stub(*_args, **_kwargs):
+        calls["in_memory"] += 1
+        return {
+            "results": [SimpleNamespace()],
+            "total_subtrees": 3,
+            "triplets_with_trees": 1,
+            "extraction_wall_seconds": 0.01,
+            "extraction_cpu_seconds": 0.01,
+            "inference_wall_seconds": 0.02,
+            "inference_cpu_seconds": 0.02,
+        }
+
+    def _file_extract_stub(*_args, **_kwargs):
+        calls["file_extract"] += 1
+        raise AssertionError("File-backed extraction should not run in in-memory mode")
+
+    def _file_infer_stub(*_args, **_kwargs):
+        calls["file_infer"] += 1
+        raise AssertionError("File-backed inference should not run in in-memory mode")
+
+    monkeypatch.setattr(orchestrator_module, "_analyze_triplets_in_memory", _in_memory_stub)
+    monkeypatch.setattr(orchestrator_module, "write_triplet_gene_trees_multiprocess", _file_extract_stub)
+    monkeypatch.setattr(orchestrator_module, "analyze_triplet_gene_tree_file", _file_infer_stub)
+
+    orchestrator_module.main()
+
+    assert calls["in_memory"] == 1
+    assert calls["file_extract"] == 0
+    assert calls["file_infer"] == 0
+
+
+def test_main_uses_file_backed_branch_when_enabled(tmp_path, monkeypatch):
+    args = _runtime_args(tmp_path, write_full_triplet_gene_trees_mapping=True)
+    _patch_orchestrator_runtime_dependencies(monkeypatch)
+    monkeypatch.setattr(orchestrator_module, "_resolve_runtime_args", lambda _parsed: args)
+
+    calls = {"in_memory": 0, "file_extract": 0, "file_infer": 0}
+
+    def _in_memory_stub(*_args, **_kwargs):
+        calls["in_memory"] += 1
+        raise AssertionError("In-memory path should not run when file-backed mode is enabled")
+
+    def _file_extract_stub(*_args, **_kwargs):
+        calls["file_extract"] += 1
+        return (3, 1, 1)
+
+    def _file_infer_stub(*_args, **_kwargs):
+        calls["file_infer"] += 1
+        return [SimpleNamespace()]
+
+    monkeypatch.setattr(orchestrator_module, "_analyze_triplets_in_memory", _in_memory_stub)
+    monkeypatch.setattr(orchestrator_module, "write_triplet_gene_trees_multiprocess", _file_extract_stub)
+    monkeypatch.setattr(orchestrator_module, "analyze_triplet_gene_tree_file", _file_infer_stub)
+
+    orchestrator_module.main()
+
+    assert calls["in_memory"] == 0
+    assert calls["file_extract"] == 1
+    assert calls["file_infer"] == 1
