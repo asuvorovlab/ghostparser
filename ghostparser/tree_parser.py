@@ -459,6 +459,37 @@ def extract_triplet_subtree(tree, triplet_taxa):
     return subtree
 
 
+def extract_triplet_gene_trees_for_triplet(gene_trees_filepath, triplet):
+    """Extract gene-tree subtrees for one triplet by streaming a gene-tree file.
+
+    Args:
+        gene_trees_filepath: Path to cleaned gene trees file (one Newick tree per line).
+        triplet: Taxon triplet tuple, expected as (A, B, C).
+
+    Returns:
+        List of Newick strings for extracted rooted triplet subtrees.
+    """
+    triplet_set = set(triplet)
+    gene_trees = []
+
+    with open(gene_trees_filepath, "r") as gene_f:
+        for line in gene_f:
+            newick_str = line.strip()
+            if not newick_str:
+                continue
+
+            tree = dendropy.Tree.get(data=newick_str, schema="newick", preserve_underscores=True)
+            tree_taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
+            if not triplet_set.issubset(tree_taxa):
+                continue
+
+            subtree = extract_triplet_subtree(tree, triplet)
+            if subtree is not None:
+                gene_trees.append(format_newick_with_precision(subtree))
+
+    return gene_trees
+
+
 def _build_species_triplet_metadata(species_tree, triplets):
     """Normalize triplets to A/B/C and compute species triplet subtree Newick.
 
@@ -888,7 +919,8 @@ def main():
         metrics.log("")
 
         try:
-            species_start = time.time()
+            species_start_wall = time.time()
+            species_start_cpu = time.process_time()
             species_trees, dropped_species = clean_and_save_trees(
                 str(species_tree_path),
                 species_tree_clean,
@@ -904,7 +936,10 @@ def main():
                     metrics.log(f"    - Index {idx} from {args.species_tree} (avg support: {avg_support:.4f})")
 
             species_trees = read_tree_file(species_tree_clean)
-            metrics.log(f"  Time taken: {time.time() - species_start:.2f}s")
+            species_wall = time.time() - species_start_wall
+            species_cpu = time.process_time() - species_start_cpu
+            metrics.log(f"  Time taken (wall): {species_wall:.2f}s")
+            metrics.log(f"  Time taken (CPU): {species_cpu:.2f}s")
         except Exception as e:
             metrics.log(f"✗ Error processing species tree: {e}")
             return
@@ -996,7 +1031,8 @@ def main():
             return
 
         try:
-            genes_start = time.time()
+            genes_start_wall = time.time()
+            genes_start_cpu = time.process_time()
             gene_trees, dropped_genes, rooted_count, missing_root_indices = clean_and_save_gene_trees(
                 str(gene_trees_path),
                 gene_trees_clean,
@@ -1021,14 +1057,18 @@ def main():
                 for idx, avg_support in dropped_genes.items():
                     metrics.log(f"    - Index {idx} from {args.gene_trees} (avg support: {avg_support:.4f})")
 
-            metrics.log(f"  Time taken: {time.time() - genes_start:.2f}s")
+            genes_wall = time.time() - genes_start_wall
+            genes_cpu = time.process_time() - genes_start_cpu
+            metrics.log(f"  Time taken (wall): {genes_wall:.2f}s")
+            metrics.log(f"  Time taken (CPU): {genes_cpu:.2f}s")
         except Exception as e:
             metrics.log(f"✗ Error processing gene trees: {e}")
             return
 
         try:
             metrics.log("\n✓ Processing gene trees for triplets...")
-            triplet_start = time.time()
+            triplet_start_wall = time.time()
+            triplet_start_cpu = time.process_time()
 
             triplet_output_path = str(output_dir / "unique_triplets_gene_trees.txt")
 
@@ -1055,7 +1095,10 @@ def main():
             if triplets_with_trees > 0:
                 avg_trees_per_triplet = total_subtrees / triplets_with_trees
                 metrics.log(f"  Average trees per triplet: {avg_trees_per_triplet:.2f}")
-            metrics.log(f"  Time taken: {time.time() - triplet_start:.2f}s")
+            triplet_wall = time.time() - triplet_start_wall
+            triplet_cpu = time.process_time() - triplet_start_cpu
+            metrics.log(f"  Time taken (wall): {triplet_wall:.2f}s")
+            metrics.log(f"  Time taken (CPU): {triplet_cpu:.2f}s")
         except Exception as e:
             metrics.log(f"✗ Error processing triplet gene trees: {e}")
             return
