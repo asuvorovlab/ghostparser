@@ -53,7 +53,7 @@ DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
 SUMMARY_STATISTIC_CHOICES = ("mean", "median", "mode")
 STATS_BACKEND_CHOICES = ("custom", "standard")
-TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C")
+TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C", "SIS", "INT")
 P_VALUE_CORRECTION_CHOICES = ("no", "bfn", "holm", "fdr_bh", "fdr_by", "fdr_tsbh")
 
 

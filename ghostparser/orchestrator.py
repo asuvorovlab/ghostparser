@@ -160,7 +160,8 @@ def _build_argument_parser():
         default=None,
         help=(
             "Tree-height strategy: AVG uses mean root-to-tip distance, "
-            "A/B/C use the selected taxon's root-to-tip distance "
+            "A/B/C use the selected taxon's root-to-tip distance, "
+            "SIS uses sister-taxon distance, and INT uses internal branch length "
             f"(default: {DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY})"
         ),
     )
