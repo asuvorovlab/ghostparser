@@ -41,6 +41,7 @@ from .triplet_processor import (
     analyze_triplet_entry,
     analyze_triplet_gene_tree_file,
     apply_triplet_result_p_value_correction,
+    write_summary_statistics_tsv,
     write_pipeline_results,
 )
 from .config import (
@@ -187,6 +188,7 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "output_folder",
     "processes",
     "write_full_triplet_gene_trees_mapping",
+    "generate_summary_stats",
     "min_support_value",
     "discordant_test",
     "summary_statistic",
@@ -241,6 +243,13 @@ def _build_argument_parser():
             "Useful for debugging, but can be very large and add I/O overhead for large triplet sets. "
             f"Default: {DEFAULT_WRITE_FULL_TRIPLET_GENE_TREES_MAPPING} (in-memory streaming mode)."
         ),
+    )
+    parser.add_argument(
+        "--generate-summary-stats",
+        dest="generate_summary_stats",
+        action="store_true",
+        default=None,
+        help="Generate summary_statistics.tsv output (default: False)",
     )
     parser.add_argument(
         "--min-support-value",
@@ -389,6 +398,7 @@ def main():
             "Write full triplet-gene-tree mapping file: "
             f"{args.write_full_triplet_gene_trees_mapping}"
         )
+        metrics.log(f"Generate summary statistics TSV: {args.generate_summary_stats}")
         support_threshold = (
             args.min_support_value
             if args.min_support_value is not None
@@ -613,9 +623,20 @@ def main():
                 bootstrap=args.bootstrap,
                 bootstrap_debug_mode=args.bootstrap_options["debug_mode"],
             )
+            summary_tsv = str(output_dir / "summary_statistics.tsv")
+            if args.generate_summary_stats:
+                write_summary_statistics_tsv(
+                    results,
+                    summary_tsv,
+                    bootstrap=args.bootstrap,
+                )
 
             metrics.log("✓ Introgression inference complete")
             metrics.log(f"  Output: {final_tsv}")
+            if args.generate_summary_stats:
+                metrics.log(f"  Summary statistics output: {summary_tsv}")
+            else:
+                metrics.log("  Summary statistics output: skipped")
             metrics.log(f"  Triplets analyzed: {len(results)}")
             if use_multiprocessing:
                 metrics.log("  Parallelization: enabled (multiprocessing)")
