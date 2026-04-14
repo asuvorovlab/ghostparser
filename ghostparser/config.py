@@ -49,6 +49,7 @@ DEFAULT_BOOTSTRAP = False
 DEFAULT_BOOTSTRAP_ITERATIONS = 100
 DEFAULT_BOOTSTRAP_DEBUG_MODE = False
 DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
+DEFAULT_WRITE_FULL_TRIPLET_GENE_TREES_MAPPING = False
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
 SUMMARY_STATISTIC_CHOICES = ("mean", "median", "mode")
@@ -255,6 +256,11 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
         "output": output,
         "processes": _validate_non_negative_int(payload, "processes", DEFAULT_PROCESSES),
+        "write_full_triplet_gene_trees_mapping": _validate_optional_bool(
+            payload,
+            "write_full_triplet_gene_trees_mapping",
+            DEFAULT_WRITE_FULL_TRIPLET_GENE_TREES_MAPPING,
+        ),
         "min_support_value": _validate_optional_float(payload, "min_support_value", DEFAULT_MIN_SUPPORT_VALUE),
         "discordant_test": _validate_choice(
             payload,
