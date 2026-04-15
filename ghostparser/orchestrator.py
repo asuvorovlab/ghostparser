@@ -26,7 +26,6 @@ from .tree_parser import (
     _root_tree_on_outgroup,
     clean_and_save_gene_trees,
     clean_and_save_trees,
-    extract_triplet_gene_trees_for_triplet,
     filter_triplets_by_taxa,
     format_newick_with_precision,
     generate_triplets,
@@ -38,9 +37,7 @@ from .tree_parser import (
     write_triplet_gene_trees_multiprocess,
 )
 from .triplet_processor import (
-    analyze_triplet_entry,
     analyze_triplet_gene_tree_file,
-    apply_triplet_result_p_value_correction,
     write_summary_statistics_tsv,
     write_pipeline_results,
 )
@@ -55,7 +52,6 @@ from .config import (
     DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
-    DEFAULT_WRITE_FULL_TRIPLET_GENE_TREES_MAPPING,
     P_VALUE_CORRECTION_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
     STATS_BACKEND_CHOICES,
@@ -100,86 +96,6 @@ def _log_stage_timing(metrics, wall_seconds, cpu_seconds):
     metrics.log(f"  Time taken (CPU): {cpu_seconds:.2f}s")
 
 
-def _analyze_triplets_in_memory(
-    triplets,
-    species_triplet_trees,
-    gene_trees_filepath,
-    *,
-    alpha_dct,
-    alpha_ks,
-    discordant_test,
-    summary_statistic,
-    stats_backend,
-    tree_height_calculation_strategy,
-    p_value_correction,
-    bootstrap,
-    bootstrap_options,
-):
-    """Analyze triplets in-memory without writing intermediate triplet gene-tree file."""
-    raw_results = []
-    total_subtrees = 0
-    triplets_with_trees = 0
-    extraction_wall_total = 0.0
-    extraction_cpu_total = 0.0
-    inference_wall_total = 0.0
-    inference_cpu_total = 0.0
-
-    triplet_seed = (bootstrap_options or {}).get("seed")
-
-    for triplet in triplets:
-        extraction_start_wall, extraction_start_cpu = _now_times()
-        triplet_gene_trees = extract_triplet_gene_trees_for_triplet(gene_trees_filepath, triplet)
-        extraction_wall, extraction_cpu = _elapsed_times(extraction_start_wall, extraction_start_cpu)
-        extraction_wall_total += extraction_wall
-        extraction_cpu_total += extraction_cpu
-
-        count = len(triplet_gene_trees)
-        total_subtrees += count
-        if count > 0:
-            triplets_with_trees += 1
-
-        inference_start_wall, inference_start_cpu = _now_times()
-        result = analyze_triplet_entry(
-            triplet,
-            {
-                "species_tree": species_triplet_trees.get(triplet),
-                "gene_trees": triplet_gene_trees,
-            },
-            alpha_dct=alpha_dct,
-            alpha_ks=alpha_ks,
-            discordant_test=discordant_test,
-            summary_statistic=summary_statistic,
-            stats_backend=stats_backend,
-            tree_height_calculation_strategy=tree_height_calculation_strategy,
-            bootstrap=bootstrap,
-            bootstrap_options=bootstrap_options,
-            triplet_seed=triplet_seed,
-        )
-        inference_wall, inference_cpu = _elapsed_times(inference_start_wall, inference_start_cpu)
-        inference_wall_total += inference_wall
-        inference_cpu_total += inference_cpu
-
-        raw_results.append(result)
-
-    corrected_results = apply_triplet_result_p_value_correction(
-        raw_results,
-        alpha_dct=alpha_dct,
-        alpha_ks=alpha_ks,
-        method=p_value_correction,
-        stats_backend=stats_backend,
-    )
-
-    return {
-        "results": corrected_results,
-        "total_subtrees": total_subtrees,
-        "triplets_with_trees": triplets_with_trees,
-        "extraction_wall_seconds": extraction_wall_total,
-        "extraction_cpu_seconds": extraction_cpu_total,
-        "inference_wall_seconds": inference_wall_total,
-        "inference_cpu_seconds": inference_cpu_total,
-    }
-
-
 ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "species_tree_path",
     "gene_trees_path",
@@ -187,7 +103,6 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "triplet_filter",
     "output_folder",
     "processes",
-    "write_full_triplet_gene_trees_mapping",
     "generate_summary_stats",
     "min_support_value",
     "discordant_test",
@@ -232,17 +147,6 @@ def _build_argument_parser():
         type=int,
         default=None,
         help="Number of worker processes for triplet extraction/processing (0 = all cores)",
-    )
-    parser.add_argument(
-        "--write-full-triplet-gene-trees-mapping",
-        dest="write_full_triplet_gene_trees_mapping",
-        action="store_true",
-        default=None,
-        help=(
-            "Write full unique_triplets_gene_trees.txt mapping to disk before inference. "
-            "Useful for debugging, but can be very large and add I/O overhead for large triplet sets. "
-            f"Default: {DEFAULT_WRITE_FULL_TRIPLET_GENE_TREES_MAPPING} (in-memory streaming mode)."
-        ),
     )
     parser.add_argument(
         "--generate-summary-stats",
@@ -394,10 +298,6 @@ def main():
         metrics.log(f"Bootstrap seed: {args.bootstrap_options['seed']}")
         metrics.log(f"Bootstrap debug mode: {args.bootstrap_options['debug_mode']}")
         metrics.log(f"Bootstrap summary-only: {args.bootstrap_options['summary_only']}")
-        metrics.log(
-            "Write full triplet-gene-tree mapping file: "
-            f"{args.write_full_triplet_gene_trees_mapping}"
-        )
         metrics.log(f"Generate summary statistics TSV: {args.generate_summary_stats}")
         support_threshold = (
             args.min_support_value
@@ -528,90 +428,52 @@ def main():
             inference_wall_time = 0.0
             inference_cpu_time = 0.0
 
-            if args.write_full_triplet_gene_trees_mapping:
-                # Stage 1: Triplet Extraction (file-backed)
-                metrics.log("✓ Starting triplet extraction stage...")
-                extraction_start_wall, extraction_start_cpu = _now_times()
+            # Stage 1: Triplet extraction to mapping file
+            metrics.log("✓ Starting triplet extraction stage...")
+            extraction_start_wall, extraction_start_cpu = _now_times()
 
-                total_subtrees, triplets_with_trees, extraction_workers = write_triplet_gene_trees_multiprocess(
-                    triplets,
-                    gene_trees_clean,
-                    triplet_output_path,
-                    species_triplet_trees=species_triplet_trees,
-                    use_multiprocessing=use_multiprocessing,
-                    processes=processes,
-                )
+            total_subtrees, triplets_with_trees, _ = write_triplet_gene_trees_multiprocess(
+                triplets,
+                gene_trees_clean,
+                triplet_output_path,
+                species_triplet_trees=species_triplet_trees,
+                use_multiprocessing=use_multiprocessing,
+                processes=processes,
+            )
 
-                extraction_wall_time, extraction_cpu_time = _elapsed_times(
-                    extraction_start_wall,
-                    extraction_start_cpu,
-                )
-                metrics.log("✓ Triplet extraction complete")
-                metrics.log(f"  Output: {triplet_output_path}")
-                metrics.log(f"  Triplets with gene trees: {triplets_with_trees}")
-                metrics.log(f"  Total subtrees extracted: {total_subtrees}")
-                _log_stage_timing(metrics, extraction_wall_time, extraction_cpu_time)
-                metrics.log("")
+            extraction_wall_time, extraction_cpu_time = _elapsed_times(
+                extraction_start_wall,
+                extraction_start_cpu,
+            )
+            metrics.log("✓ Triplet extraction complete")
+            metrics.log(f"  Output: {triplet_output_path}")
+            metrics.log(f"  Triplets with gene trees: {triplets_with_trees}")
+            metrics.log(f"  Total subtrees extracted: {total_subtrees}")
+            _log_stage_timing(metrics, extraction_wall_time, extraction_cpu_time)
+            metrics.log("")
 
-                # Stage 2: Introgression Inference (file-backed)
-                metrics.log("✓ Starting introgression inference stage...")
-                inference_start_wall, inference_start_cpu = _now_times()
+            # Stage 2: Introgression inference from mapping file
+            metrics.log("✓ Starting introgression inference stage...")
+            inference_start_wall, inference_start_cpu = _now_times()
 
-                results = analyze_triplet_gene_tree_file(
-                    triplet_output_path,
-                    alpha_dct=args.alpha_dct,
-                    alpha_ks=args.alpha_ks,
-                    discordant_test=args.discordant_test,
-                    summary_statistic=args.summary_statistic,
-                    stats_backend=args.stats_backend,
-                    tree_height_calculation_strategy=args.tree_height_calculation_strategy,
-                    p_value_correction=args.p_value_correction,
-                    bootstrap=args.bootstrap,
-                    bootstrap_options=args.bootstrap_options,
-                    use_multiprocessing=use_multiprocessing,
-                    processes=processes,
-                )
-                inference_wall_time, inference_cpu_time = _elapsed_times(
-                    inference_start_wall,
-                    inference_start_cpu,
-                )
-            else:
-                # Stage 1+2: In-memory extraction and inference
-                metrics.log("✓ Starting in-memory triplet extraction + introgression inference...")
-                in_memory_start_wall, in_memory_start_cpu = _now_times()
-
-                in_memory_payload = _analyze_triplets_in_memory(
-                    triplets,
-                    species_triplet_trees,
-                    gene_trees_clean,
-                    alpha_dct=args.alpha_dct,
-                    alpha_ks=args.alpha_ks,
-                    discordant_test=args.discordant_test,
-                    summary_statistic=args.summary_statistic,
-                    stats_backend=args.stats_backend,
-                    tree_height_calculation_strategy=args.tree_height_calculation_strategy,
-                    p_value_correction=args.p_value_correction,
-                    bootstrap=args.bootstrap,
-                    bootstrap_options=args.bootstrap_options,
-                )
-                _in_memory_wall, _in_memory_cpu = _elapsed_times(in_memory_start_wall, in_memory_start_cpu)
-                total_subtrees = in_memory_payload["total_subtrees"]
-                triplets_with_trees = in_memory_payload["triplets_with_trees"]
-                extraction_wall_time = in_memory_payload["extraction_wall_seconds"]
-                extraction_cpu_time = in_memory_payload["extraction_cpu_seconds"]
-                inference_wall_time = in_memory_payload["inference_wall_seconds"]
-                inference_cpu_time = in_memory_payload["inference_cpu_seconds"]
-                results = in_memory_payload["results"]
-
-                metrics.log("✓ In-memory extraction + inference complete")
-                metrics.log("  Output: (no triplet-gene-tree file written)")
-                metrics.log(f"  Triplets with gene trees: {triplets_with_trees}")
-                metrics.log(f"  Total subtrees extracted: {total_subtrees}")
-                metrics.log("  Extraction timings:")
-                _log_stage_timing(metrics, extraction_wall_time, extraction_cpu_time)
-                metrics.log("  Inference timings:")
-                _log_stage_timing(metrics, inference_wall_time, inference_cpu_time)
-                metrics.log("")
+            results = analyze_triplet_gene_tree_file(
+                triplet_output_path,
+                alpha_dct=args.alpha_dct,
+                alpha_ks=args.alpha_ks,
+                discordant_test=args.discordant_test,
+                summary_statistic=args.summary_statistic,
+                stats_backend=args.stats_backend,
+                tree_height_calculation_strategy=args.tree_height_calculation_strategy,
+                p_value_correction=args.p_value_correction,
+                bootstrap=args.bootstrap,
+                bootstrap_options=args.bootstrap_options,
+                use_multiprocessing=use_multiprocessing,
+                processes=processes,
+            )
+            inference_wall_time, inference_cpu_time = _elapsed_times(
+                inference_start_wall,
+                inference_start_cpu,
+            )
 
             final_tsv = str(output_dir / "orchestrator_triplet_results.tsv")
             write_pipeline_results(
