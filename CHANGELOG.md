@@ -44,6 +44,5 @@
 - Species-tree triplet output in TSV is now topology-only Newick (branch lengths omitted).
 - Added tree-height strategies `SIS` (sister-taxon distance) and `INT` (sister-MRCA to triplet-root internal branch).
 - Added `dis1_topology` as a base TSV output column for all runs.
-- Orchestrator now defaults to in-memory triplet mapping/inference (no `unique_triplets_gene_trees.txt` written by default). Full mapping output is opt-in via `write_full_triplet_gene_trees_mapping` / `--write-full-triplet-gene-trees-mapping` for debugging, with potential large-file I/O overhead on large triplet sets.
 - Added CPU-process timing alongside wall-clock timing in logs and `metrics.txt` for species processing, gene processing, triplet extraction, inference, and total runtime.
 - Added `summary_statistics.tsv` output with per-triplet topology summaries: 63 metric-stat columns (mean/median/mode/variance/entropy/min/max × concordant/discordant1/discordant2 × avg-tree-height/internal-branch/sister-distance), plus identity fields, topology counts, classification, and bootstrap value when enabled.
