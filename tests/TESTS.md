@@ -293,10 +293,10 @@ This addendum lists tests that are intentionally grouped in the narrative sectio
 
 #### tests/test_orchestrator.py
 
-- Tests: `test_main_uses_in_memory_branch_by_default`, `test_main_uses_file_backed_branch_when_enabled`
-Inputs: orchestrator runtime with write-full-triplet-gene-trees-mapping disabled vs enabled.
-Expected outputs/behavior: default path uses in-memory extraction + inference; enabled flag selects file-backed mapping path.
-Purpose: verify branch selection and regression-proof orchestration flow.
+- Tests: `test_main_uses_file_backed_pipeline`
+Inputs: orchestrator runtime with normalized species/gene trees and triplet metadata.
+Expected outputs/behavior: orchestrator always runs file-backed triplet extraction to `unique_triplets_gene_trees.txt`, then runs inference from that file.
+Purpose: verify the orchestrator executes the canonical two-stage file-backed pipeline.
 
 #### tests/test_tree_parser.py
 
