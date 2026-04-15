@@ -110,18 +110,6 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 - `triplet_processor` applies the GhostParser statistical decision pipeline to each triplet payload.
 - The orchestrator coordinates both steps and writes the final results table.
 
-#### In-Memory Triplet Flow (Default)
-
-- Default orchestrator behavior is in-memory triplet processing.
-- `tree_parser` extracts gene-tree subtrees for one normalized triplet at a time.
-- The orchestrator passes that one-triplet payload directly to `triplet_processor` for inference.
-- After inference completes for the triplet, the payload is released before the next triplet is processed.
-- This avoids writing the full triplet-to-gene-tree mapping file by default.
-- To force file-backed mapping output for debugging/auditing, use:
-   - config key: `write_full_triplet_gene_trees_mapping: true`
-   - CLI flag: `--write-full-triplet-gene-trees-mapping`
-   - Note: for large triplet sets, the mapping file can be very large and add I/O overhead.
-
 GhostParser is configurable (discordant test, backend, thresholds, summary statistic), so execution follows the same core pipeline stages while allowing controlled method choices.
 
 #### Orchestrator Arguments
@@ -138,7 +126,6 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--output-folder`
 - `--triplet-filter`
 - `--processes`
-- `--write-full-triplet-gene-trees-mapping`
 - `--generate-summary-stats`
 - `--min-support-value`
 - `--discordant-test`
@@ -155,7 +142,7 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 
 #### Primary Outputs
 
-1. `unique_triplets_gene_trees.txt` (only when `--write-full-triplet-gene-trees-mapping` is enabled)
+1. `unique_triplets_gene_trees.txt`
 2. `orchestrator_triplet_results.tsv`
 3. `summary_statistics.tsv` (only when `--generate-summary-stats` is enabled)
 4. `metrics.txt`
@@ -265,7 +252,7 @@ The orchestrator generates these output files:
 
 1. **`processed_species.tree`** - Processed species tree with support values removed and outgroup rooting applied
 2. **`processed_gene_trees.tree`** - Processed gene trees with support values removed and outgroup rooting applied
-3. **`unique_triplets_gene_trees.txt`** - Optional full triplet-to-gene-tree mapping output, written only when `--write-full-triplet-gene-trees-mapping` is enabled
+3. **`unique_triplets_gene_trees.txt`** - Full triplet-to-gene-tree mapping output used as the input to triplet inference
 4. **`metrics.txt`** - Metrics log with warnings, timings, and counts
 5. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
 6. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `--generate-summary-stats` is enabled, including:

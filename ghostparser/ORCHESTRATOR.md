@@ -52,13 +52,6 @@ Options:
     - Worker processes for both triplet extraction (`tree_parser`) and per-triplet inference (`triplet_processor`).
     - Defaults to `0`, which means all available CPU cores (`cpu_count()`).
 
-- `--write-full-triplet-gene-trees-mapping` (optional)
-
-    - When set, writes the full `unique_triplets_gene_trees.txt` mapping before inference.
-    - Useful for debugging and inspection of triplet-to-gene-tree mappings.
-    - For large triplet sets, this file can be very large and increase I/O overhead.
-    - Default is in-memory streaming (no intermediate triplet-gene-tree file).
-
 - `--tree-height-calculation-strategy` (optional)
 
     - Tree-height strategy used by `triplet_processor`.
@@ -81,11 +74,9 @@ CLI mode inputs are normalized into the same key/value payload used by config fi
 3. Gene tree cleaning/rooting
    - Uses `clean_and_save_gene_trees`.
 4. Triplet extraction and inference
-    - Default: in-memory per-triplet streaming (no `unique_triplets_gene_trees.txt` output).
-    - Optional file-backed mode (`--write-full-triplet-gene-trees-mapping`):
-        - Uses `write_triplet_gene_trees_multiprocess` from `tree_parser`.
-        - Writes `unique_triplets_gene_trees.txt` in the same section format as `tree_parser`.
-        - Uses `analyze_triplet_gene_tree_file` from `triplet_processor` on that file.
+    - Uses `write_triplet_gene_trees_multiprocess` from `tree_parser`.
+    - Writes `unique_triplets_gene_trees.txt` in the same section format as `tree_parser`.
+    - Uses `analyze_triplet_gene_tree_file` from `triplet_processor` on that file.
 6. Final reporting
    - Uses `write_pipeline_results` to write `orchestrator_triplet_results.tsv`.
 
@@ -252,7 +243,7 @@ How to read this example quickly:
 
 - `processed_<species_tree_filename>`
 - `processed_<gene_trees_filename>`
-- `unique_triplets_gene_trees.txt` (only when `--write-full-triplet-gene-trees-mapping` is set)
+- `unique_triplets_gene_trees.txt`
 - `orchestrator_triplet_results.tsv`
 - `metrics.txt`
 

@@ -193,15 +193,6 @@ python -m ghostparser.orchestrator \
     - `0` means all available CPU cores.
     - `1` means single-worker execution (no multiprocessing).
 
-- `write_full_triplet_gene_trees_mapping` (boolean)
-
-    - CLI flag: `--write-full-triplet-gene-trees-mapping`
-
-    - When `true`, writes the full `unique_triplets_gene_trees.txt` mapping before inference.
-    - Useful for debugging and auditing extracted triplet-to-gene-tree mappings.
-    - For large numbers of triplets, this file can become very large and may add noticeable I/O overhead.
-    - Default: `false` (in-memory streaming mode, no intermediate full mapping file).
-
 - `generate_summary_stats` (boolean)
 
     - CLI flag: `--generate-summary-stats`
