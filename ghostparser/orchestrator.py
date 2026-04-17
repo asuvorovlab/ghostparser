@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 from multiprocessing import cpu_count
 from pathlib import Path
+import resource
 import time
 
 import dendropy
@@ -81,13 +82,33 @@ def _resolve_parallel_mode(processes):
 
 
 def _now_times():
-    """Return current wall-clock and CPU-process times."""
-    return time.time(), time.process_time()
+    """Return current wall-clock and CPU time (self + children)."""
+    return time.time(), _cpu_time_self_and_children()
 
 
 def _elapsed_times(start_wall, start_cpu):
-    """Return elapsed wall-clock and CPU-process times."""
-    return time.time() - start_wall, time.process_time() - start_cpu
+    """Return elapsed wall-clock and CPU time (self + children)."""
+    return time.time() - start_wall, _cpu_time_self_and_children() - start_cpu
+
+
+def _cpu_time_self_and_children():
+    """Return CPU seconds consumed by this process and reaped children.
+
+    This captures multiprocessing worker CPU time once workers exit and are
+    joined by the parent process.
+    """
+    try:
+        self_usage = resource.getrusage(resource.RUSAGE_SELF)
+        child_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        return (
+            self_usage.ru_utime
+            + self_usage.ru_stime
+            + child_usage.ru_utime
+            + child_usage.ru_stime
+        )
+    except Exception:
+        # Fallback for platforms where resource accounting is unavailable.
+        return time.process_time()
 
 
 def _log_stage_timing(metrics, wall_seconds, cpu_seconds):
