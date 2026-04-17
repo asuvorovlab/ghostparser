@@ -1455,10 +1455,17 @@ def parse_triplet_gene_trees_file(filepath):
     return triplet_map
 
 
-def _get_mp_context():
-    """Get a multiprocessing context that avoids fork in multi-threaded processes."""
+def _get_mp_context(prefer_fork=False):
+    """Get a multiprocessing context for worker pools.
+
+    Args:
+        prefer_fork: If True, prefer ``fork`` where available for lower worker
+            startup overhead and parent-child CPU accounting consistency.
+    """
     if hasattr(mp, "get_context"):
         methods = mp.get_all_start_methods()
+        if prefer_fork and "fork" in methods:
+            return mp.get_context("fork")
         if "forkserver" in methods:
             return mp.get_context("forkserver")
         if "spawn" in methods:
@@ -1670,7 +1677,7 @@ def analyze_triplet_gene_tree_file(
             for triplet, entry in items
         ]
         chunksize = max(1, len(args) // (worker_count * 4))
-        ctx = _get_mp_context()
+        ctx = _get_mp_context(prefer_fork=True)
         with ctx.Pool(processes=worker_count) as pool:
             results = list(pool.imap(_analyze_triplet_entry, args, chunksize=chunksize))
         corrected = _apply_triplet_result_p_value_correction(
