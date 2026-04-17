@@ -569,10 +569,17 @@ def process_gene_trees_for_triplets(gene_trees, triplets):
     return triplet_gene_trees
 
 
-def _get_mp_context():
-    """Get a multiprocessing context that avoids fork in multi-threaded processes."""
+def _get_mp_context(prefer_fork=False):
+    """Get a multiprocessing context for worker pools.
+
+    Args:
+        prefer_fork: If True, prefer ``fork`` where available so workers can
+            inherit large read-only data via copy-on-write.
+    """
     if hasattr(mp, "get_context"):
         methods = mp.get_all_start_methods()
+        if prefer_fork and "fork" in methods:
+            return mp.get_context("fork")
         if "forkserver" in methods:
             return mp.get_context("forkserver")
         if "spawn" in methods:
@@ -580,37 +587,62 @@ def _get_mp_context():
     return mp
 
 
-_GENE_TREES_PATH: str = ""
+_GENE_TREES_LIST: list[str] = []
 _CHUNK_DIR: str = ""
 _SPECIES_TRIPLET_TREES: dict[tuple[str, str, str], str] = {}
 
 
-def _init_triplet_chunk_worker(gene_trees_path, chunk_dir, species_triplet_trees=None):
-    """Initializer for multiprocessing triplet chunk workers."""
-    global _GENE_TREES_PATH, _CHUNK_DIR, _SPECIES_TRIPLET_TREES
-    _GENE_TREES_PATH = str(gene_trees_path)
+def _read_gene_trees_file(gene_trees_filepath):
+    """Read all gene trees from file into memory as Newick strings.
+    
+    Args:
+        gene_trees_filepath: Path to the cleaned gene trees file (one Newick per line).
+        
+    Returns:
+        List of Newick strings (empty lines filtered out).
+    """
+    trees = []
+    with open(str(gene_trees_filepath), "r") as f:
+        for line in f:
+            newick_str = line.strip()
+            if newick_str:
+                trees.append(newick_str)
+    return trees
+
+
+def _init_triplet_chunk_worker(gene_trees_list, chunk_dir, species_triplet_trees=None):
+    """Initializer for multiprocessing triplet chunk workers.
+    
+    Args:
+        gene_trees_list: List of Newick strings (read once in main process).
+        chunk_dir: Directory for writing chunk output files.
+        species_triplet_trees: Dict mapping triplet -> species subtree Newick.
+    """
+    global _GENE_TREES_LIST, _CHUNK_DIR, _SPECIES_TRIPLET_TREES
+    if gene_trees_list is not None:
+        _GENE_TREES_LIST = gene_trees_list
     _CHUNK_DIR = str(chunk_dir)
     _SPECIES_TRIPLET_TREES = species_triplet_trees or {}
 
 
 def _process_triplet_chunk_stream(args):
-    """Process a chunk of triplets against all gene trees and write to a chunk file."""
+    """Process a chunk of triplets against in-memory gene trees and write to a chunk file.
+    
+    Gene trees are read once in the main process and distributed to workers via
+    the initializer, avoiding parallel disk I/O contention.
+    """
     chunk_index, triplet_chunk = args
     triplet_results = {triplet: [] for triplet in triplet_chunk}
 
-    with open(_GENE_TREES_PATH, "r") as gene_f:
-        for line in gene_f:
-            newick_str = line.strip()
-            if not newick_str:
+    for newick_str in _GENE_TREES_LIST:
+        tree = dendropy.Tree.get(data=newick_str, schema="newick", preserve_underscores=True)
+        tree_taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
+        for triplet in triplet_chunk:
+            if not set(triplet).issubset(tree_taxa):
                 continue
-            tree = dendropy.Tree.get(data=newick_str, schema="newick", preserve_underscores=True)
-            tree_taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
-            for triplet in triplet_chunk:
-                if not set(triplet).issubset(tree_taxa):
-                    continue
-                subtree = extract_triplet_subtree(tree, triplet)
-                if subtree:
-                    triplet_results[triplet].append(format_newick_with_precision(subtree))
+            subtree = extract_triplet_subtree(tree, triplet)
+            if subtree:
+                triplet_results[triplet].append(format_newick_with_precision(subtree))
 
     total_subtrees = 0
     triplets_with_trees = 0
@@ -749,18 +781,27 @@ def write_triplet_gene_trees_multiprocess(
         temp_gene_file.write_text("\n".join(gene_trees_filepath))
         gene_trees_filepath = str(temp_gene_file)
 
+    # Read gene trees file ONCE in the main process
+    gene_trees_list = _read_gene_trees_file(gene_trees_filepath)
+
     args = [(idx, chunk) for idx, chunk in enumerate(triplet_chunks)]
 
     if use_multiprocessing and worker_count > 1:
-        ctx = _get_mp_context()
+        ctx = _get_mp_context(prefer_fork=True)
+        init_gene_trees = gene_trees_list
+        if hasattr(ctx, "get_start_method") and ctx.get_start_method() == "fork":
+            # Under fork, workers inherit this read-only payload via copy-on-write.
+            global _GENE_TREES_LIST
+            _GENE_TREES_LIST = gene_trees_list
+            init_gene_trees = None
         with ctx.Pool(
             processes=worker_count,
             initializer=_init_triplet_chunk_worker,
-            initargs=(gene_trees_filepath, str(chunk_dir), species_triplet_trees),
+            initargs=(init_gene_trees, str(chunk_dir), species_triplet_trees),
         ) as pool:
             totals = pool.map(_process_triplet_chunk_stream, args)
     else:
-        _init_triplet_chunk_worker(gene_trees_filepath, str(chunk_dir), species_triplet_trees)
+        _init_triplet_chunk_worker(gene_trees_list, str(chunk_dir), species_triplet_trees)
         totals = [_process_triplet_chunk_stream(item) for item in args]
 
     _merge_chunk_files(chunk_dir, output_filepath, batch_size=1000)

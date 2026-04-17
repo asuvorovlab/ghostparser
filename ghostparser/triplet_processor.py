@@ -1673,13 +1673,14 @@ def analyze_triplet_gene_tree_file(
         ctx = _get_mp_context()
         with ctx.Pool(processes=worker_count) as pool:
             results = list(pool.imap(_analyze_triplet_entry, args, chunksize=chunksize))
-        return _apply_triplet_result_p_value_correction(
+        corrected = _apply_triplet_result_p_value_correction(
             results,
             alpha_dct=alpha_dct,
             alpha_ks=alpha_ks,
             method=p_value_correction,
             stats_backend=stats_backend,
         )
+        return corrected
 
     results = []
     for triplet, entry in items:
@@ -1705,13 +1706,14 @@ def analyze_triplet_gene_tree_file(
                 rng=triplet_rng if triplet_rng is not None else rng,
             )
         )
-    return _apply_triplet_result_p_value_correction(
+    corrected = _apply_triplet_result_p_value_correction(
         results,
         alpha_dct=alpha_dct,
         alpha_ks=alpha_ks,
         method=p_value_correction,
         stats_backend=stats_backend,
     )
+    return corrected
 
 
 def collect_triplet_statistics(results):
