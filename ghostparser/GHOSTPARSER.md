@@ -152,7 +152,7 @@ Runs the pipeline for all triplets in an input file with configurable discordant
 
 ### `write_pipeline_results(results, output_filepath, dct_method='chi-square', summary_statistic='median', p_value_correction='no', bootstrap=False)`
 
-Writes per-triplet results to a TSV file with counts, DCT/KS statistics, raw and corrected p-values (`dct_p_value`, `ks_p_value`, plus dynamic corrected columns like `dct_p_val_bfn_corr`), dynamic summary columns (`median_con`/`median_dis`, `mean_con`/`mean_dis`, or `mode_con`/`mode_dis`), and classification.
+Writes per-triplet results to a TSV file with counts, DCT/KS statistics, raw and corrected p-values (`dct_p_value`, `ks_p_value`, plus dynamic corrected columns like `dct_p_val_bfn_corr`), dynamic summary columns (`median_con`/`median_dis`, `mean_con`/`mean_dis`, or `mode_con`/`mode_dis`), final classification, and an `inference` column describing direction with species names.
 
 When `bootstrap=True`, output also includes:
 

@@ -262,6 +262,7 @@ The orchestrator generates these output files:
    - final `classification` and `bootstrap_value` (when bootstrap is enabled)
 
 Base TSV output includes `dis1_topology` and a topology-only `species_tree` value for each triplet.
+Base TSV output also includes an `inference` column with human-readable direction text using actual species names.
 
 When bootstrap is enabled, the TSV adds:
 

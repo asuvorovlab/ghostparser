@@ -208,6 +208,15 @@ Per-gene-tree height uses:
             - `ghost_introgression` if `<summary>_con < <summary>_dis`
             - `unresolved` if equal/undefined.
 
+- `inference`
+
+    - Method: human-readable direction text derived from `classification`, `triplet` (A/B/C taxa), and `dis1_topology`.
+    - Output examples:
+
+        - `no introgression`
+        - `introgression from <taxonX> to <taxonY>`
+        - `introgression from ghost lineage to <taxonX>`
+
 ### Data Coverage Tracking
 
 - `analyzed_trees`
@@ -225,13 +234,13 @@ Below is an example of how one row appears in `orchestrator_triplet_results.tsv`
 Header (truncated for readability):
 
 ```tsv
-triplet	species_tree	n_con	n_dis1	n_dis2	most_frequent_matches_concordant	dct_chi_stats	dct_p_value	dct_significant	ks_statistic	ks_p_value	ks_significant	median_con	median_dis	classification	analyzed_trees
+triplet	species_tree	n_con	n_dis1	n_dis2	most_frequent_matches_concordant	dct_chi_stats	dct_p_value	dct_significant	ks_statistic	ks_p_value	ks_significant	median_con	median_dis	classification	inference	analyzed_trees
 ```
 
 Example data row:
 
 ```tsv
-TaxaA,TaxaB,TaxaC	((TaxaA:1,TaxaB:1):1,TaxaC:1);	8	12	4	False	8	0.001	True	0.2	0.07	False			inflow_introgression	24
+TaxaA,TaxaB,TaxaC	((TaxaA:1,TaxaB:1):1,TaxaC:1);	8	12	4	False	8	0.001	True	0.2	0.07	False			inflow_introgression	introgression from TaxaC to TaxaB	24
 ```
 
 How to read this example quickly:
