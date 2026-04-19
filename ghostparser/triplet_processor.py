@@ -43,11 +43,13 @@ from .config import (
     DEFAULT_BOOTSTRAP_ITERATIONS,
     DEFAULT_BOOTSTRAP_SUMMARY_ONLY,
     DEFAULT_DISCORDANT_TEST,
+    DEFAULT_INPUT_FORMAT,
     DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     DISCORDANT_TEST_CHOICES,
+    INPUT_FORMAT_CHOICES,
     P_VALUE_CORRECTION_CHOICES,
     STATS_BACKEND_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
@@ -1256,6 +1258,52 @@ def _serialize_triplet_gene_trees(
     return observations, metric_buckets
 
 
+def _serialize_triplet_observation_rows(
+    observation_rows,
+    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+):
+    """Build observations from cached parquet rows."""
+    observations: list[SerializedTripletObservation] = []
+    metric_buckets = _build_empty_metric_buckets()
+
+    for row in observation_rows:
+        topology = row.get("topology")
+        if topology not in ALL_TOPOLOGIES:
+            continue
+
+        avg_tree_height = float(row.get("h_avg"))
+        internal_branch = float(row.get("h_int"))
+        sister_distance = float(row.get("h_sis"))
+        h_a = float(row.get("h_a"))
+        h_b = float(row.get("h_b"))
+        h_c = float(row.get("h_c"))
+
+        if tree_height_calculation_strategy == "AVG":
+            tree_height = avg_tree_height
+        elif tree_height_calculation_strategy == "A":
+            tree_height = h_a
+        elif tree_height_calculation_strategy == "B":
+            tree_height = h_b
+        elif tree_height_calculation_strategy == "C":
+            tree_height = h_c
+        elif tree_height_calculation_strategy == "SIS":
+            tree_height = sister_distance
+        elif tree_height_calculation_strategy == "INT":
+            tree_height = internal_branch
+        else:
+            raise ValueError(
+                f"Unsupported tree height calculation strategy: {tree_height_calculation_strategy}. "
+                f"Choose one of: {', '.join(TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES)}"
+            )
+
+        metric_buckets[topology]["avg_tree_height"].append(avg_tree_height)
+        metric_buckets[topology]["internal_branch"].append(internal_branch)
+        metric_buckets[topology]["sister_distance"].append(sister_distance)
+        observations.append((topology, tree_height))
+
+    return observations, metric_buckets
+
+
 def _run_triplet_pipeline_from_observations(
     species_triplet,
     observations,
@@ -1631,6 +1679,99 @@ def parse_triplet_gene_trees_file(filepath):
     return triplet_map
 
 
+def _require_pyarrow():
+    """Import and return pyarrow parquet module."""
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise ImportError("Parquet input requires pyarrow to be installed") from exc
+    return pq
+
+
+def parse_triplet_gene_trees_parquet(dataset_path):
+    """Parse partitioned parquet triplet dataset produced by ``tree_parser``."""
+    pq = _require_pyarrow()
+
+    dataset_root = Path(dataset_path)
+    triplet_dir = dataset_root / "triplets"
+    observations_dir = dataset_root / "observations"
+    if not triplet_dir.exists() or not observations_dir.exists():
+        raise ValueError(
+            "Invalid parquet triplet dataset: expected 'triplets/' and 'observations/' directories"
+        )
+
+    triplet_files = sorted(triplet_dir.glob("*.parquet"))
+    if not triplet_files:
+        return {}
+
+    triplet_map = {}
+    triplet_id_to_taxa = {}
+
+    for file_path in triplet_files:
+        rows = pq.read_table(file_path).to_pylist()
+        for row in rows:
+            taxa = (row["A"], row["B"], row["C"])
+            triplet_id = row["triplet_id"]
+            if taxa in triplet_map:
+                raise ValueError(f"Duplicate triplet header encountered: {','.join(taxa)}")
+
+            bc_role = row["bc_role"]
+            ac_role = row["ac_role"]
+            if bc_role == ac_role:
+                raise ValueError(f"Invalid discordant role assignment in parquet row for {','.join(taxa)}")
+
+            dis1_topology = TOPOLOGY_BC if bc_role == "discordant1" else TOPOLOGY_AC
+            triplet_map[taxa] = {
+                "count": int(row["count"]),
+                "species_tree": row.get("species_tree"),
+                "gene_trees": [],
+                "observation_rows": [],
+                "label_map": {"A": taxa[0], "B": taxa[1], "C": taxa[2]},
+                "header_topology_counts": {
+                    TOPOLOGY_AB: int(row["n_ab"]),
+                    TOPOLOGY_BC: int(row["n_bc"]),
+                    TOPOLOGY_AC: int(row["n_ac"]),
+                },
+                "header_dis1_topology": dis1_topology,
+            }
+            triplet_id_to_taxa[triplet_id] = taxa
+
+    observation_files = sorted(observations_dir.rglob("*.parquet"))
+    for file_path in observation_files:
+        rows = pq.read_table(file_path).to_pylist()
+        for row in rows:
+            triplet_id = row["triplet_id"]
+            taxa = triplet_id_to_taxa.get(triplet_id)
+            if taxa is None:
+                raise ValueError(f"Observation references unknown triplet_id: {triplet_id}")
+            triplet_map[taxa]["observation_rows"].append(row)
+            if "gene_tree_newick" in row and row["gene_tree_newick"]:
+                triplet_map[taxa]["gene_trees"].append(row["gene_tree_newick"])
+
+    for taxa, entry in triplet_map.items():
+        if entry["count"] != len(entry["observation_rows"]):
+            raise ValueError(
+                f"Triplet count/header mismatch for {','.join(taxa)}: "
+                f"header count={entry['count']}, parsed rows={len(entry['observation_rows'])}"
+            )
+
+    return triplet_map
+
+
+def _resolve_input_format(filepath, input_format=DEFAULT_INPUT_FORMAT):
+    """Resolve triplet input format from explicit value or path suffix."""
+    if input_format not in INPUT_FORMAT_CHOICES:
+        raise ValueError(
+            f"Unsupported input format: {input_format}. "
+            f"Choose one of: {', '.join(INPUT_FORMAT_CHOICES)}"
+        )
+    if input_format != "auto":
+        return input_format
+
+    path = Path(filepath)
+    return "parquet" if path.suffix.lower() == ".parquet" else "txt"
+
+
 def _get_mp_context(prefer_fork=False):
     """Get a multiprocessing context for worker pools.
 
@@ -1702,12 +1843,17 @@ def analyze_triplet_entry(
     """Analyze one triplet entry payload and return a pipeline result."""
     species_tree_topology = _species_tree_topology_only_newick(entry.get("species_tree"))
     species_topology = TOPOLOGY_AB
-    observations = _serialize_triplet_gene_trees(
-        triplet,
-        entry["gene_trees"],
-        tree_height_calculation_strategy=tree_height_calculation_strategy,
-    )
-    observations, metric_buckets = observations
+    if entry.get("observation_rows"):
+        observations, metric_buckets = _serialize_triplet_observation_rows(
+            entry["observation_rows"],
+            tree_height_calculation_strategy=tree_height_calculation_strategy,
+        )
+    else:
+        observations, metric_buckets = _serialize_triplet_gene_trees(
+            triplet,
+            entry["gene_trees"],
+            tree_height_calculation_strategy=tree_height_calculation_strategy,
+        )
     base_result = _run_triplet_pipeline_from_observations(
         triplet,
         observations,
@@ -1772,6 +1918,7 @@ def analyze_triplet_entry(
 
 def analyze_triplet_gene_tree_file(
     filepath,
+    input_format="auto",
     alpha_dct=DEFAULT_ALPHA_DCT,
     alpha_ks=DEFAULT_ALPHA_KS,
     discordant_test=DEFAULT_DISCORDANT_TEST,
@@ -1785,7 +1932,7 @@ def analyze_triplet_gene_tree_file(
     use_multiprocessing=True,
     processes=None,
 ):
-    """Analyze all triplets from a triplet-gene-trees file."""
+    """Analyze all triplets from a triplet-gene-trees text or parquet input."""
     if discordant_test not in DISCORDANT_TEST_CHOICES:
         raise ValueError(
             f"Unsupported discordant test method: {discordant_test}. "
@@ -1826,7 +1973,11 @@ def analyze_triplet_gene_tree_file(
     if "seed" not in options:
         options["seed"] = None
 
-    triplet_map = parse_triplet_gene_trees_file(filepath)
+    resolved_input_format = _resolve_input_format(filepath, input_format=input_format)
+    if resolved_input_format == "parquet":
+        triplet_map = parse_triplet_gene_trees_parquet(filepath)
+    else:
+        triplet_map = parse_triplet_gene_trees_file(filepath)
     items = list(triplet_map.items())
     if not items:
         return []
@@ -2114,6 +2265,7 @@ def main():
 
     results = analyze_triplet_gene_tree_file(
         str(input_path),
+        input_format=args.input_format,
         alpha_dct=args.alpha_dct,
         alpha_ks=args.alpha_ks,
         discordant_test=args.discordant_test,
@@ -2160,7 +2312,13 @@ def _build_argument_parser():
     """Build triplet_processor CLI argument parser."""
     parser = argparse.ArgumentParser(description="Run GhostParser triplet processing pipeline (Fig. 6).")
     parser.add_argument("-c", "--config-file", default=None, help="Path to a JSON or YAML config file")
-    parser.add_argument("--input-path", default=None, help="Path to unique_triplets_gene_trees.txt")
+    parser.add_argument("--input-path", default=None, help="Path to unique_triplets_gene_trees.txt or parquet dataset")
+    parser.add_argument(
+        "--input-format",
+        choices=INPUT_FORMAT_CHOICES,
+        default=None,
+        help=f"Input format (default: {DEFAULT_INPUT_FORMAT}; auto infers from input path suffix)",
+    )
     parser.add_argument("--output-path", default=None, help="Output TSV path (default: alongside input)")
     parser.add_argument(
         "--stats-output",
@@ -2254,6 +2412,7 @@ def _build_argument_parser():
 
 TRIPLET_PROCESSOR_PAYLOAD_ARG_NAMES = [
     "input_path",
+    "input_format",
     "output_path",
     "stats_output",
     "alpha_dct",
