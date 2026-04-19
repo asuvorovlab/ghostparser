@@ -20,7 +20,12 @@ file.
 For very large datasets, triplet processing parallelizes over triplet chunks and streams gene trees from disk,
 keeping memory bounded to the active triplet chunk.
 
-`triplet_processor` consumes `unique_triplets_gene_trees.txt` and applies the GhostParser decision pipeline:
+`triplet_processor` consumes triplet datasets from either:
+
+- `unique_triplets_gene_trees.txt` (text sections)
+- `unique_triplets_gene_trees.parquet/` (partitioned parquet dataset)
+
+and applies the GhostParser decision pipeline:
 
 1. Count concordant and discordant topology frequencies, set concordant to the species-tree topology, and assign discordant1/discordant2 by discordant counts (higher count -> discordant1; ties keep fixed discordant order).
 2. Compute `H(T)` using a configurable tree-height strategy (`AVG` default, taxon-specific `A|B|C`, sister-distance `SIS`, or internal-branch `INT`).
@@ -32,7 +37,7 @@ keeping memory bounded to the active triplet chunk.
 
 This is a configurable pipeline: users can choose supported statistical methods and thresholds while preserving the same core stage order.
 
-Triplet sections in `unique_triplets_gene_trees.txt` are written as:
+Text-mode triplet sections in `unique_triplets_gene_trees.txt` are written as:
 
 - `A,B,C<TAB>gene_tree_count<TAB>species_triplet_tree_newick<TAB>[A=speciesA,B=speciesB,C=speciesC]<TAB>AB:n/concordant,BC:n/discordant1|discordant2,AC:n/discordant2|discordant1`
 
@@ -64,7 +69,8 @@ python -m ghostparser.orchestrator -c <config.yaml>
 
 ### Primary orchestrator outputs
 
-- `unique_triplets_gene_trees.txt`
+- `unique_triplets_gene_trees.txt` (default)
+- `unique_triplets_gene_trees.parquet/` (when parquet mode is enabled)
 - `orchestrator_triplet_results.tsv`
 - `metrics.txt`
 
@@ -143,7 +149,9 @@ Possible `classification` values:
 
 ### `parse_triplet_gene_trees_file(filepath)`
 
-Parses `unique_triplets_gene_trees.txt` into a dictionary using a strict section schema:
+Parses either text sections or parquet datasets into a dictionary.
+
+For text input (`*.txt`), strict section schema is:
 
 - header: `A,B,C<TAB>count<TAB>species_tree_newick<TAB>[A=...,B=...,C=...]<TAB>AB:x/concordant,BC:y/discordant1|discordant2,AC:z/discordant2|discordant1`
 - one required blank line after header
@@ -153,6 +161,11 @@ Parses `unique_triplets_gene_trees.txt` into a dictionary using a strict section
 Validation is strict: malformed sections, duplicate triplets, or header/tree-count mismatches raise `ValueError`.
 
 - triplet -> `{count, species_tree, gene_trees, label_map, header_topology_counts, header_dis1_topology}`
+
+For parquet input (`*.parquet` dataset directory), required layout is:
+
+- `triplets/*.parquet` with one row per triplet (`A`, `B`, `C`, `count`, topology-count metadata)
+- `observations/partition_id=*/part-*.parquet` with one row per extracted subtree and cached metrics (`h_a`, `h_b`, `h_c`, `h_avg`, `h_int`, `h_sis`)
 
 ### `analyze_triplet_gene_tree_file(filepath, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', p_value_correction='bfn', bootstrap=False, bootstrap_options=None, rng=None, use_multiprocessing=True, processes=None)`
 
@@ -185,6 +198,9 @@ Bootstrap payload fields are serialized as JSON strings by default.
 
 ```bash
 python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.txt
+
+# or parquet dataset mode
+python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.parquet --input-format parquet
 ```
 
 Config-file mode:

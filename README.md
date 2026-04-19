@@ -139,10 +139,13 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--bootstrap-seed`
 - `--bootstrap-debug-mode`
 - `--bootstrap-summary-only`
+- `--triplet-output-format`
+- `--parquet-partitions`
+- `--parquet-compression`
 
 #### Primary Outputs
 
-1. `unique_triplets_gene_trees.txt`
+1. `unique_triplets_gene_trees.parquet` (default; use `--triplet-output-format txt` to write text output)
 2. `orchestrator_triplet_results.tsv`
 3. `summary_statistics.tsv` (only when `--generate-summary-stats` is enabled)
 4. `metrics.txt`
@@ -166,11 +169,11 @@ python -m ghostparser.tree_parser -c sample_configs/tree_parser_minimal.yaml
 - Removes support labels and preserves branch lengths
 - If support values are present, removes trees with average support below `min_support_value`
 - Roots on outgroup(s), prunes outgroup clade, and logs excluded taxa
-- Writes processed trees and `unique_triplets_gene_trees.txt`
+- Writes processed trees and triplet extraction output (`unique_triplets_gene_trees.parquet` by default, `unique_triplets_gene_trees.txt` when `--triplet-output-format txt` is selected)
 
 ### Triplet Processor (Submodule)
 
-Use this module when you already have `unique_triplets_gene_trees.txt` and only need inference.
+Use this module when you already have triplet extraction output (`unique_triplets_gene_trees.parquet` by default or `unique_triplets_gene_trees.txt`) and only need inference.
 
 ```bash
 python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.txt
@@ -252,7 +255,7 @@ The orchestrator generates these output files:
 
 1. **`processed_species.tree`** - Processed species tree with support values removed and outgroup rooting applied
 2. **`processed_gene_trees.tree`** - Processed gene trees with support values removed and outgroup rooting applied
-3. **`unique_triplets_gene_trees.txt`** - Full triplet-to-gene-tree mapping output used as the input to triplet inference
+3. **`unique_triplets_gene_trees.parquet`** - Default triplet-to-gene-tree mapping output used as the input to triplet inference (`.txt` can be selected with `--triplet-output-format txt`)
 4. **`metrics.txt`** - Metrics log with warnings, timings, and counts
 5. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
 6. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `--generate-summary-stats` is enabled, including:
@@ -360,11 +363,16 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 
 - `processes`: `0` (all available CPU cores)
 - `output_folder` (orchestrator/tree_parser): `./results`
+- `triplet_output_format` (orchestrator/tree_parser): `parquet`
+- `input_format` (triplet_processor): `parquet`
+- `parquet_partitions`: `128`
+- `parquet_compression`: `zstd`
 - `min_support_value`: `0.5`
 - `bootstrap`: `false`
+- `bootstrap_options.debug_mode`: `false`
 - `bootstrap_options.iterations`: `100`
 - `bootstrap_options.seed`: unset
-- `bootstrap_options.summary_only`: `true`
+- `bootstrap_options.summary_only`: `false`
 
 **Backend Details:**
 

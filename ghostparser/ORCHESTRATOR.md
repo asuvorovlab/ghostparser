@@ -75,7 +75,7 @@ CLI mode inputs are normalized into the same key/value payload used by config fi
    - Uses `clean_and_save_gene_trees`.
 4. Triplet extraction and inference
     - Uses `write_triplet_gene_trees_multiprocess` from `tree_parser`.
-    - Writes `unique_triplets_gene_trees.txt` in the same section format as `tree_parser`.
+    - Writes triplet extraction output in either text mode (`unique_triplets_gene_trees.txt`) or parquet dataset mode (`unique_triplets_gene_trees.parquet/`) based on tree_parser settings.
     - Uses `analyze_triplet_gene_tree_file` from `triplet_processor` on that file.
 6. Final reporting
    - Uses `write_pipeline_results` to write `orchestrator_triplet_results.tsv`.
@@ -252,7 +252,8 @@ How to read this example quickly:
 
 - `processed_<species_tree_filename>`
 - `processed_<gene_trees_filename>`
-- `unique_triplets_gene_trees.txt`
+- `unique_triplets_gene_trees.txt` (default)
+- `unique_triplets_gene_trees.parquet/` (when parquet output mode is enabled)
 - `orchestrator_triplet_results.tsv`
 - `metrics.txt`
 
