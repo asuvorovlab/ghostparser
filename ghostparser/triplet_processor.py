@@ -622,6 +622,83 @@ def _classify_introgression(dct_significant, ks_significant, summary_con, summar
     return "unresolved"
 
 
+def _generate_inference_description(triplet, classification, dis1_topology):
+    """Generate human-readable inference direction with actual species names.
+
+    Args:
+        triplet: Tuple of (A, B, C) taxa where A and B are sisters in species tree.
+        classification: String classification (no_introgression, inflow_introgression, etc).
+        dis1_topology: Topology string for discordant1 trees (e.g., "((B,C),A)").
+
+    Returns:
+        Human-readable inference description with actual species names.
+    """
+    a_taxon, b_taxon, c_taxon = triplet
+
+    if classification == "no_introgression":
+        return "no introgression"
+
+    if dis1_topology is None:
+        return classification  # Fallback for unresolved cases.
+
+    # Parse dis1_topology to determine sister pairs.
+    # Supports both canonical A/B/C topologies and labeled species topologies.
+    topology_label = str(dis1_topology).strip().upper()
+
+    if dis1_topology == TOPOLOGY_AB or topology_label == "AB":  # ((A,B),C) - same as species tree
+        sisters_in_dis1 = {a_taxon, b_taxon}
+        outgroup_in_dis1 = c_taxon
+    elif dis1_topology == TOPOLOGY_BC or topology_label == "BC":  # ((B,C),A) - B and C are sisters
+        sisters_in_dis1 = {b_taxon, c_taxon}
+        outgroup_in_dis1 = a_taxon
+    elif dis1_topology == TOPOLOGY_AC or topology_label == "AC":  # ((A,C),B) - A and C are sisters
+        sisters_in_dis1 = {a_taxon, c_taxon}
+        outgroup_in_dis1 = b_taxon
+    else:
+        try:
+            dis1_newick = dis1_topology if str(dis1_topology).strip().endswith(";") else f"{dis1_topology};"
+            dis1_tree = dendropy.Tree.get(data=dis1_newick, schema="newick", preserve_underscores=True)
+            sisters_in_dis1 = set(find_sister_pair(dis1_tree))
+            outgroup_candidates = set(triplet) - sisters_in_dis1
+            if len(outgroup_candidates) != 1:
+                return classification
+            outgroup_in_dis1 = next(iter(outgroup_candidates))
+        except Exception:
+            return classification  # Fallback for unknown topology encodings.
+
+    # Species tree sisters are A and B
+    species_tree_sisters = {a_taxon, b_taxon}
+
+    if classification == "inflow_introgression":
+        # Introgression FROM non-sister (outgroup in species tree) TO sisters in dis1.
+        # C (outgroup in species tree) moved toward A or B.
+        if c_taxon in sisters_in_dis1:
+            sister_who_moved = (sisters_in_dis1 - {c_taxon}).pop()
+            return f"introgression from {c_taxon} to {sister_who_moved}"
+        else:
+            # Fallback: describe based on what we know
+            sisters_str = " and ".join(sorted(sisters_in_dis1))
+            return f"introgression between {sisters_str} and {outgroup_in_dis1}"
+
+    elif classification == "outflow_introgression":
+        # Introgression FROM sisters in species tree TO the non-sister (C).
+        # One of A or B moved toward C.
+        if c_taxon in sisters_in_dis1:
+            # C paired with one of A or B
+            sister_who_introgressed = (sisters_in_dis1 - {c_taxon}).pop()
+            return f"introgression from {sister_who_introgressed} to {c_taxon}"
+        else:
+            # Fallback
+            sisters_str = " and ".join(sorted(species_tree_sisters))
+            return f"introgression from {sisters_str} to {outgroup_in_dis1}"
+
+    elif classification == "ghost_introgression":
+        # Use the dis1 outgroup taxon as recipient per reporting convention.
+        return f"introgression from ghost lineage to {outgroup_in_dis1}"
+
+    return classification
+
+
 _BOOTSTRAP_CLASSES = [
     "ghost_introgression",
     "inflow_introgression",
@@ -1795,6 +1872,7 @@ def write_pipeline_results(
         summary_con_column,
         summary_dis_column,
         "classification",
+        "inference",
         "analyzed_trees",
     ]
 
@@ -1823,6 +1901,11 @@ def write_pipeline_results(
         for result in results:
             a_taxon, b_taxon, c_taxon = result.triplet
             abc_mapping = f"A={a_taxon};B={b_taxon};C={c_taxon}"
+            inference = _generate_inference_description(
+                result.triplet,
+                result.classification,
+                result.dis1_topology,
+            )
             row = [
                 ",".join(result.triplet),
                 abc_mapping,
@@ -1843,6 +1926,7 @@ def write_pipeline_results(
                 "" if result.summary_con is None else f"{result.summary_con:.12g}",
                 "" if result.summary_dis is None else f"{result.summary_dis:.12g}",
                 result.classification,
+                inference,
                 str(result.analyzed_trees),
             ]
 
