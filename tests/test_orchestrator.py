@@ -23,6 +23,9 @@ def _orchestrator_args(tmp_path, **overrides):
         "outgroups": "Out1,Out2",
         "triplet_filter": None,
         "output_folder": str(tmp_path / "results"),
+        "triplet_output_format": None,
+        "parquet_partitions": None,
+        "parquet_compression": None,
         "processes": 0,
         "generate_summary_stats": None,
         "min_support_value": None,
@@ -116,6 +119,9 @@ def test_resolve_runtime_args_cli_defaults_and_overrides(
     assert resolved.gene_trees == str((tmp_path / "genes.nwk").resolve())
     assert resolved.outgroup == ["Out1", "Out2"]
     assert resolved.output == str(tmp_path / "results")
+    assert resolved.triplet_output_format == "parquet"
+    assert resolved.parquet_partitions == 128
+    assert resolved.parquet_compression == "zstd"
     assert resolved.processes == expected_processes
     assert resolved.generate_summary_stats is False
     assert resolved.min_support_value == 0.5
@@ -143,6 +149,9 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
         outgroups=None,
         triplet_filter=None,
         output_folder=str(tmp_path / "results"),
+        triplet_output_format="txt",
+        parquet_partitions=8,
+        parquet_compression="gzip",
         processes=7,
         generate_summary_stats=True,
         min_support_value=0.9,
@@ -168,6 +177,9 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
     assert resolved.species_tree == str(Path("s.nwk").resolve())
     assert resolved.gene_trees == str(Path("g.nwk").resolve())
     assert resolved.outgroup == ["OutA"]
+    assert resolved.triplet_output_format == "parquet"
+    assert resolved.parquet_partitions == 128
+    assert resolved.parquet_compression == "zstd"
     assert resolved.processes == 0
     assert resolved.generate_summary_stats is False
     assert resolved.discordant_test == "chi-square"
@@ -228,6 +240,9 @@ def _runtime_args(tmp_path):
         outgroup=["Out1"],
         triplet_filter=None,
         output=str(tmp_path / "results"),
+        triplet_output_format="txt",
+        parquet_partitions=8,
+        parquet_compression="gzip",
         processes=1,
         generate_summary_stats=False,
         min_support_value=0.5,

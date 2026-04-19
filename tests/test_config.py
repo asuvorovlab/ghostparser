@@ -202,6 +202,9 @@ def test_load_tree_parser_config_json(tmp_path):
     assert config["triplet_filter"] == str(Path("triplets.txt").resolve())
     assert config["min_support_value"] == 0.6
     assert config["no_multiprocessing"] is True
+    assert config["triplet_output_format"] == "parquet"
+    assert config["parquet_partitions"] == 128
+    assert config["parquet_compression"] == "zstd"
 
 
 def test_load_tree_parser_config_invalid_no_multiprocessing(tmp_path):
@@ -270,6 +273,7 @@ def test_load_triplet_processor_config_json(tmp_path):
 
     # Paths are resolved to absolute paths
     assert config["input"] == str(Path("unique_triplets_gene_trees.txt").resolve())
+    assert config["input_format"] == "parquet"
     assert config["output"] == str(Path("results.tsv").resolve())
     assert config["stats_output"] == str(Path("stats.json").resolve())
     assert config["alpha_dct"] == 0.02
