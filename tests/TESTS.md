@@ -74,8 +74,8 @@ Expected output: missing-outgroup tree is discarded during cleaning.
 ### `tests/test_config.py`
 
 - `test_load_orchestrator_config_json`
-Inputs: full orchestrator JSON config (paths, methods, thresholds).
-Expected outputs: normalized absolute paths, parsed outgroups list, preserved explicit values.
+Inputs: full orchestrator JSON config (paths, methods, thresholds, bootstrap settings).
+Expected outputs: normalized absolute paths, parsed outgroups list, preserved explicit values, and default parquet-orchestrator settings.
 
 - `test_load_orchestrator_config_yaml`
 Inputs: minimal YAML config with comma-separated outgroup string.
@@ -103,7 +103,7 @@ Expected outputs: `processes == 0`.
 
 - `test_load_tree_parser_config_json`
 Inputs: full tree parser JSON config including `no_multiprocessing`.
-Expected outputs: normalized paths and preserved explicit values.
+Expected outputs: normalized paths, preserved explicit values, and default parquet tree-parser settings.
 
 - `test_load_tree_parser_config_invalid_no_multiprocessing`
 Inputs: non-boolean `no_multiprocessing`.
@@ -114,8 +114,8 @@ Inputs: no `processes`.
 Expected outputs: `processes == 0`.
 
 - `test_load_triplet_processor_config_json`
-Inputs: full triplet-processor JSON config.
-Expected outputs: normalized paths and preserved explicit methods/thresholds.
+Inputs: full triplet-processor JSON config with bootstrap debug settings.
+Expected outputs: normalized paths, preserved explicit methods/thresholds, and default parquet input-format handling.
 
 - `test_load_triplet_processor_config_invalid_choice_fields` (parametrized)
 Inputs: invalid `p_value_correction`, `stats_backend`.
@@ -153,15 +153,23 @@ Expected outputs: `(processes, use_multiprocessing)` toggles correctly (`1` disa
 
 - `test_resolve_runtime_args_cli_defaults_and_overrides` (parametrized)
 Inputs: CLI defaults and a CLI override scenario (`processes`, bootstrap options).
-Expected outputs: default statistical settings/path resolution and preserved CLI overrides.
+Expected outputs: default statistical settings/path resolution, default parquet output settings, and preserved CLI overrides.
 
 - `test_resolve_runtime_args_config_with_cli_warns_and_ignores`
 Inputs: config file + conflicting CLI args.
-Expected outputs: warning emitted; config values/defaults win over CLI extras.
+Expected outputs: warning emitted; config values/defaults win over CLI extras, including default parquet orchestrator settings.
 
 - `test_resolve_runtime_args_config_processes_behavior` (parametrized)
 Inputs: config with explicit `processes` and config without `processes`.
 Expected outputs: preserves configured value or defaults to `0`.
+
+- `test_write_triplet_gene_trees_parquet_multiprocess`
+Inputs: one triplet, a small set of gene-tree Newick strings, and a species-triplet map.
+Expected outputs: parquet dataset directory is created with `triplets/` and `observations/` subdirectories, parquet part files are written, and the returned counts reflect extracted subtrees.
+
+- `test_parse_and_analyze_triplet_gene_trees_parquet`
+Inputs: parquet triplet dataset created from one triplet and three gene trees.
+Expected outputs: parquet parser returns a populated triplet entry with cached observation rows, and analysis succeeds when `input_format="parquet"` is selected.
 
 ### `tests/test_tree_parser.py`
 
