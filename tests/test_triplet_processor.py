@@ -305,7 +305,7 @@ def test_run_triplet_pipeline_breaks_discordant_ties_by_first_topology():
     assert result.n_dis2 == 3
 
 
-def test_run_triplet_pipeline_relabels_a_b_when_ac_is_more_frequent_discordant():
+def test_run_triplet_pipeline_selects_ac_as_discordant1_when_ac_is_more_frequent():
     species_triplet = ("A", "B", "C")
     trees = (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 12) + (["((B:1,C:1):1,A:1);"] * 4)
 
@@ -315,11 +315,11 @@ def test_run_triplet_pipeline_relabels_a_b_when_ac_is_more_frequent_discordant()
         species_topology=TOPOLOGY_AB,
     )
 
-    # Labels are reassigned so dis1 is always BC|A after canonicalization.
-    assert result.triplet == ("B", "A", "C")
+    assert result.triplet == species_triplet
     assert result.n_con == 8
     assert result.n_dis1 == 12
     assert result.n_dis2 == 4
+    assert result.dis1_topology == "AC"
 
 
 def test_run_triplet_pipeline_no_introgression_when_dct_not_significant():
@@ -387,7 +387,7 @@ def test_run_triplet_pipeline_ghost_when_dis_summary_higher():
 
 
 def test_parse_analyze_and_write_pipeline_roundtrip_with_species_header(tmp_path):
-    content = """A,B,C\t4\t((A:1,B:1):1,C:1);
+    content = """A,B,C\t4\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:2/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
 ((B:1,C:1):1,A:1);
@@ -420,7 +420,7 @@ def test_parse_analyze_and_write_pipeline_roundtrip_with_species_header(tmp_path
 
 
 def test_analyze_triplet_gene_tree_file_with_multiprocessing(tmp_path):
-    content = """A,B,C\t3\t((A:1,B:1):1,C:1);
+    content = """A,B,C\t3\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
 ((B:1,C:1):1,A:1);
@@ -672,7 +672,8 @@ def test_adjust_p_values_custom_matches_standard_randomized(method, seed, alpha)
 
 
 def test_analyze_triplet_gene_tree_file_applies_selected_correction(tmp_path):
-    content = """A,B,C\t6\t((A:1,B:1):1,C:1);
+    separator = "=" * 60
+    content = """A,B,C\t6\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:2/concordant,BC:3/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
 ((A:1,B:1):1,C:1);
@@ -680,8 +681,8 @@ def test_analyze_triplet_gene_tree_file_applies_selected_correction(tmp_path):
 ((B:1,C:1):1,A:1);
 ((B:1,C:1):1,A:1);
 ((A:1,C:1):1,B:1);
-================================================
-A,B,D\t6\t((A:1,B:1):1,D:1);
+{separator}
+A,B,D\t6\t((A:1,B:1):1,D:1);\t[A=A,B=B,C=D]\tAB:2/concordant,BC:3/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,D:1);
 ((A:1,B:1):1,D:1);
@@ -689,7 +690,7 @@ A,B,D\t6\t((A:1,B:1):1,D:1);
 ((B:1,D:1):1,A:1);
 ((B:1,D:1):1,A:1);
 ((A:1,D:1):1,B:1);
-"""
+""".format(separator=separator)
     input_file = tmp_path / "two_triplets.txt"
     input_file.write_text(content)
 
@@ -745,12 +746,12 @@ def test_parse_triplet_gene_trees_file_requires_species_tree_column(tmp_path):
     input_file = tmp_path / "unique_triplets_gene_trees.txt"
     input_file.write_text(content)
 
-    with pytest.raises(ValueError, match="expected 3 tab-separated fields"):
+    with pytest.raises(ValueError, match="expected 5 tab-separated fields"):
         parse_triplet_gene_trees_file(str(input_file))
 
 
 def test_parse_triplet_gene_trees_file_rejects_empty_species_tree(tmp_path):
-    content = """A,B,C\t3\t
+    content = """A,B,C\t3\t\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
 """
@@ -758,6 +759,30 @@ def test_parse_triplet_gene_trees_file_rejects_empty_species_tree(tmp_path):
     input_file.write_text(content)
 
     with pytest.raises(ValueError, match="Invalid species tree in header"):
+        parse_triplet_gene_trees_file(str(input_file))
+
+
+def test_parse_triplet_gene_trees_file_rejects_count_mismatch(tmp_path):
+    content = """A,B,C\t3\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
+
+((A:1,B:1):1,C:1);
+((B:1,C:1):1,A:1);
+"""
+    input_file = tmp_path / "unique_triplets_gene_trees.txt"
+    input_file.write_text(content)
+
+    with pytest.raises(ValueError, match="Triplet count/header mismatch"):
+        parse_triplet_gene_trees_file(str(input_file))
+
+
+def test_parse_triplet_gene_trees_file_requires_blank_line_after_header(tmp_path):
+    content = """A,B,C\t1\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:0/discordant1,AC:0/discordant2
+((A:1,B:1):1,C:1);
+"""
+    input_file = tmp_path / "unique_triplets_gene_trees.txt"
+    input_file.write_text(content)
+
+    with pytest.raises(ValueError, match="expected blank line after header"):
         parse_triplet_gene_trees_file(str(input_file))
 
 
@@ -1058,6 +1083,11 @@ def test_write_pipeline_statistics_json(tmp_path):
     assert "dct_method" not in out
     assert "dct_statistic" in out
     assert "classification" in out
+
+
+def test_serialize_bootstrap_value_rejects_non_json_value():
+    with pytest.raises(ValueError, match="not JSON-serializable"):
+        triplet_processor_module._serialize_bootstrap_value({"bad": {1, 2, 3}})
 
 
 def test_write_summary_statistics_tsv_includes_expected_columns_and_counts(tmp_path):

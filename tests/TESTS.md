@@ -241,7 +241,7 @@ Expected outputs: `ValueError`.
 
 Topology classification and pipeline behavior:
 
-- Tests cover concordant/discordant label mapping, tie behavior, relabeling under canonicalization, and the 5 output classes (`no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, `unresolved` where applicable).
+- Tests cover concordant/discordant label mapping, tie behavior, deterministic discordant role assignment, and the 5 output classes (`no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, `unresolved` where applicable).
 Inputs: controlled synthetic topology distributions and tree-height profiles.
 Expected outputs: deterministic role counts, significance states, and final classification strings.
 
@@ -352,7 +352,7 @@ Inputs: representative topology strings and balanced discordant count scenarios.
 Expected outputs/behavior: topology labels map correctly and balanced discordant tests remain non-significant.
 Purpose: validate baseline topology classification and count-test behavior.
 
-- Tests: `test_run_triplet_pipeline_uses_species_concordant_and_frequency_ranked_discordants`, `test_run_triplet_pipeline_supports_z_test_for_discordant_counts`, `test_run_triplet_pipeline_supports_standard_stats_backend`, `test_run_triplet_pipeline_supports_median_summary_statistic`, `test_run_triplet_pipeline_supports_mode_summary_statistic`, `test_run_triplet_pipeline_supports_taxon_specific_tree_height_strategy`, `test_run_triplet_pipeline_breaks_discordant_ties_by_first_topology`, `test_run_triplet_pipeline_relabels_a_b_when_ac_is_more_frequent_discordant`, `test_run_triplet_pipeline_no_introgression_when_dct_not_significant`, `test_run_triplet_pipeline_inflow_when_ks_not_significant`, `test_run_triplet_pipeline_outflow_when_con_summary_higher`, `test_run_triplet_pipeline_ghost_when_dis_summary_higher`
+- Tests: `test_run_triplet_pipeline_uses_species_concordant_and_frequency_ranked_discordants`, `test_run_triplet_pipeline_supports_z_test_for_discordant_counts`, `test_run_triplet_pipeline_supports_standard_stats_backend`, `test_run_triplet_pipeline_supports_median_summary_statistic`, `test_run_triplet_pipeline_supports_mode_summary_statistic`, `test_run_triplet_pipeline_supports_taxon_specific_tree_height_strategy`, `test_run_triplet_pipeline_breaks_discordant_ties_by_first_topology`, `test_run_triplet_pipeline_selects_ac_as_discordant1_when_ac_is_more_frequent`, `test_run_triplet_pipeline_no_introgression_when_dct_not_significant`, `test_run_triplet_pipeline_inflow_when_ks_not_significant`, `test_run_triplet_pipeline_outflow_when_con_summary_higher`, `test_run_triplet_pipeline_ghost_when_dis_summary_higher`
 Inputs: synthetic per-triplet topology/tree-height distributions, configurable test/stat backends, and strategy variants.
 Expected outputs/behavior: discordant role assignment, statistical backend selection, summary-stat selection, and final classification outcomes match expected logic.
 Purpose: validate triplet inference decision logic across major branches.
@@ -362,7 +362,7 @@ Inputs: mapping files and pipeline run settings, including multiprocessing.
 Expected outputs/behavior: analyze/parse/write pipeline roundtrips successfully and statistics collection returns expected dictionary-list structures.
 Purpose: validate end-to-end processing API behavior.
 
-- Tests: `test_analyze_triplet_gene_tree_file_rejects_unknown_discordant_test`, `test_analyze_triplet_gene_tree_file_rejects_unknown_summary_statistic`, `test_analyze_triplet_gene_tree_file_rejects_unknown_stats_backend`, `test_analyze_triplet_gene_tree_file_rejects_unknown_tree_height_strategy`, `test_analyze_triplet_gene_tree_file_rejects_unknown_p_value_correction`, `test_parse_triplet_gene_trees_file_requires_species_tree_column`, `test_parse_triplet_gene_trees_file_rejects_empty_species_tree`
+- Tests: `test_analyze_triplet_gene_tree_file_rejects_unknown_discordant_test`, `test_analyze_triplet_gene_tree_file_rejects_unknown_summary_statistic`, `test_analyze_triplet_gene_tree_file_rejects_unknown_stats_backend`, `test_analyze_triplet_gene_tree_file_rejects_unknown_tree_height_strategy`, `test_analyze_triplet_gene_tree_file_rejects_unknown_p_value_correction`, `test_parse_triplet_gene_trees_file_requires_species_tree_column`, `test_parse_triplet_gene_trees_file_rejects_empty_species_tree`, `test_parse_triplet_gene_trees_file_rejects_count_mismatch`, `test_parse_triplet_gene_trees_file_requires_blank_line_after_header`
 Inputs: invalid configuration values and malformed mapping-file headers/content.
 Expected outputs/behavior: parser/analyzer rejects invalid inputs with explicit error paths.
 Purpose: verify input validation and defensive error handling.
@@ -372,9 +372,9 @@ Inputs: p-value correction selections and KS hybrid-mode threshold conditions.
 Expected outputs/behavior: selected correction is applied; KS hybrid dispatches to expected backend and validates margin constraints.
 Purpose: validate statistical-dispatch control flow.
 
-- Tests: `test_write_pipeline_results_includes_dis1_topology_and_omits_removed_topology_columns`, `test_write_pipeline_results_uses_dynamic_summary_column_names`, `test_write_pipeline_results_uses_dct_chi_stats_column_for_chi_square`, `test_write_pipeline_results_uses_dct_z_score_column_for_z_test`, `test_write_pipeline_results_uses_mode_summary_columns_for_mode`, `test_write_pipeline_results_uses_dynamic_corrected_p_value_column_names`, `test_write_pipeline_results_includes_abc_mapping_column`, `test_write_pipeline_results_ghost_inference_uses_dis1_outgroup_recipient`, `test_write_pipeline_results_rejects_mixed_discordant_test_outputs`, `test_write_pipeline_results_rejects_unsupported_p_value_correction`, `test_write_pipeline_results_rejects_unsupported_summary_statistic`, `test_write_pipeline_statistics_json`
+- Tests: `test_write_pipeline_results_includes_dis1_topology_and_omits_removed_topology_columns`, `test_write_pipeline_results_uses_dynamic_summary_column_names`, `test_write_pipeline_results_uses_dct_chi_stats_column_for_chi_square`, `test_write_pipeline_results_uses_dct_z_score_column_for_z_test`, `test_write_pipeline_results_uses_mode_summary_columns_for_mode`, `test_write_pipeline_results_uses_dynamic_corrected_p_value_column_names`, `test_write_pipeline_results_includes_abc_mapping_column`, `test_write_pipeline_results_ghost_inference_uses_dis1_outgroup_recipient`, `test_write_pipeline_results_rejects_mixed_discordant_test_outputs`, `test_write_pipeline_results_rejects_unsupported_p_value_correction`, `test_write_pipeline_results_rejects_unsupported_summary_statistic`, `test_write_pipeline_statistics_json`, `test_serialize_bootstrap_value_rejects_non_json_value`
 Inputs: synthetic pipeline result rows across discordant-test/summary-stat/correction settings and serialization targets.
-Expected outputs/behavior: TSV/JSON outputs contain expected dynamic columns (including `inference`) and reject unsupported or mixed output states.
+Expected outputs/behavior: TSV/JSON outputs contain expected dynamic columns (including `inference`), enforce strict bootstrap JSON serialization, and reject unsupported or mixed output states.
 Purpose: validate output-schema stability and writer safeguards.
 
 - Tests: `test_write_summary_statistics_tsv_includes_expected_columns_and_counts`, `test_write_summary_statistics_tsv_includes_bootstrap_value_when_enabled`

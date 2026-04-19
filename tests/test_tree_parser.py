@@ -712,11 +712,11 @@ def test_write_triplet_gene_trees(tmp_path):
     """Test writing triplet gene trees to file in the specified format."""
     triplet_gene_trees = {
         ("TaxaA", "TaxaB", "TaxaC"): [
-            "(TaxaA:0.1,TaxaB:0.2,TaxaC:0.3);",
-            "(TaxaA:0.15,TaxaB:0.25,TaxaC:0.35);",
+            "((TaxaA:0.1,TaxaB:0.2):0.3,TaxaC:0.3);",
+            "((TaxaA:0.15,TaxaB:0.25):0.3,TaxaC:0.35);",
         ],
         ("TaxaD", "TaxaE", "TaxaF"): [
-            "(TaxaD:0.4,TaxaE:0.5,TaxaF:0.6);",
+            "((TaxaD:0.4,TaxaE:0.5):0.3,TaxaF:0.6);",
         ],
         ("TaxaG", "TaxaH", "TaxaI"): [],  # Empty triplet
     }
@@ -734,29 +734,35 @@ def test_write_triplet_gene_trees(tmp_path):
     lines = content.split("\n")
 
     # Check first triplet header
-    assert lines[0] == "TaxaA,TaxaB,TaxaC\t2\t((TaxaA:1,TaxaB:1):1,TaxaC:1);"
+    assert lines[0] == (
+        "TaxaA,TaxaB,TaxaC\t2\t((TaxaA:1,TaxaB:1):1,TaxaC:1);\t[A=TaxaA,B=TaxaB,C=TaxaC]"
+        "\tAB:2/concordant,BC:0/discordant1,AC:0/discordant2"
+    )
 
     # Check blank line after header
     assert lines[1] == ""
 
     # Check first tree
-    assert "TaxaA:0.1,TaxaB:0.2,TaxaC:0.3" in lines[2]
+    assert "((TaxaA:0.1,TaxaB:0.2):0.3,TaxaC:0.3);" in lines[2]
 
     # Check second tree
-    assert "TaxaA:0.15,TaxaB:0.25,TaxaC:0.35" in lines[3]
+    assert "((TaxaA:0.15,TaxaB:0.25):0.3,TaxaC:0.35);" in lines[3]
 
     # Check separator line format: blank line then separator
     assert lines[4] == ""
     assert lines[5] == "=" * 60
 
     # Check second triplet header
-    assert lines[6] == "TaxaD,TaxaE,TaxaF\t1\t((TaxaD:1,TaxaE:1):1,TaxaF:1);"
+    assert lines[6] == (
+        "TaxaD,TaxaE,TaxaF\t1\t((TaxaD:1,TaxaE:1):1,TaxaF:1);\t[A=TaxaD,B=TaxaE,C=TaxaF]"
+        "\tAB:1/concordant,BC:0/discordant1,AC:0/discordant2"
+    )
 
 
 def test_write_triplet_gene_trees_includes_species_tree_header(tmp_path):
     """Test writing species triplet subtree in header with count."""
     triplet_gene_trees = {
-        ("TaxaA", "TaxaB", "TaxaC"): ["(TaxaA:0.1,TaxaB:0.2,TaxaC:0.3);"]
+        ("TaxaA", "TaxaB", "TaxaC"): ["((TaxaA:0.1,TaxaB:0.2):0.3,TaxaC:0.3);"]
     }
     species_triplet_trees = {
         ("TaxaA", "TaxaB", "TaxaC"): "((TaxaA:1,TaxaB:1):1,TaxaC:1);"
@@ -766,7 +772,10 @@ def test_write_triplet_gene_trees_includes_species_tree_header(tmp_path):
     write_triplet_gene_trees(triplet_gene_trees, str(output_file), species_triplet_trees=species_triplet_trees)
 
     header = output_file.read_text().splitlines()[0]
-    assert header == "TaxaA,TaxaB,TaxaC\t1\t((TaxaA:1,TaxaB:1):1,TaxaC:1);"
+    assert header == (
+        "TaxaA,TaxaB,TaxaC\t1\t((TaxaA:1,TaxaB:1):1,TaxaC:1);\t[A=TaxaA,B=TaxaB,C=TaxaC]"
+        "\tAB:1/concordant,BC:0/discordant1,AC:0/discordant2"
+    )
 
 
 def test_write_triplet_gene_trees_empty_triplet(tmp_path):
@@ -788,7 +797,10 @@ def test_write_triplet_gene_trees_empty_triplet(tmp_path):
     lines = content.split("\n")
 
     # Should have header with count 0 and blank line
-    assert lines[0] == "TaxaA,TaxaB,TaxaC\t0\t((TaxaA:1,TaxaB:1):1,TaxaC:1);"
+    assert lines[0] == (
+        "TaxaA,TaxaB,TaxaC\t0\t((TaxaA:1,TaxaB:1):1,TaxaC:1);\t[A=TaxaA,B=TaxaB,C=TaxaC]"
+        "\tAB:0/concordant,BC:0/discordant1,AC:0/discordant2"
+    )
     assert lines[1] == ""
     # No trees after blank line
 
@@ -899,7 +911,10 @@ def test_write_triplet_gene_trees_multiprocess_includes_species_header(tmp_path)
     )
 
     first_line = output_file.read_text().splitlines()[0]
-    assert first_line == "TaxaA,TaxaB,TaxaC\t1\t((TaxaA:1,TaxaB:1):1,TaxaC:1);"
+    assert first_line == (
+        "TaxaA,TaxaB,TaxaC\t1\t((TaxaA:1,TaxaB:1):1,TaxaC:1);\t[A=TaxaA,B=TaxaB,C=TaxaC]"
+        "\tAB:1/concordant,BC:0/discordant1,AC:0/discordant2"
+    )
 
 
 def test_metrics_logger_context_manager(tmp_path):
@@ -937,9 +952,9 @@ def test_metrics_logger_file_not_opened_before_enter(tmp_path):
 def test_triplet_gene_trees_separator_format(tmp_path):
     """Test that separator lines are correctly formatted between triplets."""
     triplet_gene_trees = {
-        ("TaxaA", "TaxaB", "TaxaC"): ["(TaxaA:0.1,TaxaB:0.2,TaxaC:0.3);"],
-        ("TaxaD", "TaxaE", "TaxaF"): ["(TaxaD:0.4,TaxaE:0.5,TaxaF:0.6);"],
-        ("TaxaG", "TaxaH", "TaxaI"): ["(TaxaG:0.7,TaxaH:0.8,TaxaI:0.9);"],
+        ("TaxaA", "TaxaB", "TaxaC"): ["((TaxaA:0.1,TaxaB:0.2):0.3,TaxaC:0.3);"],
+        ("TaxaD", "TaxaE", "TaxaF"): ["((TaxaD:0.4,TaxaE:0.5):0.3,TaxaF:0.6);"],
+        ("TaxaG", "TaxaH", "TaxaI"): ["((TaxaG:0.7,TaxaH:0.8):0.3,TaxaI:0.9);"],
     }
 
     output_file = tmp_path / "triplet_gene_trees.txt"
