@@ -415,6 +415,7 @@ def test_parse_analyze_and_write_pipeline_roundtrip_with_species_header(tmp_path
     assert "most_frequent_matches_concordant" in out
     assert "dct_chi_stats" in out
     assert "dct_z_score" not in out
+    assert "inference" in out
     assert "A,B,C" in out
 
 
@@ -1015,7 +1016,34 @@ def test_write_pipeline_results_includes_abc_mapping_column(tmp_path):
     row = lines[1].split("\t")
 
     mapping_idx = header.index("abc_mapping")
+    inference_idx = header.index("inference")
     assert row[mapping_idx] == "A=TaxonA;B=TaxonB;C=TaxonC"
+    assert row[inference_idx] == "no introgression"
+
+
+def test_write_pipeline_results_ghost_inference_uses_dis1_outgroup_recipient(tmp_path):
+    species_triplet = ("TaxonA", "TaxonB", "TaxonC")
+    con_tree = "((TaxonA:0.2,TaxonB:0.2):0.3,TaxonC:0.5);"
+    dis1_tree = "((TaxonB:1.0,TaxonC:1.0):2.0,TaxonA:3.0);"
+    dis2_tree = "((TaxonA:0.2,TaxonC:0.2):0.3,TaxonB:0.5);"
+    trees = ([con_tree] * 40) + ([dis1_tree] * 30) + ([dis2_tree] * 5)
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        rng=random.Random(77),
+    )
+
+    output_file = tmp_path / "results_inference_ghost.tsv"
+    write_pipeline_results([result], str(output_file), dct_method="chi-square", summary_statistic="median")
+
+    lines = output_file.read_text().splitlines()
+    header = lines[0].split("\t")
+    row = lines[1].split("\t")
+
+    assert row[header.index("classification")] == "ghost_introgression"
+    # dis1 topology is ((B,C),A), so outgroup in dis1 is A -> TaxonA.
+    assert row[header.index("inference")] == "introgression from ghost lineage to TaxonA"
 
 
 def test_write_pipeline_statistics_json(tmp_path):
