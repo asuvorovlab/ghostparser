@@ -6,8 +6,6 @@ Utilities in this module are used by both ``tree_parser`` and
 
 from __future__ import annotations
 
-import random
-
 
 TOPOLOGY_AB = "((A,B),C)"
 TOPOLOGY_BC = "((B,C),A)"
@@ -82,19 +80,11 @@ def classify_triplet_topology_string(tree, abc_triplet):
 def rank_topologies_by_frequency(topology_counts, rng=None):
     """Rank topologies as (con, dis1, dis2) by descending frequency.
 
-    Ties are broken randomly (as requested by pipeline convention).
+    Ties are broken deterministically using ``ALL_TOPOLOGIES`` order.
     """
-    randomizer = rng or random
-
-    grouped = {}
-    for topology in ALL_TOPOLOGIES:
-        count = int(topology_counts.get(topology, 0))
-        grouped.setdefault(count, []).append(topology)
-
-    ranked = []
-    for count in sorted(grouped.keys(), reverse=True):
-        tied = list(grouped[count])
-        randomizer.shuffle(tied)
-        ranked.extend(tied)
+    ranked = sorted(
+        ALL_TOPOLOGIES,
+        key=lambda topology: (-int(topology_counts.get(topology, 0)), ALL_TOPOLOGIES.index(topology)),
+    )
 
     return ranked[0], ranked[1], ranked[2]
