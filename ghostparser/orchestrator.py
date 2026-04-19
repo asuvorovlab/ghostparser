@@ -35,6 +35,7 @@ from .tree_parser import (
     read_triplet_filter_file,
     read_tree_file,
     write_clean_trees,
+    write_triplet_gene_trees_parquet_multiprocess,
     write_triplet_gene_trees_multiprocess,
 )
 from .triplet_processor import (
@@ -49,11 +50,16 @@ from .config import (
     DEFAULT_DISCORDANT_TEST,
     DEFAULT_MIN_SUPPORT_VALUE,
     DEFAULT_OUTPUT_FOLDER,
+    DEFAULT_PARQUET_COMPRESSION,
+    DEFAULT_PARQUET_PARTITIONS,
     DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
+    DEFAULT_TRIPLET_OUTPUT_FORMAT,
+    PARQUET_COMPRESSION_CHOICES,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     P_VALUE_CORRECTION_CHOICES,
+    TRIPLET_IO_FORMAT_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
     STATS_BACKEND_CHOICES,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
@@ -123,6 +129,9 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "outgroups",
     "triplet_filter",
     "output_folder",
+    "triplet_output_format",
+    "parquet_partitions",
+    "parquet_compression",
     "processes",
     "generate_summary_stats",
     "min_support_value",
@@ -162,6 +171,24 @@ def _build_argument_parser():
         type=str,
         default=None,
         help=f"Output folder (default: ./{DEFAULT_OUTPUT_FOLDER})",
+    )
+    parser.add_argument(
+        "--triplet-output-format",
+        choices=TRIPLET_IO_FORMAT_CHOICES,
+        default=None,
+        help=f"Triplet extraction output format (default: {DEFAULT_TRIPLET_OUTPUT_FORMAT})",
+    )
+    parser.add_argument(
+        "--parquet-partitions",
+        type=int,
+        default=None,
+        help=f"Number of parquet hash partitions when parquet output is used (default: {DEFAULT_PARQUET_PARTITIONS})",
+    )
+    parser.add_argument(
+        "--parquet-compression",
+        choices=PARQUET_COMPRESSION_CHOICES,
+        default=None,
+        help=f"Parquet compression codec (default: {DEFAULT_PARQUET_COMPRESSION})",
     )
     parser.add_argument(
         "--processes",
@@ -319,6 +346,9 @@ def main():
         metrics.log(f"Bootstrap seed: {args.bootstrap_options['seed']}")
         metrics.log(f"Bootstrap debug mode: {args.bootstrap_options['debug_mode']}")
         metrics.log(f"Bootstrap summary-only: {args.bootstrap_options['summary_only']}")
+        metrics.log(f"Triplet output format: {args.triplet_output_format}")
+        metrics.log(f"Parquet partitions: {args.parquet_partitions}")
+        metrics.log(f"Parquet compression: {args.parquet_compression}")
         metrics.log(f"Generate summary statistics TSV: {args.generate_summary_stats}")
         support_threshold = (
             args.min_support_value
@@ -443,7 +473,10 @@ def main():
         metrics.log("")
 
         try:
-            triplet_output_path = str(output_dir / "unique_triplets_gene_trees.txt")
+            if args.triplet_output_format == "parquet":
+                triplet_output_path = str(output_dir / "unique_triplets_gene_trees.parquet")
+            else:
+                triplet_output_path = str(output_dir / "unique_triplets_gene_trees.txt")
             extraction_wall_time = 0.0
             extraction_cpu_time = 0.0
             inference_wall_time = 0.0
@@ -453,14 +486,26 @@ def main():
             metrics.log("✓ Starting triplet extraction stage...")
             extraction_start_wall, extraction_start_cpu = _now_times()
 
-            total_subtrees, triplets_with_trees, _ = write_triplet_gene_trees_multiprocess(
-                triplets,
-                gene_trees_clean,
-                triplet_output_path,
-                species_triplet_trees=species_triplet_trees,
-                use_multiprocessing=use_multiprocessing,
-                processes=processes,
-            )
+            if args.triplet_output_format == "parquet":
+                total_subtrees, triplets_with_trees, _ = write_triplet_gene_trees_parquet_multiprocess(
+                    triplets,
+                    gene_trees_clean,
+                    triplet_output_path,
+                    species_triplet_trees=species_triplet_trees,
+                    parquet_partitions=args.parquet_partitions,
+                    parquet_compression=args.parquet_compression,
+                    use_multiprocessing=use_multiprocessing,
+                    processes=processes,
+                )
+            else:
+                total_subtrees, triplets_with_trees, _ = write_triplet_gene_trees_multiprocess(
+                    triplets,
+                    gene_trees_clean,
+                    triplet_output_path,
+                    species_triplet_trees=species_triplet_trees,
+                    use_multiprocessing=use_multiprocessing,
+                    processes=processes,
+                )
 
             extraction_wall_time, extraction_cpu_time = _elapsed_times(
                 extraction_start_wall,
@@ -479,6 +524,7 @@ def main():
 
             results = analyze_triplet_gene_tree_file(
                 triplet_output_path,
+                input_format=args.triplet_output_format,
                 alpha_dct=args.alpha_dct,
                 alpha_ks=args.alpha_ks,
                 discordant_test=args.discordant_test,
