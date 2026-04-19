@@ -19,6 +19,11 @@ from .config import (
     normalize_tree_parser_payload,
 )
 from .triplet_utils import (
+    ALL_TOPOLOGIES,
+    TOPOLOGY_AB,
+    TOPOLOGY_AC,
+    TOPOLOGY_BC,
+    classify_triplet_topology_string,
     find_sister_pair,
     normalize_abc_from_sister_pair,
 )
@@ -532,14 +537,41 @@ def _build_species_triplet_metadata(species_tree, triplets):
     return normalized_triplets, species_triplet_trees, skipped_triplets
 
 
-def _format_triplet_header(triplet, count, species_tree_newick=None):
-    """Format a triplet section header as ``triplet<TAB>count<TAB>species_tree``."""
+def _build_topology_count_summary(triplet, newick_trees):
+    """Return topology counts and discordant role summary for one triplet."""
+    topology_counts = {topology: 0 for topology in ALL_TOPOLOGIES}
+
+    for newick in newick_trees:
+        tree = dendropy.Tree.get(data=str(newick).strip(), schema="newick", preserve_underscores=True)
+        topology = classify_triplet_topology_string(tree, triplet)
+        topology_counts[topology] += 1
+
+    if topology_counts[TOPOLOGY_BC] >= topology_counts[TOPOLOGY_AC]:
+        bc_role = "discordant1"
+        ac_role = "discordant2"
+    else:
+        bc_role = "discordant2"
+        ac_role = "discordant1"
+
+    summary = (
+        f"AB:{topology_counts[TOPOLOGY_AB]}/concordant,"
+        f"BC:{topology_counts[TOPOLOGY_BC]}/{bc_role},"
+        f"AC:{topology_counts[TOPOLOGY_AC]}/{ac_role}"
+    )
+    return topology_counts, summary
+
+
+def _format_triplet_header(triplet, count, species_tree_newick=None, topology_summary=None):
+    """Format a triplet section header with explicit ABC mapping and topology summary."""
     if species_tree_newick is None or not str(species_tree_newick).strip():
         raise ValueError(f"Missing species subtree for triplet header: {','.join(triplet)}")
+    if topology_summary is None or not str(topology_summary).strip():
+        raise ValueError(f"Missing topology summary for triplet header: {','.join(triplet)}")
 
     base = ",".join(triplet) + f"\t{count}"
     species_tree = str(species_tree_newick)
-    return base + f"\t{species_tree}"
+    label_map = f"[A={triplet[0]},B={triplet[1]},C={triplet[2]}]"
+    return base + f"\t{species_tree}\t{label_map}\t{topology_summary}"
 
 
 def _validate_species_triplet_trees(triplets, species_triplet_trees):
@@ -650,12 +682,13 @@ def _process_triplet_chunk_stream(args):
     for i, triplet in enumerate(triplet_chunk):
         newick_trees = triplet_results[triplet]
         count = len(newick_trees)
+        _, topology_summary = _build_topology_count_summary(triplet, newick_trees)
         total_subtrees += count
         if count > 0:
             triplets_with_trees += 1
 
         species_tree_newick = _SPECIES_TRIPLET_TREES.get(triplet)
-        output_lines.append(_format_triplet_header(triplet, count, species_tree_newick))
+        output_lines.append(_format_triplet_header(triplet, count, species_tree_newick, topology_summary))
         output_lines.append("")
         for newick in newick_trees:
             output_lines.append(newick)
@@ -822,8 +855,9 @@ def write_triplet_gene_trees(triplet_gene_trees, output_filepath, species_triple
     with open(output_filepath, "w") as f:
         for i, (triplet, newick_trees) in enumerate(triplet_gene_trees.items()):
             count = len(newick_trees)
+            _, topology_summary = _build_topology_count_summary(triplet, newick_trees)
             species_tree_newick = species_triplet_trees.get(triplet)
-            f.write(_format_triplet_header(triplet, count, species_tree_newick) + "\n")
+            f.write(_format_triplet_header(triplet, count, species_tree_newick, topology_summary) + "\n")
             f.write("\n")
 
             for newick in newick_trees:
@@ -870,12 +904,13 @@ def write_triplet_gene_trees_streaming(
                         newick_trees.append(format_newick_with_precision(subtree))
 
             count = len(newick_trees)
+            _, topology_summary = _build_topology_count_summary(triplet, newick_trees)
             total_subtrees += count
             if count > 0:
                 triplets_with_trees += 1
 
             species_tree_newick = species_triplet_trees.get(triplet)
-            out_f.write(_format_triplet_header(triplet, count, species_tree_newick) + "\n")
+            out_f.write(_format_triplet_header(triplet, count, species_tree_newick, topology_summary) + "\n")
             out_f.write("\n")
             for newick in newick_trees:
                 out_f.write(f"{newick}\n")

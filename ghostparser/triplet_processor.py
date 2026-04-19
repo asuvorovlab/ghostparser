@@ -252,16 +252,32 @@ def classify_triplet_topology(
 
 
 def _resolve_topology_roles(topology_counts, species_topology):
-    """Resolve concordant/discordant roles and concordant frequency status."""
-    if species_topology != TOPOLOGY_AB:
-        raise ValueError("Resolved topology roles require species_topology == ((A,B),C)")
+    """Resolve concordant/discordant roles with deterministic tie handling.
 
-    n_con = int(topology_counts.get(TOPOLOGY_AB, 0))
-    n_dis1 = int(topology_counts.get(TOPOLOGY_BC, 0))
-    n_dis2 = int(topology_counts.get(TOPOLOGY_AC, 0))
+    Concordant is the topology matching ``species_topology``. Discordant roles are
+    selected from the remaining two topologies by descending count; ties keep
+    list order.
+    """
+    if species_topology not in ALL_TOPOLOGIES:
+        raise ValueError("Resolved topology roles require a valid species topology")
+
+    all_topologies = list(ALL_TOPOLOGIES)
+    all_topologies.remove(species_topology)
+
+    first, second = all_topologies[0], all_topologies[1]
+    first_count = int(topology_counts.get(first, 0))
+    second_count = int(topology_counts.get(second, 0))
+    if first_count >= second_count:
+        dis1_topology, dis2_topology = first, second
+        n_dis1, n_dis2 = first_count, second_count
+    else:
+        dis1_topology, dis2_topology = second, first
+        n_dis1, n_dis2 = second_count, first_count
+
+    n_con = int(topology_counts.get(species_topology, 0))
     most_frequent_matches_concordant = n_con >= n_dis1 and n_con >= n_dis2
 
-    return TOPOLOGY_AB, TOPOLOGY_BC, TOPOLOGY_AC, most_frequent_matches_concordant
+    return species_topology, dis1_topology, dis2_topology, most_frequent_matches_concordant
 
 
 def pearson_discordant_chi_square_test(n_dis1, n_dis2):
@@ -628,7 +644,7 @@ def _generate_inference_description(triplet, classification, dis1_topology):
     Args:
         triplet: Tuple of (A, B, C) taxa where A and B are sisters in species tree.
         classification: String classification (no_introgression, inflow_introgression, etc).
-        dis1_topology: Topology string for discordant1 trees (e.g., "((B,C),A)").
+        dis1_topology: Discordant1 topology label ("BC" or "AC").
 
     Returns:
         Human-readable inference description with actual species names.
@@ -642,29 +658,17 @@ def _generate_inference_description(triplet, classification, dis1_topology):
         return classification  # Fallback for unresolved cases.
 
     # Parse dis1_topology to determine sister pairs.
-    # Supports both canonical A/B/C topologies and labeled species topologies.
     topology_label = str(dis1_topology).strip().upper()
 
-    if dis1_topology == TOPOLOGY_AB or topology_label == "AB":  # ((A,B),C) - same as species tree
-        sisters_in_dis1 = {a_taxon, b_taxon}
-        outgroup_in_dis1 = c_taxon
-    elif dis1_topology == TOPOLOGY_BC or topology_label == "BC":  # ((B,C),A) - B and C are sisters
+    if topology_label == "BC":  # ((B,C),A) - B and C are sisters
         sisters_in_dis1 = {b_taxon, c_taxon}
         outgroup_in_dis1 = a_taxon
-    elif dis1_topology == TOPOLOGY_AC or topology_label == "AC":  # ((A,C),B) - A and C are sisters
+    elif topology_label == "AC":  # ((A,C),B) - A and C are sisters
         sisters_in_dis1 = {a_taxon, c_taxon}
         outgroup_in_dis1 = b_taxon
     else:
-        try:
-            dis1_newick = dis1_topology if str(dis1_topology).strip().endswith(";") else f"{dis1_topology};"
-            dis1_tree = dendropy.Tree.get(data=dis1_newick, schema="newick", preserve_underscores=True)
-            sisters_in_dis1 = set(find_sister_pair(dis1_tree))
-            outgroup_candidates = set(triplet) - sisters_in_dis1
-            if len(outgroup_candidates) != 1:
-                return classification
-            outgroup_in_dis1 = next(iter(outgroup_candidates))
-        except Exception:
-            return classification  # Fallback for unknown topology encodings.
+        expected = " or ".join(f"'{value}'" for value in DISCORDANT1_TOPOLOGY_CHOICES)
+        raise ValueError(f"Invalid dis1_topology '{dis1_topology}'. Expected {expected}.")
 
     # Species tree sisters are A and B
     species_tree_sisters = {a_taxon, b_taxon}
@@ -706,6 +710,8 @@ _BOOTSTRAP_CLASSES = [
     "no_introgression",
     "unresolved",
 ]
+
+DISCORDANT1_TOPOLOGY_CHOICES = ("BC", "AC")
 
 
 def _build_triplet_rng(seed, triplet):
@@ -849,21 +855,14 @@ def _run_bootstrap_iterations(
 
 
 def _serialize_bootstrap_value(value):
-    """Serialize bootstrap structures for TSV output.
-
-    Uses JSON strings by default and falls back to key:value compact strings.
-    """
+    """Serialize bootstrap structures for TSV output as strict JSON."""
     if value is None:
         return ""
 
     try:
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
-    except (TypeError, ValueError):
-        if isinstance(value, dict):
-            return ",".join(f"{key}:{value[key]}" for key in sorted(value))
-        if isinstance(value, list):
-            return ",".join("" if item is None else str(item) for item in value)
-        return str(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Bootstrap payload is not JSON-serializable: {value!r}") from exc
 
 
 def _bonferroni_adjust_p_values_custom(p_values):
@@ -1184,18 +1183,6 @@ def _canonicalize_triplet_labels(species_triplet, species_topology, topology_cou
     }
     reported_dis1_topology = TOPOLOGY_BC if canonical_counts[TOPOLOGY_BC] >= canonical_counts[TOPOLOGY_AC] else TOPOLOGY_AC
 
-    # Swapping A and B preserves concordant AB|C but swaps BC|A and AC|B.
-    if canonical_counts[TOPOLOGY_AC] > canonical_counts[TOPOLOGY_BC]:
-        canonical_triplet = (canonical_triplet[1], canonical_triplet[0], canonical_triplet[2])
-        canonical_counts[TOPOLOGY_BC], canonical_counts[TOPOLOGY_AC] = (
-            canonical_counts[TOPOLOGY_AC],
-            canonical_counts[TOPOLOGY_BC],
-        )
-        canonical_to_original_topology[TOPOLOGY_BC], canonical_to_original_topology[TOPOLOGY_AC] = (
-            canonical_to_original_topology[TOPOLOGY_AC],
-            canonical_to_original_topology[TOPOLOGY_BC],
-        )
-
     return canonical_triplet, canonical_counts, canonical_to_original_topology, reported_dis1_topology
 
 
@@ -1475,59 +1462,171 @@ def run_triplet_pipeline(
 def parse_triplet_gene_trees_file(filepath):
     """Parse triplet gene tree file produced by ``tree_parser``.
 
-    Required header style:
-    - ``A,B,C<TAB>count<TAB>species_triplet_newick``
+    Required section structure per triplet:
+    1. ``A,B,C<TAB>count<TAB>species_triplet_newick<TAB>[A=...,B=...,C=...]<TAB>AB:x/concordant,BC:y/discordant1|discordant2,AC:z/discordant2|discordant1``
+    2. one blank line
+    3. zero or more Newick gene-tree lines (each ending in ``;``)
+
+    Sections are separated by a line of exactly 60 ``=`` characters.
 
     Returns:
         dict mapping triplet tuple ->
         ``{"count": int | None, "species_tree": str | None, "gene_trees": list[str]}``
     """
+    section_separator = "=" * 60
+
+    def _parse_section(section_lines):
+        trimmed = list(section_lines)
+        while trimmed and not trimmed[0].strip():
+            trimmed.pop(0)
+        while trimmed and not trimmed[-1].strip():
+            trimmed.pop()
+
+        if not trimmed:
+            return None
+
+        header = trimmed[0]
+        parts = header.split("\t")
+        if len(parts) != 5:
+            raise ValueError(f"Invalid triplet header format (expected 5 tab-separated fields): {header}")
+
+        triplet_text = parts[0].strip()
+        taxa = tuple(part.strip() for part in triplet_text.split(",") if part.strip())
+        if len(taxa) != 3:
+            raise ValueError(f"Invalid triplet header: {header}")
+
+        if not parts[1].strip():
+            raise ValueError(f"Invalid triplet count in header: {header}")
+        try:
+            count = int(parts[1].strip())
+        except ValueError as exc:
+            raise ValueError(f"Invalid triplet count in header: {header}") from exc
+
+        if not parts[2].strip():
+            raise ValueError(f"Invalid species tree in header: {header}")
+        species_tree = parts[2].strip()
+
+        label_text = parts[3].strip()
+        if not (label_text.startswith("[") and label_text.endswith("]")):
+            raise ValueError(f"Invalid ABC label mapping in header: {header}")
+        label_body = label_text[1:-1]
+        label_pairs = [segment.strip() for segment in label_body.split(",") if segment.strip()]
+        if len(label_pairs) != 3:
+            raise ValueError(f"Invalid ABC label mapping in header: {header}")
+
+        mapped_values = []
+        expected_keys = ("A", "B", "C")
+        for expected_key, label_pair in zip(expected_keys, label_pairs):
+            if "=" not in label_pair:
+                raise ValueError(f"Invalid ABC label mapping in header: {header}")
+            key, value = (piece.strip() for piece in label_pair.split("=", 1))
+            if key != expected_key or not value:
+                raise ValueError(f"Invalid ABC label mapping in header: {header}")
+            mapped_values.append(value)
+        mapped_triplet = tuple(mapped_values)
+        if mapped_triplet != taxa:
+            raise ValueError(
+                f"Triplet/header label mapping mismatch for {','.join(taxa)}: "
+                f"A,B,C mapping resolves to {','.join(mapped_triplet)}"
+            )
+
+        summary_text = parts[4].strip()
+        summary_items = [segment.strip() for segment in summary_text.split(",") if segment.strip()]
+        if len(summary_items) != 3:
+            raise ValueError(f"Invalid topology summary in header: {header}")
+
+        parsed_summary = {}
+        for item in summary_items:
+            if ":" not in item:
+                raise ValueError(f"Invalid topology summary in header: {header}")
+            topology_key, payload = (piece.strip() for piece in item.split(":", 1))
+            if "/" not in payload:
+                raise ValueError(f"Invalid topology summary in header: {header}")
+            count_text, role = (piece.strip() for piece in payload.split("/", 1))
+            if topology_key in parsed_summary:
+                raise ValueError(f"Invalid topology summary in header: {header}")
+            try:
+                parsed_count = int(count_text)
+            except ValueError as exc:
+                raise ValueError(f"Invalid topology summary in header: {header}") from exc
+            parsed_summary[topology_key] = (parsed_count, role)
+
+        if set(parsed_summary.keys()) != {"AB", "BC", "AC"}:
+            raise ValueError(f"Invalid topology summary in header: {header}")
+
+        n_ab, ab_role = parsed_summary["AB"]
+        n_bc, bc_role = parsed_summary["BC"]
+        n_ac, ac_role = parsed_summary["AC"]
+        if ab_role != "concordant":
+            raise ValueError(f"Invalid topology summary in header: {header}")
+        if bc_role not in {"discordant1", "discordant2"}:
+            raise ValueError(f"Invalid topology summary in header: {header}")
+        if ac_role not in {"discordant1", "discordant2"}:
+            raise ValueError(f"Invalid topology summary in header: {header}")
+        if bc_role == ac_role:
+            raise ValueError(f"Invalid discordant role assignment in header: {header}")
+
+        summary_total = n_ab + n_bc + n_ac
+        if summary_total != count:
+            raise ValueError(
+                f"Triplet count/header mismatch for {','.join(taxa)}: "
+                f"header count={count}, topology summary total={summary_total}"
+            )
+
+        if len(trimmed) > 1 and trimmed[1].strip():
+            raise ValueError("Invalid triplet section format: expected blank line after header")
+
+        gene_trees = []
+        for line in trimmed[2:]:
+            if not line.strip():
+                continue
+            if not line.endswith(";"):
+                raise ValueError(f"Invalid gene-tree line (expected Newick ending with ';'): {line}")
+            gene_trees.append(line)
+
+        if count != len(gene_trees):
+            raise ValueError(
+                f"Triplet count/header mismatch for {','.join(taxa)}: header count={count}, parsed trees={len(gene_trees)}"
+            )
+
+        dis1_topology = TOPOLOGY_BC if bc_role == "discordant1" else TOPOLOGY_AC
+
+        return taxa, {
+            "count": count,
+            "species_tree": species_tree,
+            "gene_trees": gene_trees,
+            "label_map": {"A": taxa[0], "B": taxa[1], "C": taxa[2]},
+            "header_topology_counts": {
+                TOPOLOGY_AB: n_ab,
+                TOPOLOGY_BC: n_bc,
+                TOPOLOGY_AC: n_ac,
+            },
+            "header_dis1_topology": dis1_topology,
+        }
+
     triplet_map = {}
-    current_triplet = None
+    current_section = []
 
     with open(filepath, "r") as handle:
         for raw_line in handle:
             line = raw_line.rstrip("\n").rstrip("\r")
-
-            if not line.strip():
+            if line == section_separator:
+                parsed = _parse_section(current_section)
+                if parsed is not None:
+                    taxa, payload = parsed
+                    if taxa in triplet_map:
+                        raise ValueError(f"Duplicate triplet header encountered: {','.join(taxa)}")
+                    triplet_map[taxa] = payload
+                current_section = []
                 continue
+            current_section.append(line)
 
-            if set(line) == {"="}:
-                current_triplet = None
-                continue
-
-            if "\t" in line and "," in line.split("\t", 1)[0]:
-                parts = line.split("\t")
-                if len(parts) != 3:
-                    raise ValueError(f"Invalid triplet header format (expected 3 tab-separated fields): {line}")
-
-                triplet_text = parts[0].strip()
-                taxa = tuple(part.strip() for part in triplet_text.split(",") if part.strip())
-                if len(taxa) != 3:
-                    raise ValueError(f"Invalid triplet header: {line}")
-
-                if not parts[1].strip():
-                    raise ValueError(f"Invalid triplet count in header: {line}")
-                try:
-                    count = int(parts[1].strip())
-                except ValueError as exc:
-                    raise ValueError(f"Invalid triplet count in header: {line}") from exc
-
-                if not parts[2].strip():
-                    raise ValueError(f"Invalid species tree in header: {line}")
-                species_tree = parts[2].strip()
-                current_triplet = taxa
-                triplet_map[current_triplet] = {
-                    "count": count,
-                    "species_tree": species_tree,
-                    "gene_trees": [],
-                }
-                continue
-
-            if line.endswith(";"):
-                if current_triplet is None:
-                    raise ValueError("Encountered tree line before any triplet header")
-                triplet_map[current_triplet]["gene_trees"].append(line)
+    parsed = _parse_section(current_section)
+    if parsed is not None:
+        taxa, payload = parsed
+        if taxa in triplet_map:
+            raise ValueError(f"Duplicate triplet header encountered: {','.join(taxa)}")
+        triplet_map[taxa] = payload
 
     return triplet_map
 
@@ -1602,7 +1701,7 @@ def analyze_triplet_entry(
 ):
     """Analyze one triplet entry payload and return a pipeline result."""
     species_tree_topology = _species_tree_topology_only_newick(entry.get("species_tree"))
-    species_topology = _species_topology_from_newick(entry.get("species_tree"), triplet)
+    species_topology = TOPOLOGY_AB
     observations = _serialize_triplet_gene_trees(
         triplet,
         entry["gene_trees"],
@@ -1769,7 +1868,7 @@ def analyze_triplet_gene_tree_file(
     results = []
     for triplet, entry in items:
         species_tree_topology = _species_tree_topology_only_newick(entry.get("species_tree"))
-        species_topology = _species_topology_from_newick(entry.get("species_tree"), triplet)
+        species_topology = TOPOLOGY_AB
         triplet_rng = None
         if bootstrap:
             triplet_rng = _build_triplet_rng(options.get("seed"), triplet)
