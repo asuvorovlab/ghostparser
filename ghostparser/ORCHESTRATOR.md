@@ -107,10 +107,10 @@ Canonical topology strings:
 Triplet labeling is canonicalized after topology-frequency counting so that:
 
 - concordant is always `((A,B),C)`
-- discordant1 is always `((B,C),A)` (and represented by `n_dis1`)
-- discordant2 is always `((A,C),B)` (and represented by `n_dis2`)
+- discordant1 is whichever discordant topology has higher count (represented by `n_dis1`)
+- discordant2 is the other discordant topology (represented by `n_dis2`)
 
-If the two discordant topologies tie in frequency, canonical ordering is kept.
+If the two discordant topologies tie in frequency, fixed discordant ordering is kept (BC before AC).
 
 ### Frequency Metadata
 
