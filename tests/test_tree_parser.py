@@ -32,6 +32,7 @@ from ghostparser.tree_parser import (
     write_clean_trees,
     write_triplet_gene_trees,
     write_triplet_gene_trees_multiprocess,
+    write_triplet_gene_trees_parquet_multiprocess,
     write_triplet_gene_trees_streaming,
     write_triplets_to_file,
 )
@@ -49,6 +50,9 @@ def _tree_parser_args(**overrides):
         "outgroups": "Out1,Out2",
         "triplet_filter": None,
         "output_folder": None,
+        "triplet_output_format": None,
+        "parquet_partitions": None,
+        "parquet_compression": None,
         "processes": None,
         "no_multiprocessing": False,
     }
@@ -95,6 +99,9 @@ def test_resolve_runtime_args_tree_parser_config_warns_and_ignores(tmp_path, cap
         outgroups=None,
         triplet_filter=None,
         output_folder=None,
+        triplet_output_format=None,
+        parquet_partitions=None,
+        parquet_compression=None,
         processes=None,
         no_multiprocessing=False,
     )
@@ -1127,6 +1134,34 @@ def test_write_triplet_gene_trees_multiprocess_accepts_list(tmp_path):
     assert triplets_with_trees > 0
     chunk_dirs = list(tmp_path.glob(".*_chunks"))
     assert not chunk_dirs
+
+
+def test_write_triplet_gene_trees_parquet_multiprocess(tmp_path):
+    gene_trees_newick = [
+        "((TaxaA:0.15,TaxaB:0.25):0.35,TaxaC:0.45);",
+        "((TaxaA:0.11,TaxaC:0.22):0.33,TaxaB:0.44);",
+        "((TaxaB:0.12,TaxaC:0.23):0.34,TaxaA:0.45);",
+    ]
+    triplets = [("TaxaA", "TaxaB", "TaxaC")]
+    output_dir = tmp_path / "triplet_gene_trees.parquet"
+
+    total_subtrees, triplets_with_trees, worker_count = write_triplet_gene_trees_parquet_multiprocess(
+        triplets,
+        gene_trees_newick,
+        str(output_dir),
+        species_triplet_trees=_species_triplet_map(triplets),
+        parquet_partitions=4,
+        parquet_compression="zstd",
+        use_multiprocessing=False,
+    )
+
+    assert worker_count == 1
+    assert total_subtrees == 3
+    assert triplets_with_trees == 1
+    assert (output_dir / "triplets").exists()
+    assert (output_dir / "observations").exists()
+    assert list((output_dir / "triplets").glob("*.parquet"))
+    assert list((output_dir / "observations").rglob("*.parquet"))
 
 
 def test_build_species_triplet_metadata_normalizes_abc(tmp_path):
