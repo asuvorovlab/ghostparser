@@ -19,6 +19,7 @@ from ghostparser.triplet_processor import (
     collect_triplet_statistics,
     compute_tree_height_statistic,
     parse_triplet_gene_trees_file,
+    parse_triplet_gene_trees_parquet,
     pearson_discordant_chi_square_test,
     run_discordant_count_test,
     run_triplet_pipeline,
@@ -1085,6 +1086,42 @@ def test_write_pipeline_statistics_json(tmp_path):
     assert "classification" in out
 
 
+def test_parse_and_analyze_triplet_gene_trees_parquet(tmp_path):
+    from ghostparser.tree_parser import write_triplet_gene_trees_parquet_multiprocess
+
+    triplets = [("A", "B", "C")]
+    gene_trees_newick = [
+        "((A:1.0,B:1.0):1.0,C:1.0);",
+        "((B:1.0,C:1.0):1.0,A:1.0);",
+        "((A:1.0,C:1.0):1.0,B:1.0);",
+    ]
+    dataset_path = tmp_path / "unique_triplets_gene_trees.parquet"
+    species_triplet_trees = {("A", "B", "C"): "((A:1,B:1):1,C:1);"}
+
+    write_triplet_gene_trees_parquet_multiprocess(
+        triplets,
+        gene_trees_newick,
+        str(dataset_path),
+        species_triplet_trees=species_triplet_trees,
+        parquet_partitions=2,
+        parquet_compression="zstd",
+        use_multiprocessing=False,
+    )
+
+    parsed = parse_triplet_gene_trees_parquet(str(dataset_path))
+    assert ("A", "B", "C") in parsed
+    assert parsed[("A", "B", "C")]["count"] == 3
+    assert len(parsed[("A", "B", "C")]["observation_rows"]) == 3
+
+    results = analyze_triplet_gene_tree_file(
+        str(dataset_path),
+        input_format="parquet",
+        use_multiprocessing=False,
+    )
+    assert len(results) == 1
+    assert results[0].triplet == ("A", "B", "C")
+
+
 def test_serialize_bootstrap_value_rejects_non_json_value():
     with pytest.raises(ValueError, match="not JSON-serializable"):
         triplet_processor_module._serialize_bootstrap_value({"bad": {1, 2, 3}})
@@ -1198,6 +1235,7 @@ def _triplet_processor_args(**overrides):
     base = {
         "config_file": None,
         "input_path": "unique_triplets_gene_trees.txt",
+        "input_format": None,
         "output_path": None,
         "stats_output": None,
         "alpha_dct": None,
@@ -1296,6 +1334,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     args = argparse.Namespace(
         config_file=str(config_path),
         input_path="unique_triplets_gene_trees.txt",
+        input_format=None,
         output_path=None,
         stats_output=None,
         alpha_dct=None,
