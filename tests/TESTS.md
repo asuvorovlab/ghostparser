@@ -101,41 +101,7 @@ Expected outputs: supported values load successfully; invalid value raises `Conf
 Inputs: no `processes` key.
 Expected outputs: `processes == 0`.
 
-- `test_load_tree_parser_config_json`
-Inputs: full tree parser JSON config including `no_multiprocessing`.
-Expected outputs: normalized paths, preserved explicit values, and default parquet tree-parser settings.
-
-- `test_load_tree_parser_config_invalid_no_multiprocessing`
-Inputs: non-boolean `no_multiprocessing`.
-Expected outputs: `ConfigError`.
-
-- `test_load_tree_parser_config_defaults_processes_to_zero`
-Inputs: no `processes`.
-Expected outputs: `processes == 0`.
-
-- `test_load_triplet_processor_config_json`
-Inputs: full triplet-processor JSON config with bootstrap debug settings.
-Expected outputs: normalized paths, preserved explicit methods/thresholds, and default parquet input-format handling.
-
-- `test_load_triplet_processor_config_invalid_choice_fields` (parametrized)
-Inputs: invalid `p_value_correction`, `stats_backend`.
-Expected outputs: `ConfigError` referencing offending field.
-
-- `test_load_triplet_processor_config_tree_height_strategy_validation` (parametrized)
-Inputs: supported values (`AVG`, `A`, `B`, `C`, `SIS`, `INT`) and an invalid value (`D`).
-Expected outputs: supported values load successfully; invalid value raises `ConfigError`.
-
-- `test_load_triplet_processor_config_missing_input`
-Inputs: config without `input_path`.
-Expected outputs: `ConfigError` on required input.
-
-- `test_load_triplet_processor_config_defaults_processes_to_zero`
-Inputs: minimal config.
-Expected outputs: `processes == 0`, `tree_height_calculation_strategy == "AVG"`, `p_value_correction == "no"`.
-
-- `test_load_triplet_processor_config_invalid_bootstrap_fields` (parametrized)
-Inputs: invalid bootstrap payload variants (`bootstrap` non-bool, invalid `iterations`, invalid `seed`, invalid `debug_mode`, invalid `summary_only`).
-Expected outputs: `ConfigError` references the offending bootstrap field.
+- Only orchestrator config loading is covered in `tests/test_config.py`.
 
 - `test_path_resolution_for_absolute_relative_and_home_paths` (parametrized)
 Inputs: absolute paths, relative paths, and `~` paths.
@@ -179,13 +145,7 @@ Runtime-arg resolution:
 Inputs: CLI defaults and explicit `processes=6`.
 Expected outputs: path resolution, outgroup parsing, default `min_support_value`, and expected process behavior.
 
-- `test_resolve_runtime_args_tree_parser_config_warns_and_ignores`
-Inputs: config mode + extra CLI args.
-Expected outputs: warning + config precedence.
-
-- `test_resolve_runtime_args_tree_parser_config_processes_behavior` (parametrized)
-Inputs: config with explicit `processes` and config without `processes`.
-Expected outputs: preserves configured value or defaults to `0`.
+- Tree-parser runtime arg tests cover CLI defaults and overrides.
 
 Tree IO and cleaning:
 
@@ -291,13 +251,13 @@ Expected outputs: custom backend equals standard backend within tight tolerance.
 
 Runtime-arg resolution:
 
-- Covers CLI defaults, config precedence, and `processes` default/preservation behavior.
-Inputs: CLI-only args and config-file mode args.
-Expected outputs: resolved defaults and correct precedence semantics.
+- Covers CLI defaults and `processes` default/preservation behavior.
+Inputs: CLI args.
+Expected outputs: resolved defaults and expected process semantics.
 
 ### Explicit Grouped Test Names
 
-This addendum lists tests that are intentionally grouped in the narrative sections above but were not previously named explicitly.
+This addendum lists tests that are intentionally grouped in the narrative sections above and named explicitly.
 
 #### tests/test_orchestrator.py
 
@@ -308,7 +268,7 @@ Purpose: verify the orchestrator executes the canonical two-stage file-backed pi
 
 #### tests/test_tree_parser.py
 
-- Tests: `test_write_clean_trees`, `test_write_clean_trees_multiple`, `test_clean_and_save_trees_filters_low_support`, `test_clean_and_save_trees_no_filters`, `test_clean_and_save_trees_creates_output_file`, `test_clean_and_save_gene_trees_discards_missing_outgroup`
+- Tests: `test_write_clean_trees_outputs_expected_tree_count`, `test_clean_and_save_trees_filters_low_support`, `test_clean_and_save_trees_no_filters`, `test_clean_and_save_trees_creates_output_file`, `test_clean_and_save_gene_trees_discards_missing_outgroup`
 Inputs: single/multiple trees, low-support trees, gene trees missing outgroup.
 Expected outputs/behavior: clean outputs are written, support filtering behaves correctly, invalid/missing-outgroup trees are excluded where required.
 Purpose: validate cleaned-tree persistence and support/outgroup filtering behavior.
@@ -343,7 +303,7 @@ Inputs: multiprocess writer invocations across worker-count and input-shape vari
 Expected outputs/behavior: output format remains valid; species header persists; empty and list-based inputs are handled safely.
 Purpose: validate robust multiprocess mapping-file writer behavior.
 
-- Tests: `test_get_clean_filename_simple`, `test_get_clean_filename_different_extension`, `test_get_clean_filename_no_extension`, `test_metrics_logger_context_manager`, `test_metrics_logger_file_not_opened_before_enter`
+- Tests: `test_get_clean_filename_variants`, `test_metrics_logger_context_manager`, `test_metrics_logger_file_not_opened_before_enter`
 Inputs: filename variants and metrics-logger lifecycle usage.
 Expected outputs/behavior: cleaned output filenames are formed correctly; logger opens/writes only in expected context-manager lifecycle.
 Purpose: verify utility helpers that support parser CLI workflows.
@@ -370,7 +330,7 @@ Inputs: mapping files and pipeline run settings, including multiprocessing.
 Expected outputs/behavior: analyze/parse/write pipeline roundtrips successfully and statistics collection returns expected dictionary-list structures.
 Purpose: validate end-to-end processing API behavior.
 
-- Tests: `test_analyze_triplet_gene_tree_file_rejects_unknown_discordant_test`, `test_analyze_triplet_gene_tree_file_rejects_unknown_summary_statistic`, `test_analyze_triplet_gene_tree_file_rejects_unknown_stats_backend`, `test_analyze_triplet_gene_tree_file_rejects_unknown_tree_height_strategy`, `test_analyze_triplet_gene_tree_file_rejects_unknown_p_value_correction`, `test_parse_triplet_gene_trees_file_requires_species_tree_column`, `test_parse_triplet_gene_trees_file_rejects_empty_species_tree`, `test_parse_triplet_gene_trees_file_rejects_count_mismatch`, `test_parse_triplet_gene_trees_file_requires_blank_line_after_header`
+- Tests: `test_analyze_triplet_gene_tree_file_rejects_unsupported_runtime_options`, `test_parse_triplet_gene_trees_file_rejects_malformed_sections`
 Inputs: invalid configuration values and malformed mapping-file headers/content.
 Expected outputs/behavior: parser/analyzer rejects invalid inputs with explicit error paths.
 Purpose: verify input validation and defensive error handling.
@@ -390,9 +350,9 @@ Inputs: summary-statistics payloads with bootstrap disabled/enabled.
 Expected outputs/behavior: summary TSV includes required 63-stat topology metrics plus identity/count/classification fields and bootstrap_value when enabled.
 Purpose: verify summary-statistics file schema and conditional bootstrap column behavior.
 
-- Tests: `test_resolve_runtime_args_triplet_processor_cli_defaults_and_overrides`, `test_resolve_runtime_args_triplet_processor_config_warns_and_ignores`, `test_resolve_runtime_args_triplet_processor_config_processes_behavior`
-Inputs: CLI-mode and config-mode argument combinations, including processes handling.
-Expected outputs/behavior: runtime args resolve defaults/overrides correctly and apply config precedence warnings/semantics.
+- Tests: `test_resolve_runtime_args_triplet_processor_cli_defaults_and_overrides`
+Inputs: CLI-mode argument combinations, including processes handling.
+Expected outputs/behavior: runtime args resolve defaults/overrides correctly.
 Purpose: validate triplet-processor runtime argument resolution behavior.
 
 ## Backend Parity Tests (`@pytest.mark.backend_parity`)
