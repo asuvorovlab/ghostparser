@@ -36,7 +36,7 @@ def _orchestrator_args(tmp_path, **overrides):
         "p_value_correction": None,
         "alpha_dct": None,
         "alpha_ks": None,
-        "bootstrap": False,
+        "bootstrap": None,
         "bootstrap_iterations": None,
         "bootstrap_seed": None,
         "bootstrap_debug_mode": None,
@@ -75,7 +75,7 @@ def test_resolve_parallel_mode(monkeypatch):
         (
             {},
             0,
-            False,
+            True,
             {
                 "iterations": 100,
                 "seed": None,
@@ -86,14 +86,14 @@ def test_resolve_parallel_mode(monkeypatch):
         (
             {
                 "processes": 5,
-                "bootstrap": True,
+                "bootstrap": False,
                 "bootstrap_iterations": 25,
                 "bootstrap_seed": 99,
                 "bootstrap_debug_mode": True,
                 "bootstrap_summary_only": False,
             },
             5,
-            True,
+            False,
             {
                 "iterations": 25,
                 "seed": 99,
@@ -130,7 +130,7 @@ def test_resolve_runtime_args_cli_defaults_and_overrides(
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.p_value_correction == "no"
-    assert resolved.alpha_dct == 0.01
+    assert resolved.alpha_dct == 0.05
     assert resolved.alpha_ks == 0.05
     assert resolved.bootstrap is expected_bootstrap
     assert resolved.bootstrap_options == expected_bootstrap_options
@@ -159,10 +159,10 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
         summary_statistic="mean",
         stats_backend="standard",
         tree_height_calculation_strategy="C",
-            p_value_correction="no",
+        p_value_correction="no",
         alpha_dct=0.2,
         alpha_ks=0.3,
-        bootstrap=True,
+        bootstrap=None,
         bootstrap_iterations=20,
         bootstrap_seed=1,
         bootstrap_debug_mode=True,
@@ -187,9 +187,9 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.p_value_correction == "no"
-    assert resolved.alpha_dct == 0.01
+    assert resolved.alpha_dct == 0.05
     assert resolved.alpha_ks == 0.05
-    assert resolved.bootstrap is False
+    assert resolved.bootstrap is True
     assert resolved.bootstrap_options == {
         "iterations": 100,
         "seed": None,
@@ -251,7 +251,7 @@ def _runtime_args(tmp_path):
         stats_backend="standard",
         tree_height_calculation_strategy="AVG",
         p_value_correction="no",
-        alpha_dct=0.01,
+        alpha_dct=0.05,
         alpha_ks=0.05,
         bootstrap=False,
         bootstrap_options={
