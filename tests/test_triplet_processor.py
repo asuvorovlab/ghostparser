@@ -440,7 +440,17 @@ def test_analyze_triplet_gene_tree_file_with_multiprocessing(tmp_path):
     assert results[0].analyzed_trees == 3
 
 
-def test_analyze_triplet_gene_tree_file_rejects_unknown_discordant_test(tmp_path):
+@pytest.mark.parametrize(
+    "override_kwargs,error_match",
+    [
+        ({"discordant_test": "bad-test"}, "Unsupported discordant test method"),
+        ({"summary_statistic": "bad-summary"}, "Unsupported summary statistic"),
+        ({"stats_backend": "numpy"}, "Unsupported stats backend"),
+        ({"tree_height_calculation_strategy": "D"}, "Unsupported tree height calculation strategy"),
+        ({"p_value_correction": "sidak"}, "Unsupported p-value correction method"),
+    ],
+)
+def test_analyze_triplet_gene_tree_file_rejects_unsupported_runtime_options(tmp_path, override_kwargs, error_match):
     content = """A,B,C\t3\t((A:1,B:1):1,C:1);
 
 ((A:1,B:1):1,C:1);
@@ -450,22 +460,8 @@ def test_analyze_triplet_gene_tree_file_rejects_unknown_discordant_test(tmp_path
     input_file = tmp_path / "unique_triplets_gene_trees.txt"
     input_file.write_text(content)
 
-    with pytest.raises(ValueError, match="Unsupported discordant test method"):
-        analyze_triplet_gene_tree_file(str(input_file), discordant_test="bad-test")
-
-
-def test_analyze_triplet_gene_tree_file_rejects_unknown_summary_statistic(tmp_path):
-    content = """A,B,C\t3\t((A:1,B:1):1,C:1);
-
-((A:1,B:1):1,C:1);
-((B:1,C:1):1,A:1);
-((A:1,C:1):1,B:1);
-"""
-    input_file = tmp_path / "unique_triplets_gene_trees.txt"
-    input_file.write_text(content)
-
-    with pytest.raises(ValueError, match="Unsupported summary statistic"):
-        analyze_triplet_gene_tree_file(str(input_file), summary_statistic="bad-summary")
+    with pytest.raises(ValueError, match=error_match):
+        analyze_triplet_gene_tree_file(str(input_file), **override_kwargs)
 
 
 def test_run_triplet_pipeline_supports_mode_summary_statistic():
@@ -578,46 +574,6 @@ def test_run_bootstrap_iterations_joins_tied_classes(monkeypatch):
     assert payload["bootstrap_value"] == pytest.approx(0.5)
 
 
-def test_analyze_triplet_gene_tree_file_rejects_unknown_stats_backend(tmp_path):
-    content = """A,B,C\t3\t((A:1,B:1):1,C:1);
-
-((A:1,B:1):1,C:1);
-((B:1,C:1):1,A:1);
-((A:1,C:1):1,B:1);
-"""
-    input_file = tmp_path / "unique_triplets_gene_trees.txt"
-    input_file.write_text(content)
-
-    with pytest.raises(ValueError, match="Unsupported stats backend"):
-        analyze_triplet_gene_tree_file(str(input_file), stats_backend="numpy")
-
-
-def test_analyze_triplet_gene_tree_file_rejects_unknown_tree_height_strategy(tmp_path):
-    content = """A,B,C\t3\t((A:1,B:1):1,C:1);
-
-((A:1,B:1):1,C:1);
-((B:1,C:1):1,A:1);
-((A:1,C:1):1,B:1);
-"""
-    input_file = tmp_path / "unique_triplets_gene_trees.txt"
-    input_file.write_text(content)
-
-    with pytest.raises(ValueError, match="Unsupported tree height calculation strategy"):
-        analyze_triplet_gene_tree_file(str(input_file), tree_height_calculation_strategy="D")
-
-
-def test_analyze_triplet_gene_tree_file_rejects_unknown_p_value_correction(tmp_path):
-    content = """A,B,C\t3\t((A:1,B:1):1,C:1);
-
-((A:1,B:1):1,C:1);
-((B:1,C:1):1,A:1);
-((A:1,C:1):1,B:1);
-"""
-    input_file = tmp_path / "unique_triplets_gene_trees.txt"
-    input_file.write_text(content)
-
-    with pytest.raises(ValueError, match="Unsupported p-value correction method"):
-        analyze_triplet_gene_tree_file(str(input_file), p_value_correction="sidak")
 
 
 def test_adjust_p_values_custom_fdr_matches_known_bh_example():
@@ -739,51 +695,44 @@ def test_two_sample_ks_test_hybrid_rejects_negative_margin():
         two_sample_ks_test_hybrid([0.1, 0.2], [0.3, 0.4], borderline_margin=-0.1)
 
 
-def test_parse_triplet_gene_trees_file_requires_species_tree_column(tmp_path):
-    content = """A,B,C\t3
+@pytest.mark.parametrize(
+    "content,error_match",
+    [
+        (
+            """A,B,C\t3
 
 ((A:1,B:1):1,C:1);
-"""
-    input_file = tmp_path / "unique_triplets_gene_trees.txt"
-    input_file.write_text(content)
-
-    with pytest.raises(ValueError, match="expected 5 tab-separated fields"):
-        parse_triplet_gene_trees_file(str(input_file))
-
-
-def test_parse_triplet_gene_trees_file_rejects_empty_species_tree(tmp_path):
-    content = """A,B,C\t3\t\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
+""",
+            "expected 5 tab-separated fields",
+        ),
+        (
+            """A,B,C\t3\t\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
-"""
-    input_file = tmp_path / "unique_triplets_gene_trees.txt"
-    input_file.write_text(content)
-
-    with pytest.raises(ValueError, match="Invalid species tree in header"):
-        parse_triplet_gene_trees_file(str(input_file))
-
-
-def test_parse_triplet_gene_trees_file_rejects_count_mismatch(tmp_path):
-    content = """A,B,C\t3\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
+""",
+            "Invalid species tree in header",
+        ),
+        (
+            """A,B,C\t3\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
 ((B:1,C:1):1,A:1);
-"""
-    input_file = tmp_path / "unique_triplets_gene_trees.txt"
-    input_file.write_text(content)
-
-    with pytest.raises(ValueError, match="Triplet count/header mismatch"):
-        parse_triplet_gene_trees_file(str(input_file))
-
-
-def test_parse_triplet_gene_trees_file_requires_blank_line_after_header(tmp_path):
-    content = """A,B,C\t1\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:0/discordant1,AC:0/discordant2
+""",
+            "Triplet count/header mismatch",
+        ),
+        (
+            """A,B,C\t1\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:0/discordant1,AC:0/discordant2
 ((A:1,B:1):1,C:1);
-"""
+""",
+            "expected blank line after header",
+        ),
+    ],
+)
+def test_parse_triplet_gene_trees_file_rejects_malformed_sections(tmp_path, content, error_match):
     input_file = tmp_path / "unique_triplets_gene_trees.txt"
     input_file.write_text(content)
 
-    with pytest.raises(ValueError, match="expected blank line after header"):
+    with pytest.raises(ValueError, match=error_match):
         parse_triplet_gene_trees_file(str(input_file))
 
 
