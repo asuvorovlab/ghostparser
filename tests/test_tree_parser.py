@@ -274,29 +274,24 @@ def test_format_newick_with_custom_precision(simple_newick_file):
 # ============================================================================
 
 
-def test_write_clean_trees(simple_newick_file, tmp_path):
-    """Test writing cleaned trees to a file."""
-    trees = read_tree_file(str(simple_newick_file))
+@pytest.mark.parametrize(
+    "input_fixture_name,expected_count",
+    [
+        ("simple_newick_file", 1),
+        ("multiple_trees_file", 3),
+    ],
+)
+def test_write_clean_trees_outputs_expected_tree_count(request, input_fixture_name, expected_count, tmp_path):
+    """Test writing cleaned trees preserves tree count for single and multiple inputs."""
+    input_file = request.getfixturevalue(input_fixture_name)
+    trees = read_tree_file(str(input_file))
     output_file = tmp_path / "output_trees.nwk"
 
     write_clean_trees(trees, str(output_file))
 
     assert output_file.exists()
-
-    # Verify the output file contains valid Newick
     output_trees = read_tree_file(str(output_file))
-    assert len(output_trees) == len(trees)
-
-
-def test_write_clean_trees_multiple(multiple_trees_file, tmp_path):
-    """Test writing multiple cleaned trees to a file."""
-    trees = read_tree_file(str(multiple_trees_file))
-    output_file = tmp_path / "output_trees.nwk"
-
-    write_clean_trees(trees, str(output_file))
-
-    output_trees = read_tree_file(str(output_file))
-    assert len(output_trees) == 3
+    assert len(output_trees) == expected_count
 
 
 # ============================================================================
@@ -467,28 +462,18 @@ def test_write_triplets_to_file_empty(tmp_path):
 # ============================================================================
 
 
-def test_get_clean_filename_simple():
-    """Test generating clean filename."""
-    filepath = "/path/to/tree.nwk"
+@pytest.mark.parametrize(
+    "filepath,expected",
+    [
+        ("/path/to/tree.nwk", "/path/to/processed_tree.nwk"),
+        ("/path/to/mytrees.txt", "/path/to/processed_mytrees.txt"),
+        ("/path/to/treefile", "/path/to/processed_treefile"),
+    ],
+)
+def test_get_clean_filename_variants(filepath, expected):
+    """Test generating clean filenames across extension variants."""
     clean_filepath = get_clean_filename(filepath)
-
-    assert clean_filepath == "/path/to/processed_tree.nwk"
-
-
-def test_get_clean_filename_different_extension():
-    """Test clean filename with different extension."""
-    filepath = "/path/to/mytrees.txt"
-    clean_filepath = get_clean_filename(filepath)
-
-    assert clean_filepath == "/path/to/processed_mytrees.txt"
-
-
-def test_get_clean_filename_no_extension():
-    """Test clean filename for file without extension."""
-    filepath = "/path/to/treefile"
-    clean_filepath = get_clean_filename(filepath)
-
-    assert clean_filepath == "/path/to/processed_treefile"
+    assert clean_filepath == expected
 
 
 # ============================================================================
