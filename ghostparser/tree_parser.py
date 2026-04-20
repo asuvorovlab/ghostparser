@@ -12,17 +12,13 @@ from Bio import Phylo
 from Bio.Phylo.BaseTree import Clade, Tree
 import dendropy
 
-from .cli_config import resolve_cli_or_config_args
 from .config import (
-    ConfigError,
     DEFAULT_MIN_SUPPORT_VALUE,
     DEFAULT_PARQUET_COMPRESSION,
     DEFAULT_PARQUET_PARTITIONS,
     DEFAULT_TRIPLET_OUTPUT_FORMAT,
     PARQUET_COMPRESSION_CHOICES,
     TRIPLET_IO_FORMAT_CHOICES,
-    load_tree_parser_config,
-    normalize_tree_parser_payload,
 )
 from .triplet_utils import (
     ALL_TOPOLOGIES,
@@ -1230,7 +1226,7 @@ def main():
 
     try:
         args = _resolve_runtime_args(parsed_args)
-    except (ValueError, ConfigError) as exc:
+    except ValueError as exc:
         print(f"Error: {exc}")
         return
 
@@ -1478,10 +1474,9 @@ def _build_argument_parser():
         description="Ghost parser for identifying ghost introgressions in phylogenetic trees."
     )
 
-    parser.add_argument("-c", "--config-file", type=str, default=None, help="Path to a JSON or YAML config file")
-    parser.add_argument("-st", "--species-tree-path", default=None, help="Path to the species tree file in Newick format")
-    parser.add_argument("-gt", "--gene-trees-path", default=None, help="Path to the gene trees file in Newick format")
-    parser.add_argument("-og", "--outgroups", default=None, help="Outgroup species identifier(s), comma-separated")
+    parser.add_argument("-st", "--species-tree-path", required=True, help="Path to the species tree file in Newick format")
+    parser.add_argument("-gt", "--gene-trees-path", required=True, help="Path to the gene trees file in Newick format")
+    parser.add_argument("-og", "--outgroups", required=True, help="Outgroup species identifier(s), comma-separated")
     parser.add_argument(
         "--triplet-filter",
         type=str,
@@ -1513,6 +1508,12 @@ def _build_argument_parser():
         help=f"Parquet compression codec (default: {DEFAULT_PARQUET_COMPRESSION})",
     )
     parser.add_argument(
+        "--min-support-value",
+        type=float,
+        default=None,
+        help=f"Support threshold for tree cleaning (default: {DEFAULT_MIN_SUPPORT_VALUE})",
+    )
+    parser.add_argument(
         "--processes",
         type=int,
         default=None,
@@ -1526,27 +1527,38 @@ def _build_argument_parser():
     return parser
 
 
-TREE_PARSER_PAYLOAD_ARG_NAMES = [
-    "species_tree_path",
-    "gene_trees_path",
-    "outgroups",
-    "triplet_filter",
-    "output_folder",
-    "triplet_output_format",
-    "parquet_partitions",
-    "parquet_compression",
-    "processes",
-    "no_multiprocessing",
-]
-
-
 def _resolve_runtime_args(args):
-    """Resolve runtime arguments from config-file mode or plain CLI mode."""
-    return resolve_cli_or_config_args(
-        args,
-        load_config=load_tree_parser_config,
-        normalize_payload=normalize_tree_parser_payload,
-        payload_arg_names=TREE_PARSER_PAYLOAD_ARG_NAMES,
+    """Resolve runtime arguments from CLI mode."""
+    species_tree = Path(args.species_tree_path).expanduser().resolve()
+    gene_trees = Path(args.gene_trees_path).expanduser().resolve()
+    outgroups = _parse_outgroup_arg(args.outgroups)
+    if not outgroups:
+        raise ValueError("Missing required CLI argument: --outgroups")
+
+    triplet_filter = None
+    if args.triplet_filter:
+        triplet_filter = str(Path(args.triplet_filter).expanduser().resolve())
+
+    output = None
+    if args.output_folder:
+        output = str(Path(args.output_folder).expanduser().resolve())
+
+    processes = args.processes if args.processes is not None else 0
+    if processes < 0:
+        raise ValueError("CLI argument --processes must be an integer >= 0")
+
+    return argparse.Namespace(
+        species_tree=str(species_tree),
+        gene_trees=str(gene_trees),
+        outgroup=outgroups,
+        triplet_filter=triplet_filter,
+        output=output,
+        triplet_output_format=args.triplet_output_format or DEFAULT_TRIPLET_OUTPUT_FORMAT,
+        parquet_partitions=args.parquet_partitions if args.parquet_partitions is not None else DEFAULT_PARQUET_PARTITIONS,
+        parquet_compression=args.parquet_compression or DEFAULT_PARQUET_COMPRESSION,
+        processes=processes,
+        no_multiprocessing=bool(args.no_multiprocessing),
+        min_support_value=args.min_support_value if args.min_support_value is not None else DEFAULT_MIN_SUPPORT_VALUE,
     )
 
 

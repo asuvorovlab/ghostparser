@@ -5,7 +5,7 @@ This module implements the sequential logic for rooted species triplets:
 1. Classify each triplet gene tree as concordant/dis1/dis2.
 2. Compute tree height statistic ``H(T)`` using configurable strategy
     (average root-to-tip distance by default).
-3. Run discordant count test (default: two-proportion z-test, alpha=0.01).
+3. Run discordant count test (default: Pearson chi-square, alpha=0.05).
 4. If significant, run tree height test (two-sample KS, alpha=0.05).
 5. If significant, compare selected summary values to classify inflow vs ghost introgression.
 
@@ -33,9 +33,7 @@ from scipy import stats
 from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportions_ztest
 
-from .cli_config import resolve_cli_or_config_args
 from .config import (
-    ConfigError,
     DEFAULT_ALPHA_DCT,
     DEFAULT_ALPHA_KS,
     DEFAULT_BOOTSTRAP,
@@ -54,8 +52,6 @@ from .config import (
     STATS_BACKEND_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
-    load_triplet_processor_config,
-    normalize_triplet_processor_payload,
 )
 from .triplet_utils import (
     ALL_TOPOLOGIES,
@@ -2205,7 +2201,7 @@ def write_pipeline_results(
 
 def write_summary_statistics_tsv(results, output_filepath, bootstrap=DEFAULT_BOOTSTRAP):
     """Write per-triplet topology/metric summary statistics to TSV."""
-    include_bootstrap_value = bootstrap or any(result.bootstrap_value is not None for result in results)
+    include_bootstrap_value = bool(bootstrap)
 
     header = [
         "triplet",
@@ -2256,7 +2252,7 @@ def main():
 
     try:
         args = _resolve_runtime_args(parsed_args)
-    except (ValueError, ConfigError) as exc:
+    except ValueError as exc:
         print(f"Error: {exc}")
         return
 
@@ -2311,8 +2307,7 @@ def main():
 def _build_argument_parser():
     """Build triplet_processor CLI argument parser."""
     parser = argparse.ArgumentParser(description="Run GhostParser triplet processing pipeline (Fig. 6).")
-    parser.add_argument("-c", "--config-file", default=None, help="Path to a JSON or YAML config file")
-    parser.add_argument("--input-path", default=None, help="Path to unique_triplets_gene_trees.txt or parquet dataset")
+    parser.add_argument("--input-path", required=True, help="Path to unique_triplets_gene_trees.txt or parquet dataset")
     parser.add_argument(
         "--input-format",
         choices=INPUT_FORMAT_CHOICES,
@@ -2326,8 +2321,8 @@ def _build_argument_parser():
         default=None,
         help="Optional JSON output path for full per-triplet statistics",
     )
-    parser.add_argument("--alpha-dct", type=float, default=None, help="DCT significance threshold (default: 0.01)")
-    parser.add_argument("--alpha-ks", type=float, default=None, help="KS significance threshold (default: 0.05)")
+    parser.add_argument("--alpha-dct", type=float, default=None, help=f"DCT significance threshold (default: {DEFAULT_ALPHA_DCT})")
+    parser.add_argument("--alpha-ks", type=float, default=None, help=f"KS significance threshold (default: {DEFAULT_ALPHA_KS})")
     parser.add_argument(
         "--discordant-test",
         choices=DISCORDANT_TEST_CHOICES,
@@ -2364,15 +2359,17 @@ def _build_argument_parser():
         help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
     )
     parser.add_argument(
-        "--bootstrap",
-        action="store_true",
-        help="Enable bootstrap sampling-with-replacement during triplet analysis",
+        "--no-bootstrap",
+        dest="bootstrap",
+        action="store_false",
+        help="Disable bootstrap sampling-with-replacement during triplet analysis",
     )
+    parser.set_defaults(bootstrap=None)
     parser.add_argument(
         "--bootstrap-iterations",
         type=int,
         default=None,
-        help="Number of bootstrap iterations per triplet (default: 100)",
+        help=f"Number of bootstrap iterations per triplet (default: {DEFAULT_BOOTSTRAP_ITERATIONS})",
     )
     parser.add_argument(
         "--bootstrap-seed",
@@ -2384,14 +2381,12 @@ def _build_argument_parser():
         "--bootstrap-debug-mode",
         dest="bootstrap_debug_mode",
         action="store_true",
-        default=None,
         help="Enable bootstrap debug output columns",
     )
     parser.add_argument(
         "--bootstrap-summary-only",
         dest="bootstrap_summary_only",
         action="store_true",
-        default=None,
         help="When bootstrap debug mode is enabled, emit compact summaries instead of full per-iteration lists",
     )
     parser.add_argument("--processes", type=int, default=None, help="Number of worker processes for triplet analysis (0 = all cores)")
@@ -2410,36 +2405,48 @@ def _build_argument_parser():
     return parser
 
 
-TRIPLET_PROCESSOR_PAYLOAD_ARG_NAMES = [
-    "input_path",
-    "input_format",
-    "output_path",
-    "stats_output",
-    "alpha_dct",
-    "alpha_ks",
-    "discordant_test",
-    "summary_statistic",
-    "stats_backend",
-    "tree_height_calculation_strategy",
-    "p_value_correction",
-    "bootstrap",
-    "bootstrap_iterations",
-    "bootstrap_seed",
-    "bootstrap_debug_mode",
-    "bootstrap_summary_only",
-    "processes",
-    "generate_summary_stats",
-    "no_multiprocessing",
-]
-
-
 def _resolve_runtime_args(args):
-    """Resolve runtime arguments from config-file mode or plain CLI mode."""
-    return resolve_cli_or_config_args(
-        args,
-        load_config=load_triplet_processor_config,
-        normalize_payload=normalize_triplet_processor_payload,
-        payload_arg_names=TRIPLET_PROCESSOR_PAYLOAD_ARG_NAMES,
+    """Resolve runtime arguments from CLI mode."""
+    input_path = Path(args.input_path).expanduser().resolve()
+
+    output = None
+    if args.output_path:
+        output = str(Path(args.output_path).expanduser().resolve())
+
+    stats_output = None
+    if args.stats_output:
+        stats_output = str(Path(args.stats_output).expanduser().resolve())
+
+    processes = args.processes if args.processes is not None else 0
+    if processes < 0:
+        raise ValueError("CLI argument --processes must be an integer >= 0")
+
+    bootstrap_iterations = args.bootstrap_iterations if args.bootstrap_iterations is not None else DEFAULT_BOOTSTRAP_ITERATIONS
+    if bootstrap_iterations < 1:
+        raise ValueError("CLI argument --bootstrap-iterations must be an integer >= 1")
+
+    return argparse.Namespace(
+        input=str(input_path),
+        input_format=args.input_format or DEFAULT_INPUT_FORMAT,
+        output=output,
+        stats_output=stats_output,
+        alpha_dct=args.alpha_dct if args.alpha_dct is not None else DEFAULT_ALPHA_DCT,
+        alpha_ks=args.alpha_ks if args.alpha_ks is not None else DEFAULT_ALPHA_KS,
+        discordant_test=args.discordant_test or DEFAULT_DISCORDANT_TEST,
+        summary_statistic=args.summary_statistic or DEFAULT_SUMMARY_STATISTIC,
+        stats_backend=args.stats_backend or DEFAULT_STATS_BACKEND,
+        tree_height_calculation_strategy=args.tree_height_calculation_strategy or DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+        p_value_correction=args.p_value_correction or DEFAULT_P_VALUE_CORRECTION,
+        bootstrap=DEFAULT_BOOTSTRAP if args.bootstrap is None else bool(args.bootstrap),
+        bootstrap_options={
+            "iterations": bootstrap_iterations,
+            "seed": args.bootstrap_seed,
+            "debug_mode": bool(args.bootstrap_debug_mode),
+            "summary_only": bool(args.bootstrap_summary_only),
+        },
+        processes=processes,
+        generate_summary_stats=bool(args.generate_summary_stats),
+        no_multiprocessing=bool(args.no_multiprocessing),
     )
 
 
