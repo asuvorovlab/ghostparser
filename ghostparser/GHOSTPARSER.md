@@ -29,7 +29,7 @@ and applies the GhostParser decision pipeline:
 
 1. Count concordant and discordant topology frequencies, set concordant to the species-tree topology, and assign discordant1/discordant2 by discordant counts (higher count -> discordant1; ties keep fixed discordant order).
 2. Compute `H(T)` using a configurable tree-height strategy (`AVG` default, taxon-specific `A|B|C`, sister-distance `SIS`, or internal-branch `INT`).
-3. Run discordant count test (configurable: Pearson chi-square or two-proportion z-test, alpha `alpha_dct`, default `0.01`).
+3. Run discordant count test (configurable: Pearson chi-square or two-proportion z-test, alpha `alpha_dct`, default `0.05`).
 4. If significant, run two-sample KS tree-height test (alpha `alpha_ks`, default `0.05`).
 5. Apply selected multiple-testing correction across triplets for DCT and KS p-values (`no` default; also `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`).
 6. If significant, compare selected summary statistics (median by default; mean and binned mode optional) to infer outflow vs ghost introgression.
@@ -101,7 +101,7 @@ Returns:
 
 - `(label, most_frequent_matches_concordant)` where `most_frequent_matches_concordant` is `True` when concordant count is not lower than either discordant count.
 
-### `run_triplet_pipeline(species_triplet, triplet_gene_trees, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', tree_height_calculation_strategy='AVG', bootstrap=False, bootstrap_options=None)`
+### `run_triplet_pipeline(species_triplet, triplet_gene_trees, alpha_dct=0.05, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', tree_height_calculation_strategy='AVG', bootstrap=True, bootstrap_options=None)`
 
 Runs full sequential GhostParser logic and returns counts, p-values, summary values, and final classification.
 
@@ -167,11 +167,11 @@ For parquet input (`*.parquet` dataset directory), required layout is:
 - `triplets/*.parquet` with one row per triplet (`A`, `B`, `C`, `count`, topology-count metadata)
 - `observations/partition_id=*/part-*.parquet` with one row per extracted subtree and cached metrics (`h_a`, `h_b`, `h_c`, `h_avg`, `h_int`, `h_sis`)
 
-### `analyze_triplet_gene_tree_file(filepath, alpha_dct=0.01, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', p_value_correction='bfn', bootstrap=False, bootstrap_options=None, rng=None, use_multiprocessing=True, processes=None)`
+### `analyze_triplet_gene_tree_file(filepath, alpha_dct=0.05, alpha_ks=0.05, discordant_test='chi-square', summary_statistic='median', stats_backend='standard', p_value_correction='no', bootstrap=True, bootstrap_options=None, rng=None, use_multiprocessing=True, processes=None)`
 
 Runs the pipeline for all triplets in an input file with configurable discordant test and summary statistic.
 
-### `write_pipeline_results(results, output_filepath, dct_method='chi-square', summary_statistic='median', p_value_correction='no', bootstrap=False)`
+### `write_pipeline_results(results, output_filepath, dct_method='chi-square', summary_statistic='median', p_value_correction='no', bootstrap=True)`
 
 Writes per-triplet results to a TSV file with counts, DCT/KS statistics, raw and corrected p-values (`dct_p_value`, `ks_p_value`, plus dynamic corrected columns like `dct_p_val_bfn_corr`), dynamic summary columns (`median_con`/`median_dis`, `mean_con`/`mean_dis`, or `mode_con`/`mode_dis`), final classification, and an `inference` column describing direction with species names.
 
@@ -203,32 +203,27 @@ python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.
 python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.parquet --input-format parquet
 ```
 
-Config-file mode:
-
-```bash
-python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_minimal.yaml
-```
-
 Optional arguments:
 
 - `--output-path`: output TSV path (default: `triplet_introgression_results.tsv` next to input)
-- `--alpha-dct`: DCT threshold (default: `0.01`)
+- `--stats-output`: JSON output path for full per-triplet statistics
+- `--alpha-dct`: DCT threshold (default: `0.05`)
 - `--alpha-ks`: KS threshold (default: `0.05`)
+- `--discordant-test`: `chi-square` (default) or `z-test`
 - `--summary-statistic`: `median` (default), `mean`, or `mode`
 - `--stats-backend`: `standard` (default) or `custom`
 - `--tree-height-calculation-strategy`: `AVG` (default), `A`, `B`, `C`, `SIS`, or `INT`
 - `--p-value-correction`: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, or `fdr_tsbh`
-- `--bootstrap`: enable bootstrap sampling-with-replacement
+- `--no-bootstrap`: disable bootstrap sampling-with-replacement
 - `--bootstrap-iterations`: number of iterations (default: `100`)
 - `--bootstrap-seed`: optional reproducibility seed
 - `--bootstrap-debug-mode`: enable detailed bootstrap metric output columns
-- `--bootstrap-summary-only`: when debug mode is enabled, write compact summaries instead of full per-iteration lists
+- `--bootstrap-summary-only`: with debug mode, write compact summaries instead of full per-iteration lists
 - `--processes`: worker count for triplet inference (`0` = all cores)
+- `--generate-summary-stats`: write `summary_statistics.tsv`
 - `--no-multiprocessing`: disable multiprocessing for triplet inference
 
-When `-c/--config-file` is provided, other CLI options are ignored with a warning.
-
-CLI mode and config-file mode both resolve through the same normalization and default-validation path.
+These CLI parameters can be used for focused inference runs, debugging, and testing.
 
 ### Tree parser CLI usage
 
@@ -238,13 +233,7 @@ Quick CLI mode (required inputs only):
 python -m ghostparser.tree_parser -st species.tree -gt genes.tree -og OutGroup
 ```
 
-Config-file mode:
-
-```bash
-python -m ghostparser.tree_parser -c sample_configs/tree_parser_minimal.yaml
-```
-
-When `-c/--config-file` is provided, other CLI options are ignored with a warning.
+`tree_parser` supports required arguments `-st/--species-tree-path`, `-gt/--gene-trees-path`, and `-og/--outgroups`, plus optional CLI parameters for focused extraction runs and debugging.
 
 ## Tree Parser Module (`ghostparser.tree_parser`)
 

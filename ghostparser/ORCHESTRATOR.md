@@ -156,7 +156,7 @@ If the two discordant topologies tie in frequency, fixed discordant ordering is 
 
 - `dct_significant`
 
-    - Method: `dct_p_val_<correction>_corr <= alpha_dct` (`alpha_dct` default `0.01`).
+    - Method: `dct_p_val_<correction>_corr <= alpha_dct` (`alpha_dct` default `0.05`).
 
 ### Tree-Height Test Outputs
 
