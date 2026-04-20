@@ -21,6 +21,7 @@ def main():
     print("  python -m ghostparser.triplet_processor -i <unique_triplets_gene_trees.txt>")
     print("  python -m ghostparser.orchestrator -st <species_tree> -gt <gene_trees> -og <outgroup>")
     print("  python -m ghostparser.orchestrator -c <config.yaml|config.json>")
+    print("  (Only orchestrator supports --config-file)")
     print()
     print("Example:")
     print("  python -m ghostparser.tree_parser -st species.nwk -gt genes.nwk -og Outgroup1")

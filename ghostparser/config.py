@@ -43,9 +43,9 @@ DEFAULT_SUMMARY_STATISTIC = "median"
 DEFAULT_STATS_BACKEND = "standard"
 DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY = "AVG"
 DEFAULT_P_VALUE_CORRECTION = "no"
-DEFAULT_ALPHA_DCT = 0.01
+DEFAULT_ALPHA_DCT = 0.05
 DEFAULT_ALPHA_KS = 0.05
-DEFAULT_BOOTSTRAP = False
+DEFAULT_BOOTSTRAP = True
 DEFAULT_BOOTSTRAP_ITERATIONS = 100
 DEFAULT_BOOTSTRAP_DEBUG_MODE = False
 DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
@@ -324,118 +324,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
     }
 
 
-def normalize_tree_parser_payload(payload: dict) -> dict:
-    """Normalize tree_parser config/CLI payload to internal runtime keys with defaults."""
-    species_tree = _validate_required_path(payload, "species_tree_path")
-    gene_trees = _validate_required_path(payload, "gene_trees_path")
-
-    outgroups_source = payload.get("outgroups")
-    if outgroups_source is None:
-        outgroups_source = payload.get("outgroup")
-    outgroups = _parse_outgroups(outgroups_source)
-
-    return {
-        "species_tree": species_tree,
-        "gene_trees": gene_trees,
-        "outgroup": outgroups,
-        "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
-        "output": _validate_optional_path(payload, "output_folder"),
-        "triplet_output_format": _validate_choice(
-            payload,
-            "triplet_output_format",
-            DEFAULT_TRIPLET_OUTPUT_FORMAT,
-            TRIPLET_IO_FORMAT_CHOICES,
-        ),
-        "parquet_partitions": _validate_non_negative_int(
-            payload,
-            "parquet_partitions",
-            DEFAULT_PARQUET_PARTITIONS,
-        ),
-        "parquet_compression": _validate_choice(
-            payload,
-            "parquet_compression",
-            DEFAULT_PARQUET_COMPRESSION,
-            PARQUET_COMPRESSION_CHOICES,
-        ),
-        "processes": _validate_non_negative_int(payload, "processes", DEFAULT_PROCESSES),
-        "min_support_value": _validate_optional_float(payload, "min_support_value", DEFAULT_MIN_SUPPORT_VALUE),
-        "no_multiprocessing": _validate_optional_bool(payload, "no_multiprocessing", False),
-    }
-
-
-def normalize_triplet_processor_payload(payload: dict) -> dict:
-    """Normalize triplet_processor config/CLI payload to internal runtime keys with defaults."""
-    input_path = _validate_required_path(payload, "input_path")
-
-    bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
-
-    return {
-        "input": input_path,
-        "input_format": _validate_choice(
-            payload,
-            "input_format",
-            DEFAULT_INPUT_FORMAT,
-            INPUT_FORMAT_CHOICES,
-        ),
-        "output": _validate_optional_path(payload, "output_path"),
-        "stats_output": _validate_optional_path(payload, "stats_output"),
-        "alpha_dct": _validate_optional_float(payload, "alpha_dct", DEFAULT_ALPHA_DCT),
-        "alpha_ks": _validate_optional_float(payload, "alpha_ks", DEFAULT_ALPHA_KS),
-        "discordant_test": _validate_choice(
-            payload,
-            "discordant_test",
-            DEFAULT_DISCORDANT_TEST,
-            DISCORDANT_TEST_CHOICES,
-        ),
-        "summary_statistic": _validate_choice(
-            payload,
-            "summary_statistic",
-            DEFAULT_SUMMARY_STATISTIC,
-            SUMMARY_STATISTIC_CHOICES,
-        ),
-        "stats_backend": _validate_choice(
-            payload,
-            "stats_backend",
-            DEFAULT_STATS_BACKEND,
-            STATS_BACKEND_CHOICES,
-        ),
-        "tree_height_calculation_strategy": _validate_choice(
-            payload,
-            "tree_height_calculation_strategy",
-            DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
-            TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
-        ),
-        "p_value_correction": _validate_choice(
-            payload,
-            "p_value_correction",
-            DEFAULT_P_VALUE_CORRECTION,
-            P_VALUE_CORRECTION_CHOICES,
-        ),
-        "generate_summary_stats": _validate_optional_bool(
-            payload,
-            "generate_summary_stats",
-            DEFAULT_GENERATE_SUMMARY_STATS,
-        ),
-        "processes": _validate_non_negative_int(payload, "processes", DEFAULT_PROCESSES),
-        "no_multiprocessing": _validate_optional_bool(payload, "no_multiprocessing", False),
-        "bootstrap": bootstrap,
-        "bootstrap_options": bootstrap_options,
-    }
-
-
 def load_orchestrator_config(config_file: str) -> dict:
     """Load and normalize orchestrator config values from JSON/YAML file."""
     payload = _load_raw_config(config_file)
     return normalize_orchestrator_payload(payload)
-
-
-def load_tree_parser_config(config_file: str) -> dict:
-    """Load and normalize tree_parser config values from JSON/YAML file."""
-    payload = _load_raw_config(config_file)
-    return normalize_tree_parser_payload(payload)
-
-
-def load_triplet_processor_config(config_file: str) -> dict:
-    """Load and normalize triplet_processor config values from JSON/YAML file."""
-    payload = _load_raw_config(config_file)
-    return normalize_triplet_processor_payload(payload)
