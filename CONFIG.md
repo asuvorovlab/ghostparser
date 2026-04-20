@@ -185,6 +185,27 @@ python -m ghostparser.orchestrator \
     - Output directory path.
     - Default: `./results` from the current working directory.
 
+- `triplet_output_format` (string)
+
+    - CLI flag: `--triplet-output-format`
+
+    - Triplet extraction output format written by the tree-parser stage.
+    - Allowed values: `parquet` (default), `txt`.
+
+- `parquet_partitions` (integer >= 0)
+
+    - CLI flag: `--parquet-partitions`
+
+    - Number of hash partitions used when `triplet_output_format` is `parquet`.
+    - Default: `128`.
+
+- `parquet_compression` (string)
+
+    - CLI flag: `--parquet-compression`
+
+    - Compression codec used when `triplet_output_format` is `parquet`.
+    - Allowed values: `zstd` (default), `snappy`, `gzip`, `brotli`, `none`.
+
 - `processes` (integer >= 0)
 
     - CLI flag: `--processes`
@@ -192,6 +213,13 @@ python -m ghostparser.orchestrator \
     - Worker count for extraction and inference.
     - `0` means all available CPU cores.
     - `1` means single-worker execution (no multiprocessing).
+
+- `generate_summary_stats` (boolean)
+
+    - CLI flag: `--generate-summary-stats`
+
+    - When `true`, writes `summary_statistics.tsv`.
+    - Default: `false` (skips summary statistics TSV generation to reduce runtime overhead).
 
 - `triplet_filter` (string)
 
@@ -368,6 +396,27 @@ See examples in:
 
     - `true` forces single-worker extraction.
 
+- `triplet_output_format` (string)
+
+    - CLI flag: `--triplet-output-format`
+
+    - Triplet extraction output format.
+    - Allowed values: `parquet` (default), `txt`.
+
+- `parquet_partitions` (integer >= 0)
+
+    - CLI flag: `--parquet-partitions`
+
+    - Number of hash partitions used when `triplet_output_format` is `parquet`.
+    - Default: `128`.
+
+- `parquet_compression` (string)
+
+    - CLI flag: `--parquet-compression`
+
+    - Compression codec used when `triplet_output_format` is `parquet`.
+    - Allowed values: `zstd` (default), `snappy`, `gzip`, `brotli`, `none`.
+
 ### Sample Configs
 
 - `sample_configs/tree_parser_minimal.yaml`
@@ -382,9 +431,16 @@ See examples in:
 
     - CLI flag: `--input-path`
 
-        - Path to `unique_triplets_gene_trees.txt`.
+        - Path to triplet extraction output: `unique_triplets_gene_trees.parquet` (default pipeline format) or `unique_triplets_gene_trees.txt`.
 
 ### Optional
+
+- `input_format` (string)
+
+    - CLI flag: `--input-format`
+
+    - Parser mode for `input_path`.
+    - Allowed values: `parquet` (default), `txt`, `auto`.
 
 - `output_path` (string)
 
@@ -399,6 +455,13 @@ See examples in:
 
     - Optional JSON statistics output path.
     - Default: same path as output TSV with `.json` extension.
+
+- `generate_summary_stats` (boolean)
+
+    - CLI flag: `--generate-summary-stats`
+
+    - When `true`, writes `summary_statistics.tsv` alongside main outputs.
+    - Default: `false`.
 
 - `alpha_dct` (number)
 

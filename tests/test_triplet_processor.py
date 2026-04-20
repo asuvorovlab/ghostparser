@@ -19,6 +19,7 @@ from ghostparser.triplet_processor import (
     collect_triplet_statistics,
     compute_tree_height_statistic,
     parse_triplet_gene_trees_file,
+    parse_triplet_gene_trees_parquet,
     pearson_discordant_chi_square_test,
     run_discordant_count_test,
     run_triplet_pipeline,
@@ -27,6 +28,7 @@ from ghostparser.triplet_processor import (
     two_proportion_discordant_z_test,
     write_pipeline_statistics_json,
     write_pipeline_results,
+    write_summary_statistics_tsv,
     _resolve_runtime_args,
 )
 from ghostparser.triplet_utils import TOPOLOGY_AB, TOPOLOGY_AC, TOPOLOGY_BC
@@ -304,7 +306,7 @@ def test_run_triplet_pipeline_breaks_discordant_ties_by_first_topology():
     assert result.n_dis2 == 3
 
 
-def test_run_triplet_pipeline_relabels_a_b_when_ac_is_more_frequent_discordant():
+def test_run_triplet_pipeline_selects_ac_as_discordant1_when_ac_is_more_frequent():
     species_triplet = ("A", "B", "C")
     trees = (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 12) + (["((B:1,C:1):1,A:1);"] * 4)
 
@@ -314,11 +316,11 @@ def test_run_triplet_pipeline_relabels_a_b_when_ac_is_more_frequent_discordant()
         species_topology=TOPOLOGY_AB,
     )
 
-    # Labels are reassigned so dis1 is always BC|A after canonicalization.
-    assert result.triplet == ("B", "A", "C")
+    assert result.triplet == species_triplet
     assert result.n_con == 8
     assert result.n_dis1 == 12
     assert result.n_dis2 == 4
+    assert result.dis1_topology == "AC"
 
 
 def test_run_triplet_pipeline_no_introgression_when_dct_not_significant():
@@ -386,7 +388,7 @@ def test_run_triplet_pipeline_ghost_when_dis_summary_higher():
 
 
 def test_parse_analyze_and_write_pipeline_roundtrip_with_species_header(tmp_path):
-    content = """A,B,C\t4\t((A:1,B:1):1,C:1);
+    content = """A,B,C\t4\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:2/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
 ((B:1,C:1):1,A:1);
@@ -414,11 +416,12 @@ def test_parse_analyze_and_write_pipeline_roundtrip_with_species_header(tmp_path
     assert "most_frequent_matches_concordant" in out
     assert "dct_chi_stats" in out
     assert "dct_z_score" not in out
+    assert "inference" in out
     assert "A,B,C" in out
 
 
 def test_analyze_triplet_gene_tree_file_with_multiprocessing(tmp_path):
-    content = """A,B,C\t3\t((A:1,B:1):1,C:1);
+    content = """A,B,C\t3\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
 ((B:1,C:1):1,A:1);
@@ -670,7 +673,8 @@ def test_adjust_p_values_custom_matches_standard_randomized(method, seed, alpha)
 
 
 def test_analyze_triplet_gene_tree_file_applies_selected_correction(tmp_path):
-    content = """A,B,C\t6\t((A:1,B:1):1,C:1);
+    separator = "=" * 60
+    content = """A,B,C\t6\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:2/concordant,BC:3/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
 ((A:1,B:1):1,C:1);
@@ -678,8 +682,8 @@ def test_analyze_triplet_gene_tree_file_applies_selected_correction(tmp_path):
 ((B:1,C:1):1,A:1);
 ((B:1,C:1):1,A:1);
 ((A:1,C:1):1,B:1);
-================================================
-A,B,D\t6\t((A:1,B:1):1,D:1);
+{separator}
+A,B,D\t6\t((A:1,B:1):1,D:1);\t[A=A,B=B,C=D]\tAB:2/concordant,BC:3/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,D:1);
 ((A:1,B:1):1,D:1);
@@ -687,7 +691,7 @@ A,B,D\t6\t((A:1,B:1):1,D:1);
 ((B:1,D:1):1,A:1);
 ((B:1,D:1):1,A:1);
 ((A:1,D:1):1,B:1);
-"""
+""".format(separator=separator)
     input_file = tmp_path / "two_triplets.txt"
     input_file.write_text(content)
 
@@ -743,12 +747,12 @@ def test_parse_triplet_gene_trees_file_requires_species_tree_column(tmp_path):
     input_file = tmp_path / "unique_triplets_gene_trees.txt"
     input_file.write_text(content)
 
-    with pytest.raises(ValueError, match="expected 3 tab-separated fields"):
+    with pytest.raises(ValueError, match="expected 5 tab-separated fields"):
         parse_triplet_gene_trees_file(str(input_file))
 
 
 def test_parse_triplet_gene_trees_file_rejects_empty_species_tree(tmp_path):
-    content = """A,B,C\t3\t
+    content = """A,B,C\t3\t\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
 
 ((A:1,B:1):1,C:1);
 """
@@ -756,6 +760,30 @@ def test_parse_triplet_gene_trees_file_rejects_empty_species_tree(tmp_path):
     input_file.write_text(content)
 
     with pytest.raises(ValueError, match="Invalid species tree in header"):
+        parse_triplet_gene_trees_file(str(input_file))
+
+
+def test_parse_triplet_gene_trees_file_rejects_count_mismatch(tmp_path):
+    content = """A,B,C\t3\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:1/discordant1,AC:1/discordant2
+
+((A:1,B:1):1,C:1);
+((B:1,C:1):1,A:1);
+"""
+    input_file = tmp_path / "unique_triplets_gene_trees.txt"
+    input_file.write_text(content)
+
+    with pytest.raises(ValueError, match="Triplet count/header mismatch"):
+        parse_triplet_gene_trees_file(str(input_file))
+
+
+def test_parse_triplet_gene_trees_file_requires_blank_line_after_header(tmp_path):
+    content = """A,B,C\t1\t((A:1,B:1):1,C:1);\t[A=A,B=B,C=C]\tAB:1/concordant,BC:0/discordant1,AC:0/discordant2
+((A:1,B:1):1,C:1);
+"""
+    input_file = tmp_path / "unique_triplets_gene_trees.txt"
+    input_file.write_text(content)
+
+    with pytest.raises(ValueError, match="expected blank line after header"):
         parse_triplet_gene_trees_file(str(input_file))
 
 
@@ -1014,7 +1042,34 @@ def test_write_pipeline_results_includes_abc_mapping_column(tmp_path):
     row = lines[1].split("\t")
 
     mapping_idx = header.index("abc_mapping")
+    inference_idx = header.index("inference")
     assert row[mapping_idx] == "A=TaxonA;B=TaxonB;C=TaxonC"
+    assert row[inference_idx] == "no introgression"
+
+
+def test_write_pipeline_results_ghost_inference_uses_dis1_outgroup_recipient(tmp_path):
+    species_triplet = ("TaxonA", "TaxonB", "TaxonC")
+    con_tree = "((TaxonA:0.2,TaxonB:0.2):0.3,TaxonC:0.5);"
+    dis1_tree = "((TaxonB:1.0,TaxonC:1.0):2.0,TaxonA:3.0);"
+    dis2_tree = "((TaxonA:0.2,TaxonC:0.2):0.3,TaxonB:0.5);"
+    trees = ([con_tree] * 40) + ([dis1_tree] * 30) + ([dis2_tree] * 5)
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        rng=random.Random(77),
+    )
+
+    output_file = tmp_path / "results_inference_ghost.tsv"
+    write_pipeline_results([result], str(output_file), dct_method="chi-square", summary_statistic="median")
+
+    lines = output_file.read_text().splitlines()
+    header = lines[0].split("\t")
+    row = lines[1].split("\t")
+
+    assert row[header.index("classification")] == "ghost_introgression"
+    # dis1 topology is ((B,C),A), so outgroup in dis1 is A -> TaxonA.
+    assert row[header.index("inference")] == "introgression from ghost lineage to TaxonA"
 
 
 def test_write_pipeline_statistics_json(tmp_path):
@@ -1029,6 +1084,109 @@ def test_write_pipeline_statistics_json(tmp_path):
     assert "dct_method" not in out
     assert "dct_statistic" in out
     assert "classification" in out
+
+
+def test_parse_and_analyze_triplet_gene_trees_parquet(tmp_path):
+    from ghostparser.tree_parser import write_triplet_gene_trees_parquet_multiprocess
+
+    triplets = [("A", "B", "C")]
+    gene_trees_newick = [
+        "((A:1.0,B:1.0):1.0,C:1.0);",
+        "((B:1.0,C:1.0):1.0,A:1.0);",
+        "((A:1.0,C:1.0):1.0,B:1.0);",
+    ]
+    dataset_path = tmp_path / "unique_triplets_gene_trees.parquet"
+    species_triplet_trees = {("A", "B", "C"): "((A:1,B:1):1,C:1);"}
+
+    write_triplet_gene_trees_parquet_multiprocess(
+        triplets,
+        gene_trees_newick,
+        str(dataset_path),
+        species_triplet_trees=species_triplet_trees,
+        parquet_partitions=2,
+        parquet_compression="zstd",
+        use_multiprocessing=False,
+    )
+
+    parsed = parse_triplet_gene_trees_parquet(str(dataset_path))
+    assert ("A", "B", "C") in parsed
+    assert parsed[("A", "B", "C")]["count"] == 3
+    assert len(parsed[("A", "B", "C")]["observation_rows"]) == 3
+
+    results = analyze_triplet_gene_tree_file(
+        str(dataset_path),
+        input_format="parquet",
+        use_multiprocessing=False,
+    )
+    assert len(results) == 1
+    assert results[0].triplet == ("A", "B", "C")
+
+
+def test_serialize_bootstrap_value_rejects_non_json_value():
+    with pytest.raises(ValueError, match="not JSON-serializable"):
+        triplet_processor_module._serialize_bootstrap_value({"bad": {1, 2, 3}})
+
+
+def test_write_summary_statistics_tsv_includes_expected_columns_and_counts(tmp_path):
+    species_triplet = ("A", "B", "C")
+    trees = ([("((A:1,B:1):1,C:1);")] * 5) + ([("((B:1,C:1):1,A:1);")] * 3) + ([("((A:1,C:1):1,B:1);")] * 2)
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        rng=random.Random(101),
+    )
+
+    output_file = tmp_path / "summary_statistics.tsv"
+    write_summary_statistics_tsv([result], str(output_file), bootstrap=False)
+
+    lines = output_file.read_text().splitlines()
+    header = lines[0].split("\t")
+    row = lines[1].split("\t")
+
+    assert "triplet" in header
+    assert "abc_mapping" in header
+    assert "dis1_topology" in header
+    assert "n_con" in header
+    assert "n_dis1" in header
+    assert "n_dis2" in header
+    assert "classification" in header
+    assert "bootstrap_value" not in header
+
+    summary_columns = [
+        column_name
+        for column_name in header
+        if column_name.startswith("concordant_")
+        or column_name.startswith("discordant1_")
+        or column_name.startswith("discordant2_")
+    ]
+    assert len(summary_columns) == 63
+    assert "concordant_avg_tree_height_mean" in header
+    assert "discordant1_internal_branch_variance" in header
+    assert "discordant2_sister_distance_entropy" in header
+
+    assert row[header.index("n_con")] == "5"
+    assert row[header.index("n_dis1")] == "3"
+    assert row[header.index("n_dis2")] == "2"
+    assert row[header.index("concordant_avg_tree_height_mean")] != ""
+
+
+def test_write_summary_statistics_tsv_includes_bootstrap_value_when_enabled(tmp_path):
+    species_triplet = ("A", "B", "C")
+    trees = ([("((A:1,B:1):1,C:1);")] * 6) + ([("((B:1,C:1):1,A:1);")] * 4)
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        bootstrap=True,
+        bootstrap_options={"iterations": 2, "seed": 1, "debug_mode": False, "summary_only": False},
+    )
+
+    output_file = tmp_path / "summary_statistics_bootstrap.tsv"
+    write_summary_statistics_tsv([result], str(output_file), bootstrap=True)
+
+    header = output_file.read_text().splitlines()[0].split("\t")
+    assert "bootstrap_value" in header
 
 
 def test_write_pipeline_results_rejects_mixed_discordant_test_outputs(tmp_path):
@@ -1077,6 +1235,7 @@ def _triplet_processor_args(**overrides):
     base = {
         "config_file": None,
         "input_path": "unique_triplets_gene_trees.txt",
+        "input_format": None,
         "output_path": None,
         "stats_output": None,
         "alpha_dct": None,
@@ -1092,6 +1251,7 @@ def _triplet_processor_args(**overrides):
         "bootstrap_debug_mode": None,
         "bootstrap_summary_only": None,
         "processes": None,
+        "generate_summary_stats": None,
         "no_multiprocessing": False,
     }
     base.update(overrides)
@@ -1148,6 +1308,7 @@ def test_resolve_runtime_args_triplet_processor_cli_defaults_and_overrides(
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.p_value_correction == "no"
+    assert resolved.generate_summary_stats is False
     assert resolved.processes == expected_processes
     assert resolved.bootstrap is expected_bootstrap
     assert resolved.bootstrap_options == expected_bootstrap_options
@@ -1164,7 +1325,8 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     "summary_statistic": "median",
     "stats_backend": "standard",
     "tree_height_calculation_strategy": "B",
-        "p_value_correction": "bfn"
+    "p_value_correction": "bfn",
+    "generate_summary_stats": true
 }
 """.strip()
     )
@@ -1172,6 +1334,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     args = argparse.Namespace(
         config_file=str(config_path),
         input_path="unique_triplets_gene_trees.txt",
+        input_format=None,
         output_path=None,
         stats_output=None,
         alpha_dct=None,
@@ -1187,6 +1350,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
         bootstrap_debug_mode=True,
         bootstrap_summary_only=False,
         processes=None,
+        generate_summary_stats=False,
         no_multiprocessing=False,
     )
 
@@ -1202,6 +1366,7 @@ def test_resolve_runtime_args_triplet_processor_config_warns_and_ignores(tmp_pat
     assert resolved.stats_backend == "standard"
     assert resolved.tree_height_calculation_strategy == "B"
     assert resolved.p_value_correction == "bfn"
+    assert resolved.generate_summary_stats is True
     assert resolved.bootstrap is False
     assert resolved.bootstrap_options == {
         "iterations": 100,
@@ -1248,8 +1413,10 @@ def test_resolve_runtime_args_triplet_processor_config_processes_behavior(tmp_pa
             p_value_correction="no",
             bootstrap=None,
             processes=11,
+            generate_summary_stats=True,
         )
     )
     assert resolved.processes == expected_processes
     assert resolved.tree_height_calculation_strategy == "AVG"
     assert resolved.p_value_correction == "no"
+    assert resolved.generate_summary_stats is False

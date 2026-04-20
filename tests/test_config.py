@@ -23,6 +23,7 @@ def test_load_orchestrator_config_json(tmp_path):
                 "outgroups": ["OutA", "OutB"],
                 "output_folder": "out",
                 "processes": 4,
+                "generate_summary_stats": True,
                 "triplet_filter": "triplets.txt",
                 "min_support_value": 0.7,
                 "discordant_test": "z-test",
@@ -44,6 +45,7 @@ def test_load_orchestrator_config_json(tmp_path):
     assert config["outgroup"] == ["OutA", "OutB"]
     assert config["output"] == str(Path("out").resolve())
     assert config["processes"] == 4
+    assert config["generate_summary_stats"] is True
     assert config["triplet_filter"] == str(Path("triplets.txt").resolve())
     assert config["min_support_value"] == 0.7
     assert config["discordant_test"] == "z-test"
@@ -162,6 +164,7 @@ def test_load_orchestrator_config_defaults_processes_to_zero(tmp_path):
 
     config = load_orchestrator_config(str(config_path))
     assert config["processes"] == 0
+    assert config["generate_summary_stats"] is False
     assert config["bootstrap"] is False
     assert config["bootstrap_options"] == {
         "iterations": 100,
@@ -199,6 +202,9 @@ def test_load_tree_parser_config_json(tmp_path):
     assert config["triplet_filter"] == str(Path("triplets.txt").resolve())
     assert config["min_support_value"] == 0.6
     assert config["no_multiprocessing"] is True
+    assert config["triplet_output_format"] == "parquet"
+    assert config["parquet_partitions"] == 128
+    assert config["parquet_compression"] == "zstd"
 
 
 def test_load_tree_parser_config_invalid_no_multiprocessing(tmp_path):
@@ -249,6 +255,7 @@ def test_load_triplet_processor_config_json(tmp_path):
                 "stats_backend": "standard",
                 "tree_height_calculation_strategy": "C",
                 "p_value_correction": "no",
+                "generate_summary_stats": True,
                 "processes": 3,
                 "no_multiprocessing": False,
                 "bootstrap": True,
@@ -266,6 +273,7 @@ def test_load_triplet_processor_config_json(tmp_path):
 
     # Paths are resolved to absolute paths
     assert config["input"] == str(Path("unique_triplets_gene_trees.txt").resolve())
+    assert config["input_format"] == "parquet"
     assert config["output"] == str(Path("results.tsv").resolve())
     assert config["stats_output"] == str(Path("stats.json").resolve())
     assert config["alpha_dct"] == 0.02
@@ -275,6 +283,7 @@ def test_load_triplet_processor_config_json(tmp_path):
     assert config["stats_backend"] == "standard"
     assert config["tree_height_calculation_strategy"] == "C"
     assert config["p_value_correction"] == "no"
+    assert config["generate_summary_stats"] is True
     assert config["processes"] == 3
     assert config["no_multiprocessing"] is False
     assert config["bootstrap"] is True
@@ -369,6 +378,7 @@ def test_load_triplet_processor_config_defaults_processes_to_zero(tmp_path):
     assert config["processes"] == 0
     assert config["tree_height_calculation_strategy"] == "AVG"
     assert config["p_value_correction"] == "no"
+    assert config["generate_summary_stats"] is False
 
 
 @pytest.mark.parametrize(

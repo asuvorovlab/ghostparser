@@ -49,6 +49,15 @@ DEFAULT_BOOTSTRAP = False
 DEFAULT_BOOTSTRAP_ITERATIONS = 100
 DEFAULT_BOOTSTRAP_DEBUG_MODE = False
 DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
+DEFAULT_GENERATE_SUMMARY_STATS = False
+DEFAULT_TRIPLET_OUTPUT_FORMAT = "parquet"
+DEFAULT_INPUT_FORMAT = "parquet"
+DEFAULT_PARQUET_PARTITIONS = 128
+DEFAULT_PARQUET_COMPRESSION = "zstd"
+
+TRIPLET_IO_FORMAT_CHOICES = ("txt", "parquet")
+INPUT_FORMAT_CHOICES = ("auto", "txt", "parquet")
+PARQUET_COMPRESSION_CHOICES = ("zstd", "snappy", "gzip", "brotli", "none")
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
 SUMMARY_STATISTIC_CHOICES = ("mean", "median", "mode")
@@ -254,7 +263,29 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "outgroup": outgroups,
         "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
         "output": output,
+        "triplet_output_format": _validate_choice(
+            payload,
+            "triplet_output_format",
+            DEFAULT_TRIPLET_OUTPUT_FORMAT,
+            TRIPLET_IO_FORMAT_CHOICES,
+        ),
+        "parquet_partitions": _validate_non_negative_int(
+            payload,
+            "parquet_partitions",
+            DEFAULT_PARQUET_PARTITIONS,
+        ),
+        "parquet_compression": _validate_choice(
+            payload,
+            "parquet_compression",
+            DEFAULT_PARQUET_COMPRESSION,
+            PARQUET_COMPRESSION_CHOICES,
+        ),
         "processes": _validate_non_negative_int(payload, "processes", DEFAULT_PROCESSES),
+        "generate_summary_stats": _validate_optional_bool(
+            payload,
+            "generate_summary_stats",
+            DEFAULT_GENERATE_SUMMARY_STATS,
+        ),
         "min_support_value": _validate_optional_float(payload, "min_support_value", DEFAULT_MIN_SUPPORT_VALUE),
         "discordant_test": _validate_choice(
             payload,
@@ -309,6 +340,23 @@ def normalize_tree_parser_payload(payload: dict) -> dict:
         "outgroup": outgroups,
         "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
         "output": _validate_optional_path(payload, "output_folder"),
+        "triplet_output_format": _validate_choice(
+            payload,
+            "triplet_output_format",
+            DEFAULT_TRIPLET_OUTPUT_FORMAT,
+            TRIPLET_IO_FORMAT_CHOICES,
+        ),
+        "parquet_partitions": _validate_non_negative_int(
+            payload,
+            "parquet_partitions",
+            DEFAULT_PARQUET_PARTITIONS,
+        ),
+        "parquet_compression": _validate_choice(
+            payload,
+            "parquet_compression",
+            DEFAULT_PARQUET_COMPRESSION,
+            PARQUET_COMPRESSION_CHOICES,
+        ),
         "processes": _validate_non_negative_int(payload, "processes", DEFAULT_PROCESSES),
         "min_support_value": _validate_optional_float(payload, "min_support_value", DEFAULT_MIN_SUPPORT_VALUE),
         "no_multiprocessing": _validate_optional_bool(payload, "no_multiprocessing", False),
@@ -323,6 +371,12 @@ def normalize_triplet_processor_payload(payload: dict) -> dict:
 
     return {
         "input": input_path,
+        "input_format": _validate_choice(
+            payload,
+            "input_format",
+            DEFAULT_INPUT_FORMAT,
+            INPUT_FORMAT_CHOICES,
+        ),
         "output": _validate_optional_path(payload, "output_path"),
         "stats_output": _validate_optional_path(payload, "stats_output"),
         "alpha_dct": _validate_optional_float(payload, "alpha_dct", DEFAULT_ALPHA_DCT),
@@ -356,6 +410,11 @@ def normalize_triplet_processor_payload(payload: dict) -> dict:
             "p_value_correction",
             DEFAULT_P_VALUE_CORRECTION,
             P_VALUE_CORRECTION_CHOICES,
+        ),
+        "generate_summary_stats": _validate_optional_bool(
+            payload,
+            "generate_summary_stats",
+            DEFAULT_GENERATE_SUMMARY_STATS,
         ),
         "processes": _validate_non_negative_int(payload, "processes", DEFAULT_PROCESSES),
         "no_multiprocessing": _validate_optional_bool(payload, "no_multiprocessing", False),

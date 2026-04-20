@@ -5,6 +5,7 @@ from itertools import combinations
 from multiprocessing import cpu_count
 import multiprocessing as mp
 from pathlib import Path
+import shutil
 import time
 
 from Bio import Phylo
@@ -15,10 +16,20 @@ from .cli_config import resolve_cli_or_config_args
 from .config import (
     ConfigError,
     DEFAULT_MIN_SUPPORT_VALUE,
+    DEFAULT_PARQUET_COMPRESSION,
+    DEFAULT_PARQUET_PARTITIONS,
+    DEFAULT_TRIPLET_OUTPUT_FORMAT,
+    PARQUET_COMPRESSION_CHOICES,
+    TRIPLET_IO_FORMAT_CHOICES,
     load_tree_parser_config,
     normalize_tree_parser_payload,
 )
 from .triplet_utils import (
+    ALL_TOPOLOGIES,
+    TOPOLOGY_AB,
+    TOPOLOGY_AC,
+    TOPOLOGY_BC,
+    classify_triplet_topology_string,
     find_sister_pair,
     normalize_abc_from_sister_pair,
 )
@@ -459,6 +470,37 @@ def extract_triplet_subtree(tree, triplet_taxa):
     return subtree
 
 
+def extract_triplet_gene_trees_for_triplet(gene_trees_filepath, triplet):
+    """Extract gene-tree subtrees for one triplet by streaming a gene-tree file.
+
+    Args:
+        gene_trees_filepath: Path to cleaned gene trees file (one Newick tree per line).
+        triplet: Taxon triplet tuple, expected as (A, B, C).
+
+    Returns:
+        List of Newick strings for extracted rooted triplet subtrees.
+    """
+    triplet_set = set(triplet)
+    gene_trees = []
+
+    with open(gene_trees_filepath, "r") as gene_f:
+        for line in gene_f:
+            newick_str = line.strip()
+            if not newick_str:
+                continue
+
+            tree = dendropy.Tree.get(data=newick_str, schema="newick", preserve_underscores=True)
+            tree_taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
+            if not triplet_set.issubset(tree_taxa):
+                continue
+
+            subtree = extract_triplet_subtree(tree, triplet)
+            if subtree is not None:
+                gene_trees.append(format_newick_with_precision(subtree))
+
+    return gene_trees
+
+
 def _build_species_triplet_metadata(species_tree, triplets):
     """Normalize triplets to A/B/C and compute species triplet subtree Newick.
 
@@ -501,14 +543,41 @@ def _build_species_triplet_metadata(species_tree, triplets):
     return normalized_triplets, species_triplet_trees, skipped_triplets
 
 
-def _format_triplet_header(triplet, count, species_tree_newick=None):
-    """Format a triplet section header as ``triplet<TAB>count<TAB>species_tree``."""
+def _build_topology_count_summary(triplet, newick_trees):
+    """Return topology counts and discordant role summary for one triplet."""
+    topology_counts = {topology: 0 for topology in ALL_TOPOLOGIES}
+
+    for newick in newick_trees:
+        tree = dendropy.Tree.get(data=str(newick).strip(), schema="newick", preserve_underscores=True)
+        topology = classify_triplet_topology_string(tree, triplet)
+        topology_counts[topology] += 1
+
+    if topology_counts[TOPOLOGY_BC] >= topology_counts[TOPOLOGY_AC]:
+        bc_role = "discordant1"
+        ac_role = "discordant2"
+    else:
+        bc_role = "discordant2"
+        ac_role = "discordant1"
+
+    summary = (
+        f"AB:{topology_counts[TOPOLOGY_AB]}/concordant,"
+        f"BC:{topology_counts[TOPOLOGY_BC]}/{bc_role},"
+        f"AC:{topology_counts[TOPOLOGY_AC]}/{ac_role}"
+    )
+    return topology_counts, summary
+
+
+def _format_triplet_header(triplet, count, species_tree_newick=None, topology_summary=None):
+    """Format a triplet section header with explicit ABC mapping and topology summary."""
     if species_tree_newick is None or not str(species_tree_newick).strip():
         raise ValueError(f"Missing species subtree for triplet header: {','.join(triplet)}")
+    if topology_summary is None or not str(topology_summary).strip():
+        raise ValueError(f"Missing topology summary for triplet header: {','.join(triplet)}")
 
     base = ",".join(triplet) + f"\t{count}"
     species_tree = str(species_tree_newick)
-    return base + f"\t{species_tree}"
+    label_map = f"[A={triplet[0]},B={triplet[1]},C={triplet[2]}]"
+    return base + f"\t{species_tree}\t{label_map}\t{topology_summary}"
 
 
 def _validate_species_triplet_trees(triplets, species_triplet_trees):
@@ -538,10 +607,17 @@ def process_gene_trees_for_triplets(gene_trees, triplets):
     return triplet_gene_trees
 
 
-def _get_mp_context():
-    """Get a multiprocessing context that avoids fork in multi-threaded processes."""
+def _get_mp_context(prefer_fork=False):
+    """Get a multiprocessing context for worker pools.
+
+    Args:
+        prefer_fork: If True, prefer ``fork`` where available so workers can
+            inherit large read-only data via copy-on-write.
+    """
     if hasattr(mp, "get_context"):
         methods = mp.get_all_start_methods()
+        if prefer_fork and "fork" in methods:
+            return mp.get_context("fork")
         if "forkserver" in methods:
             return mp.get_context("forkserver")
         if "spawn" in methods:
@@ -549,37 +625,146 @@ def _get_mp_context():
     return mp
 
 
-_GENE_TREES_PATH: str = ""
+_GENE_TREES_LIST: list[str] = []
 _CHUNK_DIR: str = ""
 _SPECIES_TRIPLET_TREES: dict[tuple[str, str, str], str] = {}
+_PARQUET_OUTPUT_DIR: str = ""
+_PARQUET_PARTITIONS: int = DEFAULT_PARQUET_PARTITIONS
+_PARQUET_COMPRESSION: str | None = DEFAULT_PARQUET_COMPRESSION
 
 
-def _init_triplet_chunk_worker(gene_trees_path, chunk_dir, species_triplet_trees=None):
-    """Initializer for multiprocessing triplet chunk workers."""
-    global _GENE_TREES_PATH, _CHUNK_DIR, _SPECIES_TRIPLET_TREES
-    _GENE_TREES_PATH = str(gene_trees_path)
+def _require_pyarrow():
+    """Import and return pyarrow modules needed for parquet I/O."""
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise ImportError("Parquet output requires pyarrow to be installed") from exc
+    return pa, pq
+
+
+def _distance_to_root(node):
+    """Compute root-to-node distance using edge lengths (missing lengths treated as 0)."""
+    distance = 0.0
+    current = node
+    while current is not None and current.parent_node is not None:
+        if current.edge_length is not None:
+            distance += float(current.edge_length)
+        current = current.parent_node
+    return distance
+
+
+def _triplet_id(triplet):
+    """Build stable triplet ID used across parquet tables."""
+    return "|".join(triplet)
+
+
+def _normalize_parquet_compression(parquet_compression):
+    """Map CLI/config parquet compression values to pyarrow values."""
+    if parquet_compression == "none":
+        return None
+    return parquet_compression
+
+
+def _build_observation_metrics(tree, triplet):
+    """Build cached topology and tree-height metrics for one triplet subtree."""
+    leaves = {leaf.taxon.label: leaf for leaf in tree.leaf_node_iter() if leaf.taxon and leaf.taxon.label}
+    if set(leaves.keys()) != set(triplet):
+        raise ValueError("Triplet subtree labels do not match expected triplet")
+
+    h_a = _distance_to_root(leaves[triplet[0]])
+    h_b = _distance_to_root(leaves[triplet[1]])
+    h_c = _distance_to_root(leaves[triplet[2]])
+    h_avg = (h_a + h_b + h_c) / 3.0
+
+    topology = classify_triplet_topology_string(tree, triplet)
+    sister_pair = find_sister_pair(tree)
+    left_label, right_label = tuple(sister_pair)
+    sister_mrca = tree.mrca(taxon_labels=[left_label, right_label])
+    if sister_mrca is None:
+        raise ValueError("Could not determine sister-pair MRCA")
+    h_int = _distance_to_root(sister_mrca)
+    h_sis = _distance_to_root(leaves[left_label]) + _distance_to_root(leaves[right_label]) - 2.0 * h_int
+
+    return {
+        "topology": topology,
+        "h_a": float(h_a),
+        "h_b": float(h_b),
+        "h_c": float(h_c),
+        "h_avg": float(h_avg),
+        "h_int": float(h_int),
+        "h_sis": float(h_sis),
+    }
+
+
+def _read_gene_trees_file(gene_trees_filepath):
+    """Read all gene trees from file into memory as Newick strings.
+    
+    Args:
+        gene_trees_filepath: Path to the cleaned gene trees file (one Newick per line).
+        
+    Returns:
+        List of Newick strings (empty lines filtered out).
+    """
+    trees = []
+    with open(str(gene_trees_filepath), "r") as f:
+        for line in f:
+            newick_str = line.strip()
+            if newick_str:
+                trees.append(newick_str)
+    return trees
+
+
+def _init_triplet_chunk_worker(gene_trees_list, chunk_dir, species_triplet_trees=None):
+    """Initializer for multiprocessing triplet chunk workers.
+    
+    Args:
+        gene_trees_list: List of Newick strings (read once in main process).
+        chunk_dir: Directory for writing chunk output files.
+        species_triplet_trees: Dict mapping triplet -> species subtree Newick.
+    """
+    global _GENE_TREES_LIST, _CHUNK_DIR, _SPECIES_TRIPLET_TREES
+    if gene_trees_list is not None:
+        _GENE_TREES_LIST = gene_trees_list
     _CHUNK_DIR = str(chunk_dir)
     _SPECIES_TRIPLET_TREES = species_triplet_trees or {}
 
 
+def _init_triplet_chunk_worker_parquet(
+    gene_trees_list,
+    output_dir,
+    species_triplet_trees=None,
+    parquet_partitions=DEFAULT_PARQUET_PARTITIONS,
+    parquet_compression=DEFAULT_PARQUET_COMPRESSION,
+):
+    """Initializer for parquet-writing chunk workers."""
+    global _GENE_TREES_LIST, _PARQUET_OUTPUT_DIR, _SPECIES_TRIPLET_TREES, _PARQUET_PARTITIONS, _PARQUET_COMPRESSION
+    if gene_trees_list is not None:
+        _GENE_TREES_LIST = gene_trees_list
+    _PARQUET_OUTPUT_DIR = str(output_dir)
+    _SPECIES_TRIPLET_TREES = species_triplet_trees or {}
+    _PARQUET_PARTITIONS = parquet_partitions
+    _PARQUET_COMPRESSION = _normalize_parquet_compression(parquet_compression)
+
+
 def _process_triplet_chunk_stream(args):
-    """Process a chunk of triplets against all gene trees and write to a chunk file."""
+    """Process a chunk of triplets against in-memory gene trees and write to a chunk file.
+    
+    Gene trees are read once in the main process and distributed to workers via
+    the initializer, avoiding parallel disk I/O contention.
+    """
     chunk_index, triplet_chunk = args
     triplet_results = {triplet: [] for triplet in triplet_chunk}
 
-    with open(_GENE_TREES_PATH, "r") as gene_f:
-        for line in gene_f:
-            newick_str = line.strip()
-            if not newick_str:
+    for newick_str in _GENE_TREES_LIST:
+        tree = dendropy.Tree.get(data=newick_str, schema="newick", preserve_underscores=True)
+        tree_taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
+        for triplet in triplet_chunk:
+            if not set(triplet).issubset(tree_taxa):
                 continue
-            tree = dendropy.Tree.get(data=newick_str, schema="newick", preserve_underscores=True)
-            tree_taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
-            for triplet in triplet_chunk:
-                if not set(triplet).issubset(tree_taxa):
-                    continue
-                subtree = extract_triplet_subtree(tree, triplet)
-                if subtree:
-                    triplet_results[triplet].append(format_newick_with_precision(subtree))
+            subtree = extract_triplet_subtree(tree, triplet)
+            if subtree:
+                triplet_results[triplet].append(format_newick_with_precision(subtree))
 
     total_subtrees = 0
     triplets_with_trees = 0
@@ -587,12 +772,13 @@ def _process_triplet_chunk_stream(args):
     for i, triplet in enumerate(triplet_chunk):
         newick_trees = triplet_results[triplet]
         count = len(newick_trees)
+        _, topology_summary = _build_topology_count_summary(triplet, newick_trees)
         total_subtrees += count
         if count > 0:
             triplets_with_trees += 1
 
         species_tree_newick = _SPECIES_TRIPLET_TREES.get(triplet)
-        output_lines.append(_format_triplet_header(triplet, count, species_tree_newick))
+        output_lines.append(_format_triplet_header(triplet, count, species_tree_newick, topology_summary))
         output_lines.append("")
         for newick in newick_trees:
             output_lines.append(newick)
@@ -609,6 +795,190 @@ def _process_triplet_chunk_stream(args):
             out_f.write("\n")
 
     return total_subtrees, triplets_with_trees
+
+
+def _process_triplet_chunk_parquet(args):
+    """Process one chunk and write parquet triplet/observation parts."""
+    pa, pq = _require_pyarrow()
+
+    chunk_index, triplet_chunk = args
+    triplet_rows = []
+    obs_rows_by_partition: dict[int, list[dict]] = {}
+    total_subtrees = 0
+    triplets_with_trees = 0
+
+    triplet_results = {triplet: [] for triplet in triplet_chunk}
+    topology_counts_by_triplet = {
+        triplet: {TOPOLOGY_AB: 0, TOPOLOGY_BC: 0, TOPOLOGY_AC: 0}
+        for triplet in triplet_chunk
+    }
+
+    for newick_str in _GENE_TREES_LIST:
+        tree = dendropy.Tree.get(data=newick_str, schema="newick", preserve_underscores=True)
+        tree_taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
+        for triplet in triplet_chunk:
+            if not set(triplet).issubset(tree_taxa):
+                continue
+            subtree = extract_triplet_subtree(tree, triplet)
+            if not subtree:
+                continue
+
+            subtree_newick = format_newick_with_precision(subtree)
+            metrics = _build_observation_metrics(subtree, triplet)
+            triplet_results[triplet].append(subtree_newick)
+            topology_counts_by_triplet[triplet][metrics["topology"]] += 1
+
+            triplet_id = _triplet_id(triplet)
+            partition_id = abs(hash(triplet_id)) % max(1, _PARQUET_PARTITIONS)
+            obs_rows_by_partition.setdefault(partition_id, []).append(
+                {
+                    "triplet_id": triplet_id,
+                    "gene_tree_newick": subtree_newick,
+                    "topology": metrics["topology"],
+                    "h_a": metrics["h_a"],
+                    "h_b": metrics["h_b"],
+                    "h_c": metrics["h_c"],
+                    "h_avg": metrics["h_avg"],
+                    "h_int": metrics["h_int"],
+                    "h_sis": metrics["h_sis"],
+                    "schema_version": 1,
+                }
+            )
+
+    for triplet in triplet_chunk:
+        count = len(triplet_results[triplet])
+        total_subtrees += count
+        if count > 0:
+            triplets_with_trees += 1
+
+        topology_counts = topology_counts_by_triplet[triplet]
+        n_ab = int(topology_counts.get(TOPOLOGY_AB, 0))
+        n_bc = int(topology_counts.get(TOPOLOGY_BC, 0))
+        n_ac = int(topology_counts.get(TOPOLOGY_AC, 0))
+        if n_bc >= n_ac:
+            bc_role = "discordant1"
+            ac_role = "discordant2"
+        else:
+            bc_role = "discordant2"
+            ac_role = "discordant1"
+
+        species_tree_newick = _SPECIES_TRIPLET_TREES.get(triplet)
+        triplet_rows.append(
+            {
+                "triplet_id": _triplet_id(triplet),
+                "A": triplet[0],
+                "B": triplet[1],
+                "C": triplet[2],
+                "count": count,
+                "species_tree": species_tree_newick,
+                "n_ab": n_ab,
+                "n_bc": n_bc,
+                "n_ac": n_ac,
+                "bc_role": bc_role,
+                "ac_role": ac_role,
+                "schema_version": 1,
+            }
+        )
+
+    triplet_dir = Path(_PARQUET_OUTPUT_DIR) / "triplets"
+    triplet_dir.mkdir(parents=True, exist_ok=True)
+    triplet_path = triplet_dir / f"part-{chunk_index:06d}.parquet"
+    triplet_table = pa.Table.from_pylist(triplet_rows)
+    pq.write_table(triplet_table, triplet_path, compression=_PARQUET_COMPRESSION)
+
+    obs_root = Path(_PARQUET_OUTPUT_DIR) / "observations"
+    for partition_id, rows in obs_rows_by_partition.items():
+        partition_dir = obs_root / f"partition_id={partition_id:04d}"
+        partition_dir.mkdir(parents=True, exist_ok=True)
+        obs_path = partition_dir / f"part-{chunk_index:06d}.parquet"
+        obs_table = pa.Table.from_pylist(rows)
+        pq.write_table(obs_table, obs_path, compression=_PARQUET_COMPRESSION)
+
+    return total_subtrees, triplets_with_trees
+
+
+def write_triplet_gene_trees_parquet_multiprocess(
+    triplets,
+    gene_trees_filepath,
+    output_path,
+    species_triplet_trees=None,
+    parquet_partitions=DEFAULT_PARQUET_PARTITIONS,
+    parquet_compression=DEFAULT_PARQUET_COMPRESSION,
+    use_multiprocessing=True,
+    processes=None,
+    chunksize=None,
+):
+    """Write triplet gene trees to a partitioned parquet dataset."""
+    _require_pyarrow()
+
+    if parquet_partitions < 1:
+        raise ValueError("parquet_partitions must be >= 1")
+
+    output_dir = Path(output_path)
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not triplets:
+        return 0, 0, 0
+
+    species_triplet_trees = _validate_species_triplet_trees(triplets, species_triplet_trees)
+
+    worker_count = _calculate_worker_count(
+        len(triplets),
+        use_multiprocessing=use_multiprocessing,
+        processes=processes,
+    )
+
+    if chunksize is None:
+        chunksize = max(1, len(triplets) // (worker_count * 4))
+
+    triplet_chunks = list(_chunk_list(triplets, chunksize))
+
+    temp_gene_file = None
+    if not isinstance(gene_trees_filepath, (str, Path)):
+        temp_gene_file = output_dir / "_gene_trees_tmp.txt"
+        temp_gene_file.write_text("\n".join(gene_trees_filepath))
+        gene_trees_filepath = str(temp_gene_file)
+
+    gene_trees_list = _read_gene_trees_file(gene_trees_filepath)
+    args = [(idx, chunk) for idx, chunk in enumerate(triplet_chunks)]
+
+    if use_multiprocessing and worker_count > 1:
+        ctx = _get_mp_context(prefer_fork=True)
+        init_gene_trees = gene_trees_list
+        if hasattr(ctx, "get_start_method") and ctx.get_start_method() == "fork":
+            global _GENE_TREES_LIST
+            _GENE_TREES_LIST = gene_trees_list
+            init_gene_trees = None
+        with ctx.Pool(
+            processes=worker_count,
+            initializer=_init_triplet_chunk_worker_parquet,
+            initargs=(
+                init_gene_trees,
+                str(output_dir),
+                species_triplet_trees,
+                parquet_partitions,
+                parquet_compression,
+            ),
+        ) as pool:
+            totals = pool.map(_process_triplet_chunk_parquet, args)
+    else:
+        _init_triplet_chunk_worker_parquet(
+            gene_trees_list,
+            str(output_dir),
+            species_triplet_trees,
+            parquet_partitions,
+            parquet_compression,
+        )
+        totals = [_process_triplet_chunk_parquet(item) for item in args]
+
+    if temp_gene_file and temp_gene_file.exists():
+        temp_gene_file.unlink()
+
+    total_subtrees = sum(t[0] for t in totals)
+    triplets_with_trees = sum(t[1] for t in totals)
+    return total_subtrees, triplets_with_trees, worker_count
 
 
 def _merge_files_with_separators(input_paths, output_path):
@@ -718,18 +1088,27 @@ def write_triplet_gene_trees_multiprocess(
         temp_gene_file.write_text("\n".join(gene_trees_filepath))
         gene_trees_filepath = str(temp_gene_file)
 
+    # Read gene trees file ONCE in the main process
+    gene_trees_list = _read_gene_trees_file(gene_trees_filepath)
+
     args = [(idx, chunk) for idx, chunk in enumerate(triplet_chunks)]
 
     if use_multiprocessing and worker_count > 1:
-        ctx = _get_mp_context()
+        ctx = _get_mp_context(prefer_fork=True)
+        init_gene_trees = gene_trees_list
+        if hasattr(ctx, "get_start_method") and ctx.get_start_method() == "fork":
+            # Under fork, workers inherit this read-only payload via copy-on-write.
+            global _GENE_TREES_LIST
+            _GENE_TREES_LIST = gene_trees_list
+            init_gene_trees = None
         with ctx.Pool(
             processes=worker_count,
             initializer=_init_triplet_chunk_worker,
-            initargs=(gene_trees_filepath, str(chunk_dir), species_triplet_trees),
+            initargs=(init_gene_trees, str(chunk_dir), species_triplet_trees),
         ) as pool:
             totals = pool.map(_process_triplet_chunk_stream, args)
     else:
-        _init_triplet_chunk_worker(gene_trees_filepath, str(chunk_dir), species_triplet_trees)
+        _init_triplet_chunk_worker(gene_trees_list, str(chunk_dir), species_triplet_trees)
         totals = [_process_triplet_chunk_stream(item) for item in args]
 
     _merge_chunk_files(chunk_dir, output_filepath, batch_size=1000)
@@ -750,8 +1129,9 @@ def write_triplet_gene_trees(triplet_gene_trees, output_filepath, species_triple
     with open(output_filepath, "w") as f:
         for i, (triplet, newick_trees) in enumerate(triplet_gene_trees.items()):
             count = len(newick_trees)
+            _, topology_summary = _build_topology_count_summary(triplet, newick_trees)
             species_tree_newick = species_triplet_trees.get(triplet)
-            f.write(_format_triplet_header(triplet, count, species_tree_newick) + "\n")
+            f.write(_format_triplet_header(triplet, count, species_tree_newick, topology_summary) + "\n")
             f.write("\n")
 
             for newick in newick_trees:
@@ -798,12 +1178,13 @@ def write_triplet_gene_trees_streaming(
                         newick_trees.append(format_newick_with_precision(subtree))
 
             count = len(newick_trees)
+            _, topology_summary = _build_topology_count_summary(triplet, newick_trees)
             total_subtrees += count
             if count > 0:
                 triplets_with_trees += 1
 
             species_tree_newick = species_triplet_trees.get(triplet)
-            out_f.write(_format_triplet_header(triplet, count, species_tree_newick) + "\n")
+            out_f.write(_format_triplet_header(triplet, count, species_tree_newick, topology_summary) + "\n")
             out_f.write("\n")
             for newick in newick_trees:
                 out_f.write(f"{newick}\n")
@@ -888,7 +1269,8 @@ def main():
         metrics.log("")
 
         try:
-            species_start = time.time()
+            species_start_wall = time.time()
+            species_start_cpu = time.process_time()
             species_trees, dropped_species = clean_and_save_trees(
                 str(species_tree_path),
                 species_tree_clean,
@@ -904,7 +1286,10 @@ def main():
                     metrics.log(f"    - Index {idx} from {args.species_tree} (avg support: {avg_support:.4f})")
 
             species_trees = read_tree_file(species_tree_clean)
-            metrics.log(f"  Time taken: {time.time() - species_start:.2f}s")
+            species_wall = time.time() - species_start_wall
+            species_cpu = time.process_time() - species_start_cpu
+            metrics.log(f"  Time taken (wall): {species_wall:.2f}s")
+            metrics.log(f"  Time taken (CPU): {species_cpu:.2f}s")
         except Exception as e:
             metrics.log(f"✗ Error processing species tree: {e}")
             return
@@ -996,7 +1381,8 @@ def main():
             return
 
         try:
-            genes_start = time.time()
+            genes_start_wall = time.time()
+            genes_start_cpu = time.process_time()
             gene_trees, dropped_genes, rooted_count, missing_root_indices = clean_and_save_gene_trees(
                 str(gene_trees_path),
                 gene_trees_clean,
@@ -1021,16 +1407,23 @@ def main():
                 for idx, avg_support in dropped_genes.items():
                     metrics.log(f"    - Index {idx} from {args.gene_trees} (avg support: {avg_support:.4f})")
 
-            metrics.log(f"  Time taken: {time.time() - genes_start:.2f}s")
+            genes_wall = time.time() - genes_start_wall
+            genes_cpu = time.process_time() - genes_start_cpu
+            metrics.log(f"  Time taken (wall): {genes_wall:.2f}s")
+            metrics.log(f"  Time taken (CPU): {genes_cpu:.2f}s")
         except Exception as e:
             metrics.log(f"✗ Error processing gene trees: {e}")
             return
 
         try:
             metrics.log("\n✓ Processing gene trees for triplets...")
-            triplet_start = time.time()
+            triplet_start_wall = time.time()
+            triplet_start_cpu = time.process_time()
 
-            triplet_output_path = str(output_dir / "unique_triplets_gene_trees.txt")
+            if args.triplet_output_format == "parquet":
+                triplet_output_path = str(output_dir / "unique_triplets_gene_trees.parquet")
+            else:
+                triplet_output_path = str(output_dir / "unique_triplets_gene_trees.txt")
 
             worker_count = _calculate_worker_count(
                 len(triplets),
@@ -1039,14 +1432,26 @@ def main():
             )
             metrics.log(f"  Workers used: {worker_count}")
 
-            total_subtrees, triplets_with_trees, worker_count = write_triplet_gene_trees_multiprocess(
-                triplets,
-                gene_trees_clean,
-                triplet_output_path,
-                species_triplet_trees=species_triplet_trees,
-                use_multiprocessing=not args.no_multiprocessing,
-                processes=args.processes,
-            )
+            if args.triplet_output_format == "parquet":
+                total_subtrees, triplets_with_trees, worker_count = write_triplet_gene_trees_parquet_multiprocess(
+                    triplets,
+                    gene_trees_clean,
+                    triplet_output_path,
+                    species_triplet_trees=species_triplet_trees,
+                    parquet_partitions=args.parquet_partitions,
+                    parquet_compression=args.parquet_compression,
+                    use_multiprocessing=not args.no_multiprocessing,
+                    processes=args.processes,
+                )
+            else:
+                total_subtrees, triplets_with_trees, worker_count = write_triplet_gene_trees_multiprocess(
+                    triplets,
+                    gene_trees_clean,
+                    triplet_output_path,
+                    species_triplet_trees=species_triplet_trees,
+                    use_multiprocessing=not args.no_multiprocessing,
+                    processes=args.processes,
+                )
 
             metrics.log(f"✓ Triplet gene trees saved to: {triplet_output_path}")
             metrics.log(f"  Total triplets: {len(triplets)}")
@@ -1055,7 +1460,10 @@ def main():
             if triplets_with_trees > 0:
                 avg_trees_per_triplet = total_subtrees / triplets_with_trees
                 metrics.log(f"  Average trees per triplet: {avg_trees_per_triplet:.2f}")
-            metrics.log(f"  Time taken: {time.time() - triplet_start:.2f}s")
+            triplet_wall = time.time() - triplet_start_wall
+            triplet_cpu = time.process_time() - triplet_start_cpu
+            metrics.log(f"  Time taken (wall): {triplet_wall:.2f}s")
+            metrics.log(f"  Time taken (CPU): {triplet_cpu:.2f}s")
         except Exception as e:
             metrics.log(f"✗ Error processing triplet gene trees: {e}")
             return
@@ -1087,6 +1495,24 @@ def _build_argument_parser():
         help="Output folder relative to input data folder (default: same folder as input data)",
     )
     parser.add_argument(
+        "--triplet-output-format",
+        choices=TRIPLET_IO_FORMAT_CHOICES,
+        default=None,
+        help=f"Triplet extraction output format (default: {DEFAULT_TRIPLET_OUTPUT_FORMAT})",
+    )
+    parser.add_argument(
+        "--parquet-partitions",
+        type=int,
+        default=None,
+        help=f"Number of parquet hash partitions when parquet output is used (default: {DEFAULT_PARQUET_PARTITIONS})",
+    )
+    parser.add_argument(
+        "--parquet-compression",
+        choices=PARQUET_COMPRESSION_CHOICES,
+        default=None,
+        help=f"Parquet compression codec (default: {DEFAULT_PARQUET_COMPRESSION})",
+    )
+    parser.add_argument(
         "--processes",
         type=int,
         default=None,
@@ -1106,6 +1532,9 @@ TREE_PARSER_PAYLOAD_ARG_NAMES = [
     "outgroups",
     "triplet_filter",
     "output_folder",
+    "triplet_output_format",
+    "parquet_partitions",
+    "parquet_compression",
     "processes",
     "no_multiprocessing",
 ]

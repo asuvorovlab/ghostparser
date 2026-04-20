@@ -13,34 +13,39 @@
 
 - Corrected versioning of releases for consistency between setup.py and GitHub tags.
 
-## v0.0.5 - Unreleased
+## v0.1.0 - Unreleased
 
 - Added bootstrap sampling-with-replacement controls for orchestrator and triplet processor configs:
 
-	- `bootstrap` (default `false`)
-	- `bootstrap_options.iterations` (default `100`)
-	- `bootstrap_options.seed` (optional reproducibility)
-	- `bootstrap_options.debug_mode` (default `false`)
-	- `bootstrap_options.summary_only` (default `false`, applied when debug mode is enabled)
+    - `bootstrap` (default `false`)
+    - `bootstrap_options.iterations` (default `100`)
+    - `bootstrap_options.seed` (optional reproducibility)
+    - `bootstrap_options.debug_mode` (default `false`)
+    - `bootstrap_options.summary_only` (default `false`, applied when debug mode is enabled)
 - Bootstrap processing reuses per-triplet serialized gene-tree observations and runs per-iteration reanalysis over sampled observations.
 - Iterations with incomplete required metrics are classified as `unresolved` and do not stop processing.
 - `bootstrap_value` is aligned to the final corrected `classification` class fraction.
 - Added bootstrap output columns to TSV output when bootstrap is enabled:
 
-	- `bootstrap_value`
-	- `all_bootstrap`
+    - `bootstrap_value`
+    - `all_bootstrap`
 
 - Added bootstrap debug output columns to TSV output when bootstrap debug mode is enabled:
 
-	- `bootstrap_dct_stats`
-	- `bootstrap_dct_p_value`
-	- `bootstrap_ks_stats`
-	- `bootstrap_ks_p_value`
-	- `bootstrap_con_<mean|median|mode>`
-	- `bootstrap_dis_<mean|median|mode>`
-	- `bootstrap_gene_tree_heights`
+    - `bootstrap_dct_stats`
+    - `bootstrap_dct_p_value`
+    - `bootstrap_ks_stats`
+    - `bootstrap_ks_p_value`
+    - `bootstrap_con_<mean|median|mode>`
+    - `bootstrap_dis_<mean|median|mode>`
+    - `bootstrap_gene_tree_heights`
 
 - Bootstrap payload columns are serialized as JSON strings by default with compact key:value fallback.
 - Species-tree triplet output in TSV is now topology-only Newick (branch lengths omitted).
 - Added tree-height strategies `SIS` (sister-taxon distance) and `INT` (sister-MRCA to triplet-root internal branch).
 - Added `dis1_topology` as a base TSV output column for all runs.
+- Added CPU-process timing alongside wall-clock timing in logs and `metrics.txt` for species processing, gene processing, triplet extraction, inference, and total runtime.
+- Added `summary_statistics.tsv` output with per-triplet topology summaries: 63 metric-stat columns (mean/median/mode/variance/entropy/min/max × concordant/discordant1/discordant2 × avg-tree-height/internal-branch/sister-distance), plus identity fields, topology counts, classification, and bootstrap value when enabled.
+- Added parquet triplet dataset support across extraction and inference (`unique_triplets_gene_trees.parquet`), including partitioned observation storage and cached per-observation tree-height metrics.
+- Updated orchestrator pipeline wiring so extraction format settings are passed end-to-end (format-aware writer selection and matching inference input format).
+- Added `pyarrow>=15.0` as a required dependency for parquet IO and updated focused tests to cover parquet writing, parquet parsing/analysis, and config/runtime default handling.

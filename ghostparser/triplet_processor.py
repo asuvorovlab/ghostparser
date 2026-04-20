@@ -43,11 +43,13 @@ from .config import (
     DEFAULT_BOOTSTRAP_ITERATIONS,
     DEFAULT_BOOTSTRAP_SUMMARY_ONLY,
     DEFAULT_DISCORDANT_TEST,
+    DEFAULT_INPUT_FORMAT,
     DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     DISCORDANT_TEST_CHOICES,
+    INPUT_FORMAT_CHOICES,
     P_VALUE_CORRECTION_CHOICES,
     STATS_BACKEND_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
@@ -67,6 +69,16 @@ from .triplet_utils import (
 
 Classification = str
 SerializedTripletObservation = tuple[str, float]
+MetricBuckets = dict[str, dict[str, list[float]]]
+
+SUMMARY_STATISTICS = ("mean", "median", "mode", "variance", "entropy", "min", "max")
+SUMMARY_TOPOLOGY_LABELS = ("concordant", "discordant1", "discordant2")
+SUMMARY_METRIC_LABELS = ("avg_tree_height", "internal_branch", "sister_distance")
+SUMMARY_TOPOLOGY_TO_CANONICAL = {
+    "concordant": TOPOLOGY_AB,
+    "discordant1": TOPOLOGY_BC,
+    "discordant2": TOPOLOGY_AC,
+}
 
 
 @dataclass(frozen=True)
@@ -101,6 +113,7 @@ class TripletPipelineResult:
     bootstrap_con_summary: dict | list | None = None
     bootstrap_dis_summary: dict | list | None = None
     bootstrap_gene_tree_heights: list[float] | None = None
+    topology_metric_statistics: dict[str, float | None] | None = None
 
     def to_dict(self):
         """Serialize all relevant triplet statistics to a dictionary."""
@@ -133,6 +146,7 @@ class TripletPipelineResult:
             "bootstrap_con_summary": self.bootstrap_con_summary,
             "bootstrap_dis_summary": self.bootstrap_dis_summary,
             "bootstrap_gene_tree_heights": self.bootstrap_gene_tree_heights,
+            "topology_metric_statistics": self.topology_metric_statistics,
         }
 
 
@@ -240,16 +254,32 @@ def classify_triplet_topology(
 
 
 def _resolve_topology_roles(topology_counts, species_topology):
-    """Resolve concordant/discordant roles and concordant frequency status."""
-    if species_topology != TOPOLOGY_AB:
-        raise ValueError("Resolved topology roles require species_topology == ((A,B),C)")
+    """Resolve concordant/discordant roles with deterministic tie handling.
 
-    n_con = int(topology_counts.get(TOPOLOGY_AB, 0))
-    n_dis1 = int(topology_counts.get(TOPOLOGY_BC, 0))
-    n_dis2 = int(topology_counts.get(TOPOLOGY_AC, 0))
+    Concordant is the topology matching ``species_topology``. Discordant roles are
+    selected from the remaining two topologies by descending count; ties keep
+    list order.
+    """
+    if species_topology not in ALL_TOPOLOGIES:
+        raise ValueError("Resolved topology roles require a valid species topology")
+
+    all_topologies = list(ALL_TOPOLOGIES)
+    all_topologies.remove(species_topology)
+
+    first, second = all_topologies[0], all_topologies[1]
+    first_count = int(topology_counts.get(first, 0))
+    second_count = int(topology_counts.get(second, 0))
+    if first_count >= second_count:
+        dis1_topology, dis2_topology = first, second
+        n_dis1, n_dis2 = first_count, second_count
+    else:
+        dis1_topology, dis2_topology = second, first
+        n_dis1, n_dis2 = second_count, first_count
+
+    n_con = int(topology_counts.get(species_topology, 0))
     most_frequent_matches_concordant = n_con >= n_dis1 and n_con >= n_dis2
 
-    return TOPOLOGY_AB, TOPOLOGY_BC, TOPOLOGY_AC, most_frequent_matches_concordant
+    return species_topology, dis1_topology, dis2_topology, most_frequent_matches_concordant
 
 
 def pearson_discordant_chi_square_test(n_dis1, n_dis2):
@@ -492,6 +522,109 @@ def _mode_binned(values, decimals=3):
     return max(modes)
 
 
+def _variance(values):
+    """Compute population variance of numeric iterable."""
+    if not values:
+        return None
+    # TODO: NumPy optimization: compute variance using np.var on float64 arrays to reduce Python-loop overhead.
+    values_float = [float(value) for value in values]
+    mean_value = _mean(values_float)
+    if mean_value is None:
+        return None
+    return sum((value - mean_value) ** 2 for value in values_float) / len(values_float)
+
+
+def _entropy_binned(values, decimals=3):
+    """Compute Shannon entropy (base 2) on rounded value frequencies."""
+    if not values:
+        return None
+
+    # TODO: NumPy optimization: use np.round + np.unique(return_counts=True) for binning and
+    # compute entropy from normalized counts (or pass probabilities to scipy.stats.entropy).
+    counts = {}
+    for value in values:
+        rounded = round(float(value), decimals)
+        counts[rounded] = counts.get(rounded, 0) + 1
+
+    total = sum(counts.values())
+    if total <= 0:
+        return None
+
+    entropy = 0.0
+    for count in counts.values():
+        probability = count / total
+        if probability > 0.0:
+            entropy -= probability * math.log2(probability)
+    return entropy
+
+
+def _compute_summary_statistic(values, statistic_name):
+    """Compute one summary statistic by name."""
+    if statistic_name == "mean":
+        return _mean(values)
+    if statistic_name == "median":
+        return _median(values)
+    if statistic_name == "mode":
+        return _mode_binned(values, decimals=3)
+    if statistic_name == "variance":
+        return _variance(values)
+    if statistic_name == "entropy":
+        return _entropy_binned(values, decimals=3)
+    if statistic_name == "min":
+        return min(values) if values else None
+    if statistic_name == "max":
+        return max(values) if values else None
+    raise ValueError(f"Unsupported summary statistic name: {statistic_name}")
+
+
+def _summary_statistics_column_names():
+    """Return stable ordered column names for topology/metric summary statistics."""
+    columns = []
+    for topology_label in SUMMARY_TOPOLOGY_LABELS:
+        for metric_label in SUMMARY_METRIC_LABELS:
+            for statistic_name in SUMMARY_STATISTICS:
+                columns.append(f"{topology_label}_{metric_label}_{statistic_name}")
+    return columns
+
+
+def _build_empty_metric_buckets():
+    """Build empty metric buckets keyed by canonical topology and metric type."""
+    return {
+        topology: {
+            "avg_tree_height": [],
+            "internal_branch": [],
+            "sister_distance": [],
+        }
+        for topology in ALL_TOPOLOGIES
+    }
+
+
+def _build_topology_metric_statistics(species_triplet, species_topology, metric_buckets):
+    """Build canonical topology/metric summary statistics for one triplet."""
+    topology_counts = {
+        topology: len(metric_buckets[topology]["avg_tree_height"])
+        for topology in ALL_TOPOLOGIES
+    }
+
+    _, _, canonical_to_original_topology, _ = _canonicalize_triplet_labels(
+        species_triplet,
+        species_topology,
+        topology_counts,
+    )
+
+    statistics = {}
+    for topology_label in SUMMARY_TOPOLOGY_LABELS:
+        canonical_topology = SUMMARY_TOPOLOGY_TO_CANONICAL[topology_label]
+        original_topology = canonical_to_original_topology[canonical_topology]
+        for metric_label in SUMMARY_METRIC_LABELS:
+            values = metric_buckets[original_topology][metric_label]
+            for statistic_name in SUMMARY_STATISTICS:
+                key = f"{topology_label}_{metric_label}_{statistic_name}"
+                statistics[key] = _compute_summary_statistic(values, statistic_name)
+
+    return statistics
+
+
 def _classify_introgression(dct_significant, ks_significant, summary_con, summary_dis):
     """Apply GhostParser decision logic to produce final classification."""
     if not dct_significant:
@@ -507,6 +640,71 @@ def _classify_introgression(dct_significant, ks_significant, summary_con, summar
     return "unresolved"
 
 
+def _generate_inference_description(triplet, classification, dis1_topology):
+    """Generate human-readable inference direction with actual species names.
+
+    Args:
+        triplet: Tuple of (A, B, C) taxa where A and B are sisters in species tree.
+        classification: String classification (no_introgression, inflow_introgression, etc).
+        dis1_topology: Discordant1 topology label ("BC" or "AC").
+
+    Returns:
+        Human-readable inference description with actual species names.
+    """
+    a_taxon, b_taxon, c_taxon = triplet
+
+    if classification == "no_introgression":
+        return "no introgression"
+
+    if dis1_topology is None:
+        return classification  # Fallback for unresolved cases.
+
+    # Parse dis1_topology to determine sister pairs.
+    topology_label = str(dis1_topology).strip().upper()
+
+    if topology_label == "BC":  # ((B,C),A) - B and C are sisters
+        sisters_in_dis1 = {b_taxon, c_taxon}
+        outgroup_in_dis1 = a_taxon
+    elif topology_label == "AC":  # ((A,C),B) - A and C are sisters
+        sisters_in_dis1 = {a_taxon, c_taxon}
+        outgroup_in_dis1 = b_taxon
+    else:
+        expected = " or ".join(f"'{value}'" for value in DISCORDANT1_TOPOLOGY_CHOICES)
+        raise ValueError(f"Invalid dis1_topology '{dis1_topology}'. Expected {expected}.")
+
+    # Species tree sisters are A and B
+    species_tree_sisters = {a_taxon, b_taxon}
+
+    if classification == "inflow_introgression":
+        # Introgression FROM non-sister (outgroup in species tree) TO sisters in dis1.
+        # C (outgroup in species tree) moved toward A or B.
+        if c_taxon in sisters_in_dis1:
+            sister_who_moved = (sisters_in_dis1 - {c_taxon}).pop()
+            return f"introgression from {c_taxon} to {sister_who_moved}"
+        else:
+            # Fallback: describe based on what we know
+            sisters_str = " and ".join(sorted(sisters_in_dis1))
+            return f"introgression between {sisters_str} and {outgroup_in_dis1}"
+
+    elif classification == "outflow_introgression":
+        # Introgression FROM sisters in species tree TO the non-sister (C).
+        # One of A or B moved toward C.
+        if c_taxon in sisters_in_dis1:
+            # C paired with one of A or B
+            sister_who_introgressed = (sisters_in_dis1 - {c_taxon}).pop()
+            return f"introgression from {sister_who_introgressed} to {c_taxon}"
+        else:
+            # Fallback
+            sisters_str = " and ".join(sorted(species_tree_sisters))
+            return f"introgression from {sisters_str} to {outgroup_in_dis1}"
+
+    elif classification == "ghost_introgression":
+        # Use the dis1 outgroup taxon as recipient per reporting convention.
+        return f"introgression from ghost lineage to {outgroup_in_dis1}"
+
+    return classification
+
+
 _BOOTSTRAP_CLASSES = [
     "ghost_introgression",
     "inflow_introgression",
@@ -514,6 +712,8 @@ _BOOTSTRAP_CLASSES = [
     "no_introgression",
     "unresolved",
 ]
+
+DISCORDANT1_TOPOLOGY_CHOICES = ("BC", "AC")
 
 
 def _build_triplet_rng(seed, triplet):
@@ -657,21 +857,14 @@ def _run_bootstrap_iterations(
 
 
 def _serialize_bootstrap_value(value):
-    """Serialize bootstrap structures for TSV output.
-
-    Uses JSON strings by default and falls back to key:value compact strings.
-    """
+    """Serialize bootstrap structures for TSV output as strict JSON."""
     if value is None:
         return ""
 
     try:
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
-    except (TypeError, ValueError):
-        if isinstance(value, dict):
-            return ",".join(f"{key}:{value[key]}" for key in sorted(value))
-        if isinstance(value, list):
-            return ",".join("" if item is None else str(item) for item in value)
-        return str(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Bootstrap payload is not JSON-serializable: {value!r}") from exc
 
 
 def _bonferroni_adjust_p_values_custom(p_values):
@@ -904,6 +1097,23 @@ def _apply_triplet_result_p_value_correction(
     return adjusted_results
 
 
+def apply_triplet_result_p_value_correction(
+    results,
+    alpha_dct,
+    alpha_ks,
+    method=DEFAULT_P_VALUE_CORRECTION,
+    stats_backend=DEFAULT_STATS_BACKEND,
+):
+    """Public wrapper for applying global p-value correction to triplet results."""
+    return _apply_triplet_result_p_value_correction(
+        results,
+        alpha_dct=alpha_dct,
+        alpha_ks=alpha_ks,
+        method=method,
+        stats_backend=stats_backend,
+    )
+
+
 _TOPOLOGY_TO_PAIR = {
     TOPOLOGY_AB: frozenset(("A", "B")),
     TOPOLOGY_BC: frozenset(("B", "C")),
@@ -975,18 +1185,6 @@ def _canonicalize_triplet_labels(species_triplet, species_topology, topology_cou
     }
     reported_dis1_topology = TOPOLOGY_BC if canonical_counts[TOPOLOGY_BC] >= canonical_counts[TOPOLOGY_AC] else TOPOLOGY_AC
 
-    # Swapping A and B preserves concordant AB|C but swaps BC|A and AC|B.
-    if canonical_counts[TOPOLOGY_AC] > canonical_counts[TOPOLOGY_BC]:
-        canonical_triplet = (canonical_triplet[1], canonical_triplet[0], canonical_triplet[2])
-        canonical_counts[TOPOLOGY_BC], canonical_counts[TOPOLOGY_AC] = (
-            canonical_counts[TOPOLOGY_AC],
-            canonical_counts[TOPOLOGY_BC],
-        )
-        canonical_to_original_topology[TOPOLOGY_BC], canonical_to_original_topology[TOPOLOGY_AC] = (
-            canonical_to_original_topology[TOPOLOGY_AC],
-            canonical_to_original_topology[TOPOLOGY_BC],
-        )
-
     return canonical_triplet, canonical_counts, canonical_to_original_topology, reported_dis1_topology
 
 
@@ -1013,8 +1211,9 @@ def _serialize_triplet_gene_trees(
     triplet_gene_trees,
     tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
 ):
-    """Parse rooted triplet trees into lightweight (topology, height) observations."""
+    """Parse rooted triplet trees into observations and metric buckets."""
     observations: list[SerializedTripletObservation] = []
+    metric_buckets = _build_empty_metric_buckets()
     species_set = set(species_triplet)
 
     for newick_str in triplet_gene_trees:
@@ -1028,6 +1227,21 @@ def _serialize_triplet_gene_trees(
 
         try:
             topology = classify_triplet_topology_string(tree, species_triplet)
+            avg_tree_height = compute_tree_height_statistic(
+                tree,
+                strategy="AVG",
+                species_triplet=species_triplet,
+            )
+            internal_branch = compute_tree_height_statistic(
+                tree,
+                strategy="INT",
+                species_triplet=species_triplet,
+            )
+            sister_distance = compute_tree_height_statistic(
+                tree,
+                strategy="SIS",
+                species_triplet=species_triplet,
+            )
             tree_height = compute_tree_height_statistic(
                 tree,
                 strategy=tree_height_calculation_strategy,
@@ -1036,9 +1250,58 @@ def _serialize_triplet_gene_trees(
         except ValueError:
             continue
 
+        metric_buckets[topology]["avg_tree_height"].append(avg_tree_height)
+        metric_buckets[topology]["internal_branch"].append(internal_branch)
+        metric_buckets[topology]["sister_distance"].append(sister_distance)
         observations.append((topology, tree_height))
 
-    return observations
+    return observations, metric_buckets
+
+
+def _serialize_triplet_observation_rows(
+    observation_rows,
+    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+):
+    """Build observations from cached parquet rows."""
+    observations: list[SerializedTripletObservation] = []
+    metric_buckets = _build_empty_metric_buckets()
+
+    for row in observation_rows:
+        topology = row.get("topology")
+        if topology not in ALL_TOPOLOGIES:
+            continue
+
+        avg_tree_height = float(row.get("h_avg"))
+        internal_branch = float(row.get("h_int"))
+        sister_distance = float(row.get("h_sis"))
+        h_a = float(row.get("h_a"))
+        h_b = float(row.get("h_b"))
+        h_c = float(row.get("h_c"))
+
+        if tree_height_calculation_strategy == "AVG":
+            tree_height = avg_tree_height
+        elif tree_height_calculation_strategy == "A":
+            tree_height = h_a
+        elif tree_height_calculation_strategy == "B":
+            tree_height = h_b
+        elif tree_height_calculation_strategy == "C":
+            tree_height = h_c
+        elif tree_height_calculation_strategy == "SIS":
+            tree_height = sister_distance
+        elif tree_height_calculation_strategy == "INT":
+            tree_height = internal_branch
+        else:
+            raise ValueError(
+                f"Unsupported tree height calculation strategy: {tree_height_calculation_strategy}. "
+                f"Choose one of: {', '.join(TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES)}"
+            )
+
+        metric_buckets[topology]["avg_tree_height"].append(avg_tree_height)
+        metric_buckets[topology]["internal_branch"].append(internal_branch)
+        metric_buckets[topology]["sister_distance"].append(sister_distance)
+        observations.append((topology, tree_height))
+
+    return observations, metric_buckets
 
 
 def _run_triplet_pipeline_from_observations(
@@ -1180,6 +1443,7 @@ def run_triplet_pipeline(
         triplet_gene_trees,
         tree_height_calculation_strategy=tree_height_calculation_strategy,
     )
+    observations, metric_buckets = observations
     base_result = _run_triplet_pipeline_from_observations(
         species_triplet,
         observations,
@@ -1192,6 +1456,12 @@ def run_triplet_pipeline(
         species_tree_newick=species_tree_newick,
         rng=rng,
     )
+    topology_metric_statistics = _build_topology_metric_statistics(
+        species_triplet,
+        species_topology,
+        metric_buckets,
+    )
+    base_result = replace(base_result, topology_metric_statistics=topology_metric_statistics)
 
     if not bootstrap:
         return base_result
@@ -1240,67 +1510,279 @@ def run_triplet_pipeline(
 def parse_triplet_gene_trees_file(filepath):
     """Parse triplet gene tree file produced by ``tree_parser``.
 
-    Required header style:
-    - ``A,B,C<TAB>count<TAB>species_triplet_newick``
+    Required section structure per triplet:
+    1. ``A,B,C<TAB>count<TAB>species_triplet_newick<TAB>[A=...,B=...,C=...]<TAB>AB:x/concordant,BC:y/discordant1|discordant2,AC:z/discordant2|discordant1``
+    2. one blank line
+    3. zero or more Newick gene-tree lines (each ending in ``;``)
+
+    Sections are separated by a line of exactly 60 ``=`` characters.
 
     Returns:
         dict mapping triplet tuple ->
         ``{"count": int | None, "species_tree": str | None, "gene_trees": list[str]}``
     """
+    section_separator = "=" * 60
+
+    def _parse_section(section_lines):
+        trimmed = list(section_lines)
+        while trimmed and not trimmed[0].strip():
+            trimmed.pop(0)
+        while trimmed and not trimmed[-1].strip():
+            trimmed.pop()
+
+        if not trimmed:
+            return None
+
+        header = trimmed[0]
+        parts = header.split("\t")
+        if len(parts) != 5:
+            raise ValueError(f"Invalid triplet header format (expected 5 tab-separated fields): {header}")
+
+        triplet_text = parts[0].strip()
+        taxa = tuple(part.strip() for part in triplet_text.split(",") if part.strip())
+        if len(taxa) != 3:
+            raise ValueError(f"Invalid triplet header: {header}")
+
+        if not parts[1].strip():
+            raise ValueError(f"Invalid triplet count in header: {header}")
+        try:
+            count = int(parts[1].strip())
+        except ValueError as exc:
+            raise ValueError(f"Invalid triplet count in header: {header}") from exc
+
+        if not parts[2].strip():
+            raise ValueError(f"Invalid species tree in header: {header}")
+        species_tree = parts[2].strip()
+
+        label_text = parts[3].strip()
+        if not (label_text.startswith("[") and label_text.endswith("]")):
+            raise ValueError(f"Invalid ABC label mapping in header: {header}")
+        label_body = label_text[1:-1]
+        label_pairs = [segment.strip() for segment in label_body.split(",") if segment.strip()]
+        if len(label_pairs) != 3:
+            raise ValueError(f"Invalid ABC label mapping in header: {header}")
+
+        mapped_values = []
+        expected_keys = ("A", "B", "C")
+        for expected_key, label_pair in zip(expected_keys, label_pairs):
+            if "=" not in label_pair:
+                raise ValueError(f"Invalid ABC label mapping in header: {header}")
+            key, value = (piece.strip() for piece in label_pair.split("=", 1))
+            if key != expected_key or not value:
+                raise ValueError(f"Invalid ABC label mapping in header: {header}")
+            mapped_values.append(value)
+        mapped_triplet = tuple(mapped_values)
+        if mapped_triplet != taxa:
+            raise ValueError(
+                f"Triplet/header label mapping mismatch for {','.join(taxa)}: "
+                f"A,B,C mapping resolves to {','.join(mapped_triplet)}"
+            )
+
+        summary_text = parts[4].strip()
+        summary_items = [segment.strip() for segment in summary_text.split(",") if segment.strip()]
+        if len(summary_items) != 3:
+            raise ValueError(f"Invalid topology summary in header: {header}")
+
+        parsed_summary = {}
+        for item in summary_items:
+            if ":" not in item:
+                raise ValueError(f"Invalid topology summary in header: {header}")
+            topology_key, payload = (piece.strip() for piece in item.split(":", 1))
+            if "/" not in payload:
+                raise ValueError(f"Invalid topology summary in header: {header}")
+            count_text, role = (piece.strip() for piece in payload.split("/", 1))
+            if topology_key in parsed_summary:
+                raise ValueError(f"Invalid topology summary in header: {header}")
+            try:
+                parsed_count = int(count_text)
+            except ValueError as exc:
+                raise ValueError(f"Invalid topology summary in header: {header}") from exc
+            parsed_summary[topology_key] = (parsed_count, role)
+
+        if set(parsed_summary.keys()) != {"AB", "BC", "AC"}:
+            raise ValueError(f"Invalid topology summary in header: {header}")
+
+        n_ab, ab_role = parsed_summary["AB"]
+        n_bc, bc_role = parsed_summary["BC"]
+        n_ac, ac_role = parsed_summary["AC"]
+        if ab_role != "concordant":
+            raise ValueError(f"Invalid topology summary in header: {header}")
+        if bc_role not in {"discordant1", "discordant2"}:
+            raise ValueError(f"Invalid topology summary in header: {header}")
+        if ac_role not in {"discordant1", "discordant2"}:
+            raise ValueError(f"Invalid topology summary in header: {header}")
+        if bc_role == ac_role:
+            raise ValueError(f"Invalid discordant role assignment in header: {header}")
+
+        summary_total = n_ab + n_bc + n_ac
+        if summary_total != count:
+            raise ValueError(
+                f"Triplet count/header mismatch for {','.join(taxa)}: "
+                f"header count={count}, topology summary total={summary_total}"
+            )
+
+        if len(trimmed) > 1 and trimmed[1].strip():
+            raise ValueError("Invalid triplet section format: expected blank line after header")
+
+        gene_trees = []
+        for line in trimmed[2:]:
+            if not line.strip():
+                continue
+            if not line.endswith(";"):
+                raise ValueError(f"Invalid gene-tree line (expected Newick ending with ';'): {line}")
+            gene_trees.append(line)
+
+        if count != len(gene_trees):
+            raise ValueError(
+                f"Triplet count/header mismatch for {','.join(taxa)}: header count={count}, parsed trees={len(gene_trees)}"
+            )
+
+        dis1_topology = TOPOLOGY_BC if bc_role == "discordant1" else TOPOLOGY_AC
+
+        return taxa, {
+            "count": count,
+            "species_tree": species_tree,
+            "gene_trees": gene_trees,
+            "label_map": {"A": taxa[0], "B": taxa[1], "C": taxa[2]},
+            "header_topology_counts": {
+                TOPOLOGY_AB: n_ab,
+                TOPOLOGY_BC: n_bc,
+                TOPOLOGY_AC: n_ac,
+            },
+            "header_dis1_topology": dis1_topology,
+        }
+
     triplet_map = {}
-    current_triplet = None
+    current_section = []
 
     with open(filepath, "r") as handle:
         for raw_line in handle:
             line = raw_line.rstrip("\n").rstrip("\r")
-
-            if not line.strip():
+            if line == section_separator:
+                parsed = _parse_section(current_section)
+                if parsed is not None:
+                    taxa, payload = parsed
+                    if taxa in triplet_map:
+                        raise ValueError(f"Duplicate triplet header encountered: {','.join(taxa)}")
+                    triplet_map[taxa] = payload
+                current_section = []
                 continue
+            current_section.append(line)
 
-            if set(line) == {"="}:
-                current_triplet = None
-                continue
-
-            if "\t" in line and "," in line.split("\t", 1)[0]:
-                parts = line.split("\t")
-                if len(parts) != 3:
-                    raise ValueError(f"Invalid triplet header format (expected 3 tab-separated fields): {line}")
-
-                triplet_text = parts[0].strip()
-                taxa = tuple(part.strip() for part in triplet_text.split(",") if part.strip())
-                if len(taxa) != 3:
-                    raise ValueError(f"Invalid triplet header: {line}")
-
-                if not parts[1].strip():
-                    raise ValueError(f"Invalid triplet count in header: {line}")
-                try:
-                    count = int(parts[1].strip())
-                except ValueError as exc:
-                    raise ValueError(f"Invalid triplet count in header: {line}") from exc
-
-                if not parts[2].strip():
-                    raise ValueError(f"Invalid species tree in header: {line}")
-                species_tree = parts[2].strip()
-                current_triplet = taxa
-                triplet_map[current_triplet] = {
-                    "count": count,
-                    "species_tree": species_tree,
-                    "gene_trees": [],
-                }
-                continue
-
-            if line.endswith(";"):
-                if current_triplet is None:
-                    raise ValueError("Encountered tree line before any triplet header")
-                triplet_map[current_triplet]["gene_trees"].append(line)
+    parsed = _parse_section(current_section)
+    if parsed is not None:
+        taxa, payload = parsed
+        if taxa in triplet_map:
+            raise ValueError(f"Duplicate triplet header encountered: {','.join(taxa)}")
+        triplet_map[taxa] = payload
 
     return triplet_map
 
 
-def _get_mp_context():
-    """Get a multiprocessing context that avoids fork in multi-threaded processes."""
+def _require_pyarrow():
+    """Import and return pyarrow parquet module."""
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise ImportError("Parquet input requires pyarrow to be installed") from exc
+    return pq
+
+
+def parse_triplet_gene_trees_parquet(dataset_path):
+    """Parse partitioned parquet triplet dataset produced by ``tree_parser``."""
+    pq = _require_pyarrow()
+
+    dataset_root = Path(dataset_path)
+    triplet_dir = dataset_root / "triplets"
+    observations_dir = dataset_root / "observations"
+    if not triplet_dir.exists() or not observations_dir.exists():
+        raise ValueError(
+            "Invalid parquet triplet dataset: expected 'triplets/' and 'observations/' directories"
+        )
+
+    triplet_files = sorted(triplet_dir.glob("*.parquet"))
+    if not triplet_files:
+        return {}
+
+    triplet_map = {}
+    triplet_id_to_taxa = {}
+
+    for file_path in triplet_files:
+        rows = pq.read_table(file_path).to_pylist()
+        for row in rows:
+            taxa = (row["A"], row["B"], row["C"])
+            triplet_id = row["triplet_id"]
+            if taxa in triplet_map:
+                raise ValueError(f"Duplicate triplet header encountered: {','.join(taxa)}")
+
+            bc_role = row["bc_role"]
+            ac_role = row["ac_role"]
+            if bc_role == ac_role:
+                raise ValueError(f"Invalid discordant role assignment in parquet row for {','.join(taxa)}")
+
+            dis1_topology = TOPOLOGY_BC if bc_role == "discordant1" else TOPOLOGY_AC
+            triplet_map[taxa] = {
+                "count": int(row["count"]),
+                "species_tree": row.get("species_tree"),
+                "gene_trees": [],
+                "observation_rows": [],
+                "label_map": {"A": taxa[0], "B": taxa[1], "C": taxa[2]},
+                "header_topology_counts": {
+                    TOPOLOGY_AB: int(row["n_ab"]),
+                    TOPOLOGY_BC: int(row["n_bc"]),
+                    TOPOLOGY_AC: int(row["n_ac"]),
+                },
+                "header_dis1_topology": dis1_topology,
+            }
+            triplet_id_to_taxa[triplet_id] = taxa
+
+    observation_files = sorted(observations_dir.rglob("*.parquet"))
+    for file_path in observation_files:
+        rows = pq.read_table(file_path).to_pylist()
+        for row in rows:
+            triplet_id = row["triplet_id"]
+            taxa = triplet_id_to_taxa.get(triplet_id)
+            if taxa is None:
+                raise ValueError(f"Observation references unknown triplet_id: {triplet_id}")
+            triplet_map[taxa]["observation_rows"].append(row)
+            if "gene_tree_newick" in row and row["gene_tree_newick"]:
+                triplet_map[taxa]["gene_trees"].append(row["gene_tree_newick"])
+
+    for taxa, entry in triplet_map.items():
+        if entry["count"] != len(entry["observation_rows"]):
+            raise ValueError(
+                f"Triplet count/header mismatch for {','.join(taxa)}: "
+                f"header count={entry['count']}, parsed rows={len(entry['observation_rows'])}"
+            )
+
+    return triplet_map
+
+
+def _resolve_input_format(filepath, input_format=DEFAULT_INPUT_FORMAT):
+    """Resolve triplet input format from explicit value or path suffix."""
+    if input_format not in INPUT_FORMAT_CHOICES:
+        raise ValueError(
+            f"Unsupported input format: {input_format}. "
+            f"Choose one of: {', '.join(INPUT_FORMAT_CHOICES)}"
+        )
+    if input_format != "auto":
+        return input_format
+
+    path = Path(filepath)
+    return "parquet" if path.suffix.lower() == ".parquet" else "txt"
+
+
+def _get_mp_context(prefer_fork=False):
+    """Get a multiprocessing context for worker pools.
+
+    Args:
+        prefer_fork: If True, prefer ``fork`` where available for lower worker
+            startup overhead and parent-child CPU accounting consistency.
+    """
     if hasattr(mp, "get_context"):
         methods = mp.get_all_start_methods()
+        if prefer_fork and "fork" in methods:
+            return mp.get_context("fork")
         if "forkserver" in methods:
             return mp.get_context("forkserver")
         if "spawn" in methods:
@@ -1330,13 +1812,48 @@ def _analyze_triplet_entry(args):
         bootstrap_options,
         triplet_seed,
     ) = args
-    species_tree_topology = _species_tree_topology_only_newick(entry.get("species_tree"))
-    species_topology = _species_topology_from_newick(entry.get("species_tree"), triplet)
-    observations = _serialize_triplet_gene_trees(
+    return analyze_triplet_entry(
         triplet,
-        entry["gene_trees"],
+        entry,
+        alpha_dct=alpha_dct,
+        alpha_ks=alpha_ks,
+        discordant_test=discordant_test,
+        summary_statistic=summary_statistic,
+        stats_backend=stats_backend,
         tree_height_calculation_strategy=tree_height_calculation_strategy,
+        bootstrap=bootstrap,
+        bootstrap_options=bootstrap_options,
+        triplet_seed=triplet_seed,
     )
+
+
+def analyze_triplet_entry(
+    triplet,
+    entry,
+    alpha_dct=DEFAULT_ALPHA_DCT,
+    alpha_ks=DEFAULT_ALPHA_KS,
+    discordant_test=DEFAULT_DISCORDANT_TEST,
+    summary_statistic=DEFAULT_SUMMARY_STATISTIC,
+    stats_backend=DEFAULT_STATS_BACKEND,
+    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+    bootstrap=DEFAULT_BOOTSTRAP,
+    bootstrap_options=None,
+    triplet_seed=None,
+):
+    """Analyze one triplet entry payload and return a pipeline result."""
+    species_tree_topology = _species_tree_topology_only_newick(entry.get("species_tree"))
+    species_topology = TOPOLOGY_AB
+    if entry.get("observation_rows"):
+        observations, metric_buckets = _serialize_triplet_observation_rows(
+            entry["observation_rows"],
+            tree_height_calculation_strategy=tree_height_calculation_strategy,
+        )
+    else:
+        observations, metric_buckets = _serialize_triplet_gene_trees(
+            triplet,
+            entry["gene_trees"],
+            tree_height_calculation_strategy=tree_height_calculation_strategy,
+        )
     base_result = _run_triplet_pipeline_from_observations(
         triplet,
         observations,
@@ -1348,6 +1865,12 @@ def _analyze_triplet_entry(args):
         species_topology=species_topology,
         species_tree_newick=species_tree_topology,
     )
+    topology_metric_statistics = _build_topology_metric_statistics(
+        triplet,
+        species_topology,
+        metric_buckets,
+    )
+    base_result = replace(base_result, topology_metric_statistics=topology_metric_statistics)
 
     if not bootstrap:
         return base_result
@@ -1395,6 +1918,7 @@ def _analyze_triplet_entry(args):
 
 def analyze_triplet_gene_tree_file(
     filepath,
+    input_format="auto",
     alpha_dct=DEFAULT_ALPHA_DCT,
     alpha_ks=DEFAULT_ALPHA_KS,
     discordant_test=DEFAULT_DISCORDANT_TEST,
@@ -1408,7 +1932,7 @@ def analyze_triplet_gene_tree_file(
     use_multiprocessing=True,
     processes=None,
 ):
-    """Analyze all triplets from a triplet-gene-trees file."""
+    """Analyze all triplets from a triplet-gene-trees text or parquet input."""
     if discordant_test not in DISCORDANT_TEST_CHOICES:
         raise ValueError(
             f"Unsupported discordant test method: {discordant_test}. "
@@ -1449,7 +1973,11 @@ def analyze_triplet_gene_tree_file(
     if "seed" not in options:
         options["seed"] = None
 
-    triplet_map = parse_triplet_gene_trees_file(filepath)
+    resolved_input_format = _resolve_input_format(filepath, input_format=input_format)
+    if resolved_input_format == "parquet":
+        triplet_map = parse_triplet_gene_trees_parquet(filepath)
+    else:
+        triplet_map = parse_triplet_gene_trees_file(filepath)
     items = list(triplet_map.items())
     if not items:
         return []
@@ -1476,21 +2004,22 @@ def analyze_triplet_gene_tree_file(
             for triplet, entry in items
         ]
         chunksize = max(1, len(args) // (worker_count * 4))
-        ctx = _get_mp_context()
+        ctx = _get_mp_context(prefer_fork=True)
         with ctx.Pool(processes=worker_count) as pool:
             results = list(pool.imap(_analyze_triplet_entry, args, chunksize=chunksize))
-        return _apply_triplet_result_p_value_correction(
+        corrected = _apply_triplet_result_p_value_correction(
             results,
             alpha_dct=alpha_dct,
             alpha_ks=alpha_ks,
             method=p_value_correction,
             stats_backend=stats_backend,
         )
+        return corrected
 
     results = []
     for triplet, entry in items:
         species_tree_topology = _species_tree_topology_only_newick(entry.get("species_tree"))
-        species_topology = _species_topology_from_newick(entry.get("species_tree"), triplet)
+        species_topology = TOPOLOGY_AB
         triplet_rng = None
         if bootstrap:
             triplet_rng = _build_triplet_rng(options.get("seed"), triplet)
@@ -1511,13 +2040,14 @@ def analyze_triplet_gene_tree_file(
                 rng=triplet_rng if triplet_rng is not None else rng,
             )
         )
-    return _apply_triplet_result_p_value_correction(
+    corrected = _apply_triplet_result_p_value_correction(
         results,
         alpha_dct=alpha_dct,
         alpha_ks=alpha_ks,
         method=p_value_correction,
         stats_backend=stats_backend,
     )
+    return corrected
 
 
 def collect_triplet_statistics(results):
@@ -1592,6 +2122,7 @@ def write_pipeline_results(
         summary_con_column,
         summary_dis_column,
         "classification",
+        "inference",
         "analyzed_trees",
     ]
 
@@ -1620,6 +2151,11 @@ def write_pipeline_results(
         for result in results:
             a_taxon, b_taxon, c_taxon = result.triplet
             abc_mapping = f"A={a_taxon};B={b_taxon};C={c_taxon}"
+            inference = _generate_inference_description(
+                result.triplet,
+                result.classification,
+                result.dis1_topology,
+            )
             row = [
                 ",".join(result.triplet),
                 abc_mapping,
@@ -1640,6 +2176,7 @@ def write_pipeline_results(
                 "" if result.summary_con is None else f"{result.summary_con:.12g}",
                 "" if result.summary_dis is None else f"{result.summary_dis:.12g}",
                 result.classification,
+                inference,
                 str(result.analyzed_trees),
             ]
 
@@ -1666,6 +2203,52 @@ def write_pipeline_results(
             out_f.write("\t".join(row) + "\n")
 
 
+def write_summary_statistics_tsv(results, output_filepath, bootstrap=DEFAULT_BOOTSTRAP):
+    """Write per-triplet topology/metric summary statistics to TSV."""
+    include_bootstrap_value = bootstrap or any(result.bootstrap_value is not None for result in results)
+
+    header = [
+        "triplet",
+        "abc_mapping",
+        "species_tree",
+        "dis1_topology",
+        "n_con",
+        "n_dis1",
+        "n_dis2",
+    ]
+    header.extend(_summary_statistics_column_names())
+    header.append("classification")
+    if include_bootstrap_value:
+        header.append("bootstrap_value")
+
+    with open(output_filepath, "w") as out_f:
+        out_f.write("\t".join(header) + "\n")
+        for result in results:
+            a_taxon, b_taxon, c_taxon = result.triplet
+            abc_mapping = f"A={a_taxon};B={b_taxon};C={c_taxon}"
+
+            row = [
+                ",".join(result.triplet),
+                abc_mapping,
+                "" if result.species_tree is None else result.species_tree,
+                "" if result.dis1_topology is None else result.dis1_topology,
+                str(result.n_con),
+                str(result.n_dis1),
+                str(result.n_dis2),
+            ]
+
+            topology_metric_statistics = result.topology_metric_statistics or {}
+            for column_name in _summary_statistics_column_names():
+                value = topology_metric_statistics.get(column_name)
+                row.append("" if value is None else f"{value:.12g}")
+
+            row.append(result.classification)
+            if include_bootstrap_value:
+                row.append("" if result.bootstrap_value is None else f"{result.bootstrap_value:.12g}")
+
+            out_f.write("\t".join(row) + "\n")
+
+
 def main():
     """CLI entry point for triplet processing pipeline."""
     parser = _build_argument_parser()
@@ -1682,6 +2265,7 @@ def main():
 
     results = analyze_triplet_gene_tree_file(
         str(input_path),
+        input_format=args.input_format,
         alpha_dct=args.alpha_dct,
         alpha_ks=args.alpha_ks,
         discordant_test=args.discordant_test,
@@ -1704,11 +2288,23 @@ def main():
         bootstrap_debug_mode=args.bootstrap_options["debug_mode"],
     )
 
+    summary_output = output_path.parent / "summary_statistics.tsv"
+    if args.generate_summary_stats:
+        write_summary_statistics_tsv(
+            results,
+            str(summary_output),
+            bootstrap=args.bootstrap,
+        )
+
     stats_output = Path(args.stats_output) if args.stats_output else output_path.with_suffix(".json")
     write_pipeline_statistics_json(results, str(stats_output))
 
     print(f"Processed {len(results)} triplets")
     print(f"Results written to: {output_path}")
+    if args.generate_summary_stats:
+        print(f"Summary statistics written to: {summary_output}")
+    else:
+        print("Summary statistics written to: skipped")
     print(f"Statistics JSON written to: {stats_output}")
 
 
@@ -1716,7 +2312,13 @@ def _build_argument_parser():
     """Build triplet_processor CLI argument parser."""
     parser = argparse.ArgumentParser(description="Run GhostParser triplet processing pipeline (Fig. 6).")
     parser.add_argument("-c", "--config-file", default=None, help="Path to a JSON or YAML config file")
-    parser.add_argument("--input-path", default=None, help="Path to unique_triplets_gene_trees.txt")
+    parser.add_argument("--input-path", default=None, help="Path to unique_triplets_gene_trees.txt or parquet dataset")
+    parser.add_argument(
+        "--input-format",
+        choices=INPUT_FORMAT_CHOICES,
+        default=None,
+        help=f"Input format (default: {DEFAULT_INPUT_FORMAT}; auto infers from input path suffix)",
+    )
     parser.add_argument("--output-path", default=None, help="Output TSV path (default: alongside input)")
     parser.add_argument(
         "--stats-output",
@@ -1794,6 +2396,13 @@ def _build_argument_parser():
     )
     parser.add_argument("--processes", type=int, default=None, help="Number of worker processes for triplet analysis (0 = all cores)")
     parser.add_argument(
+        "--generate-summary-stats",
+        dest="generate_summary_stats",
+        action="store_true",
+        default=None,
+        help="Generate summary_statistics.tsv output (default: False)",
+    )
+    parser.add_argument(
         "--no-multiprocessing",
         action="store_true",
         help="Disable multiprocessing for triplet analysis",
@@ -1803,6 +2412,7 @@ def _build_argument_parser():
 
 TRIPLET_PROCESSOR_PAYLOAD_ARG_NAMES = [
     "input_path",
+    "input_format",
     "output_path",
     "stats_output",
     "alpha_dct",
@@ -1818,6 +2428,7 @@ TRIPLET_PROCESSOR_PAYLOAD_ARG_NAMES = [
     "bootstrap_debug_mode",
     "bootstrap_summary_only",
     "processes",
+    "generate_summary_stats",
     "no_multiprocessing",
 ]
 

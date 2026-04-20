@@ -106,8 +106,8 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 
 #### How the Pipeline Works
 
-- `tree_parser` standardizes species/gene trees, roots on outgroup(s), and writes triplet-specific gene-tree blocks.
-- `triplet_processor` applies the GhostParser statistical decision pipeline to each triplet block.
+- `tree_parser` standardizes species/gene trees, roots on outgroup(s), and provides triplet extraction utilities.
+- `triplet_processor` applies the GhostParser statistical decision pipeline to each triplet payload.
 - The orchestrator coordinates both steps and writes the final results table.
 
 GhostParser is configurable (discordant test, backend, thresholds, summary statistic), so execution follows the same core pipeline stages while allowing controlled method choices.
@@ -126,6 +126,7 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--output-folder`
 - `--triplet-filter`
 - `--processes`
+- `--generate-summary-stats`
 - `--min-support-value`
 - `--discordant-test`
 - `--summary-statistic`
@@ -138,12 +139,16 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--bootstrap-seed`
 - `--bootstrap-debug-mode`
 - `--bootstrap-summary-only`
+- `--triplet-output-format`
+- `--parquet-partitions`
+- `--parquet-compression`
 
 #### Primary Outputs
 
-1. `unique_triplets_gene_trees.txt`
+1. `unique_triplets_gene_trees.parquet` (default; use `--triplet-output-format txt` to write text output)
 2. `orchestrator_triplet_results.tsv`
-3. `metrics.txt`
+3. `summary_statistics.tsv` (only when `--generate-summary-stats` is enabled)
+4. `metrics.txt`
 
 ### Tree Parser (Submodule)
 
@@ -164,11 +169,11 @@ python -m ghostparser.tree_parser -c sample_configs/tree_parser_minimal.yaml
 - Removes support labels and preserves branch lengths
 - If support values are present, removes trees with average support below `min_support_value`
 - Roots on outgroup(s), prunes outgroup clade, and logs excluded taxa
-- Writes processed trees and `unique_triplets_gene_trees.txt`
+- Writes processed trees and triplet extraction output (`unique_triplets_gene_trees.parquet` by default, `unique_triplets_gene_trees.txt` when `--triplet-output-format txt` is selected)
 
 ### Triplet Processor (Submodule)
 
-Use this module when you already have `unique_triplets_gene_trees.txt` and only need inference.
+Use this module when you already have triplet extraction output (`unique_triplets_gene_trees.parquet` by default or `unique_triplets_gene_trees.txt`) and only need inference.
 
 ```bash
 python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.txt
@@ -250,11 +255,17 @@ The orchestrator generates these output files:
 
 1. **`processed_species.tree`** - Processed species tree with support values removed and outgroup rooting applied
 2. **`processed_gene_trees.tree`** - Processed gene trees with support values removed and outgroup rooting applied
-3. **`unique_triplets_gene_trees.txt`** - Triplets normalized to `A,B,C` (with `A,B` as species sisters), with required header format `triplet<TAB>count<TAB>species_tree` (non-empty species subtree)
+3. **`unique_triplets_gene_trees.parquet`** - Default triplet-to-gene-tree mapping output used as the input to triplet inference (`.txt` can be selected with `--triplet-output-format txt`)
 4. **`metrics.txt`** - Metrics log with warnings, timings, and counts
 5. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
+6. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `--generate-summary-stats` is enabled, including:
+   - identity columns (`triplet`, `abc_mapping`, `species_tree`, `dis1_topology`)
+   - topology counts (`n_con`, `n_dis1`, `n_dis2`)
+   - 63 topology/metric summary columns (7 statistics × 3 topology classes × 3 metric types)
+   - final `classification` and `bootstrap_value` (when bootstrap is enabled)
 
 Base TSV output includes `dis1_topology` and a topology-only `species_tree` value for each triplet.
+Base TSV output also includes an `inference` column with human-readable direction text using actual species names.
 
 When bootstrap is enabled, the TSV adds:
 
@@ -352,11 +363,16 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 
 - `processes`: `0` (all available CPU cores)
 - `output_folder` (orchestrator/tree_parser): `./results`
+- `triplet_output_format` (orchestrator/tree_parser): `parquet`
+- `input_format` (triplet_processor): `parquet`
+- `parquet_partitions`: `128`
+- `parquet_compression`: `zstd`
 - `min_support_value`: `0.5`
 - `bootstrap`: `false`
+- `bootstrap_options.debug_mode`: `false`
 - `bootstrap_options.iterations`: `100`
 - `bootstrap_options.seed`: unset
-- `bootstrap_options.summary_only`: `true`
+- `bootstrap_options.summary_only`: `false`
 
 **Backend Details:**
 

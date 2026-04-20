@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 from multiprocessing import cpu_count
 from pathlib import Path
+import resource
 import time
 
 import dendropy
@@ -34,10 +35,12 @@ from .tree_parser import (
     read_triplet_filter_file,
     read_tree_file,
     write_clean_trees,
+    write_triplet_gene_trees_parquet_multiprocess,
     write_triplet_gene_trees_multiprocess,
 )
 from .triplet_processor import (
     analyze_triplet_gene_tree_file,
+    write_summary_statistics_tsv,
     write_pipeline_results,
 )
 from .config import (
@@ -47,11 +50,16 @@ from .config import (
     DEFAULT_DISCORDANT_TEST,
     DEFAULT_MIN_SUPPORT_VALUE,
     DEFAULT_OUTPUT_FOLDER,
+    DEFAULT_PARQUET_COMPRESSION,
+    DEFAULT_PARQUET_PARTITIONS,
     DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
+    DEFAULT_TRIPLET_OUTPUT_FORMAT,
+    PARQUET_COMPRESSION_CHOICES,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     P_VALUE_CORRECTION_CHOICES,
+    TRIPLET_IO_FORMAT_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
     STATS_BACKEND_CHOICES,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
@@ -79,13 +87,53 @@ def _resolve_parallel_mode(processes):
     return resolved_processes, use_multiprocessing
 
 
+def _now_times():
+    """Return current wall-clock and CPU time (self + children)."""
+    return time.time(), _cpu_time_self_and_children()
+
+
+def _elapsed_times(start_wall, start_cpu):
+    """Return elapsed wall-clock and CPU time (self + children)."""
+    return time.time() - start_wall, _cpu_time_self_and_children() - start_cpu
+
+
+def _cpu_time_self_and_children():
+    """Return CPU seconds consumed by this process and reaped children.
+
+    This captures multiprocessing worker CPU time once workers exit and are
+    joined by the parent process.
+    """
+    try:
+        self_usage = resource.getrusage(resource.RUSAGE_SELF)
+        child_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        return (
+            self_usage.ru_utime
+            + self_usage.ru_stime
+            + child_usage.ru_utime
+            + child_usage.ru_stime
+        )
+    except Exception:
+        # Fallback for platforms where resource accounting is unavailable.
+        return time.process_time()
+
+
+def _log_stage_timing(metrics, wall_seconds, cpu_seconds):
+    """Log wall-clock and CPU time for a stage."""
+    metrics.log(f"  Time taken (wall): {wall_seconds:.2f}s")
+    metrics.log(f"  Time taken (CPU): {cpu_seconds:.2f}s")
+
+
 ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "species_tree_path",
     "gene_trees_path",
     "outgroups",
     "triplet_filter",
     "output_folder",
+    "triplet_output_format",
+    "parquet_partitions",
+    "parquet_compression",
     "processes",
+    "generate_summary_stats",
     "min_support_value",
     "discordant_test",
     "summary_statistic",
@@ -125,10 +173,35 @@ def _build_argument_parser():
         help=f"Output folder (default: ./{DEFAULT_OUTPUT_FOLDER})",
     )
     parser.add_argument(
+        "--triplet-output-format",
+        choices=TRIPLET_IO_FORMAT_CHOICES,
+        default=None,
+        help=f"Triplet extraction output format (default: {DEFAULT_TRIPLET_OUTPUT_FORMAT})",
+    )
+    parser.add_argument(
+        "--parquet-partitions",
+        type=int,
+        default=None,
+        help=f"Number of parquet hash partitions when parquet output is used (default: {DEFAULT_PARQUET_PARTITIONS})",
+    )
+    parser.add_argument(
+        "--parquet-compression",
+        choices=PARQUET_COMPRESSION_CHOICES,
+        default=None,
+        help=f"Parquet compression codec (default: {DEFAULT_PARQUET_COMPRESSION})",
+    )
+    parser.add_argument(
         "--processes",
         type=int,
         default=None,
         help="Number of worker processes for triplet extraction/processing (0 = all cores)",
+    )
+    parser.add_argument(
+        "--generate-summary-stats",
+        dest="generate_summary_stats",
+        action="store_true",
+        default=None,
+        help="Generate summary_statistics.tsv output (default: False)",
     )
     parser.add_argument(
         "--min-support-value",
@@ -273,6 +346,10 @@ def main():
         metrics.log(f"Bootstrap seed: {args.bootstrap_options['seed']}")
         metrics.log(f"Bootstrap debug mode: {args.bootstrap_options['debug_mode']}")
         metrics.log(f"Bootstrap summary-only: {args.bootstrap_options['summary_only']}")
+        metrics.log(f"Triplet output format: {args.triplet_output_format}")
+        metrics.log(f"Parquet partitions: {args.parquet_partitions}")
+        metrics.log(f"Parquet compression: {args.parquet_compression}")
+        metrics.log(f"Generate summary statistics TSV: {args.generate_summary_stats}")
         support_threshold = (
             args.min_support_value
             if args.min_support_value is not None
@@ -282,7 +359,7 @@ def main():
         metrics.log("")
 
         try:
-            species_start = time.time()
+            species_start_wall, species_start_cpu = _now_times()
             species_trees, dropped_species = clean_and_save_trees(
                 str(species_tree_path),
                 species_tree_clean,
@@ -296,8 +373,8 @@ def main():
                 )
 
             species_trees = read_tree_file(species_tree_clean)
-            species_time = time.time() - species_start
-            metrics.log(f"  Time taken: {species_time:.2f}s")
+            species_wall_time, species_cpu_time = _elapsed_times(species_start_wall, species_start_cpu)
+            _log_stage_timing(metrics, species_wall_time, species_cpu_time)
         except Exception as exc:
             metrics.log(f"✗ Error processing species tree: {exc}")
             return
@@ -369,7 +446,7 @@ def main():
             return
 
         try:
-            genes_start = time.time()
+            genes_start_wall, genes_start_cpu = _now_times()
             gene_trees, dropped_genes, rooted_count, missing_root_indices = clean_and_save_gene_trees(
                 str(gene_trees_path),
                 gene_trees_clean,
@@ -385,8 +462,8 @@ def main():
                 metrics.log(
                     f"  ⚠ Dropped {len(dropped_genes)} tree(s) with avg support < {support_threshold}"
                 )
-            genes_time = time.time() - genes_start
-            metrics.log(f"  Time taken: {genes_time:.2f}s")
+            genes_wall_time, genes_cpu_time = _elapsed_times(genes_start_wall, genes_start_cpu)
+            _log_stage_timing(metrics, genes_wall_time, genes_cpu_time)
         except Exception as exc:
             metrics.log(f"✗ Error processing gene trees: {exc}")
             return
@@ -396,34 +473,58 @@ def main():
         metrics.log("")
 
         try:
-            # Stage 1: Triplet Extraction
+            if args.triplet_output_format == "parquet":
+                triplet_output_path = str(output_dir / "unique_triplets_gene_trees.parquet")
+            else:
+                triplet_output_path = str(output_dir / "unique_triplets_gene_trees.txt")
+            extraction_wall_time = 0.0
+            extraction_cpu_time = 0.0
+            inference_wall_time = 0.0
+            inference_cpu_time = 0.0
+
+            # Stage 1: Triplet extraction to mapping file
             metrics.log("✓ Starting triplet extraction stage...")
-            extraction_start = time.time()
+            extraction_start_wall, extraction_start_cpu = _now_times()
 
-            triplet_output_path = str(output_dir / "unique_triplets_gene_trees.txt")
-            total_subtrees, triplets_with_trees, extraction_workers = write_triplet_gene_trees_multiprocess(
-                triplets,
-                gene_trees_clean,
-                triplet_output_path,
-                species_triplet_trees=species_triplet_trees,
-                use_multiprocessing=use_multiprocessing,
-                processes=processes,
+            if args.triplet_output_format == "parquet":
+                total_subtrees, triplets_with_trees, _ = write_triplet_gene_trees_parquet_multiprocess(
+                    triplets,
+                    gene_trees_clean,
+                    triplet_output_path,
+                    species_triplet_trees=species_triplet_trees,
+                    parquet_partitions=args.parquet_partitions,
+                    parquet_compression=args.parquet_compression,
+                    use_multiprocessing=use_multiprocessing,
+                    processes=processes,
+                )
+            else:
+                total_subtrees, triplets_with_trees, _ = write_triplet_gene_trees_multiprocess(
+                    triplets,
+                    gene_trees_clean,
+                    triplet_output_path,
+                    species_triplet_trees=species_triplet_trees,
+                    use_multiprocessing=use_multiprocessing,
+                    processes=processes,
+                )
+
+            extraction_wall_time, extraction_cpu_time = _elapsed_times(
+                extraction_start_wall,
+                extraction_start_cpu,
             )
-
-            extraction_time = time.time() - extraction_start
             metrics.log("✓ Triplet extraction complete")
             metrics.log(f"  Output: {triplet_output_path}")
             metrics.log(f"  Triplets with gene trees: {triplets_with_trees}")
             metrics.log(f"  Total subtrees extracted: {total_subtrees}")
-            metrics.log(f"  Time taken: {extraction_time:.2f}s")
+            _log_stage_timing(metrics, extraction_wall_time, extraction_cpu_time)
             metrics.log("")
 
-            # Stage 2: Introgression Inference
+            # Stage 2: Introgression inference from mapping file
             metrics.log("✓ Starting introgression inference stage...")
-            inference_start = time.time()
+            inference_start_wall, inference_start_cpu = _now_times()
 
             results = analyze_triplet_gene_tree_file(
                 triplet_output_path,
+                input_format=args.triplet_output_format,
                 alpha_dct=args.alpha_dct,
                 alpha_ks=args.alpha_ks,
                 discordant_test=args.discordant_test,
@@ -436,6 +537,11 @@ def main():
                 use_multiprocessing=use_multiprocessing,
                 processes=processes,
             )
+            inference_wall_time, inference_cpu_time = _elapsed_times(
+                inference_start_wall,
+                inference_start_cpu,
+            )
+
             final_tsv = str(output_dir / "orchestrator_triplet_results.tsv")
             write_pipeline_results(
                 results,
@@ -446,22 +552,34 @@ def main():
                 bootstrap=args.bootstrap,
                 bootstrap_debug_mode=args.bootstrap_options["debug_mode"],
             )
+            summary_tsv = str(output_dir / "summary_statistics.tsv")
+            if args.generate_summary_stats:
+                write_summary_statistics_tsv(
+                    results,
+                    summary_tsv,
+                    bootstrap=args.bootstrap,
+                )
 
-            inference_time = time.time() - inference_start
             metrics.log("✓ Introgression inference complete")
             metrics.log(f"  Output: {final_tsv}")
+            if args.generate_summary_stats:
+                metrics.log(f"  Summary statistics output: {summary_tsv}")
+            else:
+                metrics.log("  Summary statistics output: skipped")
             metrics.log(f"  Triplets analyzed: {len(results)}")
             if use_multiprocessing:
                 metrics.log("  Parallelization: enabled (multiprocessing)")
             else:
                 metrics.log("  Parallelization: disabled (single-worker mode)")
-            metrics.log(f"  Time taken: {inference_time:.2f}s")
+            _log_stage_timing(metrics, inference_wall_time, inference_cpu_time)
             metrics.log("")
 
             # Summary
-            total_time = species_time + genes_time + extraction_time + inference_time
+            total_wall_time = species_wall_time + genes_wall_time + extraction_wall_time + inference_wall_time
+            total_cpu_time = species_cpu_time + genes_cpu_time + extraction_cpu_time + inference_cpu_time
             metrics.log("✓ End-to-end orchestration complete")
-            metrics.log(f"  Total time: {total_time:.2f}s")
+            metrics.log(f"  Total time (wall): {total_wall_time:.2f}s")
+            metrics.log(f"  Total time (CPU): {total_cpu_time:.2f}s")
         except Exception as exc:
             metrics.log(f"✗ Error in triplet inference or introgression inference stage: {exc}")
             return

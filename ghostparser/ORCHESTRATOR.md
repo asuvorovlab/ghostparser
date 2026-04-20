@@ -73,11 +73,10 @@ CLI mode inputs are normalized into the same key/value payload used by config fi
    - Converts each triplet to A/B/C orientation where A and B are species sisters (`_build_species_triplet_metadata`).
 3. Gene tree cleaning/rooting
    - Uses `clean_and_save_gene_trees`.
-4. Triplet extraction file generation
-  - Uses `write_triplet_gene_trees_multiprocess` from `tree_parser`.
-  - Writes `unique_triplets_gene_trees.txt` in the same section format as `tree_parser`.
-5. Per-triplet inference from file
-  - Uses `analyze_triplet_gene_tree_file` from `triplet_processor` on `unique_triplets_gene_trees.txt`.
+4. Triplet extraction and inference
+    - Uses `write_triplet_gene_trees_multiprocess` from `tree_parser`.
+    - Writes triplet extraction output in either text mode (`unique_triplets_gene_trees.txt`) or parquet dataset mode (`unique_triplets_gene_trees.parquet/`) based on tree_parser settings.
+    - Uses `analyze_triplet_gene_tree_file` from `triplet_processor` on that file.
 6. Final reporting
    - Uses `write_pipeline_results` to write `orchestrator_triplet_results.tsv`.
 
@@ -108,10 +107,10 @@ Canonical topology strings:
 Triplet labeling is canonicalized after topology-frequency counting so that:
 
 - concordant is always `((A,B),C)`
-- discordant1 is always `((B,C),A)` (and represented by `n_dis1`)
-- discordant2 is always `((A,C),B)` (and represented by `n_dis2`)
+- discordant1 is whichever discordant topology has higher count (represented by `n_dis1`)
+- discordant2 is the other discordant topology (represented by `n_dis2`)
 
-If the two discordant topologies tie in frequency, canonical ordering is kept.
+If the two discordant topologies tie in frequency, fixed discordant ordering is kept (BC before AC).
 
 ### Frequency Metadata
 
@@ -209,6 +208,15 @@ Per-gene-tree height uses:
             - `ghost_introgression` if `<summary>_con < <summary>_dis`
             - `unresolved` if equal/undefined.
 
+- `inference`
+
+    - Method: human-readable direction text derived from `classification`, `triplet` (A/B/C taxa), and `dis1_topology`.
+    - Output examples:
+
+        - `no introgression`
+        - `introgression from <taxonX> to <taxonY>`
+        - `introgression from ghost lineage to <taxonX>`
+
 ### Data Coverage Tracking
 
 - `analyzed_trees`
@@ -226,13 +234,13 @@ Below is an example of how one row appears in `orchestrator_triplet_results.tsv`
 Header (truncated for readability):
 
 ```tsv
-triplet	species_tree	n_con	n_dis1	n_dis2	most_frequent_matches_concordant	dct_chi_stats	dct_p_value	dct_significant	ks_statistic	ks_p_value	ks_significant	median_con	median_dis	classification	analyzed_trees
+triplet	species_tree	n_con	n_dis1	n_dis2	most_frequent_matches_concordant	dct_chi_stats	dct_p_value	dct_significant	ks_statistic	ks_p_value	ks_significant	median_con	median_dis	classification	inference	analyzed_trees
 ```
 
 Example data row:
 
 ```tsv
-TaxaA,TaxaB,TaxaC	((TaxaA:1,TaxaB:1):1,TaxaC:1);	8	12	4	False	8	0.001	True	0.2	0.07	False			inflow_introgression	24
+TaxaA,TaxaB,TaxaC	((TaxaA:1,TaxaB:1):1,TaxaC:1);	8	12	4	False	8	0.001	True	0.2	0.07	False			inflow_introgression	introgression from TaxaC to TaxaB	24
 ```
 
 How to read this example quickly:
@@ -244,7 +252,8 @@ How to read this example quickly:
 
 - `processed_<species_tree_filename>`
 - `processed_<gene_trees_filename>`
-- `unique_triplets_gene_trees.txt`
+- `unique_triplets_gene_trees.txt` (default)
+- `unique_triplets_gene_trees.parquet/` (when parquet output mode is enabled)
 - `orchestrator_triplet_results.tsv`
 - `metrics.txt`
 
