@@ -44,7 +44,6 @@ def _species_triplet_map(triplets):
 
 def _tree_parser_args(**overrides):
     base = {
-        "config_file": None,
         "species_tree_path": "species.nwk",
         "gene_trees_path": "genes.nwk",
         "outgroups": "Out1,Out2",
@@ -53,6 +52,7 @@ def _tree_parser_args(**overrides):
         "triplet_output_format": None,
         "parquet_partitions": None,
         "parquet_compression": None,
+        "min_support_value": None,
         "processes": None,
         "no_multiprocessing": False,
     }
@@ -77,90 +77,9 @@ def test_resolve_runtime_args_tree_parser_cli_processes(processes, expected_proc
     assert resolved.processes == expected_processes
 
 
-def test_resolve_runtime_args_tree_parser_config_warns_and_ignores(tmp_path, capsys):
-    config_path = tmp_path / "tree_parser_config.json"
-    config_path.write_text(
-        """
-{
-  "species_tree_path": "s.nwk",
-  "gene_trees_path": "g.nwk",
-  "outgroup": "OutA",
-  "processes": 3,
-  "no_multiprocessing": true,
-  "min_support_value": 0.7
-}
-""".strip()
-    )
-
-    args = argparse.Namespace(
-        config_file=str(config_path),
-        species_tree_path="species.nwk",
-        gene_trees_path=None,
-        outgroups=None,
-        triplet_filter=None,
-        output_folder=None,
-        triplet_output_format=None,
-        parquet_partitions=None,
-        parquet_compression=None,
-        processes=None,
-        no_multiprocessing=False,
-    )
-
-    resolved = _resolve_runtime_args(args)
-    captured = capsys.readouterr()
-
-    assert "Warning: --config-file provided; CLI arguments not in config will be ignored" in captured.out
-    # Paths are resolved to absolute paths
-    assert resolved.species_tree == str(Path("s.nwk").resolve())
-    assert resolved.gene_trees == str(Path("g.nwk").resolve())
-    assert resolved.outgroup == ["OutA"]
-    assert resolved.processes == 3
-    assert resolved.no_multiprocessing is True
-    assert resolved.min_support_value == 0.7
-
-
-@pytest.mark.parametrize(
-    "config_body,expected_processes",
-    [
-        (
-            """
-{
-  "species_tree_path": "s.nwk",
-  "gene_trees_path": "g.nwk",
-  "outgroup": "OutA",
-  "processes": 3,
-  "no_multiprocessing": true,
-  "min_support_value": 0.7
-}
-""".strip(),
-            3,
-        ),
-        (
-            """
-{
-  "species_tree_path": "s.nwk",
-  "gene_trees_path": "g.nwk",
-  "outgroup": "OutA"
-}
-""".strip(),
-            0,
-        ),
-    ],
-)
-def test_resolve_runtime_args_tree_parser_config_processes_behavior(tmp_path, config_body, expected_processes):
-    config_path = tmp_path / "tree_parser_config_processes.json"
-    config_path.write_text(config_body)
-
-    resolved = _resolve_runtime_args(
-        _tree_parser_args(
-            config_file=str(config_path),
-            species_tree_path=None,
-            gene_trees_path=None,
-            outgroups=None,
-            processes=9,
-        )
-    )
-    assert resolved.processes == expected_processes
+def test_resolve_runtime_args_tree_parser_cli_min_support_override():
+    resolved = _resolve_runtime_args(_tree_parser_args(min_support_value=0.75))
+    assert resolved.min_support_value == 0.75
 
 # ============================================================================
 # Fixtures
