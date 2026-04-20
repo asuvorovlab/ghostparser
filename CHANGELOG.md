@@ -13,7 +13,7 @@
 
 - Corrected versioning of releases for consistency between setup.py and GitHub tags.
 
-## v0.1.0 - Unreleased
+## v0.1.0 - April 20, 2026
 
 - Added bootstrap sampling-with-replacement controls for orchestrator and triplet processor configs:
 
