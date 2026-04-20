@@ -51,3 +51,9 @@
 - Added `pyarrow>=15.0` as a required dependency for parquet IO and updated focused tests to cover parquet writing, parquet parsing/analysis, and config/runtime default handling.
 
 ## v0.1.1 - Unreleased
+
+- Changed default `alpha_dct` from `0.01` to `0.05` across orchestrator/runtime defaults.
+- Changed default `bootstrap` from `false` to `true` across orchestrator/runtime defaults.
+- Changed CLI architecture so config-file mode remains only in `ghostparser.orchestrator`.
+- Changed `ghostparser.tree_parser` and `ghostparser.triplet_processor` entry points to CLI-only runtime resolution with required core inputs.
+- Updated tests and documentation.
