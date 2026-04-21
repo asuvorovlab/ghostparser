@@ -257,10 +257,12 @@ def _build_argument_parser():
         help=f"KS significance threshold (default: {DEFAULT_ALPHA_KS})",
     )
     parser.add_argument(
-        "--bootstrap",
-        action="store_true",
-        help="Enable bootstrap sampling-with-replacement during triplet inference",
+        "--no-bootstrap",
+        dest="bootstrap",
+        action="store_false",
+        help="Disable bootstrap sampling-with-replacement during triplet inference",
     )
+    parser.set_defaults(bootstrap=None)
     parser.add_argument(
         "--bootstrap-iterations",
         type=int,

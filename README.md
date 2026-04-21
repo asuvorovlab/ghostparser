@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Ghostparser** is a phylogenetic introgression pipeline centered on `ghostparser.orchestrator`. The orchestrator runs two internal stages (`tree_parser` and `triplet_processor`) and produces final triplet-level inference outputs. It supports both command-line and configuration-file modes for flexible execution, with support for multiprocessing, multiple statistical backends, and configurable statistical thresholds.
+**Ghostparser** is a phylogenetic introgression pipeline centered on `ghostparser.orchestrator`. The orchestrator runs two internal stages (`tree_parser` and `triplet_processor`) and produces final triplet-level inference outputs. Orchestrator supports command-line and configuration-file modes, and the two submodules support CLI parameters that are useful for focused runs, debugging, and testing.
 
 ---
 
@@ -134,7 +134,7 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--tree-height-calculation-strategy`
 - `--p-value-correction`
 - `--alpha-dct`, `--alpha-ks`
-- `--bootstrap`
+- `--no-bootstrap`
 - `--bootstrap-iterations`
 - `--bootstrap-seed`
 - `--bootstrap-debug-mode`
@@ -158,12 +158,6 @@ Use this module when you only want preprocessing + triplet extraction.
 python -m ghostparser.tree_parser -st species.tree -gt genes.tree -og OutGroup
 ```
 
-Config mode:
-
-```bash
-python -m ghostparser.tree_parser -c sample_configs/tree_parser_minimal.yaml
-```
-
 #### Core Behavior
 
 - Removes support labels and preserves branch lengths
@@ -171,18 +165,23 @@ python -m ghostparser.tree_parser -c sample_configs/tree_parser_minimal.yaml
 - Roots on outgroup(s), prunes outgroup clade, and logs excluded taxa
 - Writes processed trees and triplet extraction output (`unique_triplets_gene_trees.parquet` by default, `unique_triplets_gene_trees.txt` when `--triplet-output-format txt` is selected)
 
+Useful CLI options for focused runs and debugging:
+
+- `--triplet-filter`
+- `--output-folder`
+- `--min-support-value`
+- `--processes`
+- `--no-multiprocessing`
+- `--triplet-output-format`
+- `--parquet-partitions`
+- `--parquet-compression`
+
 ### Triplet Processor (Submodule)
 
 Use this module when you already have triplet extraction output (`unique_triplets_gene_trees.parquet` by default or `unique_triplets_gene_trees.txt`) and only need inference.
 
 ```bash
 python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.txt
-```
-
-Config mode:
-
-```bash
-python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_minimal.yaml
 ```
 
 #### Core Behavior
@@ -193,13 +192,28 @@ python -m ghostparser.triplet_processor -c sample_configs/triplet_processor_mini
 - Supports tree-height strategy selection via `tree_height_calculation_strategy`: `AVG` (default), taxon-specific `A|B|C`, sister-distance `SIS`, or internal-branch `INT`
 - Optionally runs bootstrap sampling-with-replacement per triplet using reusable per-gene-tree observations
 
+Useful CLI options for focused runs and debugging:
+
+- `--output-path`
+- `--stats-output`
+- `--input-format`
+- `--alpha-dct`, `--alpha-ks`
+- `--discordant-test`
+- `--summary-statistic`
+- `--stats-backend`
+- `--tree-height-calculation-strategy`
+- `--p-value-correction`
+- `--bootstrap-iterations`
+- `--bootstrap-seed`
+- `--bootstrap-debug-mode`
+- `--bootstrap-summary-only`
+- `--processes`
+- `--generate-summary-stats`
+- `--no-multiprocessing`
+
 #### Bootstrap Behavior
 
-- `--bootstrap` enables bootstrap sampling-with-replacement.
-- `--bootstrap-iterations` sets iteration count (default: `100`).
-- `--bootstrap-seed` enables reproducible per-triplet sampling; if omitted, sampling is non-deterministic.
-- `--bootstrap-debug-mode` enables detailed bootstrap metric columns in TSV output.
-- `--bootstrap-summary-only` is used only when debug mode is enabled; it stores compact summaries instead of per-iteration lists.
+- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`; additional bootstrap controls are configured through orchestrator (`--bootstrap-iterations`, `--bootstrap-seed`, `--bootstrap-debug-mode`, `--bootstrap-summary-only`).
 - Iterations with incomplete required metrics are counted as `unresolved` and processing continues.
 - `bootstrap_value` reports the bootstrap fraction for the final `classification` value after correction.
 
@@ -347,7 +361,7 @@ See the **[Configuration Guide](CONFIG.md)** for complete details on:
 
 ## Defaults at a Glance
 
-Core defaults are centralized and applied consistently in both CLI mode and config-file mode:
+Core defaults are centralized in orchestrator config/CLI normalization and in module CLI runtime defaults:
 
 **Statistical and Processing Defaults:**
 
@@ -356,7 +370,7 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 - `stats_backend`: `standard`
 - `tree_height_calculation_strategy`: `AVG`
 - `p_value_correction`: `no`
-- `alpha_dct`: `0.01`
+- `alpha_dct`: `0.05`
 - `alpha_ks`: `0.05`
 
 **Execution Defaults:**
@@ -368,7 +382,7 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 - `parquet_partitions`: `128`
 - `parquet_compression`: `zstd`
 - `min_support_value`: `0.5`
-- `bootstrap`: `false`
+- `bootstrap`: `true`
 - `bootstrap_options.debug_mode`: `false`
 - `bootstrap_options.iterations`: `100`
 - `bootstrap_options.seed`: unset
@@ -380,7 +394,7 @@ Core defaults are centralized and applied consistently in both CLI mode and conf
 
 **Configuration Precedence:**
 
-When `-c/--config-file` is provided, other CLI flags are ignored with a warning.
+`ghostparser.orchestrator` supports `-c/--config-file`; `tree_parser` and `triplet_processor` accept CLI parameters.
 
 ---
 

@@ -44,7 +44,6 @@ def _species_triplet_map(triplets):
 
 def _tree_parser_args(**overrides):
     base = {
-        "config_file": None,
         "species_tree_path": "species.nwk",
         "gene_trees_path": "genes.nwk",
         "outgroups": "Out1,Out2",
@@ -53,6 +52,7 @@ def _tree_parser_args(**overrides):
         "triplet_output_format": None,
         "parquet_partitions": None,
         "parquet_compression": None,
+        "min_support_value": None,
         "processes": None,
         "no_multiprocessing": False,
     }
@@ -77,90 +77,9 @@ def test_resolve_runtime_args_tree_parser_cli_processes(processes, expected_proc
     assert resolved.processes == expected_processes
 
 
-def test_resolve_runtime_args_tree_parser_config_warns_and_ignores(tmp_path, capsys):
-    config_path = tmp_path / "tree_parser_config.json"
-    config_path.write_text(
-        """
-{
-  "species_tree_path": "s.nwk",
-  "gene_trees_path": "g.nwk",
-  "outgroup": "OutA",
-  "processes": 3,
-  "no_multiprocessing": true,
-  "min_support_value": 0.7
-}
-""".strip()
-    )
-
-    args = argparse.Namespace(
-        config_file=str(config_path),
-        species_tree_path="species.nwk",
-        gene_trees_path=None,
-        outgroups=None,
-        triplet_filter=None,
-        output_folder=None,
-        triplet_output_format=None,
-        parquet_partitions=None,
-        parquet_compression=None,
-        processes=None,
-        no_multiprocessing=False,
-    )
-
-    resolved = _resolve_runtime_args(args)
-    captured = capsys.readouterr()
-
-    assert "Warning: --config-file provided; CLI arguments not in config will be ignored" in captured.out
-    # Paths are resolved to absolute paths
-    assert resolved.species_tree == str(Path("s.nwk").resolve())
-    assert resolved.gene_trees == str(Path("g.nwk").resolve())
-    assert resolved.outgroup == ["OutA"]
-    assert resolved.processes == 3
-    assert resolved.no_multiprocessing is True
-    assert resolved.min_support_value == 0.7
-
-
-@pytest.mark.parametrize(
-    "config_body,expected_processes",
-    [
-        (
-            """
-{
-  "species_tree_path": "s.nwk",
-  "gene_trees_path": "g.nwk",
-  "outgroup": "OutA",
-  "processes": 3,
-  "no_multiprocessing": true,
-  "min_support_value": 0.7
-}
-""".strip(),
-            3,
-        ),
-        (
-            """
-{
-  "species_tree_path": "s.nwk",
-  "gene_trees_path": "g.nwk",
-  "outgroup": "OutA"
-}
-""".strip(),
-            0,
-        ),
-    ],
-)
-def test_resolve_runtime_args_tree_parser_config_processes_behavior(tmp_path, config_body, expected_processes):
-    config_path = tmp_path / "tree_parser_config_processes.json"
-    config_path.write_text(config_body)
-
-    resolved = _resolve_runtime_args(
-        _tree_parser_args(
-            config_file=str(config_path),
-            species_tree_path=None,
-            gene_trees_path=None,
-            outgroups=None,
-            processes=9,
-        )
-    )
-    assert resolved.processes == expected_processes
+def test_resolve_runtime_args_tree_parser_cli_min_support_override():
+    resolved = _resolve_runtime_args(_tree_parser_args(min_support_value=0.75))
+    assert resolved.min_support_value == 0.75
 
 # ============================================================================
 # Fixtures
@@ -355,29 +274,24 @@ def test_format_newick_with_custom_precision(simple_newick_file):
 # ============================================================================
 
 
-def test_write_clean_trees(simple_newick_file, tmp_path):
-    """Test writing cleaned trees to a file."""
-    trees = read_tree_file(str(simple_newick_file))
+@pytest.mark.parametrize(
+    "input_fixture_name,expected_count",
+    [
+        ("simple_newick_file", 1),
+        ("multiple_trees_file", 3),
+    ],
+)
+def test_write_clean_trees_outputs_expected_tree_count(request, input_fixture_name, expected_count, tmp_path):
+    """Test writing cleaned trees preserves tree count for single and multiple inputs."""
+    input_file = request.getfixturevalue(input_fixture_name)
+    trees = read_tree_file(str(input_file))
     output_file = tmp_path / "output_trees.nwk"
 
     write_clean_trees(trees, str(output_file))
 
     assert output_file.exists()
-
-    # Verify the output file contains valid Newick
     output_trees = read_tree_file(str(output_file))
-    assert len(output_trees) == len(trees)
-
-
-def test_write_clean_trees_multiple(multiple_trees_file, tmp_path):
-    """Test writing multiple cleaned trees to a file."""
-    trees = read_tree_file(str(multiple_trees_file))
-    output_file = tmp_path / "output_trees.nwk"
-
-    write_clean_trees(trees, str(output_file))
-
-    output_trees = read_tree_file(str(output_file))
-    assert len(output_trees) == 3
+    assert len(output_trees) == expected_count
 
 
 # ============================================================================
@@ -548,28 +462,18 @@ def test_write_triplets_to_file_empty(tmp_path):
 # ============================================================================
 
 
-def test_get_clean_filename_simple():
-    """Test generating clean filename."""
-    filepath = "/path/to/tree.nwk"
+@pytest.mark.parametrize(
+    "filepath,expected",
+    [
+        ("/path/to/tree.nwk", "/path/to/processed_tree.nwk"),
+        ("/path/to/mytrees.txt", "/path/to/processed_mytrees.txt"),
+        ("/path/to/treefile", "/path/to/processed_treefile"),
+    ],
+)
+def test_get_clean_filename_variants(filepath, expected):
+    """Test generating clean filenames across extension variants."""
     clean_filepath = get_clean_filename(filepath)
-
-    assert clean_filepath == "/path/to/processed_tree.nwk"
-
-
-def test_get_clean_filename_different_extension():
-    """Test clean filename with different extension."""
-    filepath = "/path/to/mytrees.txt"
-    clean_filepath = get_clean_filename(filepath)
-
-    assert clean_filepath == "/path/to/processed_mytrees.txt"
-
-
-def test_get_clean_filename_no_extension():
-    """Test clean filename for file without extension."""
-    filepath = "/path/to/treefile"
-    clean_filepath = get_clean_filename(filepath)
-
-    assert clean_filepath == "/path/to/processed_treefile"
+    assert clean_filepath == expected
 
 
 # ============================================================================
