@@ -1,17 +1,14 @@
 # Changelog
 
-## v0.0.3 (alpha)
 
-- Added `--p-value-correction` option for all p-values used in summary statistics across triplets.
-- Default p-value correction: `no`.
-- Supported correction options: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
-- Output records include both original and corrected p-values, with dynamic corrected-column names (for example `dct_p_val_fdr_bh_corr`).
-- Inference uses corrected p-values; original p-values are retained for reporting.
-- Randomized parity tests validate custom correction implementations against the standard backend.
+## v0.1.1 - Unreleased
 
-## v0.0.4 (alpha) - April 1, 2026
+- Changed default `alpha_dct` from `0.01` to `0.05` across orchestrator/runtime defaults.
+- Changed default `bootstrap` from `false` to `true` across orchestrator/runtime defaults.
+- Changed CLI architecture so config-file mode remains only in `ghostparser.orchestrator`.
+- Changed `ghostparser.tree_parser` and `ghostparser.triplet_processor` entry points to CLI-only runtime resolution with required core inputs.
+- Updated tests and documentation.
 
-- Corrected versioning of releases for consistency between setup.py and GitHub tags.
 
 ## v0.1.0 - April 20, 2026
 
@@ -50,10 +47,17 @@
 - Updated orchestrator pipeline wiring so extraction format settings are passed end-to-end (format-aware writer selection and matching inference input format).
 - Added `pyarrow>=15.0` as a required dependency for parquet IO and updated focused tests to cover parquet writing, parquet parsing/analysis, and config/runtime default handling.
 
-## v0.1.1 - Unreleased
 
-- Changed default `alpha_dct` from `0.01` to `0.05` across orchestrator/runtime defaults.
-- Changed default `bootstrap` from `false` to `true` across orchestrator/runtime defaults.
-- Changed CLI architecture so config-file mode remains only in `ghostparser.orchestrator`.
-- Changed `ghostparser.tree_parser` and `ghostparser.triplet_processor` entry points to CLI-only runtime resolution with required core inputs.
-- Updated tests and documentation.
+## v0.0.4 (alpha) - April 1, 2026
+
+- Corrected versioning of releases for consistency between setup.py and GitHub tags.
+
+
+## v0.0.3 (alpha)
+
+- Added `--p-value-correction` option for all p-values used in summary statistics across triplets.
+- Default p-value correction: `no`.
+- Supported correction options: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
+- Output records include both original and corrected p-values, with dynamic corrected-column names (for example `dct_p_val_fdr_bh_corr`).
+- Inference uses corrected p-values; original p-values are retained for reporting.
+- Randomized parity tests validate custom correction implementations against the standard backend.
