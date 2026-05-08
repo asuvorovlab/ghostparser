@@ -50,6 +50,7 @@ DEFAULT_BOOTSTRAP_ITERATIONS = 100
 DEFAULT_BOOTSTRAP_DEBUG_MODE = False
 DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
 DEFAULT_GENERATE_SUMMARY_STATS = False
+DEFAULT_CONSOLIDATION = True
 DEFAULT_TRIPLET_OUTPUT_FORMAT = "parquet"
 DEFAULT_INPUT_FORMAT = "parquet"
 DEFAULT_PARQUET_PARTITIONS = 128
@@ -285,6 +286,11 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
             payload,
             "generate_summary_stats",
             DEFAULT_GENERATE_SUMMARY_STATS,
+        ),
+        "consolidation": _validate_optional_bool(
+            payload,
+            "consolidation",
+            DEFAULT_CONSOLIDATION,
         ),
         "min_support_value": _validate_optional_float(payload, "min_support_value", DEFAULT_MIN_SUPPORT_VALUE),
         "discordant_test": _validate_choice(
