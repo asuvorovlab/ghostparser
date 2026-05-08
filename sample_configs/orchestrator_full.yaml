@@ -7,6 +7,7 @@ output_folder: ./results
 processes: 0
 triplet_filter: data/asuv21/asuv_all/triplet_filter.txt
 min_support_value: 0.5
+consolidation: true
 discordant_test: chi-square
 summary_statistic: median
 stats_backend: standard
