@@ -1,6 +1,6 @@
 # Configuration Guide
 
-This guide is organized around the main pipeline entry point, `ghostparser.orchestrator`, and then the two submodules (`tree_parser`, `triplet_processor`).
+This guide is organized around the main pipeline entry point, `ghostparser.orchestrator`, and then the three submodules (`tree_parser`, `triplet_processor`, `introgression_mapper`).
 Only `ghostparser.orchestrator` supports config files.
 
 ## Path Resolution
@@ -190,6 +190,20 @@ outgroup: Taxon1,Taxon2
 - Description: writes `summary_statistics.tsv` when enabled.
 - Default: `false`.
 
+##### `consolidation`
+
+- Type: boolean
+- Parallel CLI: `--no-consolidation` (disable switch)
+- Description: controls the introgression consolidation stage that generates heatmap/bar-chart artifacts from in-memory triplet results.
+- Default: `true`.
+- Consolidation artifacts:
+  - `introgression_combined.png` — single combined figure with inflow/outflow heatmap and ghost bar chart.
+  - `introgression_matrix_inflow_outflow.tsv`
+  - `introgression_ghost_target_strength.tsv`
+  - `introgression_taxa_order.tsv`
+- Average bootstrap values in the artifacts use population-level co-occurrence denominators; see [Additional Outputs from Orchestrator Run](ghostparser/ORCHESTRATOR.md#additional-outputs-from-orchestrator-run) for details.
+- Outgroup taxa are automatically excluded from all consolidation plots and TSVs.
+
 ##### `min_support_value`
 
 - Type: number
@@ -328,6 +342,7 @@ python -m ghostparser.orchestrator \
   --parquet-compression zstd \
   --processes 8 \
   --generate-summary-stats \
+  --no-consolidation \
   --min-support-value 0.6 \
   --discordant-test z-test \
   --summary-statistic mean \
@@ -565,6 +580,52 @@ python -m ghostparser.triplet_processor \
   --bootstrap-iterations 100 \
   --processes 8
 ```
+
+---
+
+## Introgression Mapper (CLI Submodule)
+
+`ghostparser.introgression_mapper` can be run independently to regenerate consolidation artifacts from an existing `orchestrator_triplet_results.tsv` without re-running the full pipeline.
+
+### CLI Options
+
+#### Required
+
+##### `-r`, `--results-tsv`
+
+- Description: path to `orchestrator_triplet_results.tsv` produced by the orchestrator.
+
+##### `-st`, `--species-tree-path`
+
+- Description: path to the processed species tree file (Newick) used for taxon ordering.
+
+##### `-o`, `--output-dir`
+
+- Description: directory to write output plots and TSVs.
+
+#### Optional
+
+##### `-og`, `--outgroups`
+
+- Description: comma-separated outgroup taxon names to exclude from all plots and TSVs.
+- Example: `--outgroups OutGroup1,OutGroup2`
+
+### Introgression Mapper CLI Example
+
+```bash
+python -m ghostparser.introgression_mapper \
+  --results-tsv results/orchestrator_triplet_results.tsv \
+  --species-tree-path results/processed_species.tree \
+  --output-dir results/ \
+  --outgroups Ephemera_danica,Isonychia_kiangsinensis
+```
+
+### Outputs
+
+- `introgression_combined.png` — combined inflow/outflow heatmap and ghost target-strength bar chart.
+- `introgression_matrix_inflow_outflow.tsv` — target × source matrix of average bootstrap support values.
+- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support.
+- `introgression_taxa_order.tsv` — ordered taxa list matching the plot axes.
 
 ---
 
