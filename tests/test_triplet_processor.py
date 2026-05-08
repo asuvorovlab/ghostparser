@@ -430,14 +430,16 @@ def test_analyze_triplet_gene_tree_file_with_multiprocessing(tmp_path):
     input_file = tmp_path / "unique_triplets_gene_trees.txt"
     input_file.write_text(content)
 
-    results = analyze_triplet_gene_tree_file(
+    results, worker_cpu_seconds = analyze_triplet_gene_tree_file(
         str(input_file),
         use_multiprocessing=True,
         processes=2,
+        return_worker_cpu=True,
     )
 
     assert len(results) == 1
     assert results[0].analyzed_trees == 3
+    assert worker_cpu_seconds >= 0.0
 
 
 @pytest.mark.parametrize(
@@ -807,7 +809,10 @@ def test_write_pipeline_results_adds_bootstrap_columns_when_enabled(tmp_path):
     assert "bootstrap_gene_tree_heights" in header
     all_bootstrap_idx = header.index("all_bootstrap")
     heights_idx = header.index("bootstrap_gene_tree_heights")
-    assert row[all_bootstrap_idx].startswith("{")
+    all_bootstrap_cell = row[all_bootstrap_idx]
+    # all_bootstrap is now formatted as "classification=value,..." not JSON
+    assert "=" in all_bootstrap_cell
+    assert not all_bootstrap_cell.startswith("{")
     assert row[heights_idx].startswith("{")
 
 
