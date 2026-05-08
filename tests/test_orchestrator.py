@@ -28,6 +28,7 @@ def _orchestrator_args(tmp_path, **overrides):
         "parquet_compression": None,
         "processes": 0,
         "generate_summary_stats": None,
+        "consolidation": None,
         "min_support_value": None,
         "discordant_test": None,
         "summary_statistic": None,
@@ -124,6 +125,7 @@ def test_resolve_runtime_args_cli_defaults_and_overrides(
     assert resolved.parquet_compression == "zstd"
     assert resolved.processes == expected_processes
     assert resolved.generate_summary_stats is False
+    assert resolved.consolidation is True
     assert resolved.min_support_value == 0.5
     assert resolved.discordant_test == "chi-square"
     assert resolved.summary_statistic == "median"
@@ -154,6 +156,7 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
         parquet_compression="gzip",
         processes=7,
         generate_summary_stats=True,
+        consolidation=True,
         min_support_value=0.9,
         discordant_test="chi-square",
         summary_statistic="mean",
@@ -182,6 +185,7 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
     assert resolved.parquet_compression == "zstd"
     assert resolved.processes == 0
     assert resolved.generate_summary_stats is False
+    assert resolved.consolidation is True
     assert resolved.discordant_test == "chi-square"
     assert resolved.summary_statistic == "median"
     assert resolved.stats_backend == "standard"
@@ -245,6 +249,7 @@ def _runtime_args(tmp_path):
         parquet_compression="gzip",
         processes=1,
         generate_summary_stats=False,
+        consolidation=True,
         min_support_value=0.5,
         discordant_test="chi-square",
         summary_statistic="median",
@@ -295,6 +300,20 @@ def _patch_orchestrator_runtime_dependencies(monkeypatch):
     )
     monkeypatch.setattr(orchestrator_module, "write_pipeline_results", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(orchestrator_module, "write_summary_statistics_tsv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        orchestrator_module,
+        "generate_introgression_maps",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            non_ghost_plot_path="non_ghost.png",
+            ghost_plot_path="ghost.png",
+            non_ghost_matrix_tsv="non_ghost.tsv",
+            ghost_strength_tsv="ghost.tsv",
+            taxa_order_tsv="order.tsv",
+            taxa_count=3,
+            non_ghost_edge_count=1,
+            ghost_target_count=1,
+        ),
+    )
 
 
 def test_main_uses_file_backed_pipeline(tmp_path, monkeypatch):
@@ -302,20 +321,66 @@ def test_main_uses_file_backed_pipeline(tmp_path, monkeypatch):
     _patch_orchestrator_runtime_dependencies(monkeypatch)
     monkeypatch.setattr(orchestrator_module, "_resolve_runtime_args", lambda _parsed: args)
 
-    calls = {"file_extract": 0, "file_infer": 0}
+    calls = {"file_extract": 0, "file_infer": 0, "map": 0}
 
     def _file_extract_stub(*_args, **_kwargs):
         calls["file_extract"] += 1
-        return (3, 1, 1)
+        return (3, 1, 1, 0.0)
 
     def _file_infer_stub(*_args, **_kwargs):
         calls["file_infer"] += 1
-        return [SimpleNamespace()]
+        return [SimpleNamespace()], 0.0
+
+    def _map_stub(*_args, **_kwargs):
+        calls["map"] += 1
+        return SimpleNamespace(
+            non_ghost_plot_path="non_ghost.png",
+            ghost_plot_path="ghost.png",
+            non_ghost_matrix_tsv="non_ghost.tsv",
+            ghost_strength_tsv="ghost.tsv",
+            taxa_order_tsv="order.tsv",
+            taxa_count=3,
+            non_ghost_edge_count=1,
+            ghost_target_count=1,
+        )
 
     monkeypatch.setattr(orchestrator_module, "write_triplet_gene_trees_multiprocess", _file_extract_stub)
     monkeypatch.setattr(orchestrator_module, "analyze_triplet_gene_tree_file", _file_infer_stub)
+    monkeypatch.setattr(orchestrator_module, "generate_introgression_maps", _map_stub)
 
     orchestrator_module.main()
 
     assert calls["file_extract"] == 1
     assert calls["file_infer"] == 1
+    assert calls["map"] == 1
+
+
+def test_main_skips_consolidation_stage_when_disabled(tmp_path, monkeypatch):
+    args = _runtime_args(tmp_path)
+    args.consolidation = False
+    _patch_orchestrator_runtime_dependencies(monkeypatch)
+    monkeypatch.setattr(orchestrator_module, "_resolve_runtime_args", lambda _parsed: args)
+
+    calls = {"file_extract": 0, "file_infer": 0, "map": 0}
+
+    def _file_extract_stub(*_args, **_kwargs):
+        calls["file_extract"] += 1
+        return (3, 1, 1, 0.0)
+
+    def _file_infer_stub(*_args, **_kwargs):
+        calls["file_infer"] += 1
+        return [SimpleNamespace()], 0.0
+
+    def _map_stub(*_args, **_kwargs):
+        calls["map"] += 1
+        return SimpleNamespace()
+
+    monkeypatch.setattr(orchestrator_module, "write_triplet_gene_trees_multiprocess", _file_extract_stub)
+    monkeypatch.setattr(orchestrator_module, "analyze_triplet_gene_tree_file", _file_infer_stub)
+    monkeypatch.setattr(orchestrator_module, "generate_introgression_maps", _map_stub)
+
+    orchestrator_module.main()
+
+    assert calls["file_extract"] == 1
+    assert calls["file_infer"] == 1
+    assert calls["map"] == 0
