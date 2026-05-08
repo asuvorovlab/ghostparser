@@ -142,6 +142,7 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 - `--triplet-output-format`
 - `--parquet-partitions`
 - `--parquet-compression`
+- `--no-consolidation`
 
 #### Primary Outputs
 
@@ -149,6 +150,15 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 2. `orchestrator_triplet_results.tsv`
 3. `summary_statistics.tsv` (only when `--generate-summary-stats` is enabled)
 4. `metrics.txt`
+5. `introgression_heatmap_inflow_outflow.png` and `introgression_ghost_target_strength.png` (written when consolidation is enabled)
+6. `introgression_matrix_inflow_outflow.tsv`, `introgression_ghost_target_strength.tsv`, and `introgression_taxa_order.tsv`
+
+Heatmap consolidation details:
+
+- The inflow/outflow heatmap and ghost target-strength bar chart use raw values with a shared max/min/mid color legend per plot.
+- The species tree topology is stitched onto the top and left edges of the heatmap so the source and target axes read like tree labels.
+- By default, the plots use the processed species tree after outgroup pruning; when a triplet filter is supplied, the plotted tree can be pruned to the taxa represented in that filtered set.
+- Consolidation is enabled by default and can be disabled with `--no-consolidation`.
 
 ### Tree Parser (Submodule)
 
