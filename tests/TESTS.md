@@ -101,6 +101,10 @@ Expected outputs: supported values load successfully; invalid value raises `Conf
 Inputs: no `processes` key.
 Expected outputs: `processes == 0`.
 
+- `test_load_orchestrator_config_allows_disabling_consolidation`
+Inputs: config with `consolidation: false`.
+Expected outputs: normalized orchestrator config preserves `consolidation == False`.
+
 - Only orchestrator config loading is covered in `tests/test_config.py`.
 
 - `test_path_resolution_for_absolute_relative_and_home_paths` (parametrized)
@@ -119,7 +123,7 @@ Expected outputs: `(processes, use_multiprocessing)` toggles correctly (`1` disa
 
 - `test_resolve_runtime_args_cli_defaults_and_overrides` (parametrized)
 Inputs: CLI defaults and a CLI override scenario (`processes`, bootstrap options).
-Expected outputs: default statistical settings/path resolution, default parquet output settings, and preserved CLI overrides.
+Expected outputs: default statistical settings/path resolution, default parquet output settings, default `consolidation=True`, and preserved CLI overrides.
 
 - `test_resolve_runtime_args_config_with_cli_warns_and_ignores`
 Inputs: config file + conflicting CLI args.
@@ -229,7 +233,7 @@ Expected outputs: header validation, dynamic summary columns, dynamic corrected 
 
 - `test_write_pipeline_results_adds_bootstrap_columns_when_enabled`
 Inputs: bootstrap-enabled triplet result written to TSV.
-Expected outputs: base bootstrap columns (`bootstrap_value`, `all_bootstrap`) are present, debug bootstrap columns are present when debug mode is enabled, and summary-mode payload cells use JSON-style object strings.
+Expected outputs: base bootstrap columns (`bootstrap_value`, `all_bootstrap`) are present, debug bootstrap columns are present when debug mode is enabled. The `all_bootstrap` cell is formatted as comma-separated `classification=value` pairs (e.g. `no_introgression=0.5,ghost_introgression=0.5`). Debug array columns (e.g. `bootstrap_gene_tree_heights`) remain JSON-serialized.
 
 - `test_write_pipeline_results_adds_bootstrap_gene_tree_heights_when_summary_only_false`
 Inputs: bootstrap-enabled result written with debug mode enabled and `summary_only=false`.
@@ -263,8 +267,45 @@ This addendum lists tests that are intentionally grouped in the narrative sectio
 
 - Tests: `test_main_uses_file_backed_pipeline`
 Inputs: orchestrator runtime with normalized species/gene trees and triplet metadata.
-Expected outputs/behavior: orchestrator always runs file-backed triplet extraction to `unique_triplets_gene_trees.txt`, then runs inference from that file.
+Expected outputs/behavior: orchestrator always runs file-backed triplet extraction to `unique_triplets_gene_trees.txt`, then runs inference from that file, and runs consolidation stage by default.
 Purpose: verify the orchestrator executes the canonical two-stage file-backed pipeline.
+
+- Tests: `test_main_skips_consolidation_stage_when_disabled`
+Inputs: orchestrator runtime with `consolidation=False`.
+Expected outputs/behavior: extraction and inference still run, while consolidation/map generation is skipped.
+Purpose: verify configuration-controlled enable/disable behavior for consolidation artifacts.
+
+#### tests/test_introgression_mapper.py
+
+- Tests: `test_generate_introgression_maps_creates_expected_outputs`, `test_generate_introgression_maps_uses_full_species_tree_by_default`, `test_generate_introgression_maps_prunes_requested_plot_taxa`, `test_generate_introgression_maps_uses_raw_values_with_separate_scales`
+Inputs: synthetic triplet results with inflow/outflow/ghost classifications and bootstrap weights.
+Expected outputs/behavior: mapper writes expected plot/TSV artifacts, uses the full processed species tree by default, optionally prunes to requested plot taxa when supplied, average bootstrap values use population-level denominators, source taxon labels appear on top of the heatmap (between the tree strip and the heatmap cells), and the species tree strip is drawn above that.
+Purpose: validate consolidation artifact generation, plot layout semantics, and denominator correctness.
+
+- Tests: `test_generate_introgression_maps_excludes_outgroups`
+Inputs: results containing a triplet with a taxon designated as outgroup via the `outgroups` parameter.
+Expected outputs/behavior: outgroup taxon is absent from the matrix TSV column headers, ghost strength TSV rows, and the reported `taxa_count`.
+Purpose: verify that the `outgroups` parameter correctly filters taxa from all consolidation outputs.
+
+- Tests: `test_collect_counts_non_ghost_denominator_is_all_co_occurring_triplets`
+Inputs: three synthetic results — one classified inflow, one no_introgression, one unrelated triplet (ABD).
+Expected outputs/behavior: `non_ghost_counts[(C, B)]` equals 2 (both ABC rows, regardless of classification); `non_ghost_counts[(B, D)]` equals 1 (only ABD).
+Purpose: verify that the non-ghost denominator counts all triplets where both taxa co-occur, not just classified ones.
+
+- Tests: `test_collect_counts_ghost_denominator_is_all_triplets_containing_taxon`
+Inputs: three synthetic results across triplets (A,B,C) ×2 and (A,C,D) ×1.
+Expected outputs/behavior: `ghost_counts[A]` = 3, `ghost_counts[C]` = 3, `ghost_counts[D]` = 1, `ghost_counts[B]` = 2.
+Purpose: verify that the ghost denominator counts all triplets where a taxon appears in any position.
+
+- Tests: `test_collect_counts_correct_avg_in_generate_introgression_maps`
+Inputs: triplets (A,B,C) with one inflow (weight 0.6) and one no_introgression; triplet (A,B,D) with one ghost (weight 0.8).
+Expected outputs/behavior: matrix TSV cell `B←C` = 0.3 (0.6/2); ghost TSV cell `A` ≈ 0.2667 (0.8/3).
+Purpose: end-to-end verification that population-level denominators flow through to TSV output values.
+
+- Tests: `test_draw_species_tree_strip_suppresses_leaf_labels`, `test_draw_species_tree_strip_shows_leaf_labels_by_default`
+Inputs: three-taxon species tree; `show_leaf_labels=False` vs default (`True`).
+Expected outputs/behavior: with `False`, no Text artists with taxon names appear on the axis; with default `True`, one Text artist per leaf taxon is present.
+Purpose: verify the `show_leaf_labels` parameter controls leaf annotation rendering on the tree strip axis.
 
 #### tests/test_tree_parser.py
 
@@ -300,7 +341,7 @@ Purpose: verify canonical serialization format for triplet gene-tree mapping out
 
 - Tests: `test_write_triplet_gene_trees_multiprocess_with_workers`, `test_write_triplet_gene_trees_multiprocess_includes_species_header`, `test_multiprocessing_triplet_writer_handles_empty_triplets`, `test_write_triplet_gene_trees_multiprocess_triplets_single_worker`, `test_write_triplet_gene_trees_multiprocess_accepts_list`
 Inputs: multiprocess writer invocations across worker-count and input-shape variants.
-Expected outputs/behavior: output format remains valid; species header persists; empty and list-based inputs are handled safely.
+Expected outputs/behavior: output format remains valid; species header persists; empty and list-based inputs are handled safely; optional worker CPU telemetry (`return_worker_cpu=True`) returns a non-negative CPU-seconds value.
 Purpose: validate robust multiprocess mapping-file writer behavior.
 
 - Tests: `test_get_clean_filename_variants`, `test_metrics_logger_context_manager`, `test_metrics_logger_file_not_opened_before_enter`
@@ -327,7 +368,7 @@ Purpose: validate triplet inference decision logic across major branches.
 
 - Tests: `test_analyze_triplet_gene_tree_file_with_multiprocessing`, `test_parse_analyze_and_write_pipeline_roundtrip_with_species_header`, `test_collect_triplet_statistics_returns_dict_list`
 Inputs: mapping files and pipeline run settings, including multiprocessing.
-Expected outputs/behavior: analyze/parse/write pipeline roundtrips successfully and statistics collection returns expected dictionary-list structures.
+Expected outputs/behavior: analyze/parse/write pipeline roundtrips successfully, multiprocessing analysis can return optional worker CPU telemetry (`return_worker_cpu=True`) with a non-negative value, and statistics collection returns expected dictionary-list structures.
 Purpose: validate end-to-end processing API behavior.
 
 - Tests: `test_analyze_triplet_gene_tree_file_rejects_unsupported_runtime_options`, `test_parse_triplet_gene_trees_file_rejects_malformed_sections`
