@@ -2,7 +2,8 @@
 
 This module builds a single combined figure from per-triplet introgression calls
 containing a directed inflow/outflow heatmap (source x target) and a ghost
-target-strength bar chart side by side, plus companion TSV artifacts.
+target-strength bar chart side by side, plus companion TSV artifacts for raw
+bootstrap sums, supporting counts, and undiluted averages.
 """
 
 from __future__ import annotations
@@ -11,11 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import dendropy
+import seaborn as sns
 from matplotlib import pyplot as plt
+from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
-from matplotlib.cm import ScalarMappable
-import seaborn as sns
 
 
 @dataclass(frozen=True)
@@ -24,8 +25,13 @@ class IntrogressionMapArtifacts:
 
     plot_path: str
     non_ghost_matrix_tsv: str
+    non_ghost_matrix_raw_sum_tsv: str
+    non_ghost_matrix_supporting_count_tsv: str
     ghost_strength_tsv: str
+    ghost_strength_raw_sum_tsv: str
+    ghost_strength_supporting_count_tsv: str
     taxa_order_tsv: str
+    non_sister_count_tsv: str
     taxa_count: int
     non_ghost_edge_count: int
     ghost_target_count: int
@@ -55,7 +61,9 @@ def _extract_result_fields(result):
 
 def _species_tree_taxa_order(species_tree_path, allowed_taxa=None):
     """Return taxa in species-tree traversal order."""
-    tree = dendropy.Tree.get(path=str(species_tree_path), schema="newick", preserve_underscores=True)
+    tree = dendropy.Tree.get(
+        path=str(species_tree_path), schema="newick", preserve_underscores=True
+    )
     if allowed_taxa:
         tree.retain_taxa_with_labels(sorted({str(taxon) for taxon in allowed_taxa}))
     order = []
@@ -72,7 +80,9 @@ def _species_tree_taxa_order(species_tree_path, allowed_taxa=None):
 
 
 def _load_species_tree(species_tree_path, allowed_taxa=None):
-    tree = dendropy.Tree.get(path=str(species_tree_path), schema="newick", preserve_underscores=True)
+    tree = dendropy.Tree.get(
+        path=str(species_tree_path), schema="newick", preserve_underscores=True
+    )
     if allowed_taxa:
         tree.retain_taxa_with_labels(sorted({str(taxon) for taxon in allowed_taxa}))
     return tree
@@ -112,7 +122,9 @@ def _collect_weights(results):
     taxa_seen = set()
 
     for result in results:
-        triplet, classification, dis1_topology, bootstrap_value = _extract_result_fields(result)
+        triplet, classification, dis1_topology, bootstrap_value = (
+            _extract_result_fields(result)
+        )
         if not triplet or len(triplet) != 3:
             continue
         a_taxon, b_taxon, c_taxon = triplet
@@ -122,14 +134,15 @@ def _collect_weights(results):
         if weight < 0:
             continue
 
-        edge, ghost_target = _map_event(a_taxon, b_taxon, c_taxon, classification, dis1_topology)
+        edge, ghost_target = _map_event(
+            a_taxon, b_taxon, c_taxon, classification, dis1_topology
+        )
         if edge is not None:
             non_ghost[edge] = non_ghost.get(edge, 0.0) + weight
         if ghost_target is not None:
             ghost[ghost_target] = ghost.get(ghost_target, 0.0) + weight
 
     return non_ghost, ghost, taxa_seen
-
 
 
 def _build_taxa_order(species_order, taxa_seen):
@@ -177,14 +190,18 @@ def _write_ghost_strength_tsv(path, taxa_order, ghost_norm):
             out_f.write(f"{target}\t{ghost_norm.get(target, 0.0):.12g}\n")
 
 
+def _write_single_value_tsv(path, taxa_order, values, header_name):
+    with open(path, "w") as out_f:
+        out_f.write(f"target_taxon\t{header_name}\n")
+        for target in taxa_order:
+            out_f.write(f"{target}\t{values.get(target, 0.0):.12g}\n")
+
+
 def _write_taxa_order_tsv(path, taxa_order):
     with open(path, "w") as out_f:
         out_f.write("index\ttaxon\n")
         for idx, taxon in enumerate(taxa_order):
             out_f.write(f"{idx}\t{taxon}\n")
-
-
-
 
 
 def _node_edge_length(node):
@@ -246,8 +263,12 @@ def _species_tree_layout(species_tree_path, taxa_order, orientation):
     return tree, positions, max_depth, leaf_nodes
 
 
-def _draw_species_tree_strip(ax, species_tree_path, taxa_order, orientation, show_leaf_labels=True):
-    tree, positions, max_depth, leaf_nodes = _species_tree_layout(species_tree_path, taxa_order, orientation)
+def _draw_species_tree_strip(
+    ax, species_tree_path, taxa_order, orientation, show_leaf_labels=True
+):
+    tree, positions, max_depth, leaf_nodes = _species_tree_layout(
+        species_tree_path, taxa_order, orientation
+    )
     segments = []
     for node in tree.preorder_node_iter():
         parent_pos = positions[id(node)]
@@ -262,10 +283,18 @@ def _draw_species_tree_strip(ax, species_tree_path, taxa_order, orientation, sho
         for leaf in leaf_nodes:
             x_pos, y_pos = positions[id(leaf)]
             if y_pos > 0.0:
-                ax.plot([x_pos, x_pos], [y_pos, 0.0], linestyle=":", color="#666666", linewidth=0.8)
+                ax.plot(
+                    [x_pos, x_pos],
+                    [y_pos, 0.0],
+                    linestyle=":",
+                    color="#666666",
+                    linewidth=0.8,
+                )
             if show_leaf_labels:
                 label = str(leaf.taxon.label) if leaf.taxon and leaf.taxon.label else ""
-                ax.text(x_pos, -0.04, label, rotation=90, ha="center", va="top", fontsize=7)
+                ax.text(
+                    x_pos, -0.04, label, rotation=90, ha="center", va="top", fontsize=7
+                )
 
         ax.set_xlim(-0.45, len(taxa_order) - 0.55)
         ax.set_ylim(-0.9 if show_leaf_labels else 0.0, max_depth + 0.95)
@@ -282,39 +311,95 @@ def _draw_species_tree_strip(ax, species_tree_path, taxa_order, orientation, sho
     ax.set_facecolor("none")
 
 
-
-
-
 def _collect_counts(results):
     """Count triplets contributing to each average denominator.
 
-    For a directed non-ghost edge (source, target): count all triplets where
-    both source and target appear together, regardless of classification.
-
-    For a ghost target taxon: count all triplets where that taxon appears as
-    any member, regardless of classification.
+    New behavior (undiluted consolidation):
+    - For a directed non-ghost edge (source, target): count only triplets
+      where the inference actually produced that directed edge (i.e. supporting
+      classifications).
+    - For a ghost target taxon: count only triplets classified as
+      `ghost_introgression` for that taxon.
+    Returns two dicts: `non_ghost_counts` and `ghost_counts` with supporting
+    counts for each edge/taxon.
     """
     non_ghost_counts = {}
     ghost_counts = {}
     for result in results:
-        triplet, _classification, _dis1_topology, _bootstrap_value = _extract_result_fields(result)
+        triplet, classification, dis1_topology, _bootstrap_value = (
+            _extract_result_fields(result)
+        )
         if not triplet or len(triplet) != 3:
             continue
         a_taxon, b_taxon, c_taxon = triplet
-        taxa = (a_taxon, b_taxon, c_taxon)
-        taxa_set = set(taxa)
 
-        # Every directed pair co-present in this triplet
-        for x in taxa:
-            for y in taxa:
-                if x != y:
-                    non_ghost_counts[(x, y)] = non_ghost_counts.get((x, y), 0) + 1
-
-        # Every taxon present in this triplet
-        for t in taxa_set:
-            ghost_counts[t] = ghost_counts.get(t, 0) + 1
+        # Map the event for this row; only increment counts when the row
+        # produced a supporting non-ghost edge or a ghost target.
+        edge, ghost_target = _map_event(
+            a_taxon, b_taxon, c_taxon, classification, dis1_topology
+        )
+        if edge is not None:
+            non_ghost_counts[edge] = non_ghost_counts.get(edge, 0) + 1
+        if ghost_target is not None:
+            ghost_counts[ghost_target] = ghost_counts.get(ghost_target, 0) + 1
 
     return non_ghost_counts, ghost_counts
+
+
+def _collect_non_sister_counts(results):
+    """Count, for each unordered pair of taxa, how many triplets containing
+    both have them as non-sister species.
+
+    In every triplet ``(A, B, C)`` the convention is that A and B are sisters
+    in the species tree, so:
+    - The pair ``{A, B}`` is a *sister* pair in this triplet.
+    - The pairs ``{A, C}`` and ``{B, C}`` are *non-sister* pairs.
+
+    Returns a dict mapping canonical (sorted) 2-tuples of taxon names to
+    integer counts.
+    """
+    non_sister_counts = {}
+    for result in results:
+        triplet, _classification, _dis1_topology, _bootstrap_value = (
+            _extract_result_fields(result)
+        )
+        if not triplet or len(triplet) != 3:
+            continue
+        a_taxon, b_taxon, c_taxon = triplet
+
+        # (A, B) are sisters — only the non-sister pairs get incremented.
+        for sp1, sp2 in ((a_taxon, c_taxon), (b_taxon, c_taxon)):
+            key = (sp1, sp2) if sp1 < sp2 else (sp2, sp1)
+            non_sister_counts[key] = non_sister_counts.get(key, 0) + 1
+
+    return non_sister_counts
+
+
+def _build_non_sister_matrix(taxa_order, non_sister_counts):
+    """Build a symmetric pairwise non-sister count matrix in taxa order."""
+    matrix = []
+    for row_taxon in taxa_order:
+        row = []
+        for col_taxon in taxa_order:
+            if row_taxon == col_taxon:
+                row.append(0)
+            else:
+                key = (
+                    (row_taxon, col_taxon)
+                    if row_taxon < col_taxon
+                    else (col_taxon, row_taxon)
+                )
+                row.append(non_sister_counts.get(key, 0))
+        matrix.append(row)
+    return matrix
+
+
+def _write_non_sister_matrix_tsv(path, taxa_order, matrix):
+    with open(path, "w") as out_f:
+        out_f.write("taxon\t" + "\t".join(taxa_order) + "\n")
+        for idx, row_taxon in enumerate(taxa_order):
+            row_values = [str(value) for value in matrix[idx]]
+            out_f.write(row_taxon + "\t" + "\t".join(row_values) + "\n")
 
 
 def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
@@ -324,10 +409,9 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
       heatmap (with species tree on top) | centered target labels | ghost bar | colorbar
     """
     from matplotlib.gridspec import GridSpec
-    import numpy as np
 
     norm = Normalize(vmin=0.0, vmax=1.0)
-    cmap = plt.get_cmap("rainbow")
+    cmap = plt.get_cmap("PuBuGn")
     label_fontsize = 9
     n = len(taxa_order)
 
@@ -346,14 +430,18 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     temp_fig = plt.figure(figsize=(6, 2))
     temp_fig.canvas.draw()
     renderer = temp_fig.canvas.get_renderer()
-    max_lw_px = 0        # width at label_fontsize  → used for side label panel
-    max_tick_lw_px = 0   # width at tick_fontsize   → when rotated 90° this becomes height
+    max_lw_px = 0  # width at label_fontsize  → used for side label panel
+    max_tick_lw_px = (
+        0  # width at tick_fontsize   → when rotated 90° this becomes height
+    )
     for lbl in taxa_order:
         t = temp_fig.text(0, 0, lbl, fontsize=label_fontsize)
         max_lw_px = max(max_lw_px, t.get_window_extent(renderer=renderer).width)
         t.remove()
         t = temp_fig.text(0, 0, lbl, fontsize=tick_fontsize)
-        max_tick_lw_px = max(max_tick_lw_px, t.get_window_extent(renderer=renderer).width)
+        max_tick_lw_px = max(
+            max_tick_lw_px, t.get_window_extent(renderer=renderer).width
+        )
         t.remove()
     dpi = temp_fig.dpi
     plt.close(temp_fig)
@@ -362,13 +450,17 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     label_panel_w = max(1.2, min(8.0, (max_lw_px / dpi) + pad_inches))
     bar_panel_w = 3.0
     cbar_w = 0.45
-    fig_width = min(40.0, max(8.0, heatmap_width + label_panel_w + bar_panel_w + cbar_w + 1.0))
+    fig_width = min(
+        40.0, max(8.0, heatmap_width + label_panel_w + bar_panel_w + cbar_w + 1.0)
+    )
 
     # --- measured label height drives the dedicated label-strip row ---
     # When rotated 90°, pixel-width of the longest label becomes the required row height.
     # Add explicit top and bottom padding so labels are not flush against adjacent rows.
-    src_top_pad = 5.0 / 72.0   # inches of whitespace above the text (gap from tree bottom)
-    src_bot_pad = 9.0 / 72.0   # inches of whitespace below the text (gap to heatmap top)
+    src_top_pad = (
+        5.0 / 72.0
+    )  # inches of whitespace above the text (gap from tree bottom)
+    src_bot_pad = 9.0 / 72.0  # inches of whitespace below the text (gap to heatmap top)
     show_src_labels = n <= 120
     if show_src_labels:
         label_strip_h = max(0.4, max_tick_lw_px / dpi + src_top_pad + src_bot_pad)
@@ -394,7 +486,7 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     ax_tree_right = fig.add_subplot(gs[0, 1:])
     ax_tree_right.axis("off")
 
-    ax_src_labels = fig.add_subplot(gs[1, 0])   # dedicated source-taxon label strip
+    ax_src_labels = fig.add_subplot(gs[1, 0])  # dedicated source-taxon label strip
     ax_src_right = fig.add_subplot(gs[1, 1:])
     ax_src_right.axis("off")
 
@@ -404,7 +496,9 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     ax_cbar = fig.add_subplot(gs[2, 3])
 
     # --- species tree strip (no leaf labels — label strip below handles them) ---
-    _draw_species_tree_strip(ax_tree, species_tree_path, taxa_order, "top", show_leaf_labels=False)
+    _draw_species_tree_strip(
+        ax_tree, species_tree_path, taxa_order, "top", show_leaf_labels=False
+    )
 
     # --- source-taxon label strip ---
     # x range matches seaborn's heatmap column centres: 0..n in data coords,
@@ -420,12 +514,15 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
         y_text = 1.0 - src_top_pad / label_strip_h  # shift down by top-pad fraction
         for i, taxon in enumerate(taxa_order):
             ax_src_labels.text(
-                i + 0.5, y_text, taxon,
-                rotation=90, ha="center", va="top",
+                i + 0.5,
+                y_text,
+                taxon,
+                rotation=90,
+                ha="center",
+                va="top",
                 fontsize=src_fontsize,
                 clip_on=False,
             )
-
 
     # --- heatmap ---
     n_cols = len(taxa_order)
@@ -436,14 +533,15 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
         norm=norm,
         xticklabels=False,
         yticklabels=False,
-        linewidths=0,
+        linewidths=0.5,
+        linecolor="white",
         cbar=False,
     )
     ax_heat.set_ylabel("Target taxon")
     ax_heat.set_xlabel("Sampled Introgression", fontweight="bold")
-    ax_heat.tick_params(axis="x", bottom=False, labelbottom=False, top=False, labeltop=False)
-
-
+    ax_heat.tick_params(
+        axis="x", bottom=False, labelbottom=False, top=False, labeltop=False
+    )
 
     # --- centered target labels between heatmap and bar ---
     for spine in ax_label.spines.values():
@@ -454,7 +552,9 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     ax_label.set_ylim(n, 0)
     ax_label.set_yticks([i + 0.5 for i in range(n)])
     ax_label.set_yticklabels(taxa_order, fontsize=label_fontsize)
-    ax_label.tick_params(axis="y", left=False, right=False, labelleft=True, length=0, pad=0)
+    ax_label.tick_params(
+        axis="y", left=False, right=False, labelleft=True, length=0, pad=0
+    )
     for tick in ax_label.get_yticklabels():
         tick.set_horizontalalignment("center")
         tick.set_x(0.5)
@@ -473,7 +573,9 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     ax_bar.set_xlim(0.0, 1.0)
     ax_bar.set_ylim(n, 0)
     ax_bar.set_xlabel("Ghost Introgression", fontweight="bold")
-    ax_bar.tick_params(axis="y", left=False, right=False, labelleft=False, labelright=False)
+    ax_bar.tick_params(
+        axis="y", left=False, right=False, labelleft=False, labelright=False
+    )
     for spine in ax_bar.spines.values():
         spine.set_visible(False)
     ax_bar.spines["bottom"].set_visible(True)
@@ -491,8 +593,9 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     plt.close(fig)
 
 
-
-def generate_introgression_maps(results, species_tree_path, output_dir, plot_taxa=None, outgroups=None):
+def generate_introgression_maps(
+    results, species_tree_path, output_dir, plot_taxa=None, outgroups=None
+):
     """Generate non-ghost heatmap and ghost target-strength bar plot.
 
     Args:
@@ -518,7 +621,7 @@ def generate_introgression_maps(results, species_tree_path, output_dir, plot_tax
     # compute occurrence counts so we can average bootstrap weights
     non_ghost_counts, ghost_counts = _collect_counts(results)
 
-    # build averaged matrices (values normalized to 0..1 by averaging bootstraps)
+    # build averaged matrices (raw sums, supporting counts, and undiluted averages)
     avg_non_ghost = {}
     for edge, total in non_ghost_weights.items():
         cnt = non_ghost_counts.get(edge, 0)
@@ -529,27 +632,78 @@ def generate_introgression_maps(results, species_tree_path, output_dir, plot_tax
         cnt = ghost_counts.get(taxon, 0)
         avg_ghost[taxon] = (total / cnt) if cnt > 0 else 0.0
 
-    matrix = _build_non_ghost_matrix(taxa_order, avg_non_ghost)
+    raw_non_ghost_matrix = _build_non_ghost_matrix(taxa_order, non_ghost_weights)
+    supporting_non_ghost_matrix = _build_non_ghost_matrix(taxa_order, non_ghost_counts)
+    avg_non_ghost_matrix = _build_non_ghost_matrix(taxa_order, avg_non_ghost)
+    raw_ghost_values = {taxon: ghost_weights.get(taxon, 0.0) for taxon in taxa_order}
+    supporting_ghost_values = {
+        taxon: ghost_counts.get(taxon, 0) for taxon in taxa_order
+    }
 
     combined_plot = output_path / "introgression_combined.png"
-    non_ghost_tsv = output_path / "introgression_matrix_inflow_outflow.tsv"
-    ghost_tsv = output_path / "introgression_ghost_target_strength.tsv"
-    taxa_order_tsv = output_path / "introgression_taxa_order.tsv"
 
-    _write_non_ghost_matrix_tsv(non_ghost_tsv, taxa_order, matrix)
+    # ensure consolidation_data subfolder for TSV artifacts
+    consolidation_dir = output_path / "consolidation_data"
+    consolidation_dir.mkdir(parents=True, exist_ok=True)
+
+    non_ghost_tsv = consolidation_dir / "introgression_matrix_inflow_outflow.tsv"
+    non_ghost_raw_sum_tsv = (
+        consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv"
+    )
+    non_ghost_supporting_count_tsv = (
+        consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv"
+    )
+    ghost_tsv = consolidation_dir / "introgression_ghost_target_strength.tsv"
+    ghost_raw_sum_tsv = (
+        consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv"
+    )
+    ghost_supporting_count_tsv = (
+        consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv"
+    )
+    taxa_order_tsv = consolidation_dir / "introgression_taxa_order.tsv"
+    non_sister_count_tsv = (
+        consolidation_dir / "introgression_matrix_sampled_non_sister.tsv"
+    )
+
+    _write_non_ghost_matrix_tsv(non_ghost_raw_sum_tsv, taxa_order, raw_non_ghost_matrix)
+    _write_non_ghost_matrix_tsv(
+        non_ghost_supporting_count_tsv, taxa_order, supporting_non_ghost_matrix
+    )
+    non_ghost_tsv = consolidation_dir / "introgression_matrix_inflow_outflow.tsv"
+    _write_non_ghost_matrix_tsv(non_ghost_tsv, taxa_order, avg_non_ghost_matrix)
+    _write_single_value_tsv(ghost_raw_sum_tsv, taxa_order, raw_ghost_values, "raw_sum")
+    _write_single_value_tsv(
+        ghost_supporting_count_tsv,
+        taxa_order,
+        supporting_ghost_values,
+        "supporting_count",
+    )
     _write_ghost_strength_tsv(ghost_tsv, taxa_order, avg_ghost)
     _write_taxa_order_tsv(taxa_order_tsv, taxa_order)
 
-    _plot_combined(combined_plot, species_tree_path, taxa_order, matrix, avg_ghost)
+    non_sister_counts = _collect_non_sister_counts(results)
+    non_sister_matrix = _build_non_sister_matrix(taxa_order, non_sister_counts)
+    _write_non_sister_matrix_tsv(non_sister_count_tsv, taxa_order, non_sister_matrix)
+
+    _plot_combined(
+        combined_plot, species_tree_path, taxa_order, avg_non_ghost_matrix, avg_ghost
+    )
 
     return IntrogressionMapArtifacts(
         plot_path=str(combined_plot),
         non_ghost_matrix_tsv=str(non_ghost_tsv),
+        non_ghost_matrix_raw_sum_tsv=str(non_ghost_raw_sum_tsv),
+        non_ghost_matrix_supporting_count_tsv=str(non_ghost_supporting_count_tsv),
         ghost_strength_tsv=str(ghost_tsv),
+        ghost_strength_raw_sum_tsv=str(ghost_raw_sum_tsv),
+        ghost_strength_supporting_count_tsv=str(ghost_supporting_count_tsv),
         taxa_order_tsv=str(taxa_order_tsv),
+        non_sister_count_tsv=str(non_sister_count_tsv),
         taxa_count=len(taxa_order),
         non_ghost_edge_count=len(non_ghost_weights),
-        ghost_target_count=len([taxon for taxon, value in ghost_weights.items() if value > 0.0]),
+        ghost_target_count=len(
+            [taxon for taxon, value in ghost_weights.items() if value > 0.0]
+        ),
     )
 
 
@@ -564,9 +718,24 @@ def _build_standalone_parser():
     parser = _argparse.ArgumentParser(
         description="Generate introgression maps from a GhostParser orchestrator results TSV."
     )
-    parser.add_argument("-r", "--results-tsv", required=True, help="Path to orchestrator_triplet_results.tsv")
-    parser.add_argument("-st", "--species-tree-path", required=True, help="Path to the processed species tree (Newick)")
-    parser.add_argument("-o", "--output-dir", required=True, help="Directory to write output plots and TSVs")
+    parser.add_argument(
+        "-r",
+        "--results-tsv",
+        required=True,
+        help="Path to orchestrator_triplet_results.tsv",
+    )
+    parser.add_argument(
+        "-st",
+        "--species-tree-path",
+        required=True,
+        help="Path to the processed species tree (Newick)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output-dir",
+        required=True,
+        help="Directory to write output plots and TSVs",
+    )
     parser.add_argument(
         "-og",
         "--outgroups",
@@ -587,6 +756,7 @@ def _read_results_tsv(path):
     rows = []
     with open(path, newline="") as fh:
         import csv
+
         reader = csv.DictReader(fh, delimiter="\t")
         for row in reader:
             rows.append(dict(row))
@@ -609,5 +779,14 @@ if __name__ == "__main__":
     print(f"Ghost targets with signal: {_artifacts.ghost_target_count}")
     print(f"Combined plot:             {_artifacts.plot_path}")
     print(f"Non-ghost matrix TSV:      {_artifacts.non_ghost_matrix_tsv}")
+    print(f"Non-ghost raw sum TSV:     {_artifacts.non_ghost_matrix_raw_sum_tsv}")
+    print(
+        f"Non-ghost count TSV:       {_artifacts.non_ghost_matrix_supporting_count_tsv}"
+    )
     print(f"Ghost strength TSV:        {_artifacts.ghost_strength_tsv}")
+    print(f"Ghost raw sum TSV:         {_artifacts.ghost_strength_raw_sum_tsv}")
+    print(
+        f"Ghost count TSV:           {_artifacts.ghost_strength_supporting_count_tsv}"
+    )
     print(f"Taxa order TSV:            {_artifacts.taxa_order_tsv}")
+    print(f"Non-sister count TSV:      {_artifacts.non_sister_count_tsv}")
