@@ -267,9 +267,13 @@ How to read this example quickly:
 - `orchestrator_triplet_results.tsv`
 - `metrics.txt`
 - `introgression_combined.png`
-- `introgression_matrix_inflow_outflow.tsv`
-- `introgression_ghost_target_strength.tsv`
-- `introgression_taxa_order.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow_raw_sum.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow_supporting_count.tsv`
+- `consolidation_data/introgression_ghost_target_strength.tsv`
+- `consolidation_data/introgression_ghost_target_strength_raw_sum.tsv`
+- `consolidation_data/introgression_ghost_target_strength_supporting_count.tsv`
+- `consolidation_data/introgression_taxa_order.tsv`
 
 Combined plot layout and consolidation integration:
 
@@ -279,9 +283,9 @@ Combined plot layout and consolidation integration:
 - The inflow/outflow heatmap and the ghost target-strength bar chart are combined into a single figure (`introgression_combined.png`).
 - The species tree topology strip is drawn on top of the heatmap. Source taxon labels appear at the top of the heatmap with dynamically computed spacing.
 - Target taxon labels are centered between the heatmap and the bar chart. A single shared colorbar covers both panels.
-- Average bootstrap values use population-level co-occurrence denominators:
-  - Sampled introgression (source → target): `sum(bootstrap weights) / count(all triplets containing both source and target)`.
-  - Ghost introgression (target taxon): `sum(bootstrap weights) / count(all triplets containing that taxon)`.
+- Average bootstrap values use supporting-triplet denominators:
+    - Sampled introgression (source → target): `sum(bootstrap weights) / count(triplets that produced that directed edge)`.
+    - Ghost introgression (target taxon): `sum(bootstrap weights) / count(triplets that produced that ghost target)`.
 - Disable with `--no-consolidation` or `consolidation: false`; consolidation artifacts are then skipped entirely.
 
 ## Notes on Parallelism
