@@ -49,10 +49,23 @@ The scripts in this folder are lightweight utilities for repetitive data-prep an
         --bins 100
       ```
 
+- `run_orchestrator_parent_dir.py`
+    - Iterates all immediate subdirectories under a provided parent directory.
+    - Derives per-folder `GENE_TREES` as `<folder>/trees_subst_1.tre` by default.
+    - Derives per-folder `OUT_DIR` as `<folder>/bfn_correction_results` by default.
+    - Invokes `ghostparser.orchestrator` for each folder with hardcoded-style defaults for species tree and outgroup.
+    - Example usage:
+
+      ```bash
+      python3 scripts/run_orchestrator_parent_dir.py \
+        --parent-dir /projects/asuvorov/ghostparser_shared/simulations_64way/all_simulations/simulation_110110
+      ```
+
 For full CLI options and argument descriptions, run `--help` for any helper script:
 
 ```bash
 python3 scripts/consolidate_tabular_files.py --help
 python3 scripts/profile_stats_methods.py --help
 python3 scripts/plot_triplet_tree_heights.py --help
+python3 scripts/run_orchestrator_parent_dir.py --help
 ```
