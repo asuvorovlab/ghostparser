@@ -74,17 +74,21 @@ python -m ghostparser.orchestrator -c <config.yaml>
 - `orchestrator_triplet_results.tsv`
 - `metrics.txt`
 - `introgression_combined.png`
-- `introgression_matrix_inflow_outflow.tsv`
-- `introgression_ghost_target_strength.tsv`
-- `introgression_taxa_order.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow_raw_sum.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow_supporting_count.tsv`
+- `consolidation_data/introgression_ghost_target_strength.tsv`
+- `consolidation_data/introgression_ghost_target_strength_raw_sum.tsv`
+- `consolidation_data/introgression_ghost_target_strength_supporting_count.tsv`
+- `consolidation_data/introgression_taxa_order.tsv`
 
 Consolidation behavior:
 
 - Consolidation is enabled by default in orchestrator runtime.
 - The combined plot shows the inflow/outflow heatmap and the ghost target-strength bar chart side by side, sharing a single colorbar.
-- Average bootstrap values written to the TSV and shown in the plot use population-level denominators:
-    - Sampled introgression average for a directed pair (source → target): `sum(bootstrap weights) / count(all triplets containing both source and target)`.
-    - Ghost introgression average for a target taxon: `sum(bootstrap weights) / count(all triplets containing that taxon)`.
+- Average bootstrap values written to the TSV and shown in the plot use supporting-triplet denominators:
+   - Sampled introgression average for a directed pair (source → target): `sum(bootstrap weights) / count(triplets that produced that directed edge)`.
+   - Ghost introgression average for a target taxon: `sum(bootstrap weights) / count(triplets that produced that ghost target)`.
 - The species tree topology strip is drawn on top of the heatmap. Outgroup taxa passed via the `outgroups` parameter are excluded from all plots and TSVs.
 - Consolidation can be disabled through orchestrator config/CLI when visualization artifacts are not needed.
 
