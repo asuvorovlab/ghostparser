@@ -198,10 +198,15 @@ outgroup: Taxon1,Taxon2
 - Default: `true`.
 - Consolidation artifacts:
   - `introgression_combined.png` — single combined figure with inflow/outflow heatmap and ghost bar chart.
+- The TSV artifacts are written to `consolidation_data/` inside the configured results directory.
   - `introgression_matrix_inflow_outflow.tsv`
+  - `introgression_matrix_inflow_outflow_raw_sum.tsv`
+  - `introgression_matrix_inflow_outflow_supporting_count.tsv`
   - `introgression_ghost_target_strength.tsv`
+  - `introgression_ghost_target_strength_raw_sum.tsv`
+  - `introgression_ghost_target_strength_supporting_count.tsv`
   - `introgression_taxa_order.tsv`
-- Average bootstrap values in the artifacts use population-level co-occurrence denominators; see [Additional Outputs from Orchestrator Run](ghostparser/ORCHESTRATOR.md#additional-outputs-from-orchestrator-run) for details.
+- Average bootstrap values in the artifacts use supporting-triplet denominators: the directed-pair average is `sum(bootstrap weights) / count(triplets that produced that directed edge)`, and the ghost-target average is `sum(bootstrap weights) / count(triplets that produced that ghost target)`.
 - Outgroup taxa are automatically excluded from all consolidation plots and TSVs.
 
 ##### `min_support_value`
