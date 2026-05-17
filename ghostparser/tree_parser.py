@@ -607,17 +607,17 @@ def _get_mp_context(prefer_fork=False):
     """Get a multiprocessing context for worker pools.
 
     Args:
-        prefer_fork: If True, prefer ``fork`` where available so workers can
-            inherit large read-only data via copy-on-write.
+        prefer_fork: If True, allow ``fork`` when available. Safe start methods
+            are preferred by default.
     """
     if hasattr(mp, "get_context"):
         methods = mp.get_all_start_methods()
-        if prefer_fork and "fork" in methods:
-            return mp.get_context("fork")
         if "forkserver" in methods:
             return mp.get_context("forkserver")
         if "spawn" in methods:
             return mp.get_context("spawn")
+        if prefer_fork and "fork" in methods:
+            return mp.get_context("fork")
     return mp
 
 
@@ -749,6 +749,7 @@ def _process_triplet_chunk_stream(args):
     Gene trees are read once in the main process and distributed to workers via
     the initializer, avoiding parallel disk I/O contention.
     """
+    start_cpu = time.process_time()
     chunk_index, triplet_chunk = args
     triplet_results = {triplet: [] for triplet in triplet_chunk}
 
@@ -790,13 +791,15 @@ def _process_triplet_chunk_stream(args):
         if output_lines:
             out_f.write("\n")
 
-    return total_subtrees, triplets_with_trees
+    worker_cpu_seconds = time.process_time() - start_cpu
+    return total_subtrees, triplets_with_trees, worker_cpu_seconds
 
 
 def _process_triplet_chunk_parquet(args):
     """Process one chunk and write parquet triplet/observation parts."""
     pa, pq = _require_pyarrow()
 
+    start_cpu = time.process_time()
     chunk_index, triplet_chunk = args
     triplet_rows = []
     obs_rows_by_partition: dict[int, list[dict]] = {}
@@ -890,7 +893,8 @@ def _process_triplet_chunk_parquet(args):
         obs_table = pa.Table.from_pylist(rows)
         pq.write_table(obs_table, obs_path, compression=_PARQUET_COMPRESSION)
 
-    return total_subtrees, triplets_with_trees
+    worker_cpu_seconds = time.process_time() - start_cpu
+    return total_subtrees, triplets_with_trees, worker_cpu_seconds
 
 
 def write_triplet_gene_trees_parquet_multiprocess(
@@ -903,6 +907,7 @@ def write_triplet_gene_trees_parquet_multiprocess(
     use_multiprocessing=True,
     processes=None,
     chunksize=None,
+    return_worker_cpu=False,
 ):
     """Write triplet gene trees to a partitioned parquet dataset."""
     _require_pyarrow()
@@ -916,6 +921,8 @@ def write_triplet_gene_trees_parquet_multiprocess(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not triplets:
+        if return_worker_cpu:
+            return 0, 0, 0, 0.0
         return 0, 0, 0
 
     species_triplet_trees = _validate_species_triplet_trees(triplets, species_triplet_trees)
@@ -941,7 +948,7 @@ def write_triplet_gene_trees_parquet_multiprocess(
     args = [(idx, chunk) for idx, chunk in enumerate(triplet_chunks)]
 
     if use_multiprocessing and worker_count > 1:
-        ctx = _get_mp_context(prefer_fork=True)
+        ctx = _get_mp_context()
         init_gene_trees = gene_trees_list
         if hasattr(ctx, "get_start_method") and ctx.get_start_method() == "fork":
             global _GENE_TREES_LIST
@@ -974,6 +981,12 @@ def write_triplet_gene_trees_parquet_multiprocess(
 
     total_subtrees = sum(t[0] for t in totals)
     triplets_with_trees = sum(t[1] for t in totals)
+    worker_cpu_seconds = 0.0
+    if use_multiprocessing and worker_count > 1:
+        worker_cpu_seconds = sum(t[2] for t in totals)
+
+    if return_worker_cpu:
+        return total_subtrees, triplets_with_trees, worker_count, worker_cpu_seconds
     return total_subtrees, triplets_with_trees, worker_count
 
 
@@ -1036,6 +1049,7 @@ def write_triplet_gene_trees_multiprocess(
     use_multiprocessing=True,
     processes=None,
     chunksize=None,
+    return_worker_cpu=False,
 ):
     """Write triplet gene trees using multiprocessing over triplets.
 
@@ -1056,11 +1070,15 @@ def write_triplet_gene_trees_multiprocess(
 
     Returns:
         Tuple of (total_subtrees, triplets_with_trees, worker_count).
+        If ``return_worker_cpu=True``, returns
+        (total_subtrees, triplets_with_trees, worker_count, worker_cpu_seconds).
     """
     with open(output_filepath, "w") as f:
         f.write("")
 
     if not triplets:
+        if return_worker_cpu:
+            return 0, 0, 0, 0.0
         return 0, 0, 0
 
     species_triplet_trees = _validate_species_triplet_trees(triplets, species_triplet_trees)
@@ -1090,7 +1108,7 @@ def write_triplet_gene_trees_multiprocess(
     args = [(idx, chunk) for idx, chunk in enumerate(triplet_chunks)]
 
     if use_multiprocessing and worker_count > 1:
-        ctx = _get_mp_context(prefer_fork=True)
+        ctx = _get_mp_context()
         init_gene_trees = gene_trees_list
         if hasattr(ctx, "get_start_method") and ctx.get_start_method() == "fork":
             # Under fork, workers inherit this read-only payload via copy-on-write.
@@ -1114,7 +1132,12 @@ def write_triplet_gene_trees_multiprocess(
 
     total_subtrees = sum(t[0] for t in totals)
     triplets_with_trees = sum(t[1] for t in totals)
+    worker_cpu_seconds = 0.0
+    if use_multiprocessing and worker_count > 1:
+        worker_cpu_seconds = sum(t[2] for t in totals)
 
+    if return_worker_cpu:
+        return total_subtrees, triplets_with_trees, worker_count, worker_cpu_seconds
     return total_subtrees, triplets_with_trees, worker_count
 
 
@@ -1429,7 +1452,12 @@ def main():
             metrics.log(f"  Workers used: {worker_count}")
 
             if args.triplet_output_format == "parquet":
-                total_subtrees, triplets_with_trees, worker_count = write_triplet_gene_trees_parquet_multiprocess(
+                (
+                    total_subtrees,
+                    triplets_with_trees,
+                    worker_count,
+                    worker_cpu_seconds,
+                ) = write_triplet_gene_trees_parquet_multiprocess(
                     triplets,
                     gene_trees_clean,
                     triplet_output_path,
@@ -1438,15 +1466,22 @@ def main():
                     parquet_compression=args.parquet_compression,
                     use_multiprocessing=not args.no_multiprocessing,
                     processes=args.processes,
+                    return_worker_cpu=True,
                 )
             else:
-                total_subtrees, triplets_with_trees, worker_count = write_triplet_gene_trees_multiprocess(
+                (
+                    total_subtrees,
+                    triplets_with_trees,
+                    worker_count,
+                    worker_cpu_seconds,
+                ) = write_triplet_gene_trees_multiprocess(
                     triplets,
                     gene_trees_clean,
                     triplet_output_path,
                     species_triplet_trees=species_triplet_trees,
                     use_multiprocessing=not args.no_multiprocessing,
                     processes=args.processes,
+                    return_worker_cpu=True,
                 )
 
             metrics.log(f"✓ Triplet gene trees saved to: {triplet_output_path}")
@@ -1457,7 +1492,7 @@ def main():
                 avg_trees_per_triplet = total_subtrees / triplets_with_trees
                 metrics.log(f"  Average trees per triplet: {avg_trees_per_triplet:.2f}")
             triplet_wall = time.time() - triplet_start_wall
-            triplet_cpu = time.process_time() - triplet_start_cpu
+            triplet_cpu = (time.process_time() - triplet_start_cpu) + worker_cpu_seconds
             metrics.log(f"  Time taken (wall): {triplet_wall:.2f}s")
             metrics.log(f"  Time taken (CPU): {triplet_cpu:.2f}s")
         except Exception as e:

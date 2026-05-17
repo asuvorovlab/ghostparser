@@ -779,13 +779,14 @@ def test_write_triplet_gene_trees_multiprocess_with_workers(tmp_path):
 
     output_file = tmp_path / "triplet_gene_trees_mp.txt"
 
-    total_subtrees, triplets_with_trees, worker_count = write_triplet_gene_trees_multiprocess(
+    total_subtrees, triplets_with_trees, worker_count, worker_cpu_seconds = write_triplet_gene_trees_multiprocess(
         triplets,
         gene_trees_newick,
         str(output_file),
         species_triplet_trees=_species_triplet_map(triplets),
         use_multiprocessing=True,
         processes=2,
+        return_worker_cpu=True,
     )
 
     # Verify output file exists
@@ -797,6 +798,7 @@ def test_write_triplet_gene_trees_multiprocess_with_workers(tmp_path):
     # Verify statistics
     assert triplets_with_trees > 0
     assert total_subtrees > 0
+    assert worker_cpu_seconds >= 0.0
 
     # Verify file content
     content = output_file.read_text()

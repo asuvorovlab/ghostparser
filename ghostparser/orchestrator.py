@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 from multiprocessing import cpu_count
 from pathlib import Path
-import resource
 import time
 
 import dendropy
@@ -43,6 +42,7 @@ from .triplet_processor import (
     write_summary_statistics_tsv,
     write_pipeline_results,
 )
+from .introgression_mapper import generate_introgression_maps
 from .config import (
     ConfigError,
     DEFAULT_ALPHA_DCT,
@@ -88,33 +88,13 @@ def _resolve_parallel_mode(processes):
 
 
 def _now_times():
-    """Return current wall-clock and CPU time (self + children)."""
-    return time.time(), _cpu_time_self_and_children()
+    """Return current wall-clock and CPU time for the current process."""
+    return time.time(), time.process_time()
 
 
 def _elapsed_times(start_wall, start_cpu):
-    """Return elapsed wall-clock and CPU time (self + children)."""
-    return time.time() - start_wall, _cpu_time_self_and_children() - start_cpu
-
-
-def _cpu_time_self_and_children():
-    """Return CPU seconds consumed by this process and reaped children.
-
-    This captures multiprocessing worker CPU time once workers exit and are
-    joined by the parent process.
-    """
-    try:
-        self_usage = resource.getrusage(resource.RUSAGE_SELF)
-        child_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-        return (
-            self_usage.ru_utime
-            + self_usage.ru_stime
-            + child_usage.ru_utime
-            + child_usage.ru_stime
-        )
-    except Exception:
-        # Fallback for platforms where resource accounting is unavailable.
-        return time.process_time()
+    """Return elapsed wall-clock and CPU time for the current process."""
+    return time.time() - start_wall, time.process_time() - start_cpu
 
 
 def _log_stage_timing(metrics, wall_seconds, cpu_seconds):
@@ -134,6 +114,7 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "parquet_compression",
     "processes",
     "generate_summary_stats",
+    "consolidation",
     "min_support_value",
     "discordant_test",
     "summary_statistic",
@@ -202,6 +183,13 @@ def _build_argument_parser():
         action="store_true",
         default=None,
         help="Generate summary_statistics.tsv output (default: False)",
+    )
+    parser.add_argument(
+        "--no-consolidation",
+        dest="consolidation",
+        action="store_false",
+        default=None,
+        help="Disable introgression map consolidation outputs (default: enabled)",
     )
     parser.add_argument(
         "--min-support-value",
@@ -352,6 +340,7 @@ def main():
         metrics.log(f"Parquet partitions: {args.parquet_partitions}")
         metrics.log(f"Parquet compression: {args.parquet_compression}")
         metrics.log(f"Generate summary statistics TSV: {args.generate_summary_stats}")
+        metrics.log(f"Consolidation enabled: {args.consolidation}")
         support_threshold = (
             args.min_support_value
             if args.min_support_value is not None
@@ -384,6 +373,7 @@ def main():
         try:
             triplets = []
             species_triplet_trees = {}
+            plot_taxa = None
             if species_trees:
                 taxa = get_taxa_from_tree(species_trees[0])
                 metrics.log(f"\n✓ Found {len(taxa)} taxa in species tree")
@@ -415,6 +405,7 @@ def main():
                         metrics.log(f"⚠ Warning: Skipping invalid triplet line {line_number} in {filter_path}: {raw}")
 
                     triplets, skipped_triplets = filter_triplets_by_taxa(raw_triplets, set(ingroup_taxa))
+                    plot_taxa = sorted({taxon for triplet in triplets for taxon in triplet})
                     for triplet, missing in skipped_triplets:
                         metrics.log(
                             "⚠ Warning: Skipping triplet with missing taxa: "
@@ -483,13 +474,20 @@ def main():
             extraction_cpu_time = 0.0
             inference_wall_time = 0.0
             inference_cpu_time = 0.0
+            map_wall_time = 0.0
+            map_cpu_time = 0.0
 
             # Stage 1: Triplet extraction to mapping file
             metrics.log("✓ Starting triplet extraction stage...")
             extraction_start_wall, extraction_start_cpu = _now_times()
 
             if args.triplet_output_format == "parquet":
-                total_subtrees, triplets_with_trees, _ = write_triplet_gene_trees_parquet_multiprocess(
+                (
+                    total_subtrees,
+                    triplets_with_trees,
+                    _,
+                    extraction_worker_cpu,
+                ) = write_triplet_gene_trees_parquet_multiprocess(
                     triplets,
                     gene_trees_clean,
                     triplet_output_path,
@@ -498,21 +496,29 @@ def main():
                     parquet_compression=args.parquet_compression,
                     use_multiprocessing=use_multiprocessing,
                     processes=processes,
+                    return_worker_cpu=True,
                 )
             else:
-                total_subtrees, triplets_with_trees, _ = write_triplet_gene_trees_multiprocess(
+                (
+                    total_subtrees,
+                    triplets_with_trees,
+                    _,
+                    extraction_worker_cpu,
+                ) = write_triplet_gene_trees_multiprocess(
                     triplets,
                     gene_trees_clean,
                     triplet_output_path,
                     species_triplet_trees=species_triplet_trees,
                     use_multiprocessing=use_multiprocessing,
                     processes=processes,
+                    return_worker_cpu=True,
                 )
 
             extraction_wall_time, extraction_cpu_time = _elapsed_times(
                 extraction_start_wall,
                 extraction_start_cpu,
             )
+            extraction_cpu_time += extraction_worker_cpu
             metrics.log("✓ Triplet extraction complete")
             metrics.log(f"  Output: {triplet_output_path}")
             metrics.log(f"  Triplets with gene trees: {triplets_with_trees}")
@@ -524,7 +530,7 @@ def main():
             metrics.log("✓ Starting introgression inference stage...")
             inference_start_wall, inference_start_cpu = _now_times()
 
-            results = analyze_triplet_gene_tree_file(
+            results, inference_worker_cpu = analyze_triplet_gene_tree_file(
                 triplet_output_path,
                 input_format=args.triplet_output_format,
                 alpha_dct=args.alpha_dct,
@@ -538,11 +544,13 @@ def main():
                 bootstrap_options=args.bootstrap_options,
                 use_multiprocessing=use_multiprocessing,
                 processes=processes,
+                return_worker_cpu=True,
             )
             inference_wall_time, inference_cpu_time = _elapsed_times(
                 inference_start_wall,
                 inference_start_cpu,
             )
+            inference_cpu_time += inference_worker_cpu
 
             final_tsv = str(output_dir / "orchestrator_triplet_results.tsv")
             write_pipeline_results(
@@ -576,9 +584,34 @@ def main():
             _log_stage_timing(metrics, inference_wall_time, inference_cpu_time)
             metrics.log("")
 
+            if args.consolidation:
+                # Stage 3: Introgression map generation from in-memory results
+                metrics.log("✓ Starting introgression map generation stage...")
+                map_start_wall, map_start_cpu = _now_times()
+
+                map_artifacts = generate_introgression_maps(
+                    results,
+                    species_tree_path=species_tree_clean,
+                    output_dir=str(output_dir),
+                    plot_taxa=plot_taxa,
+                    outgroups=outgroup_taxa,
+                )
+
+                map_wall_time, map_cpu_time = _elapsed_times(map_start_wall, map_start_cpu)
+                metrics.log("✓ Introgression map generation complete")
+                metrics.log(f"  Taxa represented: {map_artifacts.taxa_count}")
+                metrics.log(f"  Non-ghost directed edges: {map_artifacts.non_ghost_edge_count}")
+                metrics.log(f"  Ghost targets with signal: {map_artifacts.ghost_target_count}")
+                metrics.log(f"  Combined plot: {map_artifacts.plot_path}")
+                _log_stage_timing(metrics, map_wall_time, map_cpu_time)
+                metrics.log("")
+            else:
+                metrics.log("✓ Introgression map generation stage skipped (consolidation disabled)")
+                metrics.log("")
+
             # Summary
-            total_wall_time = species_wall_time + genes_wall_time + extraction_wall_time + inference_wall_time
-            total_cpu_time = species_cpu_time + genes_cpu_time + extraction_cpu_time + inference_cpu_time
+            total_wall_time = species_wall_time + genes_wall_time + extraction_wall_time + inference_wall_time + map_wall_time
+            total_cpu_time = species_cpu_time + genes_cpu_time + extraction_cpu_time + inference_cpu_time + map_cpu_time
             metrics.log("✓ End-to-end orchestration complete")
             metrics.log(f"  Total time (wall): {total_wall_time:.2f}s")
             metrics.log(f"  Total time (CPU): {total_cpu_time:.2f}s")

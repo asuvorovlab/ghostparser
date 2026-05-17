@@ -4,4 +4,6 @@ scipy>=1.11
 statsmodels>=0.14
 PyYAML>=6.0
 pyarrow>=15.0
+matplotlib>=3.8
+seaborn>=0.13
 pytest>=7.0

@@ -3,10 +3,12 @@
 
 ## v0.1.1 - Unreleased
 
-- Changed default `alpha_dct` from `0.01` to `0.05` across orchestrator/runtime defaults.
-- Changed default `bootstrap` from `false` to `true` across orchestrator/runtime defaults.
-- Changed CLI architecture so config-file mode remains only in `ghostparser.orchestrator`.
-- Changed `ghostparser.tree_parser` and `ghostparser.triplet_processor` entry points to CLI-only runtime resolution with required core inputs.
+- Changed default `alpha_dct` from `0.01` to `0.05` and default `bootstrap` from `false` to `true` across orchestrator/runtime defaults.
+- Changed CLI architecture so config-file mode is available only in `ghostparser.orchestrator`; `tree_parser` and `triplet_processor` entry points use CLI-only runtime resolution with required core inputs.
+- Changed multiprocessing start-method selection to prefer safe modes (`forkserver`/`spawn`) and updated CPU timing aggregation to include explicit per-worker deltas in extraction and inference pipelines.
+- Added `ghostparser.introgression_mapper` consolidation module with a standalone CLI entry point, producing a single combined figure (`introgression_combined.png`) — inflow/outflow heatmap and ghost target-strength bar chart side by side with a shared colorbar and species tree strip above. Controlled via orchestrator `consolidation` config key (default `true`; `--no-consolidation` to disable).
+- Added population-level co-occurrence denominators for bootstrap averaging in introgression maps, with automatic outgroup exclusion from all plot and TSV outputs.
+- Changed `all_bootstrap` TSV column format from JSON to comma-separated `classification=value` pairs.
 - Updated tests and documentation.
 
 

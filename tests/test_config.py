@@ -44,6 +44,7 @@ def test_load_orchestrator_config_json(tmp_path):
     assert config["output"] == str(Path("out").resolve())
     assert config["processes"] == 4
     assert config["generate_summary_stats"] is True
+    assert config["consolidation"] is True
     assert config["triplet_filter"] == str(Path("triplets.txt").resolve())
     assert config["min_support_value"] == 0.7
     assert config["discordant_test"] == "z-test"
@@ -164,12 +165,30 @@ def test_load_orchestrator_config_defaults_processes_to_zero(tmp_path):
     assert config["processes"] == 0
     assert config["generate_summary_stats"] is False
     assert config["bootstrap"] is True
+    assert config["consolidation"] is True
     assert config["bootstrap_options"] == {
         "iterations": 100,
         "seed": None,
         "debug_mode": False,
         "summary_only": False,
     }
+
+
+def test_load_orchestrator_config_allows_disabling_consolidation(tmp_path):
+    config_path = tmp_path / "config_consolidation_false.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "species_tree_path": "species.nwk",
+                "gene_trees_path": "genes.nwk",
+                "outgroup": "OutA",
+                "consolidation": False,
+            }
+        )
+    )
+
+    config = load_orchestrator_config(str(config_path))
+    assert config["consolidation"] is False
 
 
 @pytest.mark.parametrize(

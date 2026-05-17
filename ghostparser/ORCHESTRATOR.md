@@ -5,6 +5,7 @@ This document describes the end-to-end orchestrator in [ghostparser/orchestrator
 1. tree preprocessing/triplet extraction (from `tree_parser`)
 2. per-triplet introgression inference (from `triplet_processor`)
 3. final TSV reporting (`orchestrator_triplet_results.tsv`)
+4. consolidation — introgression map figure and TSV artifacts (from `introgression_mapper`, enabled by default)
 
 ## CLI Input Options
 
@@ -52,6 +53,11 @@ Options:
     - Worker processes for both triplet extraction (`tree_parser`) and per-triplet inference (`triplet_processor`).
     - Defaults to `0`, which means all available CPU cores (`cpu_count()`).
 
+- `--no-consolidation` (optional)
+
+    - Disables the consolidation stage that generates introgression map artifacts.
+    - Consolidation is enabled by default.
+
 - `--tree-height-calculation-strategy` (optional)
 
     - Tree-height strategy used by `triplet_processor`.
@@ -77,8 +83,12 @@ CLI mode inputs are normalized into the same key/value payload used by config fi
     - Uses `write_triplet_gene_trees_multiprocess` from `tree_parser`.
     - Writes triplet extraction output in either text mode (`unique_triplets_gene_trees.txt`) or parquet dataset mode (`unique_triplets_gene_trees.parquet/`) based on tree_parser settings.
     - Uses `analyze_triplet_gene_tree_file` from `triplet_processor` on that file.
-6. Final reporting
+5. Final reporting
    - Uses `write_pipeline_results` to write `orchestrator_triplet_results.tsv`.
+6. Consolidation (when enabled)
+   - Calls `generate_introgression_maps` from `introgression_mapper` on the in-memory results list.
+   - Outgroup taxa resolved from the `--outgroups` CLI option or `outgroup` config key are passed to the mapper and excluded from all plot and TSV outputs.
+   - Can be disabled via `--no-consolidation` CLI flag or `consolidation: false` in the config.
 
 ## Final TSV Columns (How Each Is Produced)
 
@@ -256,6 +266,27 @@ How to read this example quickly:
 - `unique_triplets_gene_trees.parquet/` (when parquet output mode is enabled)
 - `orchestrator_triplet_results.tsv`
 - `metrics.txt`
+- `introgression_combined.png`
+- `consolidation_data/introgression_matrix_inflow_outflow.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow_raw_sum.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow_supporting_count.tsv`
+- `consolidation_data/introgression_ghost_target_strength.tsv`
+- `consolidation_data/introgression_ghost_target_strength_raw_sum.tsv`
+- `consolidation_data/introgression_ghost_target_strength_supporting_count.tsv`
+- `consolidation_data/introgression_taxa_order.tsv`
+
+Combined plot layout and consolidation integration:
+
+- The consolidation stage is triggered automatically after inference when `consolidation` is enabled (default).
+- `generate_introgression_maps` receives the full in-memory result list and writes all artifacts directly to the orchestrator output folder.
+- Outgroup taxa (from `--outgroups` / `outgroup` config key) are forwarded to `generate_introgression_maps` via the `outgroups` argument and are excluded from all heatmap rows/columns, bar chart entries, and TSVs.
+- The inflow/outflow heatmap and the ghost target-strength bar chart are combined into a single figure (`introgression_combined.png`).
+- The species tree topology strip is drawn on top of the heatmap. Source taxon labels appear at the top of the heatmap with dynamically computed spacing.
+- Target taxon labels are centered between the heatmap and the bar chart. A single shared colorbar covers both panels.
+- Average bootstrap values use supporting-triplet denominators:
+    - Sampled introgression (source → target): `sum(bootstrap weights) / count(triplets that produced that directed edge)`.
+    - Ghost introgression (target taxon): `sum(bootstrap weights) / count(triplets that produced that ghost target)`.
+- Disable with `--no-consolidation` or `consolidation: false`; consolidation artifacts are then skipped entirely.
 
 ## Notes on Parallelism
 

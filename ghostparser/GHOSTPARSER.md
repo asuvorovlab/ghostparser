@@ -73,6 +73,105 @@ python -m ghostparser.orchestrator -c <config.yaml>
 - `unique_triplets_gene_trees.parquet/` (when parquet mode is enabled)
 - `orchestrator_triplet_results.tsv`
 - `metrics.txt`
+- `introgression_combined.png`
+- `consolidation_data/introgression_matrix_inflow_outflow.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow_raw_sum.tsv`
+- `consolidation_data/introgression_matrix_inflow_outflow_supporting_count.tsv`
+- `consolidation_data/introgression_ghost_target_strength.tsv`
+- `consolidation_data/introgression_ghost_target_strength_raw_sum.tsv`
+- `consolidation_data/introgression_ghost_target_strength_supporting_count.tsv`
+- `consolidation_data/introgression_taxa_order.tsv`
+
+Consolidation behavior:
+
+- Consolidation is enabled by default in orchestrator runtime.
+- The combined plot shows the inflow/outflow heatmap and the ghost target-strength bar chart side by side, sharing a single colorbar.
+- Average bootstrap values written to the TSV and shown in the plot use supporting-triplet denominators:
+   - Sampled introgression average for a directed pair (source → target): `sum(bootstrap weights) / count(triplets that produced that directed edge)`.
+   - Ghost introgression average for a target taxon: `sum(bootstrap weights) / count(triplets that produced that ghost target)`.
+- The species tree topology strip is drawn on top of the heatmap. Outgroup taxa passed via the `outgroups` parameter are excluded from all plots and TSVs.
+- Consolidation can be disabled through orchestrator config/CLI when visualization artifacts are not needed.
+
+For full details on the consolidation module, see the [Introgression Mapper Module](#introgression-mapper-module-ghostparserintrogression_mapper) section below.
+
+## Introgression Mapper Module (`ghostparser.introgression_mapper`)
+
+### Role
+
+`ghostparser.introgression_mapper` consumes per-triplet pipeline results and produces a single combined visualization and companion TSV artifacts representing introgression signal across the ingroup taxa. It is called automatically by the orchestrator consolidation stage; see the [Orchestrator Module Guide](ORCHESTRATOR.md#additional-outputs-from-orchestrator-run) for how it is wired into the pipeline.
+
+### `generate_introgression_maps(results, species_tree_path, output_dir, plot_taxa=None, outgroups=None)`
+
+Generates the combined consolidation figure and tabular outputs.
+
+**Arguments:**
+
+- `results`: Iterable of `TripletPipelineResult`-like objects (or dict rows from a TSV).
+- `species_tree_path`: Path to the processed species tree used for taxon ordering.
+- `output_dir`: Directory to write all output files.
+- `plot_taxa`: Optional list of taxa to retain in the plot; defaults to full ingroup.
+- `outgroups`: Optional list of taxon names to exclude from all plots and TSVs (e.g. taxa used for rooting).
+
+**Outputs:**
+
+- `introgression_combined.png` — combined figure with directed inflow/outflow heatmap and ghost target-strength bar chart.
+- `introgression_matrix_inflow_outflow.tsv` — target × source matrix of average bootstrap support values.
+- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support.
+- `introgression_taxa_order.tsv` — ordered taxa list matching the plot axes.
+
+Returns an `IntrogressionMapArtifacts` dataclass with `plot_path`, TSV paths, `taxa_count`, `non_ghost_edge_count`, and `ghost_target_count`.
+
+### Bootstrap averaging denominators
+
+Average bootstrap support values are computed using population-level co-occurrence denominators:
+
+- **Sampled introgression** for a directed pair (source → target):
+
+  `avg = sum(bootstrap_value for classified triplets) / count(all triplets containing both source and target)`
+
+  The denominator counts every triplet in which both taxa co-appear, regardless of whether that triplet was classified as introgression. For `n` ingroup taxa, a directed pair appears in exactly `n − 2` triplets.
+
+- **Ghost introgression** for a target taxon:
+
+  `avg = sum(bootstrap_value for ghost-classified triplets) / count(all triplets containing that taxon)`
+
+  The denominator counts every triplet in which the target taxon appears in any position, regardless of classification. For `n` ingroup taxa, a single taxon appears in `(n−1)C2` triplets.
+
+This normalizes signal strength by the total number of opportunities at which the event could have been detected, giving a population-level confidence estimate that accounts for the full co-occurrence space.
+
+### Plot layout
+
+The combined figure uses a three-row layout above the data panels:
+
+1. **Species tree strip** (top row) — topology-only tree with leaf labels suppressed.
+2. **Source taxon label strip** (middle row) — a dedicated thin row containing the source-taxon names, rotated 90°, aligned to heatmap column centres. Row height is computed from the rendered pixel-width of the longest label so labels are never clipped. Shown for datasets up to 120 taxa; suppressed beyond that.
+3. **Data panels** (bottom row, left to right):
+    - **Inflow/outflow heatmap** — rows are target taxa, columns are source taxa, coloured by average bootstrap support.
+    - **Target label panel** — centred target taxon names aligned pixel-exactly to heatmap rows.
+    - **Ghost bar chart** — horizontal bars per target taxon showing average ghost bootstrap support.
+    - **Shared colorbar** — single colorbar covering both the heatmap and bar chart.
+
+All three rows share `hspace=0` so they appear flush. Figure and panel widths scale dynamically with taxon count and rendered label widths.
+
+### CLI usage
+
+```bash
+python -m ghostparser.introgression_mapper \
+    -r orchestrator_triplet_results.tsv \
+    -st processed_species.tree \
+    -o output_dir/ \
+    -og OutGroup1,OutGroup2
+```
+
+**Required arguments:**
+
+- `-r`, `--results-tsv`: Path to `orchestrator_triplet_results.tsv`.
+- `-st`, `--species-tree-path`: Path to the processed species tree (Newick).
+- `-o`, `--output-dir`: Directory to write output plots and TSVs.
+
+**Optional arguments:**
+
+- `-og`, `--outgroups`: Comma-separated outgroup taxon names to exclude from plots.
 
 ## Triplet Processor Module (`ghostparser.triplet_processor`)
 

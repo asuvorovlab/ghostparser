@@ -1,5 +1,5 @@
 species_tree_path: data/asuv21/species.tree
 gene_trees_path: data/asuv21/gene_trees.tree
 outgroups:
-	- Ephemera_danica
-	- Isonychia_kiangsinensis
+  - Ephemera_danica
+  - Isonychia_kiangsinensis

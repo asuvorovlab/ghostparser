@@ -27,6 +27,7 @@ import multiprocessing as mp
 from multiprocessing import cpu_count
 from pathlib import Path
 import random
+import time
 
 import dendropy
 from scipy import stats
@@ -861,6 +862,25 @@ def _serialize_bootstrap_value(value):
         return json.dumps(value, sort_keys=True, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Bootstrap payload is not JSON-serializable: {value!r}") from exc
+
+
+def _format_all_bootstrap(value):
+    """Format the all_bootstrap classification-fraction dict as readable key=value pairs.
+
+    Produces a comma-separated string of ``classification=fraction`` entries
+    sorted by classification name, e.g.::
+
+        ghost_introgression=0.42,no_introgression=0.58
+
+    Returns an empty string when value is None.
+    Raises ValueError for non-dict or non-serializable payloads (same contract
+    as _serialize_bootstrap_value).
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, dict):
+        raise ValueError(f"Bootstrap payload is not JSON-serializable: {value!r}")
+    return ",".join(f"{k}={v:.12g}" for k, v in sorted(value.items()))
 
 
 def _bonferroni_adjust_p_values_custom(p_values):
@@ -1772,17 +1792,17 @@ def _get_mp_context(prefer_fork=False):
     """Get a multiprocessing context for worker pools.
 
     Args:
-        prefer_fork: If True, prefer ``fork`` where available for lower worker
-            startup overhead and parent-child CPU accounting consistency.
+        prefer_fork: If True, allow ``fork`` when available. Safe start methods
+            are preferred by default.
     """
     if hasattr(mp, "get_context"):
         methods = mp.get_all_start_methods()
-        if prefer_fork and "fork" in methods:
-            return mp.get_context("fork")
         if "forkserver" in methods:
             return mp.get_context("forkserver")
         if "spawn" in methods:
             return mp.get_context("spawn")
+        if prefer_fork and "fork" in methods:
+            return mp.get_context("fork")
     return mp
 
 
@@ -1808,7 +1828,8 @@ def _analyze_triplet_entry(args):
         bootstrap_options,
         triplet_seed,
     ) = args
-    return analyze_triplet_entry(
+    start_cpu = time.process_time()
+    result = analyze_triplet_entry(
         triplet,
         entry,
         alpha_dct=alpha_dct,
@@ -1821,6 +1842,8 @@ def _analyze_triplet_entry(args):
         bootstrap_options=bootstrap_options,
         triplet_seed=triplet_seed,
     )
+    worker_cpu_seconds = time.process_time() - start_cpu
+    return result, worker_cpu_seconds
 
 
 def analyze_triplet_entry(
@@ -1927,6 +1950,7 @@ def analyze_triplet_gene_tree_file(
     rng=None,
     use_multiprocessing=True,
     processes=None,
+    return_worker_cpu=False,
 ):
     """Analyze all triplets from a triplet-gene-trees text or parquet input."""
     if discordant_test not in DISCORDANT_TEST_CHOICES:
@@ -2000,9 +2024,11 @@ def analyze_triplet_gene_tree_file(
             for triplet, entry in items
         ]
         chunksize = max(1, len(args) // (worker_count * 4))
-        ctx = _get_mp_context(prefer_fork=True)
+        ctx = _get_mp_context()
         with ctx.Pool(processes=worker_count) as pool:
-            results = list(pool.imap(_analyze_triplet_entry, args, chunksize=chunksize))
+            payloads = list(pool.imap(_analyze_triplet_entry, args, chunksize=chunksize))
+        results = [payload[0] for payload in payloads]
+        worker_cpu_seconds = sum(payload[1] for payload in payloads)
         corrected = _apply_triplet_result_p_value_correction(
             results,
             alpha_dct=alpha_dct,
@@ -2010,6 +2036,8 @@ def analyze_triplet_gene_tree_file(
             method=p_value_correction,
             stats_backend=stats_backend,
         )
+        if return_worker_cpu:
+            return corrected, worker_cpu_seconds
         return corrected
 
     results = []
@@ -2043,6 +2071,8 @@ def analyze_triplet_gene_tree_file(
         method=p_value_correction,
         stats_backend=stats_backend,
     )
+    if return_worker_cpu:
+        return corrected, 0.0
     return corrected
 
 
@@ -2180,7 +2210,7 @@ def write_pipeline_results(
                 row.extend(
                     [
                         "" if result.bootstrap_value is None else f"{result.bootstrap_value:.12g}",
-                        _serialize_bootstrap_value(result.all_bootstrap),
+                        _format_all_bootstrap(result.all_bootstrap),
                     ]
                 )
                 if bootstrap_debug_mode:
