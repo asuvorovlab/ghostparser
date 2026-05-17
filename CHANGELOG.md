@@ -1,7 +1,7 @@
 # Changelog
 
 
-## v0.1.1 - Unreleased
+## v0.1.1 - May 17, 2026
 
 - Changed default `alpha_dct` from `0.01` to `0.05` and default `bootstrap` from `false` to `true` across orchestrator/runtime defaults.
 - Changed CLI architecture so config-file mode is available only in `ghostparser.orchestrator`; `tree_parser` and `triplet_processor` entry points use CLI-only runtime resolution with required core inputs.
