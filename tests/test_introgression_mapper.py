@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from ghostparser.introgression_mapper import (
     _collect_counts,
+    _collect_non_sister_counts,
     _draw_species_tree_strip,
     generate_introgression_maps,
 )
@@ -58,9 +59,38 @@ def test_generate_introgression_maps_creates_expected_outputs(tmp_path):
 
     assert (tmp_path / "introgression_combined.png").exists()
     assert artifacts.plot_path == str(tmp_path / "introgression_combined.png")
-    assert (tmp_path / "introgression_matrix_inflow_outflow.tsv").exists()
-    assert (tmp_path / "introgression_ghost_target_strength.tsv").exists()
-    assert (tmp_path / "introgression_taxa_order.tsv").exists()
+    assert (
+        tmp_path / "consolidation_data" / "introgression_matrix_inflow_outflow.tsv"
+    ).exists()
+    assert (
+        tmp_path
+        / "consolidation_data"
+        / "introgression_matrix_inflow_outflow_raw_sum.tsv"
+    ).exists()
+    assert (
+        tmp_path
+        / "consolidation_data"
+        / "introgression_matrix_inflow_outflow_supporting_count.tsv"
+    ).exists()
+    assert (
+        tmp_path / "consolidation_data" / "introgression_ghost_target_strength.tsv"
+    ).exists()
+    assert (
+        tmp_path
+        / "consolidation_data"
+        / "introgression_ghost_target_strength_raw_sum.tsv"
+    ).exists()
+    assert (
+        tmp_path
+        / "consolidation_data"
+        / "introgression_ghost_target_strength_supporting_count.tsv"
+    ).exists()
+    assert (tmp_path / "consolidation_data" / "introgression_taxa_order.tsv").exists()
+    assert (
+        tmp_path
+        / "consolidation_data"
+        / "introgression_matrix_sampled_non_sister.tsv"
+    ).exists()
 
 
 def test_generate_introgression_maps_uses_full_species_tree_by_default(tmp_path):
@@ -82,8 +112,37 @@ def test_generate_introgression_maps_uses_full_species_tree_by_default(tmp_path)
         output_dir=str(tmp_path),
     )
 
-    matrix_lines = (tmp_path / "introgression_matrix_inflow_outflow.tsv").read_text().splitlines()
-    ghost_lines = (tmp_path / "introgression_ghost_target_strength.tsv").read_text().splitlines()
+    consolidation_dir = tmp_path / "consolidation_data"
+    matrix_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow.tsv")
+        .read_text()
+        .splitlines()
+    )
+    matrix_raw_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv")
+        .read_text()
+        .splitlines()
+    )
+    matrix_count_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_raw_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_count_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv")
+        .read_text()
+        .splitlines()
+    )
 
     header_fields = matrix_lines[0].split("\t")
     taxa_from_header = header_fields[1:]
@@ -117,7 +176,11 @@ def test_generate_introgression_maps_prunes_requested_plot_taxa(tmp_path):
         plot_taxa=["A", "B", "C"],
     )
 
-    matrix_lines = (tmp_path / "introgression_matrix_inflow_outflow.tsv").read_text().splitlines()
+    matrix_lines = (
+        (tmp_path / "consolidation_data" / "introgression_matrix_inflow_outflow.tsv")
+        .read_text()
+        .splitlines()
+    )
     header_fields = matrix_lines[0].split("\t")
     taxa_from_header = header_fields[1:]
 
@@ -162,8 +225,37 @@ def test_generate_introgression_maps_uses_raw_values_with_separate_scales(tmp_pa
         output_dir=str(tmp_path),
     )
 
-    matrix_lines = (tmp_path / "introgression_matrix_inflow_outflow.tsv").read_text().splitlines()
-    ghost_lines = (tmp_path / "introgression_ghost_target_strength.tsv").read_text().splitlines()
+    consolidation_dir = tmp_path / "consolidation_data"
+    matrix_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow.tsv")
+        .read_text()
+        .splitlines()
+    )
+    matrix_raw_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv")
+        .read_text()
+        .splitlines()
+    )
+    matrix_count_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_raw_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_count_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv")
+        .read_text()
+        .splitlines()
+    )
 
     matrix_values = []
     for line in matrix_lines[1:]:
@@ -173,10 +265,10 @@ def test_generate_introgression_maps_uses_raw_values_with_separate_scales(tmp_pa
 
     assert max(matrix_values) <= 1.0
     assert max(ghost_values) <= 1.0
-    # non-ghost avg: sum(0.2+0.8)=1.0 / count(triplets containing both C and B)=2 → 0.5
+    # non-ghost avg: sum(0.2+0.8)=1.0 / supporting_count_for_edge(C->B)=2 → 0.5
     assert max(matrix_values) == 0.5
-    # ghost avg: sum(0.1+0.9)=1.0 / count(triplets containing A)=4 (2 from ABC + 2 from ABD) → 0.25
-    assert max(ghost_values) == 0.25
+    # ghost avg: sum(0.1+0.9)=1.0 / supporting_count_for_A=2 (both ABD rows) → 0.5
+    assert max(ghost_values) == 0.5
 
 
 def test_generate_introgression_maps_excludes_outgroups(tmp_path):
@@ -206,8 +298,37 @@ def test_generate_introgression_maps_excludes_outgroups(tmp_path):
         outgroups=["OG"],
     )
 
-    matrix_lines = (tmp_path / "introgression_matrix_inflow_outflow.tsv").read_text().splitlines()
-    ghost_lines = (tmp_path / "introgression_ghost_target_strength.tsv").read_text().splitlines()
+    consolidation_dir = tmp_path / "consolidation_data"
+    matrix_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow.tsv")
+        .read_text()
+        .splitlines()
+    )
+    matrix_raw_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv")
+        .read_text()
+        .splitlines()
+    )
+    matrix_count_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_raw_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_count_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv")
+        .read_text()
+        .splitlines()
+    )
     taxa_from_matrix = matrix_lines[0].split("\t")[1:]
     taxa_from_ghost = [line.split("\t")[0] for line in ghost_lines[1:]]
 
@@ -217,48 +338,73 @@ def test_generate_introgression_maps_excludes_outgroups(tmp_path):
 
 
 def test_collect_counts_non_ghost_denominator_is_all_co_occurring_triplets():
-    """_collect_counts denominator for a directed pair must be all triplets containing
-    both taxa, regardless of how those triplets were classified."""
+    """_collect_counts now returns supporting-triplet counts: only rows that
+    produced the directed edge are counted."""
     results = [
         # classified — contributes weight for edge (C→B)
-        SimpleNamespace(triplet=("A", "B", "C"), classification="inflow_introgression",
-                        dis1_topology="BC", bootstrap_value=0.8),
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="inflow_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.8,
+        ),
         # no_introgression — still contains B and C, so must count
-        SimpleNamespace(triplet=("A", "B", "C"), classification="no_introgression",
-                        dis1_topology="BC", bootstrap_value=0.0),
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="no_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.0,
+        ),
         # unrelated triplet — does not contain C, must not count for (C→B)
-        SimpleNamespace(triplet=("A", "B", "D"), classification="inflow_introgression",
-                        dis1_topology="BC", bootstrap_value=0.5),
+        SimpleNamespace(
+            triplet=("A", "B", "D"),
+            classification="inflow_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.5,
+        ),
     ]
     non_ghost_counts, ghost_counts = _collect_counts(results)
 
-    # (C, B) appears in triplet (A,B,C) twice — both rows contain B and C
-    assert non_ghost_counts.get(("C", "B"), 0) == 2
-    # (B, D) appears only in the ABD triplet
-    assert non_ghost_counts.get(("B", "D"), 0) == 1
+    # Only the first row produced the (C->B) directed edge, so count should be 1
+    assert non_ghost_counts.get(("C", "B"), 0) == 1
+    # (B, D) does not get produced by the third row mapping (it maps D->B),
+    # so (B, D) supporting count should be 0
+    assert non_ghost_counts.get(("B", "D"), 0) == 0
 
 
 def test_collect_counts_ghost_denominator_is_all_triplets_containing_taxon():
-    """_collect_counts denominator for a ghost target must be all triplets where that
-    taxon appears in any position, regardless of classification."""
+    """_collect_counts now returns supporting-triplet counts for ghost targets:
+    only rows classified as `ghost_introgression` that produced a ghost target
+    are counted."""
     results = [
-        SimpleNamespace(triplet=("A", "B", "C"), classification="ghost_introgression",
-                        dis1_topology="BC", bootstrap_value=0.9),
-        SimpleNamespace(triplet=("A", "B", "C"), classification="no_introgression",
-                        dis1_topology="BC", bootstrap_value=0.0),
-        SimpleNamespace(triplet=("A", "C", "D"), classification="ghost_introgression",
-                        dis1_topology="AC", bootstrap_value=0.5),
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="ghost_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.9,
+        ),
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="no_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.0,
+        ),
+        SimpleNamespace(
+            triplet=("A", "C", "D"),
+            classification="ghost_introgression",
+            dis1_topology="AC",
+            bootstrap_value=0.5,
+        ),
     ]
     _non_ghost_counts, ghost_counts = _collect_counts(results)
 
-    # A appears in all 3 triplets
-    assert ghost_counts.get("A", 0) == 3
-    # C appears in all 3 triplets
-    assert ghost_counts.get("C", 0) == 3
-    # D appears only in triplet (A,C,D)
-    assert ghost_counts.get("D", 0) == 1
-    # B appears only in triplets (A,B,C) ×2
-    assert ghost_counts.get("B", 0) == 2
+    # The first row (ABC, topo=BC) produces ghost target A (since topo==BC -> a_taxon)
+    # The third row (ACD, topo=AC) produces ghost target C (since topo!=BC -> b_taxon)
+    assert ghost_counts.get("A", 0) == 1
+    assert ghost_counts.get("C", 0) == 1
+    assert ghost_counts.get("D", 0) == 0
+    # B is not produced as a ghost target in these rows
+    assert ghost_counts.get("B", 0) == 0
 
 
 def test_collect_counts_correct_avg_in_generate_introgression_maps(tmp_path):
@@ -274,12 +420,24 @@ def test_collect_counts_correct_avg_in_generate_introgression_maps(tmp_path):
     species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
 
     results = [
-        SimpleNamespace(triplet=("A", "B", "C"), classification="inflow_introgression",
-                        dis1_topology="BC", bootstrap_value=0.6),
-        SimpleNamespace(triplet=("A", "B", "C"), classification="no_introgression",
-                        dis1_topology="BC", bootstrap_value=0.0),
-        SimpleNamespace(triplet=("A", "B", "D"), classification="ghost_introgression",
-                        dis1_topology="BC", bootstrap_value=0.8),
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="inflow_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.6,
+        ),
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="no_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.0,
+        ),
+        SimpleNamespace(
+            triplet=("A", "B", "D"),
+            classification="ghost_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.8,
+        ),
     ]
 
     generate_introgression_maps(
@@ -288,8 +446,37 @@ def test_collect_counts_correct_avg_in_generate_introgression_maps(tmp_path):
         output_dir=str(tmp_path),
     )
 
-    matrix_lines = (tmp_path / "introgression_matrix_inflow_outflow.tsv").read_text().splitlines()
-    ghost_lines = (tmp_path / "introgression_ghost_target_strength.tsv").read_text().splitlines()
+    consolidation_dir = tmp_path / "consolidation_data"
+    matrix_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow.tsv")
+        .read_text()
+        .splitlines()
+    )
+    matrix_raw_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv")
+        .read_text()
+        .splitlines()
+    )
+    matrix_count_lines = (
+        (consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_raw_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv")
+        .read_text()
+        .splitlines()
+    )
+    ghost_count_lines = (
+        (consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv")
+        .read_text()
+        .splitlines()
+    )
 
     # Build lookup: matrix[target][source] = value
     header = matrix_lines[0].split("\t")[1:]
@@ -297,22 +484,58 @@ def test_collect_counts_correct_avg_in_generate_introgression_maps(tmp_path):
     for row_line in matrix_lines[1:]:
         parts = row_line.split("\t")
         row_target = parts[0]
-        matrix[row_target] = {header[i]: float(parts[i + 1]) for i in range(len(header))}
+        matrix[row_target] = {
+            header[i]: float(parts[i + 1]) for i in range(len(header))
+        }
 
     ghost_map = {}
     for line in ghost_lines[1:]:
         taxon, val = line.split("\t")
         ghost_map[taxon] = float(val)
 
-    # 0.6 / 2 = 0.3
-    assert abs(matrix["B"]["C"] - 0.3) < 1e-9
-    # 0.8 / 3 ≈ 0.2667
-    assert abs(ghost_map["A"] - 0.8 / 3) < 1e-9
+    raw_header = matrix_raw_lines[0].split("\t")[1:]
+    raw_matrix = {}
+    for row_line in matrix_raw_lines[1:]:
+        parts = row_line.split("\t")
+        row_target = parts[0]
+        raw_matrix[row_target] = {
+            raw_header[i]: float(parts[i + 1]) for i in range(len(raw_header))
+        }
+
+    count_header = matrix_count_lines[0].split("\t")[1:]
+    count_matrix = {}
+    for row_line in matrix_count_lines[1:]:
+        parts = row_line.split("\t")
+        row_target = parts[0]
+        count_matrix[row_target] = {
+            count_header[i]: float(parts[i + 1]) for i in range(len(count_header))
+        }
+
+    ghost_raw_map = {}
+    for line in ghost_raw_lines[1:]:
+        taxon, val = line.split("\t")
+        ghost_raw_map[taxon] = float(val)
+
+    ghost_count_map = {}
+    for line in ghost_count_lines[1:]:
+        taxon, val = line.split("\t")
+        ghost_count_map[taxon] = float(val)
+
+    # With undiluted consolidation we divide only by supporting triplets
+    # Edge (C->B) has one supporting row with bootstrap 0.6 => avg = 0.6
+    assert abs(matrix["B"]["C"] - 0.6) < 1e-9
+    # Ghost target A has one supporting ghost row with bootstrap 0.8 => avg = 0.8
+    assert abs(ghost_map["A"] - 0.8) < 1e-9
+    assert abs(raw_matrix["B"]["C"] - 0.6) < 1e-9
+    assert abs(count_matrix["B"]["C"] - 1.0) < 1e-9
+    assert abs(ghost_raw_map["A"] - 0.8) < 1e-9
+    assert abs(ghost_count_map["A"] - 1.0) < 1e-9
 
 
 def test_draw_species_tree_strip_suppresses_leaf_labels(tmp_path):
     """show_leaf_labels=False must produce no Text artists on the axis."""
     import matplotlib
+
     matplotlib.use("Agg")
     from matplotlib import pyplot as plt
     from matplotlib.text import Text
@@ -322,9 +545,14 @@ def test_draw_species_tree_strip_suppresses_leaf_labels(tmp_path):
     taxa_order = ["A", "B", "C"]
 
     fig, ax = plt.subplots()
-    _draw_species_tree_strip(ax, str(species_tree), taxa_order, "top", show_leaf_labels=False)
-    text_artists = [child for child in ax.get_children() if isinstance(child, Text)
-                    and child.get_text().strip() in taxa_order]
+    _draw_species_tree_strip(
+        ax, str(species_tree), taxa_order, "top", show_leaf_labels=False
+    )
+    text_artists = [
+        child
+        for child in ax.get_children()
+        if isinstance(child, Text) and child.get_text().strip() in taxa_order
+    ]
     plt.close(fig)
     assert len(text_artists) == 0
 
@@ -332,6 +560,7 @@ def test_draw_species_tree_strip_suppresses_leaf_labels(tmp_path):
 def test_draw_species_tree_strip_shows_leaf_labels_by_default(tmp_path):
     """show_leaf_labels=True (default) must draw one Text artist per leaf."""
     import matplotlib
+
     matplotlib.use("Agg")
     from matplotlib import pyplot as plt
     from matplotlib.text import Text
@@ -342,7 +571,59 @@ def test_draw_species_tree_strip_shows_leaf_labels_by_default(tmp_path):
 
     fig, ax = plt.subplots()
     _draw_species_tree_strip(ax, str(species_tree), taxa_order, "top")
-    text_artists = [child for child in ax.get_children() if isinstance(child, Text)
-                    and child.get_text().strip() in taxa_order]
+    text_artists = [
+        child
+        for child in ax.get_children()
+        if isinstance(child, Text) and child.get_text().strip() in taxa_order
+    ]
     plt.close(fig)
     assert len(text_artists) == len(taxa_order)
+
+
+def test_collect_non_sister_counts_counts_non_sister_pairs():
+    """_collect_non_sister_counts increments only non-sister pairs.
+
+    For a triplet (A, B, C), A and B are sisters, so:
+    - (A, C) and (B, C) are non-sister pairs and get incremented.
+    - (A, B) is the sister pair and must not be counted.
+    Multiple triplets sharing a non-sister pair accumulate their counts.
+    """
+    results = [
+        # Triplet (A, B, C): sisters are A and B; non-sisters: (A,C), (B,C)
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="inflow_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.8,
+        ),
+        # Same triplet again (different gene tree result): (A,C) and (B,C) each +1
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="no_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.0,
+        ),
+        # Triplet (A, C, D): sisters are A and C; non-sisters: (A,D), (C,D)
+        SimpleNamespace(
+            triplet=("A", "C", "D"),
+            classification="ghost_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.5,
+        ),
+    ]
+    counts = _collect_non_sister_counts(results)
+
+    # (A, C) appears as non-sisters twice (both ABC rows)
+    assert counts.get(("A", "C"), 0) == 2
+    # (B, C) appears as non-sisters twice (both ABC rows)
+    assert counts.get(("B", "C"), 0) == 2
+    # (A, B) is the sister pair in the ABC triplets — must not be counted
+    assert counts.get(("A", "B"), 0) == 0
+    # (A, D) is a non-sister pair in the ACD triplet
+    assert counts.get(("A", "D"), 0) == 1
+    # (C, D) is a non-sister pair in the ACD triplet
+    assert counts.get(("C", "D"), 0) == 1
+    # (A, C) is also incremented by ACD (C is the C-taxon, non-sister to A and C here—
+    # wait: in (A,C,D) the sisters are A and C; so (A,D) and (C,D) are non-sisters)
+    # So (A,C) comes only from (A,B,C) triplets → still 2
+    assert counts.get(("A", "C"), 0) == 2

@@ -278,9 +278,9 @@ Purpose: verify configuration-controlled enable/disable behavior for consolidati
 #### tests/test_introgression_mapper.py
 
 - Tests: `test_generate_introgression_maps_creates_expected_outputs`, `test_generate_introgression_maps_uses_full_species_tree_by_default`, `test_generate_introgression_maps_prunes_requested_plot_taxa`, `test_generate_introgression_maps_uses_raw_values_with_separate_scales`
-Inputs: synthetic triplet results with inflow/outflow/ghost classifications and bootstrap weights.
-Expected outputs/behavior: mapper writes expected plot/TSV artifacts, uses the full processed species tree by default, optionally prunes to requested plot taxa when supplied, average bootstrap values use population-level denominators, source taxon labels appear on top of the heatmap (between the tree strip and the heatmap cells), and the species tree strip is drawn above that.
-Purpose: validate consolidation artifact generation, plot layout semantics, and denominator correctness.
+  Inputs: synthetic triplet results with inflow/outflow/ghost classifications and bootstrap weights.
+  Expected outputs/behavior: mapper writes expected plot/TSV artifacts (including `introgression_matrix_sampled_non_sister.tsv`), uses the full processed species tree by default, optionally prunes to requested plot taxa when supplied, average bootstrap values use population-level denominators, source taxon labels appear on top of the heatmap (between the tree strip and the heatmap cells), and the species tree strip is drawn above that.
+  Purpose: validate consolidation artifact generation, plot layout semantics, and denominator correctness.
 
 - Tests: `test_generate_introgression_maps_excludes_outgroups`
 Inputs: results containing a triplet with a taxon designated as outgroup via the `outgroups` parameter.
@@ -303,9 +303,14 @@ Expected outputs/behavior: matrix TSV cell `B←C` = 0.3 (0.6/2); ghost TSV cell
 Purpose: end-to-end verification that population-level denominators flow through to TSV output values.
 
 - Tests: `test_draw_species_tree_strip_suppresses_leaf_labels`, `test_draw_species_tree_strip_shows_leaf_labels_by_default`
-Inputs: three-taxon species tree; `show_leaf_labels=False` vs default (`True`).
-Expected outputs/behavior: with `False`, no Text artists with taxon names appear on the axis; with default `True`, one Text artist per leaf taxon is present.
-Purpose: verify the `show_leaf_labels` parameter controls leaf annotation rendering on the tree strip axis.
+  Inputs: three-taxon species tree; `show_leaf_labels=False` vs default (`True`).
+  Expected outputs/behavior: with `False`, no Text artists with taxon names appear on the axis; with default `True`, one Text artist per leaf taxon is present.
+  Purpose: verify the `show_leaf_labels` parameter controls leaf annotation rendering on the tree strip axis.
+
+- Tests: `test_collect_non_sister_counts_counts_non_sister_pairs`
+  Inputs: two results for triplet (A,B,C) (inflow and no_introgression) and one result for triplet (A,C,D) (ghost).
+  Expected outputs/behavior: `counts[(A,C)]` = 2; `counts[(B,C)]` = 2; `counts[(A,B)]` = 0 (sister pair, never incremented); `counts[(A,D)]` = 1; `counts[(C,D)]` = 1.
+  Purpose: verify that `_collect_non_sister_counts` increments only non-sister pairs and accumulates counts across multiple triplet rows.
 
 #### tests/test_tree_parser.py
 
