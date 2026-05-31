@@ -65,6 +65,14 @@ python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.
 pip install -r requirements.txt
 ```
 
+If you want the machine-learning baselines, install the optional ML extra instead of the core-only package:
+
+```bash
+pip install .[ml]
+```
+
+That extra pulls in the scikit-learn dependency used by `ghostparser.ml.random_forest` and `ghostparser.ml.multi_knn`.
+
 #### Poetry 2.x+ Alternative
 
 If you prefer Poetry 2.x+ instead of plain pip:
@@ -397,6 +405,30 @@ Core defaults are centralized in orchestrator config/CLI normalization and in mo
 - `bootstrap_options.iterations`: `100`
 - `bootstrap_options.seed`: unset
 - `bootstrap_options.summary_only`: `false`
+
+### Machine Learning (ghostparser.ml)
+
+A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the pipeline) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see `ML.md` for full usage and the data contract.
+
+Run example:
+
+```bash
+python -m ghostparser.ml.random_forest -i results/summary_statistics.tsv -o results/ml_out
+```
+
+Or explicitly dispatch via the package entrypoint:
+
+```bash
+python -m ghostparser.ml --model random_forest -i results/summary_statistics.tsv -o results/ml_out
+```
+
+The KNN baseline is available as:
+
+```bash
+python -m ghostparser.ml.multi_knn -i results/summary_statistics.tsv -o results/ml_out
+```
+
+Note: `python -m ghostparser.ml` will not redirect to any model by default — you must pass `--model` to dispatch.
 
 **Backend Details:**
 

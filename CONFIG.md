@@ -361,11 +361,163 @@ python -m ghostparser.orchestrator \
   --bootstrap-debug-mode
 ```
 
+## Machine Learning (ghostparser.ml)
+
+The ML subpackage exposes explicit trainer modules. Invoke a trainer directly (for example `python -m ghostparser.ml.random_forest` or `python -m ghostparser.ml.multi_knn`) or use the package dispatcher with `--model`.
+
+Install the optional ML dependency set with `pip install .[ml]` when you want these trainers available; the core package can be installed without scikit-learn.
+
+The loader now uses a strict layout:
+
+- top-level keys for core run inputs and split/runtime controls
+- `model` for trainer hyperparameters
+- `evaluation` for metric selection and report/save toggles
+
+The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--output-dir`. The dispatcher also accepts `--model`. Other settings are config-file keys.
+
+### Top-Level Config Keys
+
+##### `input_path`
+
+- Type: string
+- Parallel CLI: `--input-path` (alias `-i`)
+- Description: path to `summary_statistics.tsv` produced by the pipeline.
+
+##### `output_dir`
+
+- Type: string
+- Parallel CLI: `--output-dir` (alias `-o`)
+- Description: directory where trained model and metric artifacts will be written.
+
+##### `target_column`
+
+- Type: string
+- Default: `classes`
+- Description: column name in the TSV containing the 6-bit bitstring target.
+
+##### `test_size`
+
+- Type: float in (0,1)
+- Default: `0.2`
+- Description: fraction of the dataset reserved for the hold-out test set.
+
+##### `cv_folds`
+
+- Type: int >= 1 or null
+- Default: `5`
+- Description: number of stratified cross-validation folds to run on the training partition.
+
+##### `rare_class_policy`
+
+- Type: string
+- Default: `warn_reduce_cv`
+- Description: behaviour when stratified CV is not feasible. Choices: `warn_reduce_cv`, `warn_skip_cv`, `error`.
+
+##### `random_state`
+
+- Type: int or null
+- Default: `null`
+- Description: optional RNG seed for deterministic splits and model behaviour.
+
+##### `n_jobs`
+
+- Type: int or null
+- Default: `-1`
+- Description: number of parallel jobs used by estimators.
+
+### Config Layout
+
+The loader expects a top-level layout like this:
+
+```yaml
+input_path: ./results/summary_statistics.tsv
+output_dir: ./results/ml_out
+target_column: classes
+test_size: 0.2
+cv_folds: 5
+rare_class_policy: warn_reduce_cv
+random_state: 42
+n_jobs: -1
+
+model:
+  n_estimators: 200
+  max_depth: 10
+  min_samples_split: 2
+  min_samples_leaf: 1
+  max_features: sqrt
+  class_weight: null
+  n_neighbors: 5
+  weights: uniform
+  algorithm: auto
+  leaf_size: 30
+  metric: minkowski
+  p: 2
+
+evaluation:
+  metrics: all
+  report_class_distribution: true
+  report_confusion_matrix: true
+  report_feature_importance: true
+  save_label_map: true
+  save_predictions: true
+```
+
+### Model Parameters
+
+- RandomForest (`ghostparser.ml.random_forest`):
+  - `n_estimators` (int, default: `200`)
+  - `max_depth` (int or null, default: `null`)
+  - `min_samples_split` (int, default: `2`)
+  - `min_samples_leaf` (int, default: `1`)
+  - `max_features` (string|int or null, default: `sqrt`)
+  - `class_weight` (null|dict, default: `null`)
+
+- Multi-label KNN (`ghostparser.ml.multi_knn`):
+  - `n_neighbors` (int >= 1, default: `5`)
+  - `weights` (string, default: `uniform`) — `uniform` or `distance`.
+  - `algorithm` (string, default: `auto`) — `auto`, `ball_tree`, `kd_tree`, `brute`.
+  - `leaf_size` (int >= 1, default: `30`)
+  - `metric` (string, default: `minkowski`)
+  - `p` (int >= 1, default: `2`)
+
+The top-level `n_jobs` and `random_state` keys apply to both trainers.
+
+### Evaluation Parameters
+
+- `metrics`: string metric-set selector. Choices: `all`, `primary`, `diagnostic`, `per_bit`. Default: `all`.
+- `report_class_distribution`: boolean, default `true`.
+- `report_confusion_matrix`: boolean, default `true`.
+- `report_feature_importance`: boolean, default `true`.
+- `save_label_map`: boolean, default `true`.
+- `save_predictions`: boolean, default `true`.
+
+### CLI examples
+
+Run RandomForest via module entrypoint:
+
+```bash
+python -m ghostparser.ml.random_forest -i ./results/summary_statistics.tsv -o ./results/ml_rf_out
+```
+
+Run Multi-KNN via module entrypoint:
+
+```bash
+python -m ghostparser.ml.multi_knn -i ./results/summary_statistics.tsv -o ./results/ml_knn_out
+```
+
+Use the package dispatcher (explicit model selection required):
+
+```bash
+python -m ghostparser.ml --model random_forest -c sample_configs/multi_knn_minimal.yaml
+```
+
 ### Sample Config Files
 
+- `sample_configs/multi_knn_minimal.yaml`
 - `sample_configs/orchestrator_minimal.yaml`
 - `sample_configs/orchestrator_full.yaml`
-- `sample_configs/orchestrator_full.json`
+
+The ML sample config illustrates the `input_path`, `output_dir`, `model`, and `evaluation` sections that the ML loaders expect.
 
 ## Tree Parser (CLI Submodule)
 
