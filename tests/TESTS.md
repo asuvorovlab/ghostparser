@@ -391,15 +391,49 @@ Inputs: synthetic pipeline result rows across discordant-test/summary-stat/corre
 Expected outputs/behavior: TSV/JSON outputs contain expected dynamic columns (including `inference`), enforce strict bootstrap JSON serialization, and reject unsupported or mixed output states.
 Purpose: validate output-schema stability and writer safeguards.
 
-- Tests: `test_write_summary_statistics_tsv_includes_expected_columns_and_counts`, `test_write_summary_statistics_tsv_includes_bootstrap_value_when_enabled`
-Inputs: summary-statistics payloads with bootstrap disabled/enabled.
-Expected outputs/behavior: summary TSV includes required 63-stat topology metrics plus identity/count/classification fields and bootstrap_value when enabled.
-Purpose: verify summary-statistics file schema and conditional bootstrap column behavior.
+- Tests: `test_run_triplet_pipeline_skips_summary_metric_collection_when_disabled`, `test_write_summary_statistics_tsv_includes_expected_columns_and_counts`, `test_write_summary_statistics_tsv_includes_bootstrap_value_when_enabled`
+Inputs: pipeline runs with summary-stat metric collection disabled/enabled and summary-statistics payloads with bootstrap disabled/enabled.
+Expected outputs/behavior: topology summary metrics are skipped when disabled; when enabled, summary TSV includes required 63-stat topology metrics plus identity/count/classification fields and bootstrap_value when enabled.
+Purpose: verify summary-statistics gating and summary-statistics file schema/conditional bootstrap column behavior.
 
 - Tests: `test_resolve_runtime_args_triplet_processor_cli_defaults_and_overrides`
 Inputs: CLI-mode argument combinations, including processes handling.
 Expected outputs/behavior: runtime args resolve defaults/overrides correctly.
 Purpose: validate triplet-processor runtime argument resolution behavior.
+
+## Machine Learning tests (`tests/test_ml_random_forest.py`)
+
+- `test_parse_classes_returns_binary_matrix`
+  - Inputs: two example 6-bit bitstrings (`"101001"`, `"010010"`).
+  - Expected outputs: a (2,6) binary numpy matrix and the original string labels preserved.
+  - Purpose: verify `classes` parsing enforces a 6-character 0/1 bitstring and converts to binary targets.
+
+- `test_train_random_forest_smoke`
+  - Inputs: `summary_statistics_tsv` fixture (small TSV with `classes` and numeric feature columns), runtime config (small forest for speed, `cv_folds=3`, `random_state=7`).
+  - Expected outputs: training completes, artifacts exist (`random_forest_model.pkl`, `random_forest_metrics.json`, `predictions.tsv`), metrics contain `primary_metrics` and `diagnostic_metrics`, and `cv` key exists (empty or aggregated as feasible).
+  - Purpose: smoke-test end-to-end training flow, evaluation, and artifact writing.
+
+- `test_train_random_forest_creates_bitwise_metrics_report`
+  - Inputs: same TSV fixture, compact training config (`n_estimators=15`, `cv_folds=2`, `random_state=11`).
+  - Expected outputs: human-readable metrics file includes per-bit metrics and diagnostic statements; primary metrics (hamming loss, micro/macro/weighted f1) are present and finite.
+  - Purpose: ensure textual and JSON metric artifacts include per-bit breakdowns and primary/diagnostic distinctions.
+
+## Machine Learning tests (`tests/test_ml_multi_knn.py`)
+
+- `test_multi_knn_train_smoke`
+  - Inputs: `summary_statistics_tsv` fixture, KNN runtime config (`n_neighbors=5`, `cv_folds=3`, `random_state=7`, `weights=uniform`).
+  - Expected outputs: training completes, artifacts exist (`multi_knn_model.pkl`, `multi_knn_metrics.json`, `predictions.tsv`), metrics include `classifier: multi_knn`, and the `knn` details block is present.
+  - Purpose: smoke-test the multi-label KNN baseline end to end.
+
+- `test_multi_knn_build_model_caps_neighbors_to_training_size`
+  - Inputs: direct model build request with `n_neighbors=20` and `train_size=2`.
+  - Expected outputs: effective neighbor count is capped to 2.
+  - Purpose: verify the adaptive neighbor sizing used to avoid KNN failures on small training folds.
+
+- `test_multi_knn_metrics_report_mentions_effective_neighbors`
+  - Inputs: same TSV fixture with a larger requested neighbor count (`n_neighbors=20`) and `weights=distance`.
+  - Expected outputs: text metrics report includes configured/effective neighbor details, the JSON metrics include the `knn` block, and `feature_importances.tsv` is written.
+  - Purpose: validate the KNN-specific reporting and permutation-importance artifact.
 
 ## Backend Parity Tests (`@pytest.mark.backend_parity`)
 
