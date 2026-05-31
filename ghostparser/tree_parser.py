@@ -4,6 +4,7 @@ import argparse
 from itertools import combinations
 from multiprocessing import cpu_count
 import multiprocessing as mp
+import os
 from pathlib import Path
 import shutil
 import time
@@ -603,21 +604,24 @@ def process_gene_trees_for_triplets(gene_trees, triplets):
     return triplet_gene_trees
 
 
-def _get_mp_context(prefer_fork=False):
+def _get_mp_context(prefer_fork=None):
     """Get a multiprocessing context for worker pools.
 
     Args:
-        prefer_fork: If True, allow ``fork`` when available. Safe start methods
-            are preferred by default.
+        prefer_fork: If True, prefer ``fork`` when available. If None, defaults
+            to True on POSIX platforms.
     """
+    if prefer_fork is None:
+        prefer_fork = os.name == "posix"
+
     if hasattr(mp, "get_context"):
         methods = mp.get_all_start_methods()
+        if prefer_fork and "fork" in methods:
+            return mp.get_context("fork")
         if "forkserver" in methods:
             return mp.get_context("forkserver")
         if "spawn" in methods:
             return mp.get_context("spawn")
-        if prefer_fork and "fork" in methods:
-            return mp.get_context("fork")
     return mp
 
 
