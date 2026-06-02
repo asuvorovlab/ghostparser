@@ -283,6 +283,7 @@ Combined plot layout and consolidation integration:
 - The inflow/outflow heatmap and the ghost target-strength bar chart are combined into a single figure (`introgression_combined.png`).
 - The species tree topology strip is drawn on top of the heatmap. Source taxon labels appear at the top of the heatmap with dynamically computed spacing.
 - Target taxon labels are centered between the heatmap and the bar chart. A single shared colorbar covers both panels.
+- The shared x/y labels and colorbar text scale with taxon count and use capped sizes so they remain readable on larger consolidation figures, while the species-name labels keep their separate sizing.
 - Average bootstrap values use supporting-triplet denominators:
     - Sampled introgression (source → target): `sum(bootstrap weights) / count(triplets that produced that directed edge)`.
     - Ghost introgression (target taxon): `sum(bootstrap weights) / count(triplets that produced that ghost target)`.

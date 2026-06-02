@@ -152,6 +152,7 @@ The combined figure uses a three-row layout above the data panels:
     - **Shared colorbar** — single colorbar covering both the heatmap and bar chart.
 
 All three rows share `hspace=0` so they appear flush. Figure and panel widths scale dynamically with taxon count and rendered label widths.
+The shared x/y labels and colorbar text scale with taxon count and are capped to stay readable on large figures, while the species-name labels keep their separate sizing.
 
 ### CLI usage
 
