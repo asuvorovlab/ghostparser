@@ -402,6 +402,21 @@ def _write_non_sister_matrix_tsv(path, taxa_order, matrix):
             out_f.write(row_taxon + "\t" + "\t".join(row_values) + "\n")
 
 
+def _scaled_consolidation_text_sizes(n):
+    """Return capped annotation font sizes for the consolidation plot."""
+    scale_ref = max(min(n, 200), 1)
+    frac = (scale_ref - 1) / 199.0 if scale_ref > 1 else 0.0
+
+    def _interp(min_size, max_size):
+        return int(round(min_size + (max_size - min_size) * frac))
+
+    return {
+        "axis_label": _interp(12, 18),
+        "cbar_label": _interp(11, 17),
+        "cbar_tick": _interp(10, 13),
+    }
+
+
 def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     """Plot combined heatmap (sampled introgressions) with ghost bar chart to the right.
 
@@ -414,6 +429,7 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     cmap = plt.get_cmap("PuBuGn")
     label_fontsize = 9
     n = len(taxa_order)
+    text_sizes = _scaled_consolidation_text_sizes(n)
 
     # --- dynamic cell size (shrinks as n grows, same logic as reference) ---
     scale_ref = max(min(n, 200), 1)
@@ -537,8 +553,12 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
         linecolor="white",
         cbar=False,
     )
-    ax_heat.set_ylabel("Target taxon")
-    ax_heat.set_xlabel("Sampled Introgression", fontweight="bold")
+    ax_heat.set_ylabel("Target taxon", fontsize=text_sizes["axis_label"])
+    ax_heat.set_xlabel(
+        "Sampled Introgression",
+        fontweight="bold",
+        fontsize=text_sizes["axis_label"],
+    )
     ax_heat.tick_params(
         axis="x", bottom=False, labelbottom=False, top=False, labeltop=False
     )
@@ -572,7 +592,11 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     )
     ax_bar.set_xlim(0.0, 1.0)
     ax_bar.set_ylim(n, 0)
-    ax_bar.set_xlabel("Ghost Introgression", fontweight="bold")
+    ax_bar.set_xlabel(
+        "Ghost Introgression",
+        fontweight="bold",
+        fontsize=text_sizes["axis_label"],
+    )
     ax_bar.tick_params(
         axis="y", left=False, right=False, labelleft=False, labelright=False
     )
@@ -586,8 +610,12 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     cbar = fig.colorbar(sm, cax=ax_cbar)
     cbar.set_ticks([0.0, 0.5, 1.0])
     cbar.set_ticklabels(["0", "0.5", "1"])
-    cbar.ax.tick_params(labelsize=8)
-    cbar.set_label("Average Bootstrap Value", labelpad=8)
+    cbar.ax.tick_params(labelsize=text_sizes["cbar_tick"])
+    cbar.set_label(
+        "Average Bootstrap Value",
+        labelpad=8,
+        fontsize=text_sizes["cbar_label"],
+    )
 
     fig.savefig(path, bbox_inches="tight", dpi=150)
     plt.close(fig)
