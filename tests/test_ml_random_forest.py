@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 
 import numpy as np
@@ -20,7 +21,7 @@ def test_train_random_forest_smoke(summary_statistics_tsv, tmp_path):
     config = argparse.Namespace(
         input_path=str(summary_statistics_tsv),
         output_dir=str(tmp_path / "ml_out"),
-        target_column="classes",
+        target_column="class",
         test_size=0.25,
         cv_folds=3,
         random_state=7,
@@ -40,28 +41,39 @@ def test_train_random_forest_smoke(summary_statistics_tsv, tmp_path):
     assert metrics["objective"] == "multi-label classification"
     assert "exact_match_accuracy" in metrics["diagnostic_metrics"]
     assert "hamming_loss" in metrics["primary_metrics"]
-    assert metrics["class_distribution"]["overall"]
-    assert metrics["bit_distribution"]["overall"]
+    assert metrics["dataset_summary"]["class_distribution"]["overall"]
+    assert metrics["dataset_summary"]["bit_distribution"]["overall"]
     assert metrics["cv"] is not None
 
-    metrics_json = json.loads((tmp_path / "ml_out" / "random_forest_metrics.json").read_text())
+    metrics_json = json.loads(
+        (tmp_path / "ml_out" / "random_forest_overall_metrics.json").read_text()
+    )
     assert metrics_json["exact_match_is_diagnostic"] is True
+    assert (
+        metrics_json["dataset_summary"]["label_map"]["bit_labels"][0] == "ghost_into_A"
+    )
+    assert metrics_json["timings_seconds"]["total"] >= 0
 
     predictions_path = tmp_path / "ml_out" / "predictions.tsv"
     assert predictions_path.exists()
+    with open(predictions_path, "r", encoding="utf-8", newline="") as handle:
+        header = next(csv.reader(handle, delimiter="\t"))
+    assert "matched_label_count" in header
 
     model_path = tmp_path / "ml_out" / "random_forest_model.pkl"
     assert model_path.exists()
+    assert not (tmp_path / "ml_out" / "label_map.json").exists()
+    assert not (tmp_path / "ml_out" / "class_distribution.tsv").exists()
+    assert not (tmp_path / "ml_out" / "bit_distribution.tsv").exists()
 
-    label_map = json.loads((tmp_path / "ml_out" / "label_map.json").read_text())
-    assert label_map["bit_labels"][0] == "ghost_into_A"
 
-
-def test_train_random_forest_creates_bitwise_metrics_report(summary_statistics_tsv, tmp_path):
+def test_train_random_forest_creates_bitwise_metrics_report(
+    summary_statistics_tsv, tmp_path
+):
     config = argparse.Namespace(
         input_path=str(summary_statistics_tsv),
         output_dir=str(tmp_path / "ml_out"),
-        target_column="classes",
+        target_column="class",
         test_size=0.25,
         cv_folds=2,
         random_state=11,
@@ -76,10 +88,13 @@ def test_train_random_forest_creates_bitwise_metrics_report(summary_statistics_t
     )
 
     result = train_random_forest(config)
-    metrics_text = (tmp_path / "ml_out" / "random_forest_metrics.txt").read_text()
+    metrics_text = (
+        tmp_path / "ml_out" / "random_forest_overall_metrics.txt"
+    ).read_text()
 
     assert "Primary objective: multi-label classification" in metrics_text
     assert "Exact-match accuracy is diagnostic" in metrics_text
     assert "Per-bit metrics:" in metrics_text
+    assert "Timings (seconds):" in metrics_text
     assert result["metrics"]["primary_metrics"]["bitwise_accuracy"] <= 1.0
     assert np.isfinite(result["metrics"]["primary_metrics"]["hamming_loss"])

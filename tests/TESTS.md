@@ -239,6 +239,30 @@ Expected outputs: base bootstrap columns (`bootstrap_value`, `all_bootstrap`) ar
 Inputs: bootstrap-enabled result written with debug mode enabled and `summary_only=false`.
 Expected outputs: TSV includes `bootstrap_gene_tree_heights` and stores the raw per-triplet tree-height list.
 
+### `tests/test_ml_config.py`
+
+- `test_load_ml_config_defaults_target_column_to_class`
+Inputs: minimal ML config containing only `input_path` and `output_dir`.
+Expected outputs: `target_column` defaults to `class`.
+
+- `test_load_ml_config_accepts_explicit_class_target_column`
+Inputs: minimal ML config with `target_column: class` and one model parameter.
+Expected outputs: explicit `class` target is preserved and model parameters load correctly.
+
+- `test_load_ml_config_defaults_min_samples_parameters`
+Inputs: minimal ML config without `min_samples_split` or `min_samples_leaf`.
+Expected outputs: the loader fills in the default RF values for both keys.
+
+### `tests/test_ml_utils.py`
+
+- `test_rows_to_matrix_uses_numeric_features_and_excludes_target_column`
+Inputs: TSV-like rows containing only numeric feature columns and the `class` target bitstring.
+Expected outputs: the target column is excluded from features, numeric columns are used directly, and the label bitstrings are preserved for training.
+
+- `test_rows_to_matrix_rejects_string_features`
+Inputs: TSV-like rows containing one string-valued feature column and the `class` target bitstring.
+Expected outputs: `ValueError` indicating that the non-target feature must be numeric.
+
 P-value correction behavior:
 
 - `test_adjust_p_values_custom_fdr_matches_known_bh_example`
@@ -409,20 +433,32 @@ Purpose: validate triplet-processor runtime argument resolution behavior.
   - Purpose: verify `classes` parsing enforces a 6-character 0/1 bitstring and converts to binary targets.
 
 - `test_train_random_forest_smoke`
-  - Inputs: `summary_statistics_tsv` fixture (small TSV with `classes` and numeric feature columns), runtime config (small forest for speed, `cv_folds=3`, `random_state=7`).
-  - Expected outputs: training completes, artifacts exist (`random_forest_model.pkl`, `random_forest_metrics.json`, `predictions.tsv`), metrics contain `primary_metrics` and `diagnostic_metrics`, and `cv` key exists (empty or aggregated as feasible).
+  - Inputs: `summary_statistics_tsv` fixture (small TSV with `class`, a low-cardinality string feature, and numeric feature columns), runtime config (small forest for speed, `cv_folds=3`, `random_state=7`).
+  - Expected outputs: training completes, artifacts exist (`random_forest_model.pkl`, `random_forest_overall_metrics.json`, `predictions.tsv`), metrics contain `primary_metrics`, `diagnostic_metrics`, `dataset_summary`, and `timings_seconds`, and the prediction TSV includes `matched_label_count`.
   - Purpose: smoke-test end-to-end training flow, evaluation, and artifact writing.
 
 - `test_train_random_forest_creates_bitwise_metrics_report`
   - Inputs: same TSV fixture, compact training config (`n_estimators=15`, `cv_folds=2`, `random_state=11`).
-  - Expected outputs: human-readable metrics file includes per-bit metrics and diagnostic statements; primary metrics (hamming loss, micro/macro/weighted f1) are present and finite.
-  - Purpose: ensure textual and JSON metric artifacts include per-bit breakdowns and primary/diagnostic distinctions.
+  - Expected outputs: human-readable metrics file includes per-bit metrics, diagnostic statements, dataset summary, and timings; primary metrics (hamming loss, micro/macro/weighted f1) are present and finite.
+  - Purpose: ensure textual and JSON metric artifacts include per-bit breakdowns, consolidated dataset metadata, and primary/diagnostic distinctions.
+
+## Machine Learning config tests (`tests/test_ml_config.py`)
+
+- `test_load_ml_config_defaults_target_column_to_class`
+  - Inputs: minimal JSON config with only `input_path` and `output_dir`.
+  - Expected outputs: normalized ML config defaults `target_column` to `class`.
+  - Purpose: verify the default ML target column matches the dataframe shape used for random forest training.
+
+- `test_load_ml_config_accepts_explicit_class_target_column`
+  - Inputs: JSON config with `input_path`, `output_dir`, explicit `target_column: class`, and a simple `model.n_estimators` override.
+  - Expected outputs: normalized ML config preserves `target_column: class` and carries through model hyperparameters.
+  - Purpose: verify explicit target column handling and basic nested config parsing.
 
 ## Machine Learning tests (`tests/test_ml_multi_knn.py`)
 
 - `test_multi_knn_train_smoke`
-  - Inputs: `summary_statistics_tsv` fixture, KNN runtime config (`n_neighbors=5`, `cv_folds=3`, `random_state=7`, `weights=uniform`).
-  - Expected outputs: training completes, artifacts exist (`multi_knn_model.pkl`, `multi_knn_metrics.json`, `predictions.tsv`), metrics include `classifier: multi_knn`, and the `knn` details block is present.
+  - Inputs: `summary_statistics_tsv` fixture with a low-cardinality string column and numeric features, KNN runtime config (`n_neighbors=5`, `cv_folds=3`, `random_state=7`, `weights=uniform`).
+  - Expected outputs: training completes, artifacts exist (`multi_knn_model.pkl`, `multi_knn_overall_metrics.json`, `predictions.tsv`), metrics include `classifier: multi_knn`, the `knn` details block is present, and the prediction TSV includes `matched_label_count`.
   - Purpose: smoke-test the multi-label KNN baseline end to end.
 
 - `test_multi_knn_build_model_caps_neighbors_to_training_size`
@@ -432,8 +468,30 @@ Purpose: validate triplet-processor runtime argument resolution behavior.
 
 - `test_multi_knn_metrics_report_mentions_effective_neighbors`
   - Inputs: same TSV fixture with a larger requested neighbor count (`n_neighbors=20`) and `weights=distance`.
-  - Expected outputs: text metrics report includes configured/effective neighbor details, the JSON metrics include the `knn` block, and `feature_importances.tsv` is written.
-  - Purpose: validate the KNN-specific reporting and permutation-importance artifact.
+  - Expected outputs: text metrics report includes configured/effective neighbor details and timings, the JSON metrics include the `knn` block and dataset summary, and `feature_importances.tsv` is written.
+  - Purpose: validate the KNN-specific reporting, permutation-importance artifact, and timing summary.
+
+## Machine Learning tests (`tests/test_ml_hyper_tune.py`)
+
+- `test_load_hyper_tune_config_accepts_hyperparameter_tuning_section`
+  - Inputs: JSON config with a top-level `hyperparameter_tuning` section containing a random-forest grid search space.
+  - Expected outputs: tuner config normalizes the model, method, objective, and search space correctly.
+  - Purpose: verify the new tuning config header and nested search settings.
+
+- `test_load_hyper_tune_config_requires_hyperparameter_tuning_section`
+  - Inputs: JSON config missing the `hyperparameter_tuning` section.
+  - Expected outputs: `ConfigError` requiring the new section.
+  - Purpose: ensure the tuner config is explicit and self-contained.
+
+- `test_tune_hyperparameters_grid_search_smoke`
+  - Inputs: larger shared ML tuning fixture plus a small random-forest grid search over two candidate values.
+  - Expected outputs: tuning writes best-model and results artifacts and returns two ranked candidates.
+  - Purpose: exercise the full grid-search tuning path.
+
+- `test_tune_hyperparameters_random_search_smoke`
+  - Inputs: larger shared ML tuning fixture plus a small random-forest random search space with `n_iter=1`.
+  - Expected outputs: tuning samples one candidate, writes best-model and results artifacts, and returns the best candidate rank.
+  - Purpose: exercise the random-search tuning path.
 
 ## Backend Parity Tests (`@pytest.mark.backend_parity`)
 

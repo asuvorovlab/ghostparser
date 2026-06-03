@@ -1,11 +1,16 @@
-import pytest
 import csv
+
+import pytest
 
 
 @pytest.fixture
 def simple_newick_file(tmp_path):
     """Create a temporary file with a simple Newick tree."""
-    newick_str = "(TaxaA:0.001,(TaxaB:0.098,(((TaxaC:0.001,TaxaD:0.001):0.001,TaxaE:0.001):0.086,(TaxaF:0.001,TaxaG:0.001):0.032):0.001):0.012,OutGroup:0.558);"
+    newick_str = (
+        "(TaxaA:0.001,(TaxaB:0.098,(((TaxaC:0.001,TaxaD:0.001):0.001,"
+        "TaxaE:0.001):0.086,(TaxaF:0.001,TaxaG:0.001):0.032):0.001):0.012,"
+        "OutGroup:0.558);"
+    )
     tree_file = tmp_path / "simple_tree.nwk"
     tree_file.write_text(newick_str)
     return tree_file
@@ -47,7 +52,9 @@ def low_support_tree_file(tmp_path):
 
 @pytest.fixture()
 def simple_species_tree(tmp_path):
-    species_tree_str = "(((TaxaA:0.1,TaxaB:0.2):0.3,TaxaC:0.4):0.5,(TaxaD:0.6,OutGroup:0.7):0.8);"
+    species_tree_str = (
+        "(((TaxaA:0.1,TaxaB:0.2):0.3,TaxaC:0.4):0.5,(TaxaD:0.6,OutGroup:0.7):0.8);"
+    )
     species_file = tmp_path / "species.tree"
     species_file.write_text(species_tree_str)
     return species_file
@@ -86,169 +93,117 @@ def triplet_comparison_cases():
 def summary_statistics_tsv(tmp_path):
     rows = [
         {
-            "triplet": "A,B,C",
-            "abc_mapping": "A,B,C",
-            "species_tree": "((A,B),C)",
-            "classification": "ghost_introgression",
-            "bootstrap_value": "0.9",
-            "source_folder": "run_a",
-            "classes": "100001",
-            "concordant_avg_tree_height_mean": "1.0",
-            "discordant1_avg_tree_height_mean": "0.6",
-            "discordant2_avg_tree_height_mean": "0.4",
-            "concordant_internal_branch_mean": "0.7",
-            "discordant1_internal_branch_mean": "0.5",
-            "discordant2_internal_branch_mean": "0.3",
-            "concordant_sister_distance_mean": "0.8",
-            "discordant1_sister_distance_mean": "0.45",
-            "discordant2_sister_distance_mean": "0.25",
+            "class": "100001",
+            "dis1_topology": "BC",
+            "feature_1": "1.0",
+            "feature_2": "0.6",
+            "feature_3": "0.4",
+            "feature_4": "0.7",
         },
         {
-            "triplet": "D,E,F",
-            "abc_mapping": "D,E,F",
-            "species_tree": "((D,E),F)",
-            "classification": "ghost_introgression",
-            "bootstrap_value": "0.7",
-            "source_folder": "run_a",
-            "classes": "100001",
-            "concordant_avg_tree_height_mean": "1.1",
-            "discordant1_avg_tree_height_mean": "0.7",
-            "discordant2_avg_tree_height_mean": "0.5",
-            "concordant_internal_branch_mean": "0.75",
-            "discordant1_internal_branch_mean": "0.55",
-            "discordant2_internal_branch_mean": "0.35",
-            "concordant_sister_distance_mean": "0.85",
-            "discordant1_sister_distance_mean": "0.5",
-            "discordant2_sister_distance_mean": "0.3",
+            "class": "100001",
+            "dis1_topology": "AC",
+            "feature_1": "1.1",
+            "feature_2": "0.7",
+            "feature_3": "0.5",
+            "feature_4": "0.75",
         },
         {
-            "triplet": "G,H,I",
-            "abc_mapping": "G,H,I",
-            "species_tree": "((G,H),I)",
-            "classification": "ghost_introgression",
-            "bootstrap_value": "0.8",
-            "source_folder": "run_a",
-            "classes": "010010",
-            "concordant_avg_tree_height_mean": "1.2",
-            "discordant1_avg_tree_height_mean": "0.8",
-            "discordant2_avg_tree_height_mean": "0.6",
-            "concordant_internal_branch_mean": "0.8",
-            "discordant1_internal_branch_mean": "0.6",
-            "discordant2_internal_branch_mean": "0.4",
-            "concordant_sister_distance_mean": "0.9",
-            "discordant1_sister_distance_mean": "0.55",
-            "discordant2_sister_distance_mean": "0.35",
+            "class": "010010",
+            "dis1_topology": "BC",
+            "feature_1": "1.2",
+            "feature_2": "0.8",
+            "feature_3": "0.6",
+            "feature_4": "0.8",
         },
         {
-            "triplet": "J,K,L",
-            "abc_mapping": "J,K,L",
-            "species_tree": "((J,K),L)",
-            "classification": "ghost_introgression",
-            "bootstrap_value": "0.85",
-            "source_folder": "run_a",
-            "classes": "010010",
-            "concordant_avg_tree_height_mean": "1.3",
-            "discordant1_avg_tree_height_mean": "0.85",
-            "discordant2_avg_tree_height_mean": "0.65",
-            "concordant_internal_branch_mean": "0.82",
-            "discordant1_internal_branch_mean": "0.62",
-            "discordant2_internal_branch_mean": "0.42",
-            "concordant_sister_distance_mean": "0.95",
-            "discordant1_sister_distance_mean": "0.57",
-            "discordant2_sister_distance_mean": "0.37",
+            "class": "010010",
+            "dis1_topology": "AC",
+            "feature_1": "1.3",
+            "feature_2": "0.85",
+            "feature_3": "0.65",
+            "feature_4": "0.82",
         },
         {
-            "triplet": "M,N,O",
-            "abc_mapping": "M,N,O",
-            "species_tree": "((M,N),O)",
-            "classification": "outflow_introgression",
-            "bootstrap_value": "0.65",
-            "source_folder": "run_a",
-            "classes": "001100",
-            "concordant_avg_tree_height_mean": "1.4",
-            "discordant1_avg_tree_height_mean": "0.9",
-            "discordant2_avg_tree_height_mean": "0.7",
-            "concordant_internal_branch_mean": "0.85",
-            "discordant1_internal_branch_mean": "0.65",
-            "discordant2_internal_branch_mean": "0.45",
-            "concordant_sister_distance_mean": "0.98",
-            "discordant1_sister_distance_mean": "0.6",
-            "discordant2_sister_distance_mean": "0.4",
+            "class": "001100",
+            "dis1_topology": "BC",
+            "feature_1": "1.4",
+            "feature_2": "0.9",
+            "feature_3": "0.7",
+            "feature_4": "0.85",
         },
         {
-            "triplet": "P,Q,R",
-            "abc_mapping": "P,Q,R",
-            "species_tree": "((P,Q),R)",
-            "classification": "outflow_introgression",
-            "bootstrap_value": "0.6",
-            "source_folder": "run_a",
-            "classes": "001100",
-            "concordant_avg_tree_height_mean": "1.5",
-            "discordant1_avg_tree_height_mean": "0.95",
-            "discordant2_avg_tree_height_mean": "0.75",
-            "concordant_internal_branch_mean": "0.9",
-            "discordant1_internal_branch_mean": "0.7",
-            "discordant2_internal_branch_mean": "0.5",
-            "concordant_sister_distance_mean": "1.0",
-            "discordant1_sister_distance_mean": "0.62",
-            "discordant2_sister_distance_mean": "0.42",
+            "class": "001100",
+            "dis1_topology": "AC",
+            "feature_1": "1.5",
+            "feature_2": "0.95",
+            "feature_3": "0.75",
+            "feature_4": "0.9",
         },
         {
-            "triplet": "S,T,U",
-            "abc_mapping": "S,T,U",
-            "species_tree": "((S,T),U)",
-            "classification": "outflow_introgression",
-            "bootstrap_value": "0.55",
-            "source_folder": "run_a",
-            "classes": "110000",
-            "concordant_avg_tree_height_mean": "1.6",
-            "discordant1_avg_tree_height_mean": "1.0",
-            "discordant2_avg_tree_height_mean": "0.8",
-            "concordant_internal_branch_mean": "0.92",
-            "discordant1_internal_branch_mean": "0.72",
-            "discordant2_internal_branch_mean": "0.52",
-            "concordant_sister_distance_mean": "1.02",
-            "discordant1_sister_distance_mean": "0.64",
-            "discordant2_sister_distance_mean": "0.44",
+            "class": "110000",
+            "dis1_topology": "BC",
+            "feature_1": "1.6",
+            "feature_2": "1.0",
+            "feature_3": "0.8",
+            "feature_4": "0.92",
         },
         {
-            "triplet": "V,W,X",
-            "abc_mapping": "V,W,X",
-            "species_tree": "((V,W),X)",
-            "classification": "ghost_introgression",
-            "bootstrap_value": "0.5",
-            "source_folder": "run_a",
-            "classes": "110000",
-            "concordant_avg_tree_height_mean": "1.7",
-            "discordant1_avg_tree_height_mean": "1.05",
-            "discordant2_avg_tree_height_mean": "0.85",
-            "concordant_internal_branch_mean": "0.95",
-            "discordant1_internal_branch_mean": "0.75",
-            "discordant2_internal_branch_mean": "0.55",
-            "concordant_sister_distance_mean": "1.05",
-            "discordant1_sister_distance_mean": "0.66",
-            "discordant2_sister_distance_mean": "0.46",
+            "class": "110000",
+            "dis1_topology": "AC",
+            "feature_1": "1.7",
+            "feature_2": "1.05",
+            "feature_3": "0.85",
+            "feature_4": "0.95",
         },
         {
-            "triplet": "Y,Z,AA",
-            "abc_mapping": "Y,Z,AA",
-            "species_tree": "((Y,Z),AA)",
-            "classification": "ghost_introgression",
-            "bootstrap_value": "0.45",
-            "source_folder": "run_a",
-            "classes": "110000",
-            "concordant_avg_tree_height_mean": "1.8",
-            "discordant1_avg_tree_height_mean": "1.1",
-            "discordant2_avg_tree_height_mean": "0.9",
-            "concordant_internal_branch_mean": "1.0",
-            "discordant1_internal_branch_mean": "0.8",
-            "discordant2_internal_branch_mean": "0.6",
-            "concordant_sister_distance_mean": "1.1",
-            "discordant1_sister_distance_mean": "0.68",
-            "discordant2_sister_distance_mean": "0.48",
+            "class": "110000",
+            "dis1_topology": "BC",
+            "feature_1": "1.8",
+            "feature_2": "1.1",
+            "feature_3": "0.9",
+            "feature_4": "1.0",
         },
     ]
     path = tmp_path / "summary_statistics.tsv"
+    fieldnames = list(rows[0].keys())
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+@pytest.fixture()
+def summary_statistics_tsv_tuning(tmp_path):
+    rows = []
+    class_rows = [
+        ("100001", "BC", 1.0, 0.6, 0.4, 0.7),
+        ("010010", "AC", 1.2, 0.8, 0.6, 0.8),
+        ("001100", "BC", 1.4, 0.9, 0.7, 0.85),
+        ("110000", "AC", 1.6, 1.0, 0.8, 0.92),
+    ]
+    for repeat in range(4):
+        for (
+            class_label,
+            topology,
+            feature_1,
+            feature_2,
+            feature_3,
+            feature_4,
+        ) in class_rows:
+            rows.append(
+                {
+                    "class": class_label,
+                    "dis1_topology": topology,
+                    "feature_1": f"{feature_1 + 0.01 * repeat:.2f}",
+                    "feature_2": f"{feature_2 + 0.01 * repeat:.2f}",
+                    "feature_3": f"{feature_3 + 0.01 * repeat:.2f}",
+                    "feature_4": f"{feature_4 + 0.01 * repeat:.2f}",
+                }
+            )
+
+    path = tmp_path / "summary_statistics_tuning.tsv"
     fieldnames = list(rows[0].keys())
     with open(path, "w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames, delimiter="\t")
