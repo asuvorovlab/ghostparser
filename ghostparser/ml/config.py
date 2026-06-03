@@ -8,7 +8,7 @@ from pathlib import Path
 from ..config import ConfigError
 
 DEFAULT_ML_OUTPUT_DIR = "ml_results"
-DEFAULT_TARGET_COLUMN = "classes"
+DEFAULT_TARGET_COLUMN = "class"
 DEFAULT_TEST_SIZE = 0.2
 DEFAULT_CV_FOLDS = 5
 DEFAULT_RANDOM_STATE = None
@@ -117,7 +117,7 @@ def _validate_optional_positive_int(
 ) -> int | None:
     value = payload.get(key, default)
     if value is None:
-        return None
+        raise ConfigError(f"Config field {key} must be an integer >= 1")
     if not isinstance(value, int) or value < 1:
         raise ConfigError(f"Config field {key} must be an integer >= 1")
     return value
@@ -206,7 +206,7 @@ def normalize_ml_payload(payload: dict) -> dict:
         raise ConfigError(
             "Do not place model hyperparameters or evaluation reporting controls at the top level. "
             "Group model parameters under 'model' and reporting controls under 'evaluation'. Offending keys: "
-            + ", ".join(sorted(present_forbidden))
+            f"{', '.join(sorted(present_forbidden))}"
         )
 
     forbidden_model_runtime_keys = {"random_state", "n_jobs"}
@@ -216,7 +216,7 @@ def normalize_ml_payload(payload: dict) -> dict:
     if present_forbidden_model_runtime:
         raise ConfigError(
             "Place 'random_state' and 'n_jobs' at the top level, not under 'model'. Offending keys: "
-            + ", ".join(sorted(present_forbidden_model_runtime))
+            f"{', '.join(sorted(present_forbidden_model_runtime))}"
         )
 
     return {

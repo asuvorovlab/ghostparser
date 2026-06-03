@@ -10,8 +10,15 @@ from pathlib import Path
 from typing import Iterable
 
 import numpy as np
-from sklearn.metrics import accuracy_score, classification_report, f1_score, hamming_loss, precision_recall_fscore_support
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    f1_score,
+    hamming_loss,
+    precision_recall_fscore_support,
+)
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
 
 BIT_LABELS = (
     "ghost_into_A",
@@ -22,15 +29,7 @@ BIT_LABELS = (
     "outflow_from_B_to_C",
 )
 BIT_COUNT = len(BIT_LABELS)
-DEFAULT_EXCLUDED_COLUMNS = {
-    "triplet",
-    "abc_mapping",
-    "species_tree",
-    "classification",
-    "bootstrap_value",
-    "source_folder",
-    "classes",
-}
+MAX_STRING_CATEGORIES = 7
 
 
 @dataclass(frozen=True)
@@ -67,15 +66,50 @@ def parse_classes(raw_labels: Iterable[str]) -> tuple[np.ndarray, list[str]]:
     for raw_label in raw_labels:
         label = str(raw_label).strip()
         if not is_valid_bitstring(label):
-            raise ValueError(f"Invalid classes label: {label!r}; expected a {BIT_COUNT}-character 0/1 bitstring")
+            raise ValueError(
+                f"Invalid classes label: {label!r}; expected a {BIT_COUNT}-character 0/1 bitstring"
+            )
         labels.append(label)
         binary_rows.append([int(bit) for bit in label])
     return np.asarray(binary_rows, dtype=int), labels
 
 
-def select_feature_names(fieldnames: list[str]) -> tuple[str, ...]:
-    excluded = set(DEFAULT_EXCLUDED_COLUMNS)
-    return tuple(name for name in fieldnames if name not in excluded)
+def select_feature_names(fieldnames: list[str], target_column: str) -> tuple[str, ...]:
+    return tuple(name for name in fieldnames if name != target_column)
+
+
+def _parse_numeric_column(values: list[str]) -> np.ndarray | None:
+    try:
+        return np.asarray([float(value) for value in values], dtype=float)
+    except (TypeError, ValueError):
+        return None
+
+
+def _encode_feature_column(
+    values: list[str], feature_name: str
+) -> tuple[np.ndarray, tuple[str, ...]]:
+    parsed_numeric = _parse_numeric_column(values)
+    if parsed_numeric is not None:
+        return parsed_numeric.reshape(-1, 1), (feature_name,)
+
+    categories = sorted({str(value).strip() for value in values})
+    if len(categories) > MAX_STRING_CATEGORIES:
+        raise ValueError(
+            f"Non-numeric feature value for {feature_name!r}: {values[0]!r}; "
+            f"string-valued columns must have at most {MAX_STRING_CATEGORIES} distinct values"
+        )
+
+    encoder = OneHotEncoder(
+        categories=[categories],
+        sparse_output=False,
+        handle_unknown="ignore",
+        dtype=float,
+    )
+    encoded = encoder.fit_transform(np.asarray(values, dtype=object).reshape(-1, 1))
+    encoded_feature_names = tuple(
+        f"{feature_name}={category}" for category in encoder.categories_[0]
+    )
+    return encoded, encoded_feature_names
 
 
 def rows_to_matrix(rows: list[dict[str, str]], target_column: str) -> DatasetSplit:
@@ -83,32 +117,36 @@ def rows_to_matrix(rows: list[dict[str, str]], target_column: str) -> DatasetSpl
     if target_column not in fieldnames:
         raise ValueError(f"Missing required target column: {target_column}")
 
-    feature_names = select_feature_names(fieldnames)
+    feature_names = select_feature_names(fieldnames, target_column)
     if not feature_names:
-        raise ValueError("No feature columns found after excluding metadata columns")
+        raise ValueError("No feature columns found after excluding the target column")
 
-    feature_rows: list[list[float]] = []
     raw_labels: list[str] = []
+    encoded_blocks: list[np.ndarray] = []
+    encoded_feature_names: list[str] = []
+    column_values = {feature_name: [] for feature_name in feature_names}
     for row in rows:
         raw_labels.append(row[target_column])
-        feature_row: list[float] = []
         for feature_name in feature_names:
             raw_value = row.get(feature_name, "")
             if raw_value is None or str(raw_value).strip() == "":
                 raise ValueError(f"Missing feature value for {feature_name!r}")
-            try:
-                feature_row.append(float(raw_value))
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"Non-numeric feature value for {feature_name!r}: {raw_value!r}") from exc
-        feature_rows.append(feature_row)
+            column_values[feature_name].append(str(raw_value).strip())
+
+    for feature_name in feature_names:
+        encoded_block, block_feature_names = _encode_feature_column(
+            column_values[feature_name], feature_name
+        )
+        encoded_blocks.append(encoded_block)
+        encoded_feature_names.extend(block_feature_names)
 
     targets, labels = parse_classes(raw_labels)
-    features = np.asarray(feature_rows, dtype=float)
+    features = np.hstack(encoded_blocks)
 
     return DatasetSplit(
-        feature_names=feature_names,
+        feature_names=tuple(encoded_feature_names),
         train_features=features,
-        test_features=np.empty((0, len(feature_names))),
+        test_features=np.empty((0, features.shape[1])),
         train_targets=targets,
         test_targets=np.empty((0, BIT_COUNT), dtype=int),
         train_labels=labels,
@@ -126,7 +164,9 @@ def split_dataset(
     labels: np.ndarray,
     test_size: float,
     random_state: int | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
+) -> tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]
+]:
     try:
         x_train, x_test, y_train, y_test, labels_train, labels_test = train_test_split(
             features,
@@ -136,7 +176,15 @@ def split_dataset(
             random_state=random_state,
             stratify=labels,
         )
-        return x_train, x_test, y_train, y_test, labels_train, labels_test, ["stratified"]
+        return (
+            x_train,
+            x_test,
+            y_train,
+            y_test,
+            labels_train,
+            labels_test,
+            ["stratified"],
+        )
     except ValueError:
         x_train, x_test, y_train, y_test, labels_train, labels_test = train_test_split(
             features,
@@ -146,22 +194,34 @@ def split_dataset(
             random_state=random_state,
             stratify=None,
         )
-        return x_train, x_test, y_train, y_test, labels_train, labels_test, ["unstratified"]
+        return (
+            x_train,
+            x_test,
+            y_train,
+            y_test,
+            labels_train,
+            labels_test,
+            ["unstratified"],
+        )
 
 
 def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
-    per_bit_precision, per_bit_recall, per_bit_f1, per_bit_support = precision_recall_fscore_support(
-        y_true, y_pred, average=None, zero_division=0
+    per_bit_precision, per_bit_recall, per_bit_f1, per_bit_support = (
+        precision_recall_fscore_support(y_true, y_pred, average=None, zero_division=0)
     )
     per_bit_accuracy = (y_true == y_pred).mean(axis=0)
-    report = classification_report(y_true, y_pred, target_names=BIT_LABELS, zero_division=0)
+    report = classification_report(
+        y_true, y_pred, target_names=BIT_LABELS, zero_division=0
+    )
     return {
         "exact_match_accuracy": float(accuracy_score(y_true, y_pred)),
         "hamming_loss": float(hamming_loss(y_true, y_pred)),
         "bitwise_accuracy": float((y_true == y_pred).mean()),
         "micro_f1": float(f1_score(y_true, y_pred, average="micro", zero_division=0)),
         "macro_f1": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
-        "weighted_f1": float(f1_score(y_true, y_pred, average="weighted", zero_division=0)),
+        "weighted_f1": float(
+            f1_score(y_true, y_pred, average="weighted", zero_division=0)
+        ),
         "per_bit": {
             bit_label: {
                 "precision": float(per_bit_precision[index]),
@@ -189,12 +249,17 @@ def bit_distribution(targets: np.ndarray) -> dict[str, dict[str, float]]:
     totals = targets.sum(axis=0)
     total_rows = targets.shape[0] or 1
     return {
-        bit_label: {"positive_count": int(totals[index]), "fraction": float(totals[index] / total_rows)}
+        bit_label: {
+            "positive_count": int(totals[index]),
+            "fraction": float(totals[index] / total_rows),
+        }
         for index, bit_label in enumerate(BIT_LABELS)
     }
 
 
-def auto_cv_folds(labels: np.ndarray, requested_folds: int, policy: str) -> tuple[int | None, list[str]]:
+def auto_cv_folds(
+    labels: np.ndarray, requested_folds: int, policy: str
+) -> tuple[int | None, list[str]]:
     counts = Counter(labels.tolist())
     if not counts:
         return None, ["No labels available for cross-validation"]
@@ -203,15 +268,23 @@ def auto_cv_folds(labels: np.ndarray, requested_folds: int, policy: str) -> tupl
     warnings: list[str] = []
     if min_count < 2:
         if policy == "error":
-            raise ValueError("Cannot run stratified cross-validation because at least one class has fewer than 2 samples")
-        return None, ["Skipped cross-validation because at least one class has fewer than 2 samples"]
+            raise ValueError(
+                "Cannot run stratified cross-validation because at least one class has fewer than 2 samples"
+            )
+        return None, [
+            "Skipped cross-validation because at least one class has fewer than 2 samples"
+        ]
 
     folds = min(requested_folds, min_count)
     if folds < requested_folds:
-        warnings.append(f"Reduced CV folds from {requested_folds} to {folds} because the smallest class has {min_count} samples")
+        warnings.append(
+            f"Reduced CV folds from {requested_folds} to {folds} because the smallest class has {min_count} samples"
+        )
 
     if policy == "warn_skip_cv" and folds < requested_folds:
-        return None, warnings + ["Skipped cross-validation because the requested fold count was not feasible"]
+        return None, warnings + [
+            "Skipped cross-validation because the requested fold count was not feasible"
+        ]
 
     return folds, warnings
 
@@ -242,26 +315,81 @@ def build_label_map() -> dict:
     }
 
 
-def build_prediction_rows(y_true: np.ndarray, y_pred: np.ndarray) -> list[dict[str, object]]:
-    rows = []
+def build_dataset_summary(
+    all_labels: list[str],
+    train_labels: list[str],
+    test_labels: list[str],
+    train_targets: np.ndarray,
+    test_targets: np.ndarray,
+    split_notes: list[str],
+    test_size: float,
+    random_state: int | None,
+) -> dict:
+    return {
+        "label_map": build_label_map(),
+        "split": {
+            "strategy": split_notes[0] if split_notes else None,
+            "notes": list(split_notes),
+            "test_size": float(test_size),
+            "random_state": random_state,
+            "total_rows": int(len(all_labels)),
+            "train_rows": int(len(train_labels)),
+            "test_rows": int(len(test_labels)),
+        },
+        "class_distribution": {
+            "overall": summarize_distribution(all_labels),
+            "train": summarize_distribution(train_labels),
+            "test": summarize_distribution(test_labels),
+        },
+        "bit_distribution": {
+            "overall": bit_distribution(
+                train_targets
+                if len(test_targets) == 0
+                else np.vstack([train_targets, test_targets])
+            ),
+            "train": bit_distribution(train_targets),
+            "test": bit_distribution(test_targets),
+        },
+    }
+
+
+def build_prediction_rows(
+    y_true: np.ndarray, y_pred: np.ndarray
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
     for index, (true_row, pred_row) in enumerate(zip(y_true, y_pred)):
-        rows.append(
-            {
-                "row_index": index,
-                "true_label": "".join(str(int(value)) for value in true_row),
-                "pred_label": "".join(str(int(value)) for value in pred_row),
-                "exact_match": int(np.array_equal(true_row, pred_row)),
-                **{f"true_{bit_label}": int(true_row[bit_index]) for bit_index, bit_label in enumerate(BIT_LABELS)},
-                **{f"pred_{bit_label}": int(pred_row[bit_index]) for bit_index, bit_label in enumerate(BIT_LABELS)},
-            }
-        )
+        matched_label_count = int(np.sum(true_row == pred_row))
+        row: dict[str, object] = {
+            "row_index": int(index),
+            "true_label": "".join(str(int(value)) for value in true_row),
+            "pred_label": "".join(str(int(value)) for value in pred_row),
+            "exact_match": int(np.array_equal(true_row, pred_row)),
+            "matched_label_count": matched_label_count,
+        }
+        for bit_index, bit_label in enumerate(BIT_LABELS):
+            row[f"true_{bit_label}"] = int(true_row[bit_index])
+            row[f"pred_{bit_label}"] = int(pred_row[bit_index])
+        rows.append(row)
     return rows
 
 
-def build_feature_importance_rows(feature_names: tuple[str, ...], scores: np.ndarray) -> list[dict[str, object]]:
-    rows = [
-        {"feature": feature_name, "importance": float(scores[index])}
-        for index, feature_name in enumerate(feature_names)
-    ]
+def build_feature_importance_rows(
+    feature_names: tuple[str, ...], scores: np.ndarray
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for index, feature_name in enumerate(feature_names):
+        rows.append({"feature": feature_name, "importance": float(scores[index])})
     rows.sort(key=lambda row: row["importance"], reverse=True)
     return rows
+
+
+def format_confusion_matrix_section(
+    confusion_matrices: dict[str, list[list[int]]],
+) -> list[str]:
+    lines: list[str] = []
+    for bit_label, matrix_values in confusion_matrices.items():
+        lines.append(f"  {bit_label}:")
+        lines.append("           pred=0  pred=1")
+        lines.append(f"    true=0  {matrix_values[0][0]:>6}  {matrix_values[0][1]:>6}")
+        lines.append(f"    true=1  {matrix_values[1][0]:>6}  {matrix_values[1][1]:>6}")
+    return lines
