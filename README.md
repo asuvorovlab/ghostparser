@@ -73,6 +73,14 @@ pip install .[ml]
 
 That extra pulls in the scikit-learn dependency used by `ghostparser.ml.random_forest` and `ghostparser.ml.multi_knn`.
 
+The same extra also enables `ghostparser.ml.hyper_tune`, which reads a `hyperparameter_tuning` config section and can run either grid search or random search across the supported ML trainers.
+
+Run the tuner directly with:
+
+```bash
+python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_random_forest.yaml
+```
+
 #### Poetry 2.x+ Alternative
 
 If you prefer Poetry 2.x+ instead of plain pip:

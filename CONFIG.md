@@ -363,7 +363,9 @@ python -m ghostparser.orchestrator \
 
 ## Machine Learning (ghostparser.ml)
 
-The ML subpackage exposes explicit trainer modules. Invoke a trainer directly (for example `python -m ghostparser.ml.random_forest` or `python -m ghostparser.ml.multi_knn`) or use the package dispatcher with `--model`.
+The ML subpackage exposes explicit trainer modules. Invoke a trainer directly (for example `python -m ghostparser.ml.random_forest` or `python -m ghostparser.ml.multi_knn`). The random forest baseline is the main example path in this section.
+
+The loaders treat the 6-bit label column as a multi-label target: each bit becomes one binary label, so the trainer can report both per-label scores and the stricter exact-match result for the whole bitstring.
 
 Install the optional ML dependency set with `pip install .[ml]` when you want these trainers available; the core package can be installed without scikit-learn.
 
@@ -373,7 +375,7 @@ The loader now uses a strict layout:
 - `model` for trainer hyperparameters
 - `evaluation` for metric selection and report/save toggles
 
-The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--output-dir`. The dispatcher also accepts `--model`. Other settings are config-file keys.
+The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--output-dir`. Other settings are config-file keys.
 
 ### Top-Level Config Keys
 
@@ -392,8 +394,8 @@ The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--
 ##### `target_column`
 
 - Type: string
-- Default: `classes`
-- Description: column name in the TSV containing the 6-bit bitstring target.
+- Default: `class`
+- Description: column name in the TSV containing the fixed-length binary target string. The loader reads that value as a string bitstring, expands it into one binary label per position for multi-label training, and expects six positions.
 
 ##### `test_size`
 
@@ -423,7 +425,7 @@ The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--
 
 - Type: int or null
 - Default: `-1`
-- Description: number of parallel jobs used by estimators.
+- Description: number of CPU worker jobs used by estimators. `-1` means all available CPU cores for operations that support parallelism; it does not enable GPU acceleration.
 
 ### Config Layout
 
@@ -432,7 +434,7 @@ The loader expects a top-level layout like this:
 ```yaml
 input_path: ./results/summary_statistics.tsv
 output_dir: ./results/ml_out
-target_column: classes
+target_column: class
 test_size: 0.2
 cv_folds: 5
 rare_class_policy: warn_reduce_cv
@@ -464,13 +466,25 @@ evaluation:
 
 ### Model Parameters
 
+Feature handling:
+
+- The loader uses every non-target column as a feature.
+- Numeric feature columns are used directly.
+- String-valued feature columns with 7 or fewer distinct values are one-hot encoded automatically.
+- String-valued feature columns with more than 7 distinct values are rejected.
+- The configured `target_column` is excluded from the feature matrix automatically, and its raw TSV value is still read as the multi-label target bitstring.
+
+If you want to avoid a string column being encoded, remove it from the TSV before calling the trainer.
+
 - RandomForest (`ghostparser.ml.random_forest`):
   - `n_estimators` (int, default: `200`)
-  - `max_depth` (int or null, default: `null`)
-  - `min_samples_split` (int, default: `2`)
-  - `min_samples_leaf` (int, default: `1`)
-  - `max_features` (string|int or null, default: `sqrt`)
-  - `class_weight` (null|dict, default: `null`)
+  - `max_depth` (int or null, default: `null`) — `null` leaves tree depth unconstrained.
+  - `min_samples_split` (int, default: `2`) — controls how many samples are required before a split is allowed. Larger values make the trees more conservative when the data is noisy or small.
+  - `min_samples_leaf` (int, default: `1`) — controls how many samples must remain in a leaf. Larger values smooth the model and can reduce noise.
+  - `max_features` (string|int or null, default: `sqrt`) — `null` keeps the estimator's default split-feature behavior.
+  - `class_weight` (null|dict, default: `null`) — `null` disables class weighting.
+
+  Leave `min_samples_split` and `min_samples_leaf` out of the config if you want the defaults. The loader does not infer them from the dataset, and explicit `null` values are rejected.
 
 - Multi-label KNN (`ghostparser.ml.multi_knn`):
   - `n_neighbors` (int >= 1, default: `5`)
@@ -485,11 +499,46 @@ The top-level `n_jobs` and `random_state` keys apply to both trainers.
 ### Evaluation Parameters
 
 - `metrics`: string metric-set selector. Choices: `all`, `primary`, `diagnostic`, `per_bit`. Default: `all`.
-- `report_class_distribution`: boolean, default `true`.
+- `report_class_distribution`: boolean, default `true`. When enabled, the text report includes the dataset summary block.
 - `report_confusion_matrix`: boolean, default `true`.
 - `report_feature_importance`: boolean, default `true`.
-- `save_label_map`: boolean, default `true`.
-- `save_predictions`: boolean, default `true`.
+- `save_label_map`: boolean, default `true`. The label map is embedded in the overall metrics JSON.
+- `save_predictions`: boolean, default `true`. The prediction TSV includes the matched-bit count.
+
+Use `metrics: all` when you want both per-label metrics and exact-match accuracy in the same run. The `diagnostic` set is the strict whole-bitstring view, while `primary` and `per_bit` expose narrower slices of the same evaluation.
+
+### Hyperparameter Tuning Parameters
+
+The `hyperparameter_tuning` section configures `python -m ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so tuning stays explicit.
+
+- `model` (string, default `random_forest`): tuner target. Choices: `random_forest`, `multi_knn`.
+- `method` (string, default `grid`): `grid` or `random`.
+- `objective` (string, default `exact_match_accuracy`): metric used to rank candidates. Choices: `exact_match_accuracy`, `hamming_loss`, `bitwise_accuracy`, `micro_f1`, `macro_f1`, `weighted_f1`.
+- `top_k` (int, default `10`): number of top candidates to include in the text summary.
+- `n_iter` (int, default `20`): number of sampled candidates when `method: random`.
+- `max_candidates` (int, default `5000`): hard cap for full grid evaluation.
+- `search_space` (mapping): model hyperparameter candidates. Each parameter should map to a list of values.
+
+Example:
+
+```yaml
+hyperparameter_tuning:
+  model: random_forest
+  method: random
+  objective: exact_match_accuracy
+  top_k: 5
+  n_iter: 20
+  max_candidates: 5000
+  search_space:
+    n_estimators: [100, 200, 400]
+    max_depth: [null, 10, 20]
+    min_samples_split: [2, 5]
+    min_samples_leaf: [1, 2]
+    max_features: [sqrt, log2]
+    class_weight: [null]
+```
+
+Use `method: grid` to evaluate every combination in the search space. Use `method: random` when you want to sample a fixed number of combinations from a larger space.
 
 ### CLI examples
 
@@ -505,19 +554,15 @@ Run Multi-KNN via module entrypoint:
 python -m ghostparser.ml.multi_knn -i ./results/summary_statistics.tsv -o ./results/ml_knn_out
 ```
 
-Use the package dispatcher (explicit model selection required):
-
-```bash
-python -m ghostparser.ml --model random_forest -c sample_configs/multi_knn_minimal.yaml
-```
-
 ### Sample Config Files
 
+- `sample_configs/random_forest_minimal.yaml`
 - `sample_configs/multi_knn_minimal.yaml`
+- `sample_configs/hyperparameter_tuning_random_forest.yaml`
 - `sample_configs/orchestrator_minimal.yaml`
 - `sample_configs/orchestrator_full.yaml`
 
-The ML sample config illustrates the `input_path`, `output_dir`, `model`, and `evaluation` sections that the ML loaders expect.
+The ML sample configs illustrate the `input_path`, `output_dir`, `model`, `evaluation`, and `hyperparameter_tuning` sections that the ML loaders expect.
 
 ## Tree Parser (CLI Submodule)
 
