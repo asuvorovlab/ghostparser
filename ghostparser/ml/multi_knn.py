@@ -275,7 +275,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
 
     model_path = output_dir / "multi_knn_model.pkl"
     metrics_json_path = output_dir / "multi_knn_overall_metrics.json"
-    metrics_txt_path = output_dir / "multi_knn_overall_metrics.txt"
+    metrics_txt_path = output_dir / "multi_knn_metrics.txt"
     feature_importance_path = output_dir / "feature_importances.tsv"
     predictions_path = output_dir / "predictions.tsv"
 

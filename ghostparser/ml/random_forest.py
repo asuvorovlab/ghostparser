@@ -311,7 +311,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
 
     model_path = output_dir / "random_forest_model.pkl"
     metrics_json_path = output_dir / "random_forest_overall_metrics.json"
-    metrics_txt_path = output_dir / "random_forest_overall_metrics.txt"
+    metrics_txt_path = output_dir / "random_forest_metrics.txt"
     feature_importance_path = output_dir / "feature_importances.tsv"
     predictions_path = output_dir / "predictions.tsv"
 

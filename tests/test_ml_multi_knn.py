@@ -110,7 +110,7 @@ def test_multi_knn_metrics_report_mentions_effective_neighbors(
     )
 
     result = train_multi_knn(config)
-    metrics_text = (tmp_path / "ml_out" / "multi_knn_overall_metrics.txt").read_text()
+    metrics_text = (tmp_path / "ml_out" / "multi_knn_metrics.txt").read_text()
 
     assert "Ghostparser ML multi-label KNN baseline" in metrics_text
     assert "Configured n_neighbors:" in metrics_text

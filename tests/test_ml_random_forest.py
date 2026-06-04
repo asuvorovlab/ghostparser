@@ -88,9 +88,7 @@ def test_train_random_forest_creates_bitwise_metrics_report(
     )
 
     result = train_random_forest(config)
-    metrics_text = (
-        tmp_path / "ml_out" / "random_forest_overall_metrics.txt"
-    ).read_text()
+    metrics_text = (tmp_path / "ml_out" / "random_forest_metrics.txt").read_text()
 
     assert "Primary objective: multi-label classification" in metrics_text
     assert "Exact-match accuracy is diagnostic" in metrics_text

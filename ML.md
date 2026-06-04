@@ -170,10 +170,10 @@ If your TSV contains string-valued columns, the loader will one-hot encode them 
 
 The feature-importance score depends on the trainer:
 
-- Random Forest averages the fitted `feature_importances_` values from the six one-vs-rest estimators. Those values are mean decrease in impurity scores, so larger values mean the feature helped the trees split the data more effectively.
-- Multi-label KNN uses permutation importance on the held-out test split with `scoring="f1_micro"`. Each feature is shuffled repeatedly, and the score measures how much the micro-F1 drops on average. Larger values mean the model relied on that feature more strongly.
+- Random Forest averages the fitted `feature_importances_` values from the six one-vs-rest estimators. Those values are mean decrease in impurity scores, so larger values mean the feature helped the trees split the data more effectively. We compute `feature_importances_` on each of the six binary estimators and average them to produce a single importance per input feature. The underlying score is the mean decrease in impurity (MDI); it is fast but can be biased toward features with many possible split points and can be difficult to interpret when features are strongly correlated.
+- Multi-label KNN uses permutation importance on the held-out test split with `scoring="f1_micro"`. Each feature is shuffled repeatedly, and the score measures how much the micro-F1 drops on average. Larger values mean the model relied on that feature more strongly. We use permutation importance on the held-out test split (the implementation uses `n_repeats=10` by default). Each feature is shuffled `n_repeats` times and we report the mean drop in `f1_micro`; this directly measures the impact on the chosen evaluation metric but is slower and can show negative values when shuffling by chance improves the metric on small test sets.
 
-These are model-relative importance measures, not causal explanations. Scores near zero mean the feature had little effect under the chosen trainer and evaluation metric.
+These are model-relative importance measures, not causal explanations. Scores near zero mean the feature had little effect under the chosen trainer and evaluation metric; treat them as heuristic indicators of influence rather than proofs of causality.
 
 ### What the model outputs mean
 
@@ -190,12 +190,14 @@ The sample config files in [sample_configs/random_forest_minimal.yaml](sample_co
 - All splitting uses `random_state` for determinism.
 - `n_jobs` only affects CPU-side parallel work in scikit-learn; it does not change the model into a GPU-backed implementation.
 
+Stratified here means we try to preserve the frequency of each 6-bit label combination across folds so each fold has a similar class distribution. If a particular combination is too rare to appear in every fold, the trainer follows `rare_class_policy` (reduce folds or skip CV) to avoid invalid splits.
+
 
 ## Outputs
 
 - `*_model.pkl` — Pickled trained `MultiOutputClassifier` (prefix: `random_forest_` or `multi_knn_`)
 - `*_overall_metrics.json` — Structured metrics, timings, and the consolidated dataset summary
-- `*_overall_metrics.txt` — Human-readable summary of metrics, dataset summary, and diagnostic notes
+- `*_metrics.txt` — Human-readable summary of metrics, dataset summary, and diagnostic notes
 - `feature_importances.tsv` — Ranked features and importance scores (tree-based for RF, permutation for KNN)
 - `predictions.tsv` — Per-row predictions with true/pred bit flags, exact-match indicator, and matched-bit count
 
