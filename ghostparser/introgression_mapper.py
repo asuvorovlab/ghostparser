@@ -406,14 +406,15 @@ def _scaled_consolidation_text_sizes(n):
     """Return capped annotation font sizes for the consolidation plot."""
     scale_ref = max(min(n, 200), 1)
     frac = (scale_ref - 1) / 199.0 if scale_ref > 1 else 0.0
+    eased_frac = frac**0.5
 
     def _interp(min_size, max_size):
-        return int(round(min_size + (max_size - min_size) * frac))
+        return int(round(min_size + (max_size - min_size) * eased_frac))
 
     return {
-        "axis_label": _interp(12, 18),
-        "cbar_label": _interp(11, 17),
-        "cbar_tick": _interp(10, 13),
+        "axis_label": _interp(13, 20),
+        "cbar_label": _interp(12, 19),
+        "cbar_tick": _interp(11, 14),
     }
 
 
@@ -541,7 +542,6 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
             )
 
     # --- heatmap ---
-    n_cols = len(taxa_order)
     sns.heatmap(
         matrix_avg,
         ax=ax_heat,

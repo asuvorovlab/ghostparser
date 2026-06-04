@@ -85,16 +85,20 @@ def test_generate_introgression_maps_creates_expected_outputs(tmp_path):
 
 def test_scaled_consolidation_text_sizes_grow_with_taxa_count():
     small = _scaled_consolidation_text_sizes(5)
-    large = _scaled_consolidation_text_sizes(80)
+    large = _scaled_consolidation_text_sizes(83)
     capped = _scaled_consolidation_text_sizes(500)
 
     assert small["axis_label"] < large["axis_label"]
     assert small["cbar_label"] < large["cbar_label"]
     assert small["cbar_tick"] < large["cbar_tick"]
 
-    assert capped["axis_label"] == 18
-    assert capped["cbar_label"] == 17
-    assert capped["cbar_tick"] == 13
+    assert large["axis_label"] == 17
+    assert large["cbar_label"] == 16
+    assert large["cbar_tick"] == 13
+
+    assert capped["axis_label"] == 20
+    assert capped["cbar_label"] == 19
+    assert capped["cbar_tick"] == 14
 
 
 def test_generate_introgression_maps_uses_full_species_tree_by_default(tmp_path):
