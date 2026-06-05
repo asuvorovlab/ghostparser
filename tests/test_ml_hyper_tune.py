@@ -43,6 +43,50 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
     assert config["search_space"]["n_estimators"] == [5, 10]
 
 
+def test_load_hyper_tune_config_fills_model_defaults(tmp_path):
+    config_path = tmp_path / "hyper_tune_defaults.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "input_path": "./results/summary_statistics.tsv",
+                "output_dir": "./results/hyper_tune_out",
+                "hyperparameter_tuning": {
+                    "model": "random_forest",
+                    "search_space": {
+                        "n_estimators": [5, 10],
+                    },
+                },
+            }
+        )
+    )
+
+    config = load_hyper_tune_config(str(config_path))
+
+    assert config["class_weight"] is None
+    assert config["max_features"] == "sqrt"
+    assert config["min_samples_split"] == 2
+
+
+def test_load_hyper_tune_config_rejects_evaluation_section(tmp_path):
+    config_path = tmp_path / "hyper_tune_with_evaluation.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "input_path": "./results/summary_statistics.tsv",
+                "output_dir": "./results/hyper_tune_out",
+                "evaluation": {"metrics": "all"},
+                "hyperparameter_tuning": {
+                    "model": "random_forest",
+                    "search_space": {"n_estimators": [5, 10]},
+                },
+            }
+        )
+    )
+
+    with pytest.raises(ConfigError, match="evaluation"):
+        load_hyper_tune_config(str(config_path))
+
+
 def test_load_hyper_tune_config_requires_hyperparameter_tuning_section(tmp_path):
     config_path = tmp_path / "hyper_tune_missing_section.json"
     config_path.write_text(

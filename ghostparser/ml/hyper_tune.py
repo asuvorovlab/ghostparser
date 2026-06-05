@@ -22,7 +22,19 @@ from . import ml_utils as shared
 from . import multi_knn as knn_module
 from . import random_forest as rf_module
 from .config import (
+    DEFAULT_CLASS_WEIGHT,
+    DEFAULT_KNN_ALGORITHM,
+    DEFAULT_KNN_LEAF_SIZE,
+    DEFAULT_KNN_METRIC,
+    DEFAULT_KNN_P,
+    DEFAULT_KNN_WEIGHTS,
+    DEFAULT_MAX_DEPTH,
+    DEFAULT_MAX_FEATURES,
+    DEFAULT_MIN_SAMPLES_LEAF,
+    DEFAULT_MIN_SAMPLES_SPLIT,
+    DEFAULT_N_ESTIMATORS,
     DEFAULT_N_JOBS,
+    DEFAULT_N_NEIGHBORS,
     DEFAULT_RANDOM_STATE,
     DEFAULT_TARGET_COLUMN,
     _load_raw_config,
@@ -63,6 +75,25 @@ MODEL_SEARCH_KEYS = {
         "leaf_size",
         "metric",
         "p",
+    },
+}
+
+MODEL_DEFAULTS = {
+    "random_forest": {
+        "n_estimators": DEFAULT_N_ESTIMATORS,
+        "max_depth": DEFAULT_MAX_DEPTH,
+        "min_samples_split": DEFAULT_MIN_SAMPLES_SPLIT,
+        "min_samples_leaf": DEFAULT_MIN_SAMPLES_LEAF,
+        "max_features": DEFAULT_MAX_FEATURES,
+        "class_weight": DEFAULT_CLASS_WEIGHT,
+    },
+    "multi_knn": {
+        "n_neighbors": DEFAULT_N_NEIGHBORS,
+        "weights": DEFAULT_KNN_WEIGHTS,
+        "algorithm": DEFAULT_KNN_ALGORITHM,
+        "leaf_size": DEFAULT_KNN_LEAF_SIZE,
+        "metric": DEFAULT_KNN_METRIC,
+        "p": DEFAULT_KNN_P,
     },
 }
 
@@ -182,9 +213,12 @@ def _candidate_score(cv_results: dict, objective_metric: str) -> float:
 
 
 def _build_training_namespace(
-    base_config: dict[str, object], candidate_params: dict[str, object]
+    base_config: dict[str, object],
+    candidate_params: dict[str, object],
+    model_name: str,
 ) -> argparse.Namespace:
     payload = dict(base_config)
+    payload.update(MODEL_DEFAULTS[model_name])
     payload.update(candidate_params)
     return argparse.Namespace(**payload)
 
@@ -221,6 +255,30 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
             "Config field 'hyperparameter_tuning' must be a mapping/object when provided"
         )
     tuning_section = tuning_section or {}
+    forbidden_top_level_keys = {
+        "evaluation",
+        "model",
+        "n_estimators",
+        "max_depth",
+        "min_samples_split",
+        "min_samples_leaf",
+        "max_features",
+        "class_weight",
+        "n_neighbors",
+        "weights",
+        "algorithm",
+        "leaf_size",
+        "metric",
+        "p",
+    }
+    present_forbidden_top_level_keys = forbidden_top_level_keys & set(payload)
+    if present_forbidden_top_level_keys:
+        raise ConfigError(
+            "Do not place model sections, evaluation controls, or model hyperparameters at the top level in hyperparameter_tuning configs. "
+            "Use only the runtime keys plus 'hyperparameter_tuning'. Offending keys: "
+            f"{', '.join(sorted(present_forbidden_top_level_keys))}"
+        )
+
     search_space = tuning_section.get("search_space", {})
     if search_space is not None and not isinstance(search_space, dict):
         raise ConfigError(
@@ -269,7 +327,7 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
             f"{', '.join(sorted(unexpected_search_keys))}"
         )
 
-    return {
+    normalized_config = {
         "input_path": input_path,
         "output_dir": output_dir,
         "target_column": target_column,
@@ -295,6 +353,9 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
         "search_space": search_space,
     }
 
+    normalized_config.update(MODEL_DEFAULTS[model_name])
+    return normalized_config
+
 
 def _evaluate_candidate(
     base_config: dict[str, object],
@@ -305,7 +366,9 @@ def _evaluate_candidate(
     labels_train: np.ndarray,
     folds: int,
 ) -> tuple[argparse.Namespace, dict, float]:
-    candidate_config = _build_training_namespace(base_config, candidate_params)
+    candidate_config = _build_training_namespace(
+        base_config, candidate_params, model_name
+    )
     if model_name == "random_forest":
 
         def model_factory() -> object:
@@ -337,7 +400,8 @@ def _evaluate_candidate(
 def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     run_start = time.perf_counter()
     load_start = time.perf_counter()
-    config_dict = vars(config)
+    base_config = dict(vars(config))
+    base_config.update(MODEL_DEFAULTS[config.model_name])
     rows = shared.read_tsv_rows(config.input_path)
     matrix = shared.rows_to_matrix(rows, config.target_column)
     labels = shared.combination_labels(matrix.train_labels)
@@ -392,7 +456,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
 
     for candidate_index, candidate_params in enumerate(candidates, start=1):
         candidate_config, cv_results, score = _evaluate_candidate(
-            config_dict,
+            base_config,
             candidate_params,
             config.model_name,
             x_train,

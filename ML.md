@@ -100,7 +100,7 @@ The trainers accept an `evaluation` mapping in the config that controls which me
 
 - `report_class_distribution` (bool, default: `true`): when enabled, the text report repeats the dataset summary. The overall metrics JSON always contains the label map plus the class and bit distributions for the overall file and the train/test split.
 
-- `report_confusion_matrix` (bool, default: `true`): when enabled and `metrics` includes diagnostic outputs (`diagnostic` or `all`), compute confusion matrices for each bit and include them in the metrics payload and as a persisted artifact.
+- `report_confusion_matrix` (bool, default: `true`): when enabled and `metrics` includes diagnostic outputs (`diagnostic` or `all`), compute confusion matrices for each bit and include them in the metrics payload and as a persisted artifact. The trainers also render a single heatmap-style PNG with one subplot per bit so the true/false and predicted 0/1 counts are easy to compare visually.
 
 - `report_feature_importance` (bool, default: `true`): when enabled, compute and persist `feature_importances.tsv`. For tree-based models this is fast (built-in feature importances); for non-tree models (KNN) this uses permutation importance and can be slow.
 
@@ -112,7 +112,7 @@ These keys let you trade computation and storage cost for diagnostic depth: enab
 
 ### Hyperparameter tuning
 
-The `hyperparameter_tuning` section configures the standalone tuner in `ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so the search strategy stays explicit and easy to read.
+The `hyperparameter_tuning` section configures the standalone tuner in `ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so the search strategy stays explicit and easy to read. For the tuner, only the runtime keys (`input_path`, `output_dir`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, `n_jobs`) plus `hyperparameter_tuning` are allowed at the top level. Do not provide `evaluation` or `model` sections in a tuning config; the tuner does not read them.
 
 Suggested keys:
 
@@ -123,6 +123,14 @@ Suggested keys:
 - `n_iter` (int, default: `20`): how many candidates to sample when `method: random` is selected.
 - `max_candidates` (int, default: `5000`): safety limit for `method: grid`; if the full grid would exceed this value, the tuner rejects the config.
 - `search_space` (mapping): parameter grid for the selected model. Each key should be one supported hyperparameter and each value should be a list of candidate values.
+- `search_space` (mapping): parameter grid for the selected model. Each key should be one supported hyperparameter and each value should be a list of candidate values. If you omit a parameter from `search_space`, the tuner uses the trainer default for that parameter.
+
+Supported `search_space` keys are:
+
+- `random_forest`: `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`, `class_weight`
+- `multi_knn`: `n_neighbors`, `weights`, `algorithm`, `leaf_size`, `metric`, `p`
+
+Do not put runtime keys such as `input_path`, `output_dir`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, or `n_jobs` inside `search_space`.
 
 Example:
 
@@ -198,6 +206,7 @@ Stratified here means we try to preserve the frequency of each 6-bit label combi
 - `*_model.pkl` — Pickled trained `MultiOutputClassifier` (prefix: `random_forest_` or `multi_knn_`)
 - `*_overall_metrics.json` — Structured metrics, timings, and the consolidated dataset summary
 - `*_metrics.txt` — Human-readable summary of metrics, dataset summary, and diagnostic notes
+- `*_confusion_matrices.png` — Heatmap grid of all confusion matrices, colored from red (smaller counts) to green (larger counts)
 - `feature_importances.tsv` — Ranked features and importance scores (tree-based for RF, permutation for KNN)
 - `predictions.tsv` — Per-row predictions with true/pred bit flags, exact-match indicator, and matched-bit count
 

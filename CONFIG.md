@@ -509,7 +509,9 @@ Use `metrics: all` when you want both per-label metrics and exact-match accuracy
 
 ### Hyperparameter Tuning Parameters
 
-The `hyperparameter_tuning` section configures `python -m ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so tuning stays explicit.
+The `hyperparameter_tuning` section configures `python -m ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so tuning stays explicit. The tuner config only accepts the runtime keys listed above plus `hyperparameter_tuning`; do not provide `model`, `evaluation`, or model hyperparameters at the top level. Those sections belong to the trainer config, not the tuner config.
+
+Inside `hyperparameter_tuning`, the following keys are expected:
 
 - `model` (string, default `random_forest`): tuner target. Choices: `random_forest`, `multi_knn`.
 - `method` (string, default `grid`): `grid` or `random`.
@@ -517,7 +519,14 @@ The `hyperparameter_tuning` section configures `python -m ghostparser.ml.hyper_t
 - `top_k` (int, default `10`): number of top candidates to include in the text summary.
 - `n_iter` (int, default `20`): number of sampled candidates when `method: random`.
 - `max_candidates` (int, default `5000`): hard cap for full grid evaluation.
-- `search_space` (mapping): model hyperparameter candidates. Each parameter should map to a list of values.
+- `search_space` (mapping): model hyperparameter candidates. Each parameter should map to a list of values. Omit a parameter from `search_space` if you want the trainer default to apply during tuning.
+
+Allowed `search_space` keys depend on `model`:
+
+- `random_forest`: `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`, `class_weight`
+- `multi_knn`: `n_neighbors`, `weights`, `algorithm`, `leaf_size`, `metric`, `p`
+
+Do not place runtime fields such as `input_path`, `output_dir`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, or `n_jobs` inside `search_space`.
 
 Example:
 
