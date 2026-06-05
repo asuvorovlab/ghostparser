@@ -434,7 +434,7 @@ Purpose: validate triplet-processor runtime argument resolution behavior.
 
 - `test_train_random_forest_smoke`
   - Inputs: `summary_statistics_tsv` fixture (small TSV with `class`, a low-cardinality string feature, and numeric feature columns), runtime config (small forest for speed, `cv_folds=3`, `random_state=7`).
-  - Expected outputs: training completes, artifacts exist (`random_forest_model.pkl`, `random_forest_overall_metrics.json`, `predictions.tsv`), metrics contain `primary_metrics`, `diagnostic_metrics`, `dataset_summary`, and `timings_seconds`, and the prediction TSV includes `matched_label_count`.
+  - Expected outputs: training completes, artifacts exist (`random_forest_model.pkl`, `random_forest_overall_metrics.json`, `random_forest_metrics.txt`, `random_forest_confusion_matrices.png`, `predictions.tsv`), metrics contain `primary_metrics`, `diagnostic_metrics`, `dataset_summary`, and `timings_seconds`, and the prediction TSV includes `matched_label_count`.
   - Purpose: smoke-test end-to-end training flow, evaluation, and artifact writing.
 
 - `test_train_random_forest_creates_bitwise_metrics_report`
@@ -458,7 +458,7 @@ Purpose: validate triplet-processor runtime argument resolution behavior.
 
 - `test_multi_knn_train_smoke`
   - Inputs: `summary_statistics_tsv` fixture with a low-cardinality string column and numeric features, KNN runtime config (`n_neighbors=5`, `cv_folds=3`, `random_state=7`, `weights=uniform`).
-  - Expected outputs: training completes, artifacts exist (`multi_knn_model.pkl`, `multi_knn_overall_metrics.json`, `predictions.tsv`), metrics include `classifier: multi_knn`, the `knn` details block is present, and the prediction TSV includes `matched_label_count`.
+  - Expected outputs: training completes, artifacts exist (`multi_knn_model.pkl`, `multi_knn_overall_metrics.json`, `multi_knn_metrics.txt`, `multi_knn_confusion_matrices.png`, `predictions.tsv`), metrics include `classifier: multi_knn`, the `knn` details block is present, and the prediction TSV includes `matched_label_count`.
   - Purpose: smoke-test the multi-label KNN baseline end to end.
 
 - `test_multi_knn_build_model_caps_neighbors_to_training_size`
@@ -477,6 +477,16 @@ Purpose: validate triplet-processor runtime argument resolution behavior.
   - Inputs: JSON config with a top-level `hyperparameter_tuning` section containing a random-forest grid search space.
   - Expected outputs: tuner config normalizes the model, method, objective, and search space correctly.
   - Purpose: verify the new tuning config header and nested search settings.
+
+- `test_load_hyper_tune_config_fills_model_defaults`
+  - Inputs: JSON config with a `hyperparameter_tuning` section for `random_forest` that omits optional model parameters from `search_space`.
+  - Expected outputs: normalized tuner config fills in the selected model's default parameters such as `class_weight`, `max_features`, and `min_samples_split`.
+  - Purpose: verify that omitted model parameters fall back to trainer defaults during tuning.
+
+- `test_load_hyper_tune_config_rejects_evaluation_section`
+  - Inputs: JSON config that includes a top-level `evaluation` section alongside `hyperparameter_tuning`.
+  - Expected outputs: `ConfigError` rejecting the unsupported `evaluation` section.
+  - Purpose: ensure the tuner config stays isolated from trainer-only settings.
 
 - `test_load_hyper_tune_config_requires_hyperparameter_tuning_section`
   - Inputs: JSON config missing the `hyperparameter_tuning` section.

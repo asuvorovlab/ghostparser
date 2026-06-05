@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -393,3 +396,72 @@ def format_confusion_matrix_section(
         lines.append(f"    true=0  {matrix_values[0][0]:>6}  {matrix_values[0][1]:>6}")
         lines.append(f"    true=1  {matrix_values[1][0]:>6}  {matrix_values[1][1]:>6}")
     return lines
+
+
+def save_confusion_matrix_plot(
+    confusion_matrices: dict[str, list[list[int]]],
+    output_path: Path,
+) -> str | None:
+    if not confusion_matrices:
+        return None
+
+    matrix_items = list(confusion_matrices.items())
+    max_value = max(
+        int(np.max(np.asarray(matrix_values, dtype=int)))
+        for _, matrix_values in matrix_items
+    )
+    max_value = max(1, max_value)
+    n_plots = len(matrix_items)
+    n_cols = min(3, n_plots)
+    n_rows = math.ceil(n_plots / n_cols)
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(5.2 * n_cols, 4.4 * n_rows),
+        constrained_layout=True,
+    )
+    axes_array = np.atleast_1d(axes).ravel()
+    cmap = sns.color_palette("RdYlGn", as_cmap=True)
+
+    for axis_index, (bit_label, matrix_values) in enumerate(matrix_items):
+        ax = axes_array[axis_index]
+        data = np.asarray(matrix_values, dtype=int)
+        sns.heatmap(
+            data,
+            ax=ax,
+            cmap=cmap,
+            vmin=0,
+            vmax=max_value,
+            annot=True,
+            fmt="d",
+            square=True,
+            cbar=False,
+            linewidths=1,
+            linecolor="white",
+            annot_kws={"size": 13, "weight": "bold"},
+        )
+        ax.set_title(f"{bit_label}", fontsize=12)
+        ax.set_xlabel("Predicted label (0 = predicted zero, 1 = predicted one)")
+        ax.set_ylabel("True label (0 = true zero, 1 = true one)")
+        ax.set_xticklabels(["0", "1"], rotation=0)
+        ax.set_yticklabels(["0", "1"], rotation=0)
+
+    for axis_index in range(n_plots, len(axes_array)):
+        axes_array[axis_index].axis("off")
+
+    fig.suptitle("Confusion matrices by bit", fontsize=15)
+    colorbar_mappable = plt.cm.ScalarMappable(
+        cmap=cmap, norm=plt.Normalize(vmin=0, vmax=max_value)
+    )
+    colorbar_mappable.set_array([])
+    fig.colorbar(
+        colorbar_mappable,
+        ax=axes_array[:n_plots].tolist(),
+        shrink=0.85,
+        pad=0.02,
+        label="Count",
+    )
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_path)

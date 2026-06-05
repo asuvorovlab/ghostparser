@@ -60,6 +60,7 @@ def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
 
     model_path = tmp_path / "ml_out" / "multi_knn_model.pkl"
     assert model_path.exists()
+    assert (tmp_path / "ml_out" / "multi_knn_confusion_matrices.png").exists()
     assert not (tmp_path / "ml_out" / "label_map.json").exists()
     assert not (tmp_path / "ml_out" / "class_distribution.tsv").exists()
     assert not (tmp_path / "ml_out" / "bit_distribution.tsv").exists()

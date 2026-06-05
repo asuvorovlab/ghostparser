@@ -272,6 +272,14 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     if report_confusion_matrix and include_diagnostic:
         confusion_matrices = _build_confusion_matrices(y_test, test_predictions)
 
+    confusion_matrix_plot_path = output_dir / "random_forest_confusion_matrices.png"
+    if confusion_matrices is not None:
+        confusion_matrix_plot_path = shared.save_confusion_matrix_plot(
+            confusion_matrices, confusion_matrix_plot_path
+        )
+    else:
+        confusion_matrix_plot_path = None
+
     metrics_payload = {
         "objective": "multi-label classification",
         "metric_set": metric_set,
@@ -308,6 +316,8 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         metrics_payload["per_bit"] = test_metrics["per_bit"]
     if feature_rows is not None:
         metrics_payload["feature_importance"] = feature_rows
+    if confusion_matrix_plot_path is not None:
+        metrics_payload["confusion_matrix_plot"] = confusion_matrix_plot_path
 
     model_path = output_dir / "random_forest_model.pkl"
     metrics_json_path = output_dir / "random_forest_overall_metrics.json"
@@ -405,6 +415,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         "feature_importance_path": str(feature_importance_path)
         if feature_importance_path is not None
         else None,
+        "confusion_matrix_plot_path": confusion_matrix_plot_path,
         "predictions_path": str(predictions_path)
         if predictions_path is not None
         else None,
