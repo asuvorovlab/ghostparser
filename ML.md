@@ -152,6 +152,8 @@ hyperparameter_tuning:
 
 Use `method: random` when the space is large and you want a sampled search instead of checking every combination.
 
+The tuner prints console progress while it runs, including the number of candidate cases it plans to evaluate, the approximate number of model fits implied by CV, and per-candidate timing updates.
+
 ### Random Forest settings
 
 - `n_estimators`: more trees usually make the model steadier, but training takes longer and uses more memory.

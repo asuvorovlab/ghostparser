@@ -549,6 +549,8 @@ hyperparameter_tuning:
 
 Use `method: grid` to evaluate every combination in the search space. Use `method: random` when you want to sample a fixed number of combinations from a larger space.
 
+While it runs, the tuner prints progress to the console: it announces the search method, reports the total candidate cases it will evaluate, estimates the total model fits implied by CV, and logs per-candidate timing updates.
+
 ### CLI examples
 
 Run RandomForest via module entrypoint:
