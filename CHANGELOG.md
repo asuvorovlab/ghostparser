@@ -1,6 +1,15 @@
 # Changelog
 
 
+## v0.1.2 - Unreleased
+
+- Added overwrite control for result directories across orchestrator, tree parser, introgression map generation, and ML trainers. The default behavior keeps reusing the configured output folder, while `--no-overwrite` or `overwrite: false` appends a numeric suffix such as `_1` when the target directory already exists.
+- Updated tests and documentation to cover the new output-directory behavior.
+- Expanded the ML module with a standalone hyperparameter tuner (`ghostparser.ml.hyper_tune`) supporting grid/random search under a dedicated `hyperparameter_tuning` config section, with stricter config validation and default fallback handling for omitted model parameters.
+- Updated ML reporting artifacts and docs: text metrics renamed to `*_metrics.txt`, JSON kept as `*_overall_metrics.json`, `predictions.tsv` now includes `matched_label_count`, metrics include timing summaries and consolidated `dataset_summary`, and confusion matrices are exported both as formatted text blocks and as a combined heatmap PNG (`*_confusion_matrices.png`).
+- Improved ML documentation and test coverage for split strategy behavior, feature-importance interpretation, tuner config constraints, and new ML artifact contracts.
+
+
 ## v0.1.1 - May 17, 2026
 
 - Changed default `alpha_dct` from `0.01` to `0.05` and default `bootstrap` from `false` to `true` across orchestrator/runtime defaults.
