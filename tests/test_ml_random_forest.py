@@ -33,6 +33,7 @@ def test_train_random_forest_smoke(summary_statistics_tsv, tmp_path):
         max_features="sqrt",
         class_weight=None,
         n_jobs=1,
+        overwrite=True,
     )
 
     result = train_random_forest(config)
@@ -86,6 +87,7 @@ def test_train_random_forest_creates_bitwise_metrics_report(
         max_features="sqrt",
         class_weight=None,
         n_jobs=1,
+        overwrite=True,
     )
 
     result = train_random_forest(config)

@@ -32,6 +32,7 @@ def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
         max_features="sqrt",
         class_weight=None,
         report_feature_importance=False,
+        overwrite=True,
     )
 
     result = train_multi_knn(config)
@@ -108,6 +109,7 @@ def test_multi_knn_metrics_report_mentions_effective_neighbors(
         max_features="sqrt",
         class_weight=None,
         report_feature_importance=False,
+        overwrite=True,
     )
 
     result = train_multi_knn(config)

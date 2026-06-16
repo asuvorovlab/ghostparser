@@ -83,6 +83,38 @@ def test_generate_introgression_maps_creates_expected_outputs(tmp_path):
     assert (consolidation_dir / "introgression_matrix_sampled_non_sister.tsv").exists()
 
 
+def test_generate_introgression_maps_appends_suffix_when_overwrite_disabled(tmp_path):
+    species_tree = tmp_path / "species.tree"
+    species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
+
+    results = [
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="inflow_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.5,
+        ),
+    ]
+
+    existing_output_dir = tmp_path / "introgression"
+    existing_output_dir.mkdir()
+    (existing_output_dir / "stale.txt").write_text("stale")
+
+    artifacts = generate_introgression_maps(
+        results,
+        species_tree_path=str(species_tree),
+        output_dir=str(existing_output_dir),
+        overwrite=False,
+    )
+
+    suffixed_output_dir = tmp_path / "introgression_1"
+    assert suffixed_output_dir.exists()
+    assert artifacts.plot_path == str(
+        suffixed_output_dir / "introgression_combined.png"
+    )
+    assert (existing_output_dir / "stale.txt").exists()
+
+
 def test_scaled_consolidation_text_sizes_grow_with_taxa_count():
     small = _scaled_consolidation_text_sizes(5)
     large = _scaled_consolidation_text_sizes(83)

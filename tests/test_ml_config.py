@@ -19,6 +19,7 @@ def test_load_ml_config_defaults_target_column_to_class(tmp_path):
     config = load_ml_config(str(config_path))
 
     assert config["target_column"] == "class"
+    assert config["overwrite"] is True
 
 
 def test_load_ml_config_accepts_explicit_class_target_column(tmp_path):
@@ -55,3 +56,20 @@ def test_load_ml_config_defaults_min_samples_parameters(tmp_path):
 
     assert config["min_samples_split"] == 2
     assert config["min_samples_leaf"] == 1
+
+
+def test_load_ml_config_honors_overwrite_flag(tmp_path):
+    config_path = tmp_path / "ml_config_overwrite_false.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "input_path": "./results/summary_statistics.tsv",
+                "output_dir": "./results/ml_out",
+                "overwrite": False,
+            }
+        )
+    )
+
+    config = load_ml_config(str(config_path))
+
+    assert config["overwrite"] is False

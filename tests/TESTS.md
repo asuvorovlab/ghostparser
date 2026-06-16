@@ -101,6 +101,14 @@ Expected outputs: supported values load successfully; invalid value raises `Conf
 Inputs: no `processes` key.
 Expected outputs: `processes == 0`.
 
+- `test_load_orchestrator_config_honors_overwrite_flag`
+Inputs: orchestrator JSON config with `overwrite: false`.
+Expected outputs: normalized config preserves `overwrite == False`.
+
+- `test_prepare_output_directory_overwrites_or_suffixes`
+Inputs: an existing results directory with stale files, plus a second existing target path.
+Expected outputs: the first directory is cleared when overwrite is enabled and the second call returns a suffixed directory path.
+
 - `test_load_orchestrator_config_allows_disabling_consolidation`
 Inputs: config with `consolidation: false`.
 Expected outputs: normalized orchestrator config preserves `consolidation == False`.
@@ -243,7 +251,7 @@ Expected outputs: TSV includes `bootstrap_gene_tree_heights` and stores the raw 
 
 - `test_load_ml_config_defaults_target_column_to_class`
 Inputs: minimal ML config containing only `input_path` and `output_dir`.
-Expected outputs: `target_column` defaults to `class`.
+Expected outputs: `target_column` defaults to `class` and `overwrite` defaults to `True`.
 
 - `test_load_ml_config_accepts_explicit_class_target_column`
 Inputs: minimal ML config with `target_column: class` and one model parameter.
@@ -252,6 +260,10 @@ Expected outputs: explicit `class` target is preserved and model parameters load
 - `test_load_ml_config_defaults_min_samples_parameters`
 Inputs: minimal ML config without `min_samples_split` or `min_samples_leaf`.
 Expected outputs: the loader fills in the default RF values for both keys.
+
+- `test_load_ml_config_honors_overwrite_flag`
+Inputs: ML config with `overwrite: false`.
+Expected outputs: normalized config preserves `overwrite == False`.
 
 ### `tests/test_ml_utils.py`
 
@@ -301,7 +313,7 @@ Purpose: verify configuration-controlled enable/disable behavior for consolidati
 
 #### tests/test_introgression_mapper.py
 
-- Tests: `test_generate_introgression_maps_creates_expected_outputs`, `test_generate_introgression_maps_uses_full_species_tree_by_default`, `test_generate_introgression_maps_prunes_requested_plot_taxa`, `test_generate_introgression_maps_uses_raw_values_with_separate_scales`
+- Tests: `test_generate_introgression_maps_creates_expected_outputs`, `test_generate_introgression_maps_appends_suffix_when_overwrite_disabled`, `test_generate_introgression_maps_uses_full_species_tree_by_default`, `test_generate_introgression_maps_prunes_requested_plot_taxa`, `test_generate_introgression_maps_uses_raw_values_with_separate_scales`
   Inputs: synthetic triplet results with inflow/outflow/ghost classifications and bootstrap weights.
   Expected outputs/behavior: mapper writes expected plot/TSV artifacts (including `introgression_matrix_sampled_non_sister.tsv`), uses the full processed species tree by default, optionally prunes to requested plot taxa when supplied, average bootstrap values use population-level denominators, source taxon labels appear on top of the heatmap (between the tree strip and the heatmap cells), and the species tree strip is drawn above that.
   Purpose: validate consolidation artifact generation, plot layout semantics, and denominator correctness.
