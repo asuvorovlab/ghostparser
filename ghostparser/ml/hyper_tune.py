@@ -97,6 +97,19 @@ MODEL_DEFAULTS = {
     },
 }
 
+
+def _format_seconds(seconds: float) -> str:
+    return f"{seconds:.2f}s"
+
+
+def _pluralize(word: str, count: int) -> str:
+    return word if count == 1 else f"{word}s"
+
+
+def _log_progress(message: str) -> None:
+    print(f"[hyper_tune] {message}", flush=True)
+
+
 RUNTIME_KEYS = {
     "input_path",
     "output_dir",
@@ -399,6 +412,9 @@ def _evaluate_candidate(
 
 def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     run_start = time.perf_counter()
+    _log_progress(
+        f"Starting hyperparameter tuning for {config.model_name} with {config.search_method} search"
+    )
     load_start = time.perf_counter()
     base_config = dict(vars(config))
     base_config.update(MODEL_DEFAULTS[config.model_name])
@@ -445,6 +461,17 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         sample_size = min(config.n_iter, len(candidate_grid))
         candidates = rng.sample(candidate_grid, sample_size)
 
+    total_candidates = len(candidates)
+    estimated_model_fits = total_candidates * cv_folds
+    _log_progress(
+        "Will evaluate "
+        f"{total_candidates} {_pluralize('candidate case', total_candidates)} across {cv_folds} CV folds "
+        f"(~{estimated_model_fits} model fits)"
+    )
+    _log_progress(
+        f"Setup completed in {_format_seconds(time.perf_counter() - run_start)}; starting candidate search"
+    )
+
     search_start = time.perf_counter()
     evaluated_candidates: list[dict[str, object]] = []
     best_candidate_index: int | None = None
@@ -455,6 +482,13 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     objective_direction = config.objective_direction
 
     for candidate_index, candidate_params in enumerate(candidates, start=1):
+        candidate_start = time.perf_counter()
+        candidate_label = ", ".join(
+            f"{key}={value!r}" for key, value in candidate_params.items()
+        )
+        _log_progress(
+            f"[{candidate_index}/{total_candidates}] evaluating {candidate_label}"
+        )
         candidate_config, cv_results, score = _evaluate_candidate(
             base_config,
             candidate_params,
@@ -491,7 +525,14 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             best_candidate_params = candidate_params
             best_candidate_config = candidate_config
             best_cv_results = cv_results
+        _log_progress(
+            f"[{candidate_index}/{total_candidates}] done in {_format_seconds(time.perf_counter() - candidate_start)}; cv_score={score:.6f}"
+        )
     search_seconds = time.perf_counter() - search_start
+
+    _log_progress(
+        f"Candidate search finished in {_format_seconds(search_seconds)}; best candidate so far is #{best_candidate_index}"
+    )
 
     if any(
         value is None
@@ -518,10 +559,14 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         effective_n_neighbors = None
 
     fit_start = time.perf_counter()
+    _log_progress("Refitting the best candidate on the training split")
     best_model.fit(x_train, y_train)
     test_predictions = best_model.predict(x_test)
     test_metrics = shared.evaluate_predictions(y_test, test_predictions)
     fit_predict_seconds = time.perf_counter() - fit_start
+    _log_progress(
+        f"Best candidate fit and prediction completed in {_format_seconds(fit_predict_seconds)}"
+    )
 
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -596,6 +641,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         pickle.dump(best_model, handle)
 
     artifact_start = time.perf_counter()
+    _log_progress("Writing tuning artifacts")
     shared.write_json(results_json_path, results_payload)
     shared.write_tsv(predictions_path, prediction_rows)
 
@@ -613,6 +659,9 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     results_payload["timings_seconds"]["artifact_write"] = artifact_seconds
     results_payload["timings_seconds"]["total"] = time.perf_counter() - run_start
     shared.write_json(results_json_path, results_payload)
+    _log_progress(
+        f"Finished in {_format_seconds(results_payload['timings_seconds']['total'])}; artifacts written to {output_dir}"
+    )
 
     text_lines = [
         f"Ghostparser ML hyperparameter tuning ({config.model_name})",
