@@ -15,7 +15,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.neighbors import KNeighborsClassifier
 
 from ..cli_config import resolve_cli_or_config_args
-from ..config import ConfigError
+from ..config import ConfigError, prepare_output_directory
 from . import ml_utils as shared
 from .config import DEFAULT_N_JOBS, load_ml_config, normalize_ml_payload
 
@@ -44,6 +44,13 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-o", "--output-dir", type=str, default=None, help="Directory for ML outputs"
     )
+    parser.add_argument(
+        "--no-overwrite",
+        dest="no_overwrite",
+        action="store_true",
+        default=None,
+        help="Append a numeric suffix when the output directory already exists",
+    )
     return parser
 
 
@@ -52,7 +59,7 @@ def _resolve_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
         args,
         load_config=load_ml_config,
         normalize_payload=normalize_ml_payload,
-        payload_arg_names=["input_path", "output_dir"],
+        payload_arg_names=["input_path", "output_dir", "no_overwrite"],
     )
 
 
@@ -179,8 +186,9 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     test_metrics = shared.evaluate_predictions(y_test, test_predictions)
     fit_predict_seconds = time.perf_counter() - fit_start
 
-    output_dir = Path(config.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(
+        prepare_output_directory(config.output_dir, overwrite=config.overwrite)
+    )
 
     metric_set = getattr(config, "evaluation_metrics", "all")
     report_class_distribution = getattr(config, "report_class_distribution", True)

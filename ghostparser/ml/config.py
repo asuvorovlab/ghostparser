@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..config import ConfigError
+from ..config import DEFAULT_OVERWRITE, ConfigError, _validate_overwrite_flag
 
 DEFAULT_ML_OUTPUT_DIR = "ml_results"
 DEFAULT_TARGET_COLUMN = "class"
@@ -222,6 +222,7 @@ def normalize_ml_payload(payload: dict) -> dict:
     return {
         "input_path": input_path,
         "output_dir": output_dir,
+        "overwrite": _validate_overwrite_flag(payload, DEFAULT_OVERWRITE),
         "target_column": target_column,
         "test_size": _validate_optional_float(payload, "test_size", DEFAULT_TEST_SIZE),
         "cv_folds": _validate_optional_positive_int(

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..config import ConfigError
+from ..config import ConfigError, prepare_output_directory
 from . import ml_utils as shared
 from . import multi_knn as knn_module
 from . import random_forest as rf_module
@@ -568,8 +568,9 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         f"Best candidate fit and prediction completed in {_format_seconds(fit_predict_seconds)}"
     )
 
-    output_dir = Path(config.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(
+        prepare_output_directory(config.output_dir, overwrite=config.overwrite)
+    )
 
     dataset_summary = shared.build_dataset_summary(
         matrix.train_labels,
@@ -750,12 +751,21 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         required=True,
         help="Path to a JSON or YAML hyperparameter tuning config file",
     )
+    parser.add_argument(
+        "--no-overwrite",
+        dest="no_overwrite",
+        action="store_true",
+        default=False,
+        help="Append a numeric suffix when the output directory already exists",
+    )
     return parser
 
 
 def main() -> None:
     args = _build_argument_parser().parse_args()
     config = load_hyper_tune_config(args.config_file)
+    if args.no_overwrite:
+        config["overwrite"] = False
     result = tune_hyperparameters(argparse.Namespace(**config))
     print(result["results_txt_path"])
 
