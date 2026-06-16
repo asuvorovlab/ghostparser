@@ -144,6 +144,13 @@ outgroup: Taxon1,Taxon2
 - Description: output directory for pipeline artifacts.
 - Default: `./results` from the current working directory.
 
+##### `overwrite`
+
+- Type: boolean
+- Parallel CLI: `--no-overwrite` disables overwrite when set on the CLI
+- Description: controls whether an existing output folder is cleared before the pipeline writes artifacts.
+- Default: `true`
+
 ##### `triplet_output_format`
 
 - Type: string
@@ -390,6 +397,13 @@ The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--
 - Type: string
 - Parallel CLI: `--output-dir` (alias `-o`)
 - Description: directory where trained model and metric artifacts will be written.
+
+##### `overwrite`
+
+- Type: boolean
+- Parallel CLI: `--no-overwrite` disables overwrite when set on the trainer CLI
+- Description: controls whether an existing trainer output directory is cleared before artifacts are written.
+- Default: `true`
 
 ##### `target_column`
 

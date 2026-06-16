@@ -48,6 +48,10 @@ Options:
 
     - Output folder path. Default is `./results` (from the current working directory).
 
+- `--no-overwrite` (optional)
+
+    - Appends a numeric suffix such as `results_1` when the configured output folder already exists.
+
 - `--processes` (optional)
 
     - Worker processes for both triplet extraction (`tree_parser`) and per-triplet inference (`triplet_processor`).

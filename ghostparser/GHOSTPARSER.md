@@ -100,7 +100,7 @@ For full details on the consolidation module, see the [Introgression Mapper Modu
 
 `ghostparser.introgression_mapper` consumes per-triplet pipeline results and produces a single combined visualization and companion TSV artifacts representing introgression signal across the ingroup taxa. It is called automatically by the orchestrator consolidation stage; see the [Orchestrator Module Guide](ORCHESTRATOR.md#additional-outputs-from-orchestrator-run) for how it is wired into the pipeline.
 
-### `generate_introgression_maps(results, species_tree_path, output_dir, plot_taxa=None, outgroups=None)`
+### `generate_introgression_maps(results, species_tree_path, output_dir, plot_taxa=None, outgroups=None, overwrite=True)`
 
 Generates the combined consolidation figure and tabular outputs.
 
@@ -111,6 +111,7 @@ Generates the combined consolidation figure and tabular outputs.
 - `output_dir`: Directory to write all output files.
 - `plot_taxa`: Optional list of taxa to retain in the plot; defaults to full ingroup.
 - `outgroups`: Optional list of taxon names to exclude from all plots and TSVs (e.g. taxa used for rooting).
+- `overwrite`: When `true`, existing output directories are cleared before writing; when `false`, a suffix such as `_1` is appended to avoid reusing an existing directory.
 
 **Outputs:**
 
@@ -169,6 +170,7 @@ python -m ghostparser.introgression_mapper \
 - `-r`, `--results-tsv`: Path to `orchestrator_triplet_results.tsv`.
 - `-st`, `--species-tree-path`: Path to the processed species tree (Newick).
 - `-o`, `--output-dir`: Directory to write output plots and TSVs.
+- `--no-overwrite`: Append a numeric suffix when the output directory already exists.
 
 **Optional arguments:**
 

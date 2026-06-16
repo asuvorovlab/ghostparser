@@ -140,6 +140,7 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 
 **Common optional:**
 - `--output-folder`
+- `--no-overwrite`
 - `--triplet-filter`
 - `--processes`
 - `--generate-summary-stats`
@@ -195,6 +196,7 @@ Useful CLI options for focused runs and debugging:
 
 - `--triplet-filter`
 - `--output-folder`
+- `--no-overwrite`
 - `--min-support-value`
 - `--processes`
 - `--no-multiprocessing`
@@ -403,6 +405,7 @@ Core defaults are centralized in orchestrator config/CLI normalization and in mo
 
 - `processes`: `0` (all available CPU cores)
 - `output_folder` (orchestrator/tree_parser): `./results`
+- `overwrite` (orchestrator/tree_parser): `true`
 - `triplet_output_format` (orchestrator/tree_parser): `parquet`
 - `input_format` (triplet_processor): `parquet`
 - `parquet_partitions`: `128`

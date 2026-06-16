@@ -75,6 +75,7 @@ The ML loaders enforce a strict nested layout. For the full schema and examples,
 
 - `input_path`: path to the TSV input file.
 - `output_dir`: directory where artifacts are written.
+- `overwrite`: when `true`, existing output directories are cleared before trainer artifacts are written; when `false`, a suffix such as `_1` is appended.
 - `target_column`: the label column containing the fixed-length binary target string, which defaults to `class`.
 - `test_size`: fraction reserved for hold-out evaluation.
 - `cv_folds`: how many cross-validation folds to attempt.
@@ -112,7 +113,7 @@ These keys let you trade computation and storage cost for diagnostic depth: enab
 
 ### Hyperparameter tuning
 
-The `hyperparameter_tuning` section configures the standalone tuner in `ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so the search strategy stays explicit and easy to read. For the tuner, only the runtime keys (`input_path`, `output_dir`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, `n_jobs`) plus `hyperparameter_tuning` are allowed at the top level. Do not provide `evaluation` or `model` sections in a tuning config; the tuner does not read them.
+The `hyperparameter_tuning` section configures the standalone tuner in `ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so the search strategy stays explicit and easy to read. For the tuner, only the runtime keys (`input_path`, `output_dir`, `overwrite`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, `n_jobs`) plus `hyperparameter_tuning` are allowed at the top level. Do not provide `evaluation` or `model` sections in a tuning config; the tuner does not read them.
 
 Suggested keys:
 
