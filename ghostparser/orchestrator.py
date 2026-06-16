@@ -41,6 +41,7 @@ from .config import (
     ConfigError,
     load_orchestrator_config,
     normalize_orchestrator_payload,
+    prepare_output_directory,
 )
 from .introgression_mapper import generate_introgression_maps
 from .tree_parser import (
@@ -108,6 +109,7 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "outgroups",
     "triplet_filter",
     "output_folder",
+    "no_overwrite",
     "triplet_output_format",
     "parquet_partitions",
     "parquet_compression",
@@ -172,6 +174,13 @@ def _build_argument_parser():
         type=str,
         default=None,
         help=f"Output folder (default: ./{DEFAULT_OUTPUT_FOLDER})",
+    )
+    parser.add_argument(
+        "--no-overwrite",
+        dest="no_overwrite",
+        action="store_true",
+        default=None,
+        help="Append a numeric suffix when the output folder already exists",
     )
     parser.add_argument(
         "--triplet-output-format",
@@ -332,8 +341,7 @@ def main():
         print(f"Error: Gene trees file not found: {args.gene_trees}")
         return
 
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(prepare_output_directory(args.output, overwrite=args.overwrite))
 
     species_tree_clean = str(output_dir / f"processed_{species_tree_path.name}")
     gene_trees_clean = str(output_dir / f"processed_{gene_trees_path.name}")
@@ -644,6 +652,7 @@ def main():
                     output_dir=str(output_dir),
                     plot_taxa=plot_taxa,
                     outgroups=outgroup_taxa,
+                    overwrite=args.overwrite,
                 )
 
                 map_wall_time, map_cpu_time = _elapsed_times(

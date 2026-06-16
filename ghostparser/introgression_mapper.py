@@ -8,6 +8,7 @@ bootstrap sums, supporting counts, and undiluted averages.
 
 from __future__ import annotations
 
+import argparse as _argparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from matplotlib import pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
+
+from .config import prepare_output_directory
 
 
 @dataclass(frozen=True)
@@ -622,7 +625,12 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
 
 
 def generate_introgression_maps(
-    results, species_tree_path, output_dir, plot_taxa=None, outgroups=None
+    results,
+    species_tree_path,
+    output_dir,
+    plot_taxa=None,
+    outgroups=None,
+    overwrite=True,
 ):
     """Generate non-ghost heatmap and ghost target-strength bar plot.
 
@@ -635,8 +643,7 @@ def generate_introgression_maps(
             (e.g. outgroup taxa used for rooting).  When ``None`` or empty no
             taxa are excluded.
     """
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    output_path = Path(prepare_output_directory(output_dir, overwrite=overwrite))
 
     outgroup_set = set(outgroups) if outgroups else set()
 
@@ -739,8 +746,6 @@ def generate_introgression_maps(
 # Standalone CLI entry point
 # ---------------------------------------------------------------------------
 
-import argparse as _argparse
-
 
 def _build_standalone_parser():
     parser = _argparse.ArgumentParser(
@@ -763,6 +768,13 @@ def _build_standalone_parser():
         "--output-dir",
         required=True,
         help="Directory to write output plots and TSVs",
+    )
+    parser.add_argument(
+        "--no-overwrite",
+        dest="no_overwrite",
+        action="store_true",
+        default=False,
+        help="Append a numeric suffix when the output directory already exists",
     )
     parser.add_argument(
         "-og",
@@ -801,6 +813,7 @@ if __name__ == "__main__":
         species_tree_path=_args.species_tree_path,
         output_dir=_args.output_dir,
         outgroups=_outgroups,
+        overwrite=not _args.no_overwrite,
     )
     print(f"Taxa represented:          {_artifacts.taxa_count}")
     print(f"Non-ghost directed edges:  {_artifacts.non_ghost_edge_count}")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 
@@ -12,30 +13,31 @@ class ConfigError(ValueError):
 
 def _resolve_path(path_str: str) -> str:
     """Resolve a path string to an absolute path, handling ~, relative, and absolute paths.
-    
+
     Args:
         path_str: Path string that can be:
                  - Absolute (starts with /): /path/to/file
                  - Relative (no leading /): path/to/file (resolved from cwd)
                  - User home (starts with ~): ~/path/to/file
-    
+
     Returns:
         Absolute path as a string
     """
     path = Path(path_str)
-    
+
     # Expand user home directory (~)
     path = path.expanduser()
-    
+
     # Resolve to absolute path
     # If already absolute, this keeps it as is
     # If relative, resolves from current working directory
     path = path.resolve()
-    
+
     return str(path)
 
 
 DEFAULT_OUTPUT_FOLDER = "results"
+DEFAULT_OVERWRITE = True
 DEFAULT_PROCESSES = 0
 DEFAULT_MIN_SUPPORT_VALUE = 0.5
 DEFAULT_DISCORDANT_TEST = "chi-square"
@@ -114,7 +116,9 @@ def _validate_optional_string(payload: dict, key: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"Config field {key} must be a non-empty string when provided")
+        raise ConfigError(
+            f"Config field {key} must be a non-empty string when provided"
+        )
     return value.strip()
 
 
@@ -124,7 +128,9 @@ def _validate_optional_path(payload: dict, key: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"Config field {key} must be a non-empty string when provided")
+        raise ConfigError(
+            f"Config field {key} must be a non-empty string when provided"
+        )
     return _resolve_path(value.strip())
 
 
@@ -146,6 +152,66 @@ def _validate_optional_bool(payload: dict, key: str, default: bool) -> bool:
     return value
 
 
+def _validate_overwrite_flag(payload: dict, default: bool = DEFAULT_OVERWRITE) -> bool:
+    overwrite = payload.get("overwrite")
+    if overwrite is not None:
+        if not isinstance(overwrite, bool):
+            raise ConfigError("Config field overwrite must be a boolean when provided")
+        return overwrite
+
+    no_overwrite = payload.get("no_overwrite")
+    if no_overwrite is None:
+        return default
+    if not isinstance(no_overwrite, bool):
+        raise ConfigError("Config field no_overwrite must be a boolean when provided")
+    return not no_overwrite
+
+
+def _next_available_suffixed_path(base_path: Path) -> Path:
+    """Return the smallest suffixed path `<name>_<n>` that does not exist.
+
+    This uses a single parent-directory scan and computes the smallest missing
+    positive suffix in memory.
+    """
+    parent = base_path.parent
+    base_name = base_path.name
+    prefix = f"{base_name}_"
+
+    used_suffixes: set[int] = set()
+    for entry in parent.iterdir():
+        name = entry.name
+        if not name.startswith(prefix):
+            continue
+        raw_suffix = name[len(prefix) :]
+        if raw_suffix.isdigit():
+            used_suffixes.add(int(raw_suffix))
+
+    suffix = 1
+    while suffix in used_suffixes:
+        suffix += 1
+
+    return base_path.with_name(f"{base_name}_{suffix}")
+
+
+def prepare_output_directory(
+    output_dir: str | Path, *, overwrite: bool = DEFAULT_OVERWRITE
+) -> str:
+    """Resolve an output directory and either reset it or pick a unique suffix."""
+    path = Path(output_dir).expanduser().resolve()
+
+    if path.exists() and overwrite:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    if path.exists() and not overwrite:
+        path = _next_available_suffixed_path(path)
+
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
 def _validate_optional_float(payload: dict, key: str, default: float) -> float:
     value = payload.get(key, default)
     if value is None:
@@ -156,7 +222,9 @@ def _validate_optional_float(payload: dict, key: str, default: float) -> float:
         raise ConfigError(f"Config field {key} must be a numeric value") from exc
 
 
-def _validate_choice(payload: dict, key: str, default: str, choices: tuple[str, ...]) -> str:
+def _validate_choice(
+    payload: dict, key: str, default: str, choices: tuple[str, ...]
+) -> str:
     value = payload.get(key, default)
     if value is None:
         value = default
@@ -185,17 +253,26 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
     if raw_options is None:
         raw_options = {}
     if not isinstance(raw_options, dict):
-        raise ConfigError("Config field bootstrap_options must be a key/value object when provided")
+        raise ConfigError(
+            "Config field bootstrap_options must be a key/value object when provided"
+        )
 
-    iterations = payload.get("bootstrap_iterations", raw_options.get("iterations", DEFAULT_BOOTSTRAP_ITERATIONS))
+    iterations = payload.get(
+        "bootstrap_iterations",
+        raw_options.get("iterations", DEFAULT_BOOTSTRAP_ITERATIONS),
+    )
     if iterations is None:
         iterations = DEFAULT_BOOTSTRAP_ITERATIONS
     if not isinstance(iterations, int) or iterations < 1:
-        raise ConfigError("Config field bootstrap_options.iterations must be an integer >= 1")
+        raise ConfigError(
+            "Config field bootstrap_options.iterations must be an integer >= 1"
+        )
 
     seed = payload.get("bootstrap_seed", raw_options.get("seed"))
     if seed is not None and not isinstance(seed, int):
-        raise ConfigError("Config field bootstrap_options.seed must be an integer when provided")
+        raise ConfigError(
+            "Config field bootstrap_options.seed must be an integer when provided"
+        )
 
     debug_mode = payload.get(
         "bootstrap_debug_mode",
@@ -204,7 +281,9 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
     if debug_mode is None:
         debug_mode = DEFAULT_BOOTSTRAP_DEBUG_MODE
     if not isinstance(debug_mode, bool):
-        raise ConfigError("Config field bootstrap_options.debug_mode must be a boolean when provided")
+        raise ConfigError(
+            "Config field bootstrap_options.debug_mode must be a boolean when provided"
+        )
 
     summary_only = payload.get(
         "bootstrap_summary_only",
@@ -213,7 +292,9 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
     if summary_only is None:
         summary_only = DEFAULT_BOOTSTRAP_SUMMARY_ONLY
     if not isinstance(summary_only, bool):
-        raise ConfigError("Config field bootstrap_options.summary_only must be a boolean when provided")
+        raise ConfigError(
+            "Config field bootstrap_options.summary_only must be a boolean when provided"
+        )
 
     return bootstrap, {
         "iterations": iterations,
@@ -264,6 +345,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "outgroup": outgroups,
         "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
         "output": output,
+        "overwrite": _validate_overwrite_flag(payload),
         "triplet_output_format": _validate_choice(
             payload,
             "triplet_output_format",
@@ -281,7 +363,9 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
             DEFAULT_PARQUET_COMPRESSION,
             PARQUET_COMPRESSION_CHOICES,
         ),
-        "processes": _validate_non_negative_int(payload, "processes", DEFAULT_PROCESSES),
+        "processes": _validate_non_negative_int(
+            payload, "processes", DEFAULT_PROCESSES
+        ),
         "generate_summary_stats": _validate_optional_bool(
             payload,
             "generate_summary_stats",
@@ -292,7 +376,9 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
             "consolidation",
             DEFAULT_CONSOLIDATION,
         ),
-        "min_support_value": _validate_optional_float(payload, "min_support_value", DEFAULT_MIN_SUPPORT_VALUE),
+        "min_support_value": _validate_optional_float(
+            payload, "min_support_value", DEFAULT_MIN_SUPPORT_VALUE
+        ),
         "discordant_test": _validate_choice(
             payload,
             "discordant_test",
