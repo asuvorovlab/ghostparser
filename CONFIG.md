@@ -533,6 +533,7 @@ Inside `hyperparameter_tuning`, the following keys are expected:
 - `top_k` (int, default `10`): number of top candidates to include in the text summary.
 - `n_iter` (int, default `20`): number of sampled candidates when `method: random`.
 - `max_candidates` (int, default `5000`): hard cap for full grid evaluation.
+- `wandb_detailed_payloads` (bool, default `false`): when `true`, log additional per-candidate CV payloads (aggregate and fold-level JSON) and extra summary JSON blobs to Weights & Biases. Keep `false` when network/storage overhead matters.
 - `search_space` (mapping): model hyperparameter candidates. Each parameter should map to a list of values. Omit a parameter from `search_space` if you want the trainer default to apply during tuning.
 
 Allowed `search_space` keys depend on `model`:

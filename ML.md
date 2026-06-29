@@ -3,7 +3,7 @@
 
 This document describes the machine-learning baselines included with Ghostparser under `ghostparser.ml`. It focuses on what the configuration keys control, what they change for a training run, and how the evaluation metrics behave. The random forest baseline is the primary focus; multi-label KNN remains available as a secondary baseline.
 
-Install the optional ML dependency set with `pip install .[ml]` if you want to run these baselines.
+Install the optional ML dependency set with `pip install .[ml]` if you want to run these baselines. The ML extra includes `scikit-learn` and `wandb`.
 
 ## Contents
 - [Overview](#overview)
@@ -123,6 +123,7 @@ Suggested keys:
 - `top_k` (int, default: `10`): how many of the best candidates to keep in the human-readable summary.
 - `n_iter` (int, default: `20`): how many candidates to sample when `method: random` is selected.
 - `max_candidates` (int, default: `5000`): safety limit for `method: grid`; if the full grid would exceed this value, the tuner rejects the config.
+- `wandb_detailed_payloads` (bool, default: `false`): when `true`, send additional detailed candidate payloads (aggregate and fold-level CV JSON) to Weights & Biases; use this only when network/storage overhead is acceptable.
 - `search_space` (mapping): parameter grid for the selected model. Each key should be one supported hyperparameter and each value should be a list of candidate values.
 - `search_space` (mapping): parameter grid for the selected model. Each key should be one supported hyperparameter and each value should be a list of candidate values. If you omit a parameter from `search_space`, the tuner uses the trainer default for that parameter.
 
@@ -154,6 +155,47 @@ hyperparameter_tuning:
 Use `method: random` when the space is large and you want a sampled search instead of checking every combination.
 
 The tuner prints console progress while it runs, including the number of candidate cases it plans to evaluate, the approximate number of model fits implied by CV, and per-candidate timing updates.
+
+#### Weights & Biases setup (required for tuner)
+
+`ghostparser.ml.hyper_tune` initializes Weights & Biases for every tuning run.
+
+Initial setup:
+
+1. Install ML dependencies:
+
+```bash
+pip install .[ml]
+```
+
+2. Authenticate once:
+
+```bash
+wandb login
+```
+
+3. (Optional) set project/account defaults:
+
+```bash
+export WANDB_PROJECT=ghostparser-hyper-tune
+export WANDB_ENTITY=<your-wandb-entity>
+```
+
+4. (Optional) use offline mode when needed:
+
+```bash
+export WANDB_MODE=offline
+```
+
+What the tuner logs to WandB:
+
+- run metadata (model, method, objective, candidate count, CV folds)
+- one lightweight record per candidate (score, params, elapsed time, best-so-far flag)
+- final metrics and timing summaries
+
+If you set `hyperparameter_tuning.wandb_detailed_payloads: true`, the tuner also logs additional JSON payloads per candidate (CV aggregate and fold-level details) and richer run-summary JSON fields.
+
+To keep network and memory overhead low on long runs, the integration logs scalar summaries only (no per-fold raw prediction payload uploads and no large artifact uploads to WandB by default).
 
 ### Random Forest settings
 
