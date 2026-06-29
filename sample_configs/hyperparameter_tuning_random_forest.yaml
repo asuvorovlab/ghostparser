@@ -13,6 +13,7 @@ hyperparameter_tuning:
   objective: bitwise_accuracy
   top_k: 5
   max_candidates: 1000
+  wandb_detailed_payloads: false
   search_space:
     n_estimators: [ 100, 200, 400 ]
     max_depth: [ null, 10, 20 ]

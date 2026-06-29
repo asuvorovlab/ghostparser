@@ -8,3 +8,4 @@ pyarrow>=15.0
 matplotlib>=3.8
 seaborn>=0.13
 pytest>=7.0
+wandb>=0.18
