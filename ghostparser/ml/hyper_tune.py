@@ -10,14 +10,23 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
+import os
 import pickle
 import random
 import time
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import wandb
 
-from ..config import ConfigError, prepare_output_directory
+from ..config import (
+    DEFAULT_OVERWRITE,
+    ConfigError,
+    _validate_overwrite_flag,
+    prepare_output_directory,
+)
 from . import ml_utils as shared
 from . import multi_knn as knn_module
 from . import random_forest as rf_module
@@ -46,6 +55,7 @@ DEFAULT_OBJECTIVE_METRIC = "exact_match_accuracy"
 DEFAULT_TOP_K = 10
 DEFAULT_RANDOM_ITERATIONS = 20
 DEFAULT_MAX_CANDIDATES = 5000
+DEFAULT_WANDB_PROJECT = "ghostparser-hyper-tune"
 
 SUPPORTED_MODELS = ("multi_knn", "random_forest")
 SUPPORTED_SEARCH_METHODS = ("grid", "random")
@@ -110,9 +120,77 @@ def _log_progress(message: str) -> None:
     print(f"[hyper_tune] {message}", flush=True)
 
 
+def _get_wandb_project() -> str:
+    value = os.getenv("WANDB_PROJECT")
+    if value is None:
+        return DEFAULT_WANDB_PROJECT
+    stripped = value.strip()
+    return stripped or DEFAULT_WANDB_PROJECT
+
+
+def _get_wandb_entity() -> str | None:
+    value = os.getenv("WANDB_ENTITY")
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _build_wandb_run_name(config: argparse.Namespace) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return (
+        f"ghostparser-{config.model_name}-{config.search_method}-"
+        f"{config.objective_metric}-{timestamp}"
+    )
+
+
+def _start_wandb_run(
+    config: argparse.Namespace,
+    output_dir: Path,
+    total_candidates: int,
+    cv_folds: int,
+) -> wandb.sdk.wandb_run.Run:
+    wandb_dir = output_dir / "wandb"
+    wandb_dir.mkdir(parents=True, exist_ok=True)
+
+    run_config = {
+        "model_name": config.model_name,
+        "search_method": config.search_method,
+        "objective_metric": config.objective_metric,
+        "objective_direction": config.objective_direction,
+        "candidate_count": int(total_candidates),
+        "cv_folds": int(cv_folds),
+        "test_size": float(config.test_size),
+        "rare_class_policy": config.rare_class_policy,
+        "random_state": config.random_state,
+        "n_jobs": config.n_jobs,
+    }
+
+    try:
+        run = wandb.init(
+            project=_get_wandb_project(),
+            entity=_get_wandb_entity(),
+            name=_build_wandb_run_name(config),
+            dir=str(wandb_dir),
+            config=run_config,
+            tags=["ghostparser", "hyper_tune", config.model_name, config.search_method],
+            mode=os.getenv("WANDB_MODE", "online"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise ConfigError(
+            "Failed to initialize Weights & Biases for hyperparameter tuning. "
+            "Run 'wandb login' first, or set WANDB_MODE=offline if network is unavailable."
+        ) from exc
+
+    wandb.define_metric("candidate_index")
+    wandb.define_metric("candidate/*", step_metric="candidate_index")
+    return run
+
+
 RUNTIME_KEYS = {
     "input_path",
     "output_dir",
+    "overwrite",
     "target_column",
     "test_size",
     "cv_folds",
@@ -183,6 +261,13 @@ def _validate_optional_choice(
         value = default
     if not isinstance(value, str) or value not in choices:
         raise ConfigError(f"Config field {key} must be one of: {', '.join(choices)}")
+    return value
+
+
+def _validate_optional_bool(payload: dict, key: str, default: bool) -> bool:
+    value = payload.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"Config field {key} must be a boolean")
     return value
 
 
@@ -323,6 +408,11 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
     max_candidates = _validate_optional_positive_int(
         tuning_section, "max_candidates", DEFAULT_MAX_CANDIDATES
     )
+    wandb_detailed_payloads = _validate_optional_bool(
+        tuning_section,
+        "wandb_detailed_payloads",
+        False,
+    )
 
     forbidden_search_keys = RUNTIME_KEYS | {"hyperparameter_tuning"}
     present_forbidden_search_keys = forbidden_search_keys & set(search_space)
@@ -343,6 +433,7 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
     normalized_config = {
         "input_path": input_path,
         "output_dir": output_dir,
+        "overwrite": _validate_overwrite_flag(payload, DEFAULT_OVERWRITE),
         "target_column": target_column,
         "test_size": _validate_optional_float(payload, "test_size", 0.2),
         "cv_folds": _validate_optional_positive_int(payload, "cv_folds", 5),
@@ -363,6 +454,7 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
         "top_k": top_k,
         "n_iter": n_iter,
         "max_candidates": max_candidates,
+        "wandb_detailed_payloads": wandb_detailed_payloads,
         "search_space": search_space,
     }
 
@@ -418,6 +510,9 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     load_start = time.perf_counter()
     base_config = dict(vars(config))
     base_config.update(MODEL_DEFAULTS[config.model_name])
+    output_dir = Path(
+        prepare_output_directory(config.output_dir, overwrite=config.overwrite)
+    )
     rows = shared.read_tsv_rows(config.input_path)
     matrix = shared.rows_to_matrix(rows, config.target_column)
     labels = shared.combination_labels(matrix.train_labels)
@@ -468,6 +563,18 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         f"{total_candidates} {_pluralize('candidate case', total_candidates)} across {cv_folds} CV folds "
         f"(~{estimated_model_fits} model fits)"
     )
+
+    wandb_run = _start_wandb_run(config, output_dir, total_candidates, cv_folds)
+    detailed_wandb_logging = bool(getattr(config, "wandb_detailed_payloads", False))
+    wandb.log(
+        {
+            "candidate_index": 0,
+            "candidate/total": total_candidates,
+            "candidate/estimated_model_fits": estimated_model_fits,
+            "timing/setup_seconds": time.perf_counter() - run_start,
+        }
+    )
+
     _log_progress(
         f"Setup completed in {_format_seconds(time.perf_counter() - run_start)}; starting candidate search"
     )
@@ -525,6 +632,37 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             best_candidate_params = candidate_params
             best_candidate_config = candidate_config
             best_cv_results = cv_results
+
+        candidate_log = {
+            "candidate_index": candidate_index,
+            "candidate/cv_score": float(score),
+            "candidate/is_best": int(is_better),
+            "candidate/elapsed_seconds": time.perf_counter() - candidate_start,
+            "candidate/remaining": total_candidates - candidate_index,
+        }
+        candidate_log.update(
+            {f"candidate/param/{key}": value for key, value in candidate_params.items()}
+        )
+        wandb.log(candidate_log)
+        if detailed_wandb_logging:
+            wandb.log(
+                {
+                    "candidate_index": candidate_index,
+                    "candidate/detailed/params_json": json.dumps(
+                        candidate_params,
+                        sort_keys=True,
+                    ),
+                    "candidate/detailed/cv_aggregate_json": json.dumps(
+                        cv_results.get("aggregate", {}),
+                        sort_keys=True,
+                    ),
+                    "candidate/detailed/cv_folds_json": json.dumps(
+                        cv_results.get("folds", []),
+                        sort_keys=True,
+                    ),
+                }
+            )
+
         _log_progress(
             f"[{candidate_index}/{total_candidates}] done in {_format_seconds(time.perf_counter() - candidate_start)}; cv_score={score:.6f}"
         )
@@ -566,10 +704,6 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     fit_predict_seconds = time.perf_counter() - fit_start
     _log_progress(
         f"Best candidate fit and prediction completed in {_format_seconds(fit_predict_seconds)}"
-    )
-
-    output_dir = Path(
-        prepare_output_directory(config.output_dir, overwrite=config.overwrite)
     )
 
     dataset_summary = shared.build_dataset_summary(
@@ -660,6 +794,41 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     results_payload["timings_seconds"]["artifact_write"] = artifact_seconds
     results_payload["timings_seconds"]["total"] = time.perf_counter() - run_start
     shared.write_json(results_json_path, results_payload)
+
+    wandb.log(
+        {
+            "timing/load_seconds": load_seconds,
+            "timing/split_seconds": split_seconds,
+            "timing/cv_feasibility_seconds": cv_seconds,
+            "timing/candidate_search_seconds": search_seconds,
+            "timing/fit_and_predict_seconds": fit_predict_seconds,
+            "timing/artifact_write_seconds": artifact_seconds,
+            "timing/total_seconds": results_payload["timings_seconds"]["total"],
+            "final/exact_match_accuracy": test_metrics["exact_match_accuracy"],
+            "final/hamming_loss": test_metrics["hamming_loss"],
+            "final/bitwise_accuracy": test_metrics["bitwise_accuracy"],
+            "final/micro_f1": test_metrics["micro_f1"],
+            "final/macro_f1": test_metrics["macro_f1"],
+            "final/weighted_f1": test_metrics["weighted_f1"],
+            "final/best_candidate_index": best_candidate_index,
+        }
+    )
+    wandb_run.summary["artifact_dir"] = str(output_dir)
+    wandb_run.summary["best_candidate_params"] = dict(best_candidate_params)
+    wandb_run.summary["results_json_path"] = str(results_json_path)
+    wandb_run.summary["results_tsv_path"] = str(results_tsv_path)
+    wandb_run.summary["predictions_path"] = str(predictions_path)
+    wandb_run.summary["wandb_detailed_payloads"] = detailed_wandb_logging
+    if detailed_wandb_logging:
+        wandb_run.summary["dataset_summary_json"] = json.dumps(
+            dataset_summary,
+            sort_keys=True,
+        )
+        wandb_run.summary["best_candidate_cv_results_json"] = json.dumps(
+            best_cv_results,
+            sort_keys=True,
+        )
+    wandb_run.finish()
     _log_progress(
         f"Finished in {_format_seconds(results_payload['timings_seconds']['total'])}; artifacts written to {output_dir}"
     )

@@ -65,6 +65,31 @@ def test_load_hyper_tune_config_fills_model_defaults(tmp_path):
     assert config["class_weight"] is None
     assert config["max_features"] == "sqrt"
     assert config["min_samples_split"] == 2
+    assert config["overwrite"] is True
+    assert config["wandb_detailed_payloads"] is False
+
+
+def test_load_hyper_tune_config_accepts_wandb_detailed_payloads(tmp_path):
+    config_path = tmp_path / "hyper_tune_wandb_detailed.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "input_path": "./results/summary_statistics.tsv",
+                "output_dir": "./results/hyper_tune_out",
+                "hyperparameter_tuning": {
+                    "model": "random_forest",
+                    "wandb_detailed_payloads": True,
+                    "search_space": {
+                        "n_estimators": [5, 10],
+                    },
+                },
+            }
+        )
+    )
+
+    config = load_hyper_tune_config(str(config_path))
+
+    assert config["wandb_detailed_payloads"] is True
 
 
 def test_load_hyper_tune_config_rejects_evaluation_section(tmp_path):
@@ -103,8 +128,10 @@ def test_load_hyper_tune_config_requires_hyperparameter_tuning_section(tmp_path)
 
 
 def test_tune_hyperparameters_grid_search_smoke(
-    summary_statistics_tsv_tuning, tmp_path, capsys
+    summary_statistics_tsv_tuning, tmp_path, capsys, monkeypatch
 ):
+    monkeypatch.setenv("WANDB_MODE", "disabled")
+
     config = argparse.Namespace(
         input_path=str(summary_statistics_tsv_tuning),
         output_dir=str(tmp_path / "hyper_tune_out"),
@@ -147,8 +174,10 @@ def test_tune_hyperparameters_grid_search_smoke(
 
 
 def test_tune_hyperparameters_random_search_smoke(
-    summary_statistics_tsv_tuning, tmp_path
+    summary_statistics_tsv_tuning, tmp_path, monkeypatch
 ):
+    monkeypatch.setenv("WANDB_MODE", "disabled")
+
     config = argparse.Namespace(
         input_path=str(summary_statistics_tsv_tuning),
         output_dir=str(tmp_path / "hyper_tune_random_out"),
