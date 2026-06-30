@@ -61,6 +61,20 @@ The scripts in this folder are lightweight utilities for repetitive data-prep an
         --parent-dir /projects/asuvorov/ghostparser_shared/simulations_64way/all_simulations/simulation_110110
       ```
 
+- `preflight_triplet_sanity_check.py`
+    - Runs structural preflight checks on species and gene trees before orchestrator execution.
+    - Uses outgroup rooting and triplet topology logic consistent with GhostParser internals.
+    - Reports likely failure categories with actionable context (gene-tree index and triplet/taxa).
+    - Highlights common causes for rooted sister-pair failures and triplet incompatibilities.
+    - Example usage:
+
+      ```bash
+      python3 scripts/preflight_triplet_sanity_check.py \
+        --species-tree-path /path/to/species.tree \
+        --gene-trees-path /path/to/genes.tre \
+        --outgroup O
+      ```
+
 For full CLI options and argument descriptions, run `--help` for any helper script:
 
 ```bash
@@ -68,4 +82,5 @@ python3 scripts/consolidate_tabular_files.py --help
 python3 scripts/profile_stats_methods.py --help
 python3 scripts/plot_triplet_tree_heights.py --help
 python3 scripts/run_orchestrator_parent_dir.py --help
+python3 scripts/preflight_triplet_sanity_check.py --help
 ```
