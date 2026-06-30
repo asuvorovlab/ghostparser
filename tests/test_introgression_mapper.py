@@ -6,8 +6,13 @@ from ghostparser.introgression_mapper import (
     _collect_counts,
     _collect_non_sister_counts,
     _draw_species_tree_strip,
+    _scaled_consolidation_text_sizes,
     generate_introgression_maps,
 )
+
+
+def _consolidation_lines(consolidation_dir, filename):
+    return (consolidation_dir / filename).read_text().splitlines()
 
 
 def test_generate_introgression_maps_creates_expected_outputs(tmp_path):
@@ -59,38 +64,73 @@ def test_generate_introgression_maps_creates_expected_outputs(tmp_path):
 
     assert (tmp_path / "introgression_combined.png").exists()
     assert artifacts.plot_path == str(tmp_path / "introgression_combined.png")
+    consolidation_dir = tmp_path / "consolidation_data"
+    assert (consolidation_dir / "introgression_matrix_inflow_outflow.tsv").exists()
     assert (
-        tmp_path / "consolidation_data" / "introgression_matrix_inflow_outflow.tsv"
+        consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv"
     ).exists()
     assert (
-        tmp_path
-        / "consolidation_data"
-        / "introgression_matrix_inflow_outflow_raw_sum.tsv"
+        consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv"
+    ).exists()
+    assert (consolidation_dir / "introgression_ghost_target_strength.tsv").exists()
+    assert (
+        consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv"
     ).exists()
     assert (
-        tmp_path
-        / "consolidation_data"
-        / "introgression_matrix_inflow_outflow_supporting_count.tsv"
+        consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv"
     ).exists()
-    assert (
-        tmp_path / "consolidation_data" / "introgression_ghost_target_strength.tsv"
-    ).exists()
-    assert (
-        tmp_path
-        / "consolidation_data"
-        / "introgression_ghost_target_strength_raw_sum.tsv"
-    ).exists()
-    assert (
-        tmp_path
-        / "consolidation_data"
-        / "introgression_ghost_target_strength_supporting_count.tsv"
-    ).exists()
-    assert (tmp_path / "consolidation_data" / "introgression_taxa_order.tsv").exists()
-    assert (
-        tmp_path
-        / "consolidation_data"
-        / "introgression_matrix_sampled_non_sister.tsv"
-    ).exists()
+    assert (consolidation_dir / "introgression_taxa_order.tsv").exists()
+    assert (consolidation_dir / "introgression_matrix_sampled_non_sister.tsv").exists()
+
+
+def test_generate_introgression_maps_appends_suffix_when_overwrite_disabled(tmp_path):
+    species_tree = tmp_path / "species.tree"
+    species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
+
+    results = [
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="inflow_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.5,
+        ),
+    ]
+
+    existing_output_dir = tmp_path / "introgression"
+    existing_output_dir.mkdir()
+    (existing_output_dir / "stale.txt").write_text("stale")
+
+    artifacts = generate_introgression_maps(
+        results,
+        species_tree_path=str(species_tree),
+        output_dir=str(existing_output_dir),
+        overwrite=False,
+    )
+
+    suffixed_output_dir = tmp_path / "introgression_1"
+    assert suffixed_output_dir.exists()
+    assert artifacts.plot_path == str(
+        suffixed_output_dir / "introgression_combined.png"
+    )
+    assert (existing_output_dir / "stale.txt").exists()
+
+
+def test_scaled_consolidation_text_sizes_grow_with_taxa_count():
+    small = _scaled_consolidation_text_sizes(5)
+    large = _scaled_consolidation_text_sizes(83)
+    capped = _scaled_consolidation_text_sizes(500)
+
+    assert small["axis_label"] < large["axis_label"]
+    assert small["cbar_label"] < large["cbar_label"]
+    assert small["cbar_tick"] < large["cbar_tick"]
+
+    assert large["axis_label"] == 17
+    assert large["cbar_label"] == 16
+    assert large["cbar_tick"] == 13
+
+    assert capped["axis_label"] == 20
+    assert capped["cbar_label"] == 19
+    assert capped["cbar_tick"] == 14
 
 
 def test_generate_introgression_maps_uses_full_species_tree_by_default(tmp_path):
@@ -113,35 +153,11 @@ def test_generate_introgression_maps_uses_full_species_tree_by_default(tmp_path)
     )
 
     consolidation_dir = tmp_path / "consolidation_data"
-    matrix_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow.tsv")
-        .read_text()
-        .splitlines()
+    matrix_lines = _consolidation_lines(
+        consolidation_dir, "introgression_matrix_inflow_outflow.tsv"
     )
-    matrix_raw_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv")
-        .read_text()
-        .splitlines()
-    )
-    matrix_count_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv")
-        .read_text()
-        .splitlines()
-    )
-    ghost_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength.tsv")
-        .read_text()
-        .splitlines()
-    )
-    ghost_raw_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv")
-        .read_text()
-        .splitlines()
-    )
-    ghost_count_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv")
-        .read_text()
-        .splitlines()
+    ghost_lines = _consolidation_lines(
+        consolidation_dir, "introgression_ghost_target_strength.tsv"
     )
 
     header_fields = matrix_lines[0].split("\t")
@@ -176,10 +192,8 @@ def test_generate_introgression_maps_prunes_requested_plot_taxa(tmp_path):
         plot_taxa=["A", "B", "C"],
     )
 
-    matrix_lines = (
-        (tmp_path / "consolidation_data" / "introgression_matrix_inflow_outflow.tsv")
-        .read_text()
-        .splitlines()
+    matrix_lines = _consolidation_lines(
+        tmp_path / "consolidation_data", "introgression_matrix_inflow_outflow.tsv"
     )
     header_fields = matrix_lines[0].split("\t")
     taxa_from_header = header_fields[1:]
@@ -226,35 +240,11 @@ def test_generate_introgression_maps_uses_raw_values_with_separate_scales(tmp_pa
     )
 
     consolidation_dir = tmp_path / "consolidation_data"
-    matrix_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow.tsv")
-        .read_text()
-        .splitlines()
+    matrix_lines = _consolidation_lines(
+        consolidation_dir, "introgression_matrix_inflow_outflow.tsv"
     )
-    matrix_raw_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv")
-        .read_text()
-        .splitlines()
-    )
-    matrix_count_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv")
-        .read_text()
-        .splitlines()
-    )
-    ghost_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength.tsv")
-        .read_text()
-        .splitlines()
-    )
-    ghost_raw_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv")
-        .read_text()
-        .splitlines()
-    )
-    ghost_count_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv")
-        .read_text()
-        .splitlines()
+    ghost_lines = _consolidation_lines(
+        consolidation_dir, "introgression_ghost_target_strength.tsv"
     )
 
     matrix_values = []
@@ -299,35 +289,11 @@ def test_generate_introgression_maps_excludes_outgroups(tmp_path):
     )
 
     consolidation_dir = tmp_path / "consolidation_data"
-    matrix_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow.tsv")
-        .read_text()
-        .splitlines()
+    matrix_lines = _consolidation_lines(
+        consolidation_dir, "introgression_matrix_inflow_outflow.tsv"
     )
-    matrix_raw_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv")
-        .read_text()
-        .splitlines()
-    )
-    matrix_count_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv")
-        .read_text()
-        .splitlines()
-    )
-    ghost_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength.tsv")
-        .read_text()
-        .splitlines()
-    )
-    ghost_raw_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv")
-        .read_text()
-        .splitlines()
-    )
-    ghost_count_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv")
-        .read_text()
-        .splitlines()
+    ghost_lines = _consolidation_lines(
+        consolidation_dir, "introgression_ghost_target_strength.tsv"
     )
     taxa_from_matrix = matrix_lines[0].split("\t")[1:]
     taxa_from_ghost = [line.split("\t")[0] for line in ghost_lines[1:]]
@@ -447,35 +413,25 @@ def test_collect_counts_correct_avg_in_generate_introgression_maps(tmp_path):
     )
 
     consolidation_dir = tmp_path / "consolidation_data"
-    matrix_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow.tsv")
-        .read_text()
-        .splitlines()
+    matrix_lines = _consolidation_lines(
+        consolidation_dir, "introgression_matrix_inflow_outflow.tsv"
     )
-    matrix_raw_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv")
-        .read_text()
-        .splitlines()
+    matrix_raw_lines = _consolidation_lines(
+        consolidation_dir, "introgression_matrix_inflow_outflow_raw_sum.tsv"
     )
-    matrix_count_lines = (
-        (consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv")
-        .read_text()
-        .splitlines()
+    matrix_count_lines = _consolidation_lines(
+        consolidation_dir,
+        "introgression_matrix_inflow_outflow_supporting_count.tsv",
     )
-    ghost_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength.tsv")
-        .read_text()
-        .splitlines()
+    ghost_lines = _consolidation_lines(
+        consolidation_dir, "introgression_ghost_target_strength.tsv"
     )
-    ghost_raw_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength_raw_sum.tsv")
-        .read_text()
-        .splitlines()
+    ghost_raw_lines = _consolidation_lines(
+        consolidation_dir, "introgression_ghost_target_strength_raw_sum.tsv"
     )
-    ghost_count_lines = (
-        (consolidation_dir / "introgression_ghost_target_strength_supporting_count.tsv")
-        .read_text()
-        .splitlines()
+    ghost_count_lines = _consolidation_lines(
+        consolidation_dir,
+        "introgression_ghost_target_strength_supporting_count.tsv",
     )
 
     # Build lookup: matrix[target][source] = value

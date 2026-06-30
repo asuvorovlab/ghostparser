@@ -33,6 +33,8 @@ venv/
 *.png
 *.json
 *.parquet
+*.pkl
+**/wandb/
 
 # Scripts and Test Notebooks
 ghost*.sh

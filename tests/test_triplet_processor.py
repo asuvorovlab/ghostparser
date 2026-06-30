@@ -11,9 +11,9 @@ from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportions_ztest
 
 import ghostparser.triplet_processor as triplet_processor_module
-
 from ghostparser.triplet_processor import (
     _adjust_p_values,
+    _resolve_runtime_args,
     analyze_triplet_gene_tree_file,
     classify_triplet_topology,
     collect_triplet_statistics,
@@ -23,16 +23,19 @@ from ghostparser.triplet_processor import (
     pearson_discordant_chi_square_test,
     run_discordant_count_test,
     run_triplet_pipeline,
+    two_proportion_discordant_z_test,
     two_sample_ks_test,
     two_sample_ks_test_hybrid,
-    two_proportion_discordant_z_test,
-    write_pipeline_statistics_json,
     write_pipeline_results,
+    write_pipeline_statistics_json,
     write_summary_statistics_tsv,
-    _resolve_runtime_args,
 )
-from ghostparser.triplet_utils import TOPOLOGY_AB, TOPOLOGY_AC, TOPOLOGY_BC
-from ghostparser.triplet_utils import classify_triplet_topology_string
+from ghostparser.triplet_utils import (
+    TOPOLOGY_AB,
+    TOPOLOGY_AC,
+    TOPOLOGY_BC,
+    classify_triplet_topology_string,
+)
 
 
 def _tree(newick):
@@ -60,16 +63,24 @@ def test_compute_tree_height_statistic_matches_definition():
         ("((A:2,C:3):4,B:1);", "INT", None, 4.0),
     ],
 )
-def test_compute_tree_height_statistic_supports_extended_strategies(newick, strategy, species_triplet, expected):
+def test_compute_tree_height_statistic_supports_extended_strategies(
+    newick, strategy, species_triplet, expected
+):
     tree = _tree(newick)
-    assert compute_tree_height_statistic(tree, strategy=strategy, species_triplet=species_triplet) == pytest.approx(expected)
+    assert compute_tree_height_statistic(
+        tree, strategy=strategy, species_triplet=species_triplet
+    ) == pytest.approx(expected)
 
 
 def test_compute_tree_height_statistic_rejects_unknown_strategy():
     tree = _tree("((A:2,B:3):4,C:1);")
 
-    with pytest.raises(ValueError, match="Unsupported tree height calculation strategy"):
-        compute_tree_height_statistic(tree, strategy="D", species_triplet=("A", "B", "C"))
+    with pytest.raises(
+        ValueError, match="Unsupported tree height calculation strategy"
+    ):
+        compute_tree_height_statistic(
+            tree, strategy="D", species_triplet=("A", "B", "C")
+        )
 
 
 def test_compute_tree_height_statistic_requires_species_triplet_for_taxon_specific_strategies():
@@ -82,9 +93,18 @@ def test_compute_tree_height_statistic_requires_species_triplet_for_taxon_specif
 def test_classify_triplet_topology_string_for_all_three_topologies():
     species_triplet = ("A", "B", "C")
 
-    assert classify_triplet_topology_string(_tree("((A:1,B:1):1,C:1);"), species_triplet) == TOPOLOGY_AB
-    assert classify_triplet_topology_string(_tree("((B:1,C:1):1,A:1);"), species_triplet) == TOPOLOGY_BC
-    assert classify_triplet_topology_string(_tree("((A:1,C:1):1,B:1);"), species_triplet) == TOPOLOGY_AC
+    assert (
+        classify_triplet_topology_string(_tree("((A:1,B:1):1,C:1);"), species_triplet)
+        == TOPOLOGY_AB
+    )
+    assert (
+        classify_triplet_topology_string(_tree("((B:1,C:1):1,A:1);"), species_triplet)
+        == TOPOLOGY_BC
+    )
+    assert (
+        classify_triplet_topology_string(_tree("((A:1,C:1):1,B:1);"), species_triplet)
+        == TOPOLOGY_AC
+    )
 
 
 def test_classify_triplet_topology_labels_concordant_and_discordants():
@@ -143,7 +163,9 @@ def test_custom_chi_square_matches_scipy_reference_randomized():
         custom_stat, custom_p = pearson_discordant_chi_square_test(n_dis1, n_dis2)
         scipy_result = stats.chisquare([n_dis1, n_dis2])
 
-        assert custom_stat == pytest.approx(float(scipy_result.statistic), rel=0.0, abs=1e-12)
+        assert custom_stat == pytest.approx(
+            float(scipy_result.statistic), rel=0.0, abs=1e-12
+        )
         assert custom_p == pytest.approx(float(scipy_result.pvalue), rel=0.0, abs=1e-12)
 
 
@@ -183,7 +205,9 @@ def test_custom_ks_matches_scipy_asymptotic_reference_randomized():
         sample_b = [rng.random() for _ in range(n2)]
 
         custom_d, custom_p = two_sample_ks_test(sample_a, sample_b)
-        scipy_res = stats.ks_2samp(sample_a, sample_b, alternative="two-sided", method="asymp")
+        scipy_res = stats.ks_2samp(
+            sample_a, sample_b, alternative="two-sided", method="asymp"
+        )
 
         assert custom_d == pytest.approx(float(scipy_res.statistic), rel=0.0, abs=1e-12)
         p_diffs.append(abs(custom_p - float(scipy_res.pvalue)))
@@ -197,7 +221,11 @@ def test_custom_ks_matches_scipy_asymptotic_reference_randomized():
 
 def test_run_triplet_pipeline_uses_species_concordant_and_frequency_ranked_discordants():
     species_triplet = ("A", "B", "C")
-    trees = (["((B:1,C:1):1,A:1);"] * 12) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 4)
+    trees = (
+        (["((B:1,C:1):1,A:1);"] * 12)
+        + (["((A:1,B:1):1,C:1);"] * 8)
+        + (["((A:1,C:1):1,B:1);"] * 4)
+    )
 
     result = run_triplet_pipeline(
         species_triplet,
@@ -215,7 +243,11 @@ def test_run_triplet_pipeline_uses_species_concordant_and_frequency_ranked_disco
 
 def test_run_triplet_pipeline_supports_z_test_for_discordant_counts():
     species_triplet = ("A", "B", "C")
-    trees = (["((B:1,C:1):1,A:1);"] * 12) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 4)
+    trees = (
+        (["((B:1,C:1):1,A:1);"] * 12)
+        + (["((A:1,B:1):1,C:1);"] * 8)
+        + (["((A:1,C:1):1,B:1);"] * 4)
+    )
 
     result = run_triplet_pipeline(
         species_triplet,
@@ -231,7 +263,11 @@ def test_run_triplet_pipeline_supports_z_test_for_discordant_counts():
 
 def test_run_triplet_pipeline_supports_standard_stats_backend():
     species_triplet = ("A", "B", "C")
-    trees = (["((B:1,C:1):1,A:1);"] * 12) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 4)
+    trees = (
+        (["((B:1,C:1):1,A:1);"] * 12)
+        + (["((A:1,B:1):1,C:1);"] * 8)
+        + (["((A:1,C:1):1,B:1);"] * 4)
+    )
 
     result = run_triplet_pipeline(
         species_triplet,
@@ -293,7 +329,11 @@ def test_run_triplet_pipeline_supports_median_summary_statistic():
 
 def test_run_triplet_pipeline_breaks_discordant_ties_by_first_topology():
     species_triplet = ("A", "B", "C")
-    trees = (["((A:1,B:1):1,C:1);"] * 5) + (["((B:1,C:1):1,A:1);"] * 3) + (["((A:1,C:1):1,B:1);"] * 3)
+    trees = (
+        (["((A:1,B:1):1,C:1);"] * 5)
+        + (["((B:1,C:1):1,A:1);"] * 3)
+        + (["((A:1,C:1):1,B:1);"] * 3)
+    )
 
     result = run_triplet_pipeline(
         species_triplet,
@@ -308,7 +348,11 @@ def test_run_triplet_pipeline_breaks_discordant_ties_by_first_topology():
 
 def test_run_triplet_pipeline_selects_ac_as_discordant1_when_ac_is_more_frequent():
     species_triplet = ("A", "B", "C")
-    trees = (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 12) + (["((B:1,C:1):1,A:1);"] * 4)
+    trees = (
+        (["((A:1,B:1):1,C:1);"] * 8)
+        + (["((A:1,C:1):1,B:1);"] * 12)
+        + (["((B:1,C:1):1,A:1);"] * 4)
+    )
 
     result = run_triplet_pipeline(
         species_triplet,
@@ -331,7 +375,9 @@ def test_run_triplet_pipeline_no_introgression_when_dct_not_significant():
         "((A:1,B:1):1,C:1);",
     ] * 8
 
-    result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(1))
+    result = run_triplet_pipeline(
+        species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(1)
+    )
 
     assert result.classification == "no_introgression"
     assert not result.dct_significant
@@ -348,7 +394,9 @@ def test_run_triplet_pipeline_inflow_when_ks_not_significant():
     dis2_tree = "((A:0.6,C:0.6):0.4,B:1.0);"
 
     trees = ([dis1_tree] * 30) + ([dis2_tree] * 5) + ([con_tree] * 30)
-    result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(2))
+    result = run_triplet_pipeline(
+        species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(2)
+    )
 
     assert result.dct_significant
     assert result.ks_significant is False
@@ -364,7 +412,9 @@ def test_run_triplet_pipeline_outflow_when_con_summary_higher():
     dis2_tree = "((A:0.2,C:0.2):0.3,B:0.5);"
 
     trees = ([con_tree] * 40) + ([dis1_tree] * 30) + ([dis2_tree] * 5)
-    result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(3))
+    result = run_triplet_pipeline(
+        species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(3)
+    )
 
     assert result.classification == "outflow_introgression"
     assert result.ks_significant is True
@@ -379,7 +429,9 @@ def test_run_triplet_pipeline_ghost_when_dis_summary_higher():
     dis2_tree = "((A:0.2,C:0.2):0.3,B:0.5);"
 
     trees = ([con_tree] * 40) + ([dis1_tree] * 30) + ([dis2_tree] * 5)
-    result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(4))
+    result = run_triplet_pipeline(
+        species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(4)
+    )
 
     assert result.classification == "ghost_introgression"
     assert result.ks_significant is True
@@ -448,11 +500,16 @@ def test_analyze_triplet_gene_tree_file_with_multiprocessing(tmp_path):
         ({"discordant_test": "bad-test"}, "Unsupported discordant test method"),
         ({"summary_statistic": "bad-summary"}, "Unsupported summary statistic"),
         ({"stats_backend": "numpy"}, "Unsupported stats backend"),
-        ({"tree_height_calculation_strategy": "D"}, "Unsupported tree height calculation strategy"),
+        (
+            {"tree_height_calculation_strategy": "D"},
+            "Unsupported tree height calculation strategy",
+        ),
         ({"p_value_correction": "sidak"}, "Unsupported p-value correction method"),
     ],
 )
-def test_analyze_triplet_gene_tree_file_rejects_unsupported_runtime_options(tmp_path, override_kwargs, error_match):
+def test_analyze_triplet_gene_tree_file_rejects_unsupported_runtime_options(
+    tmp_path, override_kwargs, error_match
+):
     content = """A,B,C\t3\t((A:1,B:1):1,C:1);
 
 ((A:1,B:1):1,C:1);
@@ -468,7 +525,11 @@ def test_analyze_triplet_gene_tree_file_rejects_unsupported_runtime_options(tmp_
 
 def test_run_triplet_pipeline_supports_mode_summary_statistic():
     species_triplet = ("A", "B", "C")
-    trees = (["((A:0.2,B:0.2):0.3,C:0.5);"] * 40) + (["((B:1.0,C:1.0):2.0,A:3.0);"] * 30) + (["((A:0.2,C:0.2):0.3,B:0.5);"] * 5)
+    trees = (
+        (["((A:0.2,B:0.2):0.3,C:0.5);"] * 40)
+        + (["((B:1.0,C:1.0):2.0,A:3.0);"] * 30)
+        + (["((A:0.2,C:0.2):0.3,B:0.5);"] * 5)
+    )
 
     result = run_triplet_pipeline(
         species_triplet,
@@ -479,6 +540,39 @@ def test_run_triplet_pipeline_supports_mode_summary_statistic():
 
     assert result.summary_con is not None
     assert result.summary_dis is not None
+
+
+def test_run_triplet_pipeline_skips_summary_metric_collection_when_disabled(
+    monkeypatch,
+):
+    species_triplet = ("A", "B", "C")
+    trees = (
+        (["((A:1,B:1):1,C:1);"] * 4)
+        + (["((B:1,C:1):1,A:1);"] * 3)
+        + (["((A:1,C:1):1,B:1);"] * 2)
+    )
+
+    called = False
+
+    def _fail_if_called(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("summary metric collection should be skipped")
+
+    monkeypatch.setattr(
+        triplet_processor_module, "_build_topology_metric_statistics", _fail_if_called
+    )
+
+    result = run_triplet_pipeline(
+        species_triplet,
+        trees,
+        species_topology=TOPOLOGY_AB,
+        generate_summary_stats=False,
+        rng=random.Random(123),
+    )
+
+    assert called is False
+    assert result.topology_metric_statistics is None
 
 
 def test_run_triplet_pipeline_supports_taxon_specific_tree_height_strategy():
@@ -515,7 +609,12 @@ def test_run_triplet_pipeline_bootstrap_unresolved_when_metrics_missing():
         trees,
         species_topology=TOPOLOGY_AB,
         bootstrap=True,
-        bootstrap_options={"iterations": 5, "seed": 123, "debug_mode": False, "summary_only": True},
+        bootstrap_options={
+            "iterations": 5,
+            "seed": 123,
+            "debug_mode": False,
+            "summary_only": True,
+        },
     )
 
     assert result.classification == "no_introgression"
@@ -555,7 +654,11 @@ def test_run_bootstrap_iterations_joins_tied_classes(monkeypatch):
             analyzed_trees=4,
         )
 
-    monkeypatch.setattr(triplet_processor_module, "_run_triplet_pipeline_from_observations", _fake_pipeline)
+    monkeypatch.setattr(
+        triplet_processor_module,
+        "_run_triplet_pipeline_from_observations",
+        _fake_pipeline,
+    )
 
     payload = triplet_processor_module._run_bootstrap_iterations(
         species_triplet=("A", "B", "C"),
@@ -576,8 +679,6 @@ def test_run_bootstrap_iterations_joins_tied_classes(monkeypatch):
     assert payload["bootstrap_value"] == pytest.approx(0.5)
 
 
-
-
 def test_adjust_p_values_custom_fdr_matches_known_bh_example():
     p_values = [0.01, 0.04, 0.03, 0.002]
     adjusted = _adjust_p_values(p_values, method="fdr_bh", stats_backend="custom")
@@ -596,9 +697,15 @@ def test_adjust_p_values_standard_matches_statsmodels_for_supported_methods():
 
     observed_bfn = _adjust_p_values(p_values, method="bfn", stats_backend="standard")
     observed_holm = _adjust_p_values(p_values, method="holm", stats_backend="standard")
-    observed_fdr_bh = _adjust_p_values(p_values, method="fdr_bh", stats_backend="standard")
-    observed_fdr_by = _adjust_p_values(p_values, method="fdr_by", stats_backend="standard")
-    observed_fdr_tsbh = _adjust_p_values(p_values, method="fdr_tsbh", stats_backend="standard", alpha=0.01)
+    observed_fdr_bh = _adjust_p_values(
+        p_values, method="fdr_bh", stats_backend="standard"
+    )
+    observed_fdr_by = _adjust_p_values(
+        p_values, method="fdr_by", stats_backend="standard"
+    )
+    observed_fdr_tsbh = _adjust_p_values(
+        p_values, method="fdr_tsbh", stats_backend="standard", alpha=0.01
+    )
 
     assert observed_bfn == pytest.approx(expected_bfn, abs=1e-12)
     assert observed_holm == pytest.approx(expected_holm, abs=1e-12)
@@ -625,8 +732,12 @@ def test_adjust_p_values_custom_matches_standard_randomized(method, seed, alpha)
         p_values = [rng.random() for _ in range(sample_size)]
 
         kwargs = {"alpha": alpha} if alpha is not None else {}
-        custom = _adjust_p_values(p_values, method=method, stats_backend="custom", **kwargs)
-        standard = _adjust_p_values(p_values, method=method, stats_backend="standard", **kwargs)
+        custom = _adjust_p_values(
+            p_values, method=method, stats_backend="custom", **kwargs
+        )
+        standard = _adjust_p_values(
+            p_values, method=method, stats_backend="standard", **kwargs
+        )
         assert custom == pytest.approx(standard, abs=1e-12)
 
 
@@ -675,19 +786,31 @@ A,B,D\t6\t((A:1,B:1):1,D:1);\t[A=A,B=B,C=D]\tAB:2/concordant,BC:3/discordant1,AC
 
 
 def test_two_sample_ks_test_hybrid_uses_scipy_near_threshold(monkeypatch):
-    monkeypatch.setattr(triplet_processor_module, "two_sample_ks_test", lambda *_: (0.12, 0.051))
-    monkeypatch.setattr(triplet_processor_module, "_two_sample_ks_test_scipy", lambda *_: (0.13, 0.049))
+    monkeypatch.setattr(
+        triplet_processor_module, "two_sample_ks_test", lambda *_: (0.12, 0.051)
+    )
+    monkeypatch.setattr(
+        triplet_processor_module, "_two_sample_ks_test_scipy", lambda *_: (0.13, 0.049)
+    )
 
-    d_stat, p_value = two_sample_ks_test_hybrid([0.1, 0.2], [0.3, 0.4], alpha=0.05, borderline_margin=0.01)
+    d_stat, p_value = two_sample_ks_test_hybrid(
+        [0.1, 0.2], [0.3, 0.4], alpha=0.05, borderline_margin=0.01
+    )
     assert d_stat == pytest.approx(0.13)
     assert p_value == pytest.approx(0.049)
 
 
 def test_two_sample_ks_test_hybrid_keeps_custom_when_not_borderline(monkeypatch):
-    monkeypatch.setattr(triplet_processor_module, "two_sample_ks_test", lambda *_: (0.12, 0.40))
-    monkeypatch.setattr(triplet_processor_module, "_two_sample_ks_test_scipy", lambda *_: (0.22, 0.10))
+    monkeypatch.setattr(
+        triplet_processor_module, "two_sample_ks_test", lambda *_: (0.12, 0.40)
+    )
+    monkeypatch.setattr(
+        triplet_processor_module, "_two_sample_ks_test_scipy", lambda *_: (0.22, 0.10)
+    )
 
-    d_stat, p_value = two_sample_ks_test_hybrid([0.1, 0.2], [0.3, 0.4], alpha=0.05, borderline_margin=0.01)
+    d_stat, p_value = two_sample_ks_test_hybrid(
+        [0.1, 0.2], [0.3, 0.4], alpha=0.05, borderline_margin=0.01
+    )
     assert d_stat == pytest.approx(0.12)
     assert p_value == pytest.approx(0.40)
 
@@ -730,7 +853,9 @@ def test_two_sample_ks_test_hybrid_rejects_negative_margin():
         ),
     ],
 )
-def test_parse_triplet_gene_trees_file_rejects_malformed_sections(tmp_path, content, error_match):
+def test_parse_triplet_gene_trees_file_rejects_malformed_sections(
+    tmp_path, content, error_match
+):
     input_file = tmp_path / "unique_triplets_gene_trees.txt"
     input_file.write_text(content)
 
@@ -738,10 +863,18 @@ def test_parse_triplet_gene_trees_file_rejects_malformed_sections(tmp_path, cont
         parse_triplet_gene_trees_file(str(input_file))
 
 
-def test_write_pipeline_results_includes_dis1_topology_and_omits_removed_topology_columns(tmp_path):
+def test_write_pipeline_results_includes_dis1_topology_and_omits_removed_topology_columns(
+    tmp_path,
+):
     species_triplet = ("A", "B", "C")
-    trees = (["((B:1,C:1):1,A:1);"] * 10) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 2)
-    result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(6))
+    trees = (
+        (["((B:1,C:1):1,A:1);"] * 10)
+        + (["((A:1,B:1):1,C:1);"] * 8)
+        + (["((A:1,C:1):1,B:1);"] * 2)
+    )
+    result = run_triplet_pipeline(
+        species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(6)
+    )
 
     output_file = tmp_path / "results.tsv"
     write_pipeline_results([result], str(output_file), dct_method="chi-square")
@@ -756,7 +889,11 @@ def test_write_pipeline_results_includes_dis1_topology_and_omits_removed_topolog
 
 def test_write_pipeline_results_uses_dynamic_summary_column_names(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = (["((A:1.0,B:1.0):2.0,C:3.0);"] * 40) + (["((B:0.2,C:0.2):0.3,A:0.5);"] * 30) + (["((A:0.2,C:0.2):0.3,B:0.5);"] * 5)
+    trees = (
+        (["((A:1.0,B:1.0):2.0,C:3.0);"] * 40)
+        + (["((B:0.2,C:0.2):0.3,A:0.5);"] * 30)
+        + (["((A:0.2,C:0.2):0.3,B:0.5);"] * 5)
+    )
     result = run_triplet_pipeline(
         species_triplet,
         trees,
@@ -778,14 +915,23 @@ def test_write_pipeline_results_uses_dynamic_summary_column_names(tmp_path):
 
 def test_write_pipeline_results_adds_bootstrap_columns_when_enabled(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = ([("((A:1.0,B:1.0):2.0,C:3.0);")] * 40) + ([("((B:0.2,C:0.2):0.3,A:0.5);")] * 30) + ([("((A:0.2,C:0.2):0.3,B:0.5);")] * 5)
+    trees = (
+        ([("((A:1.0,B:1.0):2.0,C:3.0);")] * 40)
+        + ([("((B:0.2,C:0.2):0.3,A:0.5);")] * 30)
+        + ([("((A:0.2,C:0.2):0.3,B:0.5);")] * 5)
+    )
     result = run_triplet_pipeline(
         species_triplet,
         trees,
         species_topology=TOPOLOGY_AB,
         summary_statistic="median",
         bootstrap=True,
-        bootstrap_options={"iterations": 4, "seed": 7, "debug_mode": True, "summary_only": True},
+        bootstrap_options={
+            "iterations": 4,
+            "seed": 7,
+            "debug_mode": True,
+            "summary_only": True,
+        },
     )
 
     output_file = tmp_path / "results_bootstrap.tsv"
@@ -816,7 +962,9 @@ def test_write_pipeline_results_adds_bootstrap_columns_when_enabled(tmp_path):
     assert row[heights_idx].startswith("{")
 
 
-def test_write_pipeline_results_adds_bootstrap_gene_tree_heights_when_summary_only_false(tmp_path):
+def test_write_pipeline_results_adds_bootstrap_gene_tree_heights_when_summary_only_false(
+    tmp_path,
+):
     species_triplet = ("A", "B", "C")
     trees = (["((A:1.0,B:1.0):2.0,C:3.0);"] * 6) + (["((B:0.2,C:0.2):0.3,A:0.5);"] * 4)
     result = run_triplet_pipeline(
@@ -825,7 +973,12 @@ def test_write_pipeline_results_adds_bootstrap_gene_tree_heights_when_summary_on
         species_topology=TOPOLOGY_AB,
         summary_statistic="median",
         bootstrap=True,
-        bootstrap_options={"iterations": 4, "seed": 7, "debug_mode": True, "summary_only": False},
+        bootstrap_options={
+            "iterations": 4,
+            "seed": 7,
+            "debug_mode": True,
+            "summary_only": False,
+        },
     )
 
     output_file = tmp_path / "results_bootstrap_full.tsv"
@@ -849,8 +1002,14 @@ def test_write_pipeline_results_adds_bootstrap_gene_tree_heights_when_summary_on
 
 def test_collect_triplet_statistics_returns_dict_list():
     species_triplet = ("A", "B", "C")
-    trees = (["((A:1,B:1):1,C:1);"] * 5) + (["((B:1,C:1):1,A:1);"] * 3) + (["((A:1,C:1):1,B:1);"] * 2)
-    result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(7))
+    trees = (
+        (["((A:1,B:1):1,C:1);"] * 5)
+        + (["((B:1,C:1):1,A:1);"] * 3)
+        + (["((A:1,C:1):1,B:1);"] * 2)
+    )
+    result = run_triplet_pipeline(
+        species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(7)
+    )
 
     stats = collect_triplet_statistics([result])
     assert isinstance(stats, list)
@@ -865,7 +1024,11 @@ def test_collect_triplet_statistics_returns_dict_list():
 
 def test_write_pipeline_results_uses_dct_chi_stats_column_for_chi_square(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = (["((B:1,C:1):1,A:1);"] * 12) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 2)
+    trees = (
+        (["((B:1,C:1):1,A:1);"] * 12)
+        + (["((A:1,B:1):1,C:1);"] * 8)
+        + (["((A:1,C:1):1,B:1);"] * 2)
+    )
     result = run_triplet_pipeline(
         species_triplet,
         trees,
@@ -894,7 +1057,11 @@ def test_write_pipeline_results_uses_dct_chi_stats_column_for_chi_square(tmp_pat
 
 def test_write_pipeline_results_uses_dct_z_score_column_for_z_test(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = (["((B:1,C:1):1,A:1);"] * 12) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 2)
+    trees = (
+        (["((B:1,C:1):1,A:1);"] * 12)
+        + (["((A:1,B:1):1,C:1);"] * 8)
+        + (["((A:1,C:1):1,B:1);"] * 2)
+    )
     result = run_triplet_pipeline(
         species_triplet,
         trees,
@@ -904,7 +1071,9 @@ def test_write_pipeline_results_uses_dct_z_score_column_for_z_test(tmp_path):
     )
 
     output_file = tmp_path / "results_z.tsv"
-    write_pipeline_results([result], str(output_file), dct_method="z-test", summary_statistic="median")
+    write_pipeline_results(
+        [result], str(output_file), dct_method="z-test", summary_statistic="median"
+    )
 
     lines = output_file.read_text().splitlines()
     header = lines[0].split("\t")
@@ -921,7 +1090,11 @@ def test_write_pipeline_results_uses_dct_z_score_column_for_z_test(tmp_path):
 
 def test_write_pipeline_results_uses_mode_summary_columns_for_mode(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = (["((A:0.2,B:0.2):0.3,C:0.5);"] * 40) + (["((B:1.0,C:1.0):2.0,A:3.0);"] * 30) + (["((A:0.2,C:0.2):0.3,B:0.5);"] * 5)
+    trees = (
+        (["((A:0.2,B:0.2):0.3,C:0.5);"] * 40)
+        + (["((B:1.0,C:1.0):2.0,A:3.0);"] * 30)
+        + (["((A:0.2,C:0.2):0.3,B:0.5);"] * 5)
+    )
     result = run_triplet_pipeline(
         species_triplet,
         trees,
@@ -931,7 +1104,9 @@ def test_write_pipeline_results_uses_mode_summary_columns_for_mode(tmp_path):
     )
 
     output_file = tmp_path / "results_mode.tsv"
-    write_pipeline_results([result], str(output_file), dct_method="chi-square", summary_statistic="mode")
+    write_pipeline_results(
+        [result], str(output_file), dct_method="chi-square", summary_statistic="mode"
+    )
 
     header = output_file.read_text().splitlines()[0]
     assert "mode_con" in header
@@ -940,7 +1115,11 @@ def test_write_pipeline_results_uses_mode_summary_columns_for_mode(tmp_path):
 
 def test_write_pipeline_results_uses_dynamic_corrected_p_value_column_names(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = (["((A:1.0,B:1.0):2.0,C:3.0);"] * 20) + (["((B:0.2,C:0.2):0.3,A:0.5);"] * 15) + (["((A:0.2,C:0.2):0.3,B:0.5);"] * 3)
+    trees = (
+        (["((A:1.0,B:1.0):2.0,C:3.0);"] * 20)
+        + (["((B:0.2,C:0.2):0.3,A:0.5);"] * 15)
+        + (["((A:0.2,C:0.2):0.3,B:0.5);"] * 3)
+    )
     result = run_triplet_pipeline(
         species_triplet,
         trees,
@@ -962,10 +1141,17 @@ def test_write_pipeline_results_uses_dynamic_corrected_p_value_column_names(tmp_
     assert "dct_p_val_fdr_bh_corr" in header
     assert "ks_p_val_fdr_bh_corr" in header
 
+
 def test_write_pipeline_results_rejects_unsupported_p_value_correction(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = (["((A:1,B:1):1,C:1);"] * 5) + (["((B:1,C:1):1,A:1);"] * 3) + (["((A:1,C:1):1,B:1);"] * 2)
-    result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(41))
+    trees = (
+        (["((A:1,B:1):1,C:1);"] * 5)
+        + (["((B:1,C:1):1,A:1);"] * 3)
+        + (["((A:1,C:1):1,B:1);"] * 2)
+    )
+    result = run_triplet_pipeline(
+        species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(41)
+    )
 
     output_file = tmp_path / "bad_correction.tsv"
     with pytest.raises(ValueError, match="Unsupported p-value correction method"):
@@ -989,7 +1175,9 @@ def test_write_pipeline_results_includes_abc_mapping_column(tmp_path):
     )
 
     output_file = tmp_path / "results_abc.tsv"
-    write_pipeline_results([result], str(output_file), dct_method="chi-square", summary_statistic="median")
+    write_pipeline_results(
+        [result], str(output_file), dct_method="chi-square", summary_statistic="median"
+    )
 
     lines = output_file.read_text().splitlines()
     header = lines[0].split("\t")
@@ -1015,7 +1203,9 @@ def test_write_pipeline_results_ghost_inference_uses_dis1_outgroup_recipient(tmp
     )
 
     output_file = tmp_path / "results_inference_ghost.tsv"
-    write_pipeline_results([result], str(output_file), dct_method="chi-square", summary_statistic="median")
+    write_pipeline_results(
+        [result], str(output_file), dct_method="chi-square", summary_statistic="median"
+    )
 
     lines = output_file.read_text().splitlines()
     header = lines[0].split("\t")
@@ -1023,13 +1213,21 @@ def test_write_pipeline_results_ghost_inference_uses_dis1_outgroup_recipient(tmp
 
     assert row[header.index("classification")] == "ghost_introgression"
     # dis1 topology is ((B,C),A), so outgroup in dis1 is A -> TaxonA.
-    assert row[header.index("inference")] == "introgression from ghost lineage to TaxonA"
+    assert (
+        row[header.index("inference")] == "introgression from ghost lineage to TaxonA"
+    )
 
 
 def test_write_pipeline_statistics_json(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = (["((A:1,B:1):1,C:1);"] * 5) + (["((B:1,C:1):1,A:1);"] * 3) + (["((A:1,C:1):1,B:1);"] * 2)
-    result = run_triplet_pipeline(species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(8))
+    trees = (
+        (["((A:1,B:1):1,C:1);"] * 5)
+        + (["((B:1,C:1):1,A:1);"] * 3)
+        + (["((A:1,C:1):1,B:1);"] * 2)
+    )
+    result = run_triplet_pipeline(
+        species_triplet, trees, species_topology=TOPOLOGY_AB, rng=random.Random(8)
+    )
 
     output_file = tmp_path / "stats.json"
     write_pipeline_statistics_json([result], str(output_file))
@@ -1083,11 +1281,16 @@ def test_serialize_bootstrap_value_rejects_non_json_value():
 
 def test_write_summary_statistics_tsv_includes_expected_columns_and_counts(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = ([("((A:1,B:1):1,C:1);")] * 5) + ([("((B:1,C:1):1,A:1);")] * 3) + ([("((A:1,C:1):1,B:1);")] * 2)
+    trees = (
+        ([("((A:1,B:1):1,C:1);")] * 5)
+        + ([("((B:1,C:1):1,A:1);")] * 3)
+        + ([("((A:1,C:1):1,B:1);")] * 2)
+    )
     result = run_triplet_pipeline(
         species_triplet,
         trees,
         species_topology=TOPOLOGY_AB,
+        generate_summary_stats=True,
         rng=random.Random(101),
     )
 
@@ -1132,8 +1335,14 @@ def test_write_summary_statistics_tsv_includes_bootstrap_value_when_enabled(tmp_
         species_triplet,
         trees,
         species_topology=TOPOLOGY_AB,
+        generate_summary_stats=True,
         bootstrap=True,
-        bootstrap_options={"iterations": 2, "seed": 1, "debug_mode": False, "summary_only": False},
+        bootstrap_options={
+            "iterations": 2,
+            "seed": 1,
+            "debug_mode": False,
+            "summary_only": False,
+        },
     )
 
     output_file = tmp_path / "summary_statistics_bootstrap.tsv"
@@ -1145,7 +1354,11 @@ def test_write_summary_statistics_tsv_includes_bootstrap_value_when_enabled(tmp_
 
 def test_write_pipeline_results_rejects_mixed_discordant_test_outputs(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = (["((B:1,C:1):1,A:1);"] * 12) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 2)
+    trees = (
+        (["((B:1,C:1):1,A:1);"] * 12)
+        + (["((A:1,B:1):1,C:1);"] * 8)
+        + (["((A:1,C:1):1,B:1);"] * 2)
+    )
 
     chi_result = run_triplet_pipeline(
         species_triplet,
@@ -1165,12 +1378,18 @@ def test_write_pipeline_results_rejects_mixed_discordant_test_outputs(tmp_path):
     output_file = tmp_path / "mixed_dct.tsv"
     # Writer column selection now comes from supplied config method.
     with pytest.raises(ValueError, match="Unsupported discordant test method"):
-        write_pipeline_results([chi_result, z_result], str(output_file), dct_method="bad-test")
+        write_pipeline_results(
+            [chi_result, z_result], str(output_file), dct_method="bad-test"
+        )
 
 
 def test_write_pipeline_results_rejects_unsupported_summary_statistic(tmp_path):
     species_triplet = ("A", "B", "C")
-    trees = (["((B:1,C:1):1,A:1);"] * 12) + (["((A:1,B:1):1,C:1);"] * 8) + (["((A:1,C:1):1,B:1);"] * 2)
+    trees = (
+        (["((B:1,C:1):1,A:1);"] * 12)
+        + (["((A:1,B:1):1,C:1);"] * 8)
+        + (["((A:1,C:1):1,B:1);"] * 2)
+    )
 
     result = run_triplet_pipeline(
         species_triplet,
@@ -1182,7 +1401,12 @@ def test_write_pipeline_results_rejects_unsupported_summary_statistic(tmp_path):
 
     output_file = tmp_path / "mixed_summary.tsv"
     with pytest.raises(ValueError, match="Unsupported summary statistic"):
-        write_pipeline_results([result], str(output_file), dct_method="chi-square", summary_statistic="bad-summary")
+        write_pipeline_results(
+            [result],
+            str(output_file),
+            dct_method="chi-square",
+            summary_statistic="bad-summary",
+        )
 
 
 def _triplet_processor_args(**overrides):
@@ -1266,7 +1490,9 @@ def test_resolve_runtime_args_triplet_processor_cli_defaults_and_overrides(
     expected_discordant_test = cli_overrides.get("discordant_test", "chi-square")
     expected_summary_statistic = cli_overrides.get("summary_statistic", "median")
     expected_stats_backend = cli_overrides.get("stats_backend", "standard")
-    expected_tree_height_strategy = cli_overrides.get("tree_height_calculation_strategy", "AVG")
+    expected_tree_height_strategy = cli_overrides.get(
+        "tree_height_calculation_strategy", "AVG"
+    )
     expected_p_value_correction = cli_overrides.get("p_value_correction", "no")
 
     assert resolved.alpha_dct == expected_alpha_dct

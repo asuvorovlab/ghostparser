@@ -7,11 +7,10 @@ from types import SimpleNamespace
 import pytest
 
 import ghostparser.orchestrator as orchestrator_module
-
 from ghostparser.orchestrator import (
     _resolve_parallel_mode,
-    _resolve_runtime_args,
     _resolve_processes,
+    _resolve_runtime_args,
 )
 
 
@@ -23,6 +22,7 @@ def _orchestrator_args(tmp_path, **overrides):
         "outgroups": "Out1,Out2",
         "triplet_filter": None,
         "output_folder": str(tmp_path / "results"),
+        "no_overwrite": False,
         "triplet_output_format": None,
         "parquet_partitions": None,
         "parquet_compression": None,
@@ -120,6 +120,7 @@ def test_resolve_runtime_args_cli_defaults_and_overrides(
     assert resolved.gene_trees == str((tmp_path / "genes.nwk").resolve())
     assert resolved.outgroup == ["Out1", "Out2"]
     assert resolved.output == str(tmp_path / "results")
+    assert resolved.overwrite is True
     assert resolved.triplet_output_format == "parquet"
     assert resolved.parquet_partitions == 128
     assert resolved.parquet_compression == "zstd"
@@ -175,7 +176,10 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
     resolved = _resolve_runtime_args(args)
     captured = capsys.readouterr()
 
-    assert "Warning: --config-file provided; CLI arguments not in config will be ignored" in captured.out
+    assert (
+        "Warning: --config-file provided; CLI arguments not in config will be ignored"
+        in captured.out
+    )
     # Paths are resolved to absolute paths
     assert resolved.species_tree == str(Path("s.nwk").resolve())
     assert resolved.gene_trees == str(Path("g.nwk").resolve())
@@ -215,7 +219,9 @@ def test_resolve_runtime_args_config_with_cli_warns_and_ignores(tmp_path, capsys
         ),
     ],
 )
-def test_resolve_runtime_args_config_processes_behavior(tmp_path, config_payload, expected_processes):
+def test_resolve_runtime_args_config_processes_behavior(
+    tmp_path, config_payload, expected_processes
+):
     config_path = tmp_path / "run_config_processes.json"
     config_path.write_text(config_payload)
 
@@ -244,6 +250,7 @@ def _runtime_args(tmp_path):
         outgroup=["Out1"],
         triplet_filter=None,
         output=str(tmp_path / "results"),
+        overwrite=True,
         triplet_output_format="txt",
         parquet_partitions=8,
         parquet_compression="gzip",
@@ -273,33 +280,73 @@ def _patch_orchestrator_runtime_dependencies(monkeypatch):
         def parse_args(self):
             return SimpleNamespace()
 
-    monkeypatch.setattr(orchestrator_module, "_build_argument_parser", lambda: _DummyParser())
+    monkeypatch.setattr(
+        orchestrator_module, "_build_argument_parser", lambda: _DummyParser()
+    )
 
-    monkeypatch.setattr(orchestrator_module, "_parse_outgroup_arg", lambda outgroup: ["Out1"])
-    monkeypatch.setattr(orchestrator_module, "clean_and_save_trees", lambda *args, **kwargs: (["species_tree"], {}))
-    monkeypatch.setattr(orchestrator_module, "read_tree_file", lambda *_args, **_kwargs: ["species_tree"])
-    monkeypatch.setattr(orchestrator_module, "get_taxa_from_tree", lambda *_args, **_kwargs: ["A", "B", "C", "Out1"])
+    monkeypatch.setattr(
+        orchestrator_module, "_parse_outgroup_arg", lambda outgroup: ["Out1"]
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "clean_and_save_trees",
+        lambda *args, **kwargs: (["species_tree"], {}),
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "read_tree_file",
+        lambda *_args, **_kwargs: ["species_tree"],
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "get_taxa_from_tree",
+        lambda *_args, **_kwargs: ["A", "B", "C", "Out1"],
+    )
     monkeypatch.setattr(
         orchestrator_module,
         "_root_tree_on_outgroup",
         lambda *_args, **_kwargs: ("pruned_tree", set(), set(), {"A", "B", "C"}),
     )
-    monkeypatch.setattr(orchestrator_module, "write_clean_trees", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(orchestrator_module, "generate_triplets", lambda *_args, **_kwargs: [("A", "B", "C")])
-    monkeypatch.setattr(orchestrator_module, "format_newick_with_precision", lambda *_args, **_kwargs: "((A:1,B:1):1,C:1);")
-    monkeypatch.setattr(orchestrator_module.dendropy.Tree, "get", lambda *_args, **_kwargs: "species_dendro_tree")
+    monkeypatch.setattr(
+        orchestrator_module, "write_clean_trees", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "generate_triplets",
+        lambda *_args, **_kwargs: [("A", "B", "C")],
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "format_newick_with_precision",
+        lambda *_args, **_kwargs: "((A:1,B:1):1,C:1);",
+    )
+    monkeypatch.setattr(
+        orchestrator_module.dendropy.Tree,
+        "get",
+        lambda *_args, **_kwargs: "species_dendro_tree",
+    )
     monkeypatch.setattr(
         orchestrator_module,
         "_build_species_triplet_metadata",
-        lambda *_args, **_kwargs: ([("A", "B", "C")], {("A", "B", "C"): "((A:1,B:1):1,C:1);"}, []),
+        lambda *_args, **_kwargs: (
+            [("A", "B", "C")],
+            {("A", "B", "C"): "((A:1,B:1):1,C:1);"},
+            [],
+        ),
     )
     monkeypatch.setattr(
         orchestrator_module,
         "clean_and_save_gene_trees",
         lambda *_args, **_kwargs: (["gene_tree"], {}, 1, []),
     )
-    monkeypatch.setattr(orchestrator_module, "write_pipeline_results", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(orchestrator_module, "write_summary_statistics_tsv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        orchestrator_module, "write_pipeline_results", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "write_summary_statistics_tsv",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         orchestrator_module,
         "generate_introgression_maps",
@@ -319,7 +366,9 @@ def _patch_orchestrator_runtime_dependencies(monkeypatch):
 def test_main_uses_file_backed_pipeline(tmp_path, monkeypatch):
     args = _runtime_args(tmp_path)
     _patch_orchestrator_runtime_dependencies(monkeypatch)
-    monkeypatch.setattr(orchestrator_module, "_resolve_runtime_args", lambda _parsed: args)
+    monkeypatch.setattr(
+        orchestrator_module, "_resolve_runtime_args", lambda _parsed: args
+    )
 
     calls = {"file_extract": 0, "file_infer": 0, "map": 0}
 
@@ -344,8 +393,12 @@ def test_main_uses_file_backed_pipeline(tmp_path, monkeypatch):
             ghost_target_count=1,
         )
 
-    monkeypatch.setattr(orchestrator_module, "write_triplet_gene_trees_multiprocess", _file_extract_stub)
-    monkeypatch.setattr(orchestrator_module, "analyze_triplet_gene_tree_file", _file_infer_stub)
+    monkeypatch.setattr(
+        orchestrator_module, "write_triplet_gene_trees_multiprocess", _file_extract_stub
+    )
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_triplet_gene_tree_file", _file_infer_stub
+    )
     monkeypatch.setattr(orchestrator_module, "generate_introgression_maps", _map_stub)
 
     orchestrator_module.main()
@@ -359,7 +412,9 @@ def test_main_skips_consolidation_stage_when_disabled(tmp_path, monkeypatch):
     args = _runtime_args(tmp_path)
     args.consolidation = False
     _patch_orchestrator_runtime_dependencies(monkeypatch)
-    monkeypatch.setattr(orchestrator_module, "_resolve_runtime_args", lambda _parsed: args)
+    monkeypatch.setattr(
+        orchestrator_module, "_resolve_runtime_args", lambda _parsed: args
+    )
 
     calls = {"file_extract": 0, "file_infer": 0, "map": 0}
 
@@ -375,8 +430,12 @@ def test_main_skips_consolidation_stage_when_disabled(tmp_path, monkeypatch):
         calls["map"] += 1
         return SimpleNamespace()
 
-    monkeypatch.setattr(orchestrator_module, "write_triplet_gene_trees_multiprocess", _file_extract_stub)
-    monkeypatch.setattr(orchestrator_module, "analyze_triplet_gene_tree_file", _file_infer_stub)
+    monkeypatch.setattr(
+        orchestrator_module, "write_triplet_gene_trees_multiprocess", _file_extract_stub
+    )
+    monkeypatch.setattr(
+        orchestrator_module, "analyze_triplet_gene_tree_file", _file_infer_stub
+    )
     monkeypatch.setattr(orchestrator_module, "generate_introgression_maps", _map_stub)
 
     orchestrator_module.main()

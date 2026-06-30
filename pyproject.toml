@@ -21,10 +21,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+ml = ["scikit-learn>=1.3.2", "wandb>=0.18"]
 
 [tool.setuptools]
-packages = ["ghostparser"]
-
+[tool.setuptools.packages.find]
+include = ["ghostparser*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"

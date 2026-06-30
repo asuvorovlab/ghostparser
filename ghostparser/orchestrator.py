@@ -12,15 +12,40 @@ written to a final TSV report.
 from __future__ import annotations
 
 import argparse
+import time
 from multiprocessing import cpu_count
 from pathlib import Path
-import time
 
 import dendropy
 
 from .cli_config import resolve_cli_or_config_args
-
+from .config import (
+    DEFAULT_ALPHA_DCT,
+    DEFAULT_ALPHA_KS,
+    DEFAULT_DISCORDANT_TEST,
+    DEFAULT_MIN_SUPPORT_VALUE,
+    DEFAULT_OUTPUT_FOLDER,
+    DEFAULT_P_VALUE_CORRECTION,
+    DEFAULT_PARQUET_COMPRESSION,
+    DEFAULT_PARQUET_PARTITIONS,
+    DEFAULT_STATS_BACKEND,
+    DEFAULT_SUMMARY_STATISTIC,
+    DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+    DEFAULT_TRIPLET_OUTPUT_FORMAT,
+    P_VALUE_CORRECTION_CHOICES,
+    PARQUET_COMPRESSION_CHOICES,
+    STATS_BACKEND_CHOICES,
+    SUMMARY_STATISTIC_CHOICES,
+    TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
+    TRIPLET_IO_FORMAT_CHOICES,
+    ConfigError,
+    load_orchestrator_config,
+    normalize_orchestrator_payload,
+    prepare_output_directory,
+)
+from .introgression_mapper import generate_introgression_maps
 from .tree_parser import (
+    MetricsLogger,
     _build_species_triplet_metadata,
     _parse_outgroup_arg,
     _root_tree_on_outgroup,
@@ -30,41 +55,16 @@ from .tree_parser import (
     format_newick_with_precision,
     generate_triplets,
     get_taxa_from_tree,
-    MetricsLogger,
-    read_triplet_filter_file,
     read_tree_file,
+    read_triplet_filter_file,
     write_clean_trees,
-    write_triplet_gene_trees_parquet_multiprocess,
     write_triplet_gene_trees_multiprocess,
+    write_triplet_gene_trees_parquet_multiprocess,
 )
 from .triplet_processor import (
     analyze_triplet_gene_tree_file,
-    write_summary_statistics_tsv,
     write_pipeline_results,
-)
-from .introgression_mapper import generate_introgression_maps
-from .config import (
-    ConfigError,
-    DEFAULT_ALPHA_DCT,
-    DEFAULT_ALPHA_KS,
-    DEFAULT_DISCORDANT_TEST,
-    DEFAULT_MIN_SUPPORT_VALUE,
-    DEFAULT_OUTPUT_FOLDER,
-    DEFAULT_PARQUET_COMPRESSION,
-    DEFAULT_PARQUET_PARTITIONS,
-    DEFAULT_P_VALUE_CORRECTION,
-    DEFAULT_STATS_BACKEND,
-    DEFAULT_SUMMARY_STATISTIC,
-    DEFAULT_TRIPLET_OUTPUT_FORMAT,
-    PARQUET_COMPRESSION_CHOICES,
-    DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
-    P_VALUE_CORRECTION_CHOICES,
-    TRIPLET_IO_FORMAT_CHOICES,
-    SUMMARY_STATISTIC_CHOICES,
-    STATS_BACKEND_CHOICES,
-    TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
-    load_orchestrator_config,
-    normalize_orchestrator_payload,
+    write_summary_statistics_tsv,
 )
 
 
@@ -109,6 +109,7 @@ ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "outgroups",
     "triplet_filter",
     "output_folder",
+    "no_overwrite",
     "triplet_output_format",
     "parquet_partitions",
     "parquet_compression",
@@ -137,10 +138,31 @@ def _build_argument_parser():
         description="GhostParser orchestrator: run tree_parser and triplet_processor end-to-end."
     )
 
-    parser.add_argument("-c", "--config-file", type=str, default=None, help="Path to a JSON or YAML config file")
-    parser.add_argument("-st", "--species-tree-path", default=None, help="Path to the species tree file in Newick format")
-    parser.add_argument("-gt", "--gene-trees-path", default=None, help="Path to the gene trees file in Newick format")
-    parser.add_argument("-og", "--outgroups", default=None, help="Outgroup species identifier(s), comma-separated")
+    parser.add_argument(
+        "-c",
+        "--config-file",
+        type=str,
+        default=None,
+        help="Path to a JSON or YAML config file",
+    )
+    parser.add_argument(
+        "-st",
+        "--species-tree-path",
+        default=None,
+        help="Path to the species tree file in Newick format",
+    )
+    parser.add_argument(
+        "-gt",
+        "--gene-trees-path",
+        default=None,
+        help="Path to the gene trees file in Newick format",
+    )
+    parser.add_argument(
+        "-og",
+        "--outgroups",
+        default=None,
+        help="Outgroup species identifier(s), comma-separated",
+    )
     parser.add_argument(
         "--triplet-filter",
         type=str,
@@ -152,6 +174,13 @@ def _build_argument_parser():
         type=str,
         default=None,
         help=f"Output folder (default: ./{DEFAULT_OUTPUT_FOLDER})",
+    )
+    parser.add_argument(
+        "--no-overwrite",
+        dest="no_overwrite",
+        action="store_true",
+        default=None,
+        help="Append a numeric suffix when the output folder already exists",
     )
     parser.add_argument(
         "--triplet-output-format",
@@ -312,8 +341,7 @@ def main():
         print(f"Error: Gene trees file not found: {args.gene_trees}")
         return
 
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(prepare_output_directory(args.output, overwrite=args.overwrite))
 
     species_tree_clean = str(output_dir / f"processed_{species_tree_path.name}")
     gene_trees_clean = str(output_dir / f"processed_{gene_trees_path.name}")
@@ -364,7 +392,9 @@ def main():
                 )
 
             species_trees = read_tree_file(species_tree_clean)
-            species_wall_time, species_cpu_time = _elapsed_times(species_start_wall, species_start_cpu)
+            species_wall_time, species_cpu_time = _elapsed_times(
+                species_start_wall, species_start_cpu
+            )
             _log_stage_timing(metrics, species_wall_time, species_cpu_time)
         except Exception as exc:
             metrics.log(f"✗ Error processing species tree: {exc}")
@@ -378,8 +408,8 @@ def main():
                 taxa = get_taxa_from_tree(species_trees[0])
                 metrics.log(f"\n✓ Found {len(taxa)} taxa in species tree")
 
-                pruned_tree, _excluded_taxa, missing_taxa, ingroup_taxa = _root_tree_on_outgroup(
-                    species_trees[0], outgroup_taxa
+                pruned_tree, _excluded_taxa, missing_taxa, ingroup_taxa = (
+                    _root_tree_on_outgroup(species_trees[0], outgroup_taxa)
                 )
 
                 if missing_taxa:
@@ -388,7 +418,9 @@ def main():
                     )
 
                 if pruned_tree is None or not ingroup_taxa:
-                    metrics.log("⚠ Warning: Unable to root and prune species tree on outgroups")
+                    metrics.log(
+                        "⚠ Warning: Unable to root and prune species tree on outgroups"
+                    )
                     return
 
                 species_trees = [pruned_tree]
@@ -397,15 +429,25 @@ def main():
                 if args.triplet_filter:
                     filter_path = Path(args.triplet_filter)
                     if not filter_path.exists():
-                        metrics.log(f"✗ Error: Triplet filter file not found: {args.triplet_filter}")
+                        metrics.log(
+                            f"✗ Error: Triplet filter file not found: {args.triplet_filter}"
+                        )
                         return
 
-                    raw_triplets, invalid_lines = read_triplet_filter_file(str(filter_path))
+                    raw_triplets, invalid_lines = read_triplet_filter_file(
+                        str(filter_path)
+                    )
                     for line_number, raw in invalid_lines:
-                        metrics.log(f"⚠ Warning: Skipping invalid triplet line {line_number} in {filter_path}: {raw}")
+                        metrics.log(
+                            f"⚠ Warning: Skipping invalid triplet line {line_number} in {filter_path}: {raw}"
+                        )
 
-                    triplets, skipped_triplets = filter_triplets_by_taxa(raw_triplets, set(ingroup_taxa))
-                    plot_taxa = sorted({taxon for triplet in triplets for taxon in triplet})
+                    triplets, skipped_triplets = filter_triplets_by_taxa(
+                        raw_triplets, set(ingroup_taxa)
+                    )
+                    plot_taxa = sorted(
+                        {taxon for triplet in triplets for taxon in triplet}
+                    )
                     for triplet, missing in skipped_triplets:
                         metrics.log(
                             "⚠ Warning: Skipping triplet with missing taxa: "
@@ -422,40 +464,52 @@ def main():
                     preserve_underscores=True,
                 )
 
-                triplets, species_triplet_trees, skipped_species_triplets = _build_species_triplet_metadata(
-                    species_dendro_tree,
-                    triplets,
+                triplets, species_triplet_trees, skipped_species_triplets = (
+                    _build_species_triplet_metadata(
+                        species_dendro_tree,
+                        triplets,
+                    )
                 )
 
                 if skipped_species_triplets:
                     metrics.log(
                         "⚠ Warning: Skipping triplets that could not be mapped on species tree: "
-                        + "; ".join(",".join(triplet) for triplet in skipped_species_triplets)
+                        + "; ".join(
+                            ",".join(triplet) for triplet in skipped_species_triplets
+                        )
                     )
 
-                metrics.log(f"✓ Normalized {len(triplets)} triplets to A,B,C (A and B are sisters)")
+                metrics.log(
+                    f"✓ Normalized {len(triplets)} triplets to A,B,C (A and B are sisters)"
+                )
         except Exception as exc:
             metrics.log(f"✗ Error generating triplets: {exc}")
             return
 
         try:
             genes_start_wall, genes_start_cpu = _now_times()
-            gene_trees, dropped_genes, rooted_count, missing_root_indices = clean_and_save_gene_trees(
-                str(gene_trees_path),
-                gene_trees_clean,
-                outgroup_taxa,
-                min_avg_support=support_threshold,
+            gene_trees, dropped_genes, rooted_count, missing_root_indices = (
+                clean_and_save_gene_trees(
+                    str(gene_trees_path),
+                    gene_trees_clean,
+                    outgroup_taxa,
+                    min_avg_support=support_threshold,
+                )
             )
             metrics.log(f"\n✓ Gene trees cleaned and saved to: {gene_trees_clean}")
             metrics.log(f"  Processed {len(gene_trees)} tree(s)")
             metrics.log(f"  Rooted {rooted_count} tree(s) on outgroup taxa")
             if missing_root_indices:
-                metrics.log(f"  Discarded {len(missing_root_indices)} gene tree(s) without outgroup taxa")
+                metrics.log(
+                    f"  Discarded {len(missing_root_indices)} gene tree(s) without outgroup taxa"
+                )
             if dropped_genes:
                 metrics.log(
                     f"  ⚠ Dropped {len(dropped_genes)} tree(s) with avg support < {support_threshold}"
                 )
-            genes_wall_time, genes_cpu_time = _elapsed_times(genes_start_wall, genes_start_cpu)
+            genes_wall_time, genes_cpu_time = _elapsed_times(
+                genes_start_wall, genes_start_cpu
+            )
             _log_stage_timing(metrics, genes_wall_time, genes_cpu_time)
         except Exception as exc:
             metrics.log(f"✗ Error processing gene trees: {exc}")
@@ -467,7 +521,9 @@ def main():
 
         try:
             if args.triplet_output_format == "parquet":
-                triplet_output_path = str(output_dir / "unique_triplets_gene_trees.parquet")
+                triplet_output_path = str(
+                    output_dir / "unique_triplets_gene_trees.parquet"
+                )
             else:
                 triplet_output_path = str(output_dir / "unique_triplets_gene_trees.txt")
             extraction_wall_time = 0.0
@@ -540,6 +596,7 @@ def main():
                 stats_backend=args.stats_backend,
                 tree_height_calculation_strategy=args.tree_height_calculation_strategy,
                 p_value_correction=args.p_value_correction,
+                generate_summary_stats=args.generate_summary_stats,
                 bootstrap=args.bootstrap,
                 bootstrap_options=args.bootstrap_options,
                 use_multiprocessing=use_multiprocessing,
@@ -595,28 +652,51 @@ def main():
                     output_dir=str(output_dir),
                     plot_taxa=plot_taxa,
                     outgroups=outgroup_taxa,
+                    overwrite=args.overwrite,
                 )
 
-                map_wall_time, map_cpu_time = _elapsed_times(map_start_wall, map_start_cpu)
+                map_wall_time, map_cpu_time = _elapsed_times(
+                    map_start_wall, map_start_cpu
+                )
                 metrics.log("✓ Introgression map generation complete")
                 metrics.log(f"  Taxa represented: {map_artifacts.taxa_count}")
-                metrics.log(f"  Non-ghost directed edges: {map_artifacts.non_ghost_edge_count}")
-                metrics.log(f"  Ghost targets with signal: {map_artifacts.ghost_target_count}")
+                metrics.log(
+                    f"  Non-ghost directed edges: {map_artifacts.non_ghost_edge_count}"
+                )
+                metrics.log(
+                    f"  Ghost targets with signal: {map_artifacts.ghost_target_count}"
+                )
                 metrics.log(f"  Combined plot: {map_artifacts.plot_path}")
                 _log_stage_timing(metrics, map_wall_time, map_cpu_time)
                 metrics.log("")
             else:
-                metrics.log("✓ Introgression map generation stage skipped (consolidation disabled)")
+                metrics.log(
+                    "✓ Introgression map generation stage skipped (consolidation disabled)"
+                )
                 metrics.log("")
 
             # Summary
-            total_wall_time = species_wall_time + genes_wall_time + extraction_wall_time + inference_wall_time + map_wall_time
-            total_cpu_time = species_cpu_time + genes_cpu_time + extraction_cpu_time + inference_cpu_time + map_cpu_time
+            total_wall_time = (
+                species_wall_time
+                + genes_wall_time
+                + extraction_wall_time
+                + inference_wall_time
+                + map_wall_time
+            )
+            total_cpu_time = (
+                species_cpu_time
+                + genes_cpu_time
+                + extraction_cpu_time
+                + inference_cpu_time
+                + map_cpu_time
+            )
             metrics.log("✓ End-to-end orchestration complete")
             metrics.log(f"  Total time (wall): {total_wall_time:.2f}s")
             metrics.log(f"  Total time (CPU): {total_cpu_time:.2f}s")
         except Exception as exc:
-            metrics.log(f"✗ Error in triplet inference or introgression inference stage: {exc}")
+            metrics.log(
+                f"✗ Error in triplet inference or introgression inference stage: {exc}"
+            )
             return
 
         metrics.log("\nProcessing complete!")

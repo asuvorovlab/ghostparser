@@ -16,8 +16,9 @@
 3. [Orchestrator Input/Output](#orchestrator-inputoutput)
 4. [Configuration](#configuration)
 5. [Defaults](#defaults-at-a-glance)
-6. [Testing](#testing)
-7. [For Maintainers](#for-maintainers)
+6. [Handled Errors](#handled-errors)
+7. [Testing](#testing)
+8. [For Maintainers](#for-maintainers)
 
 ---
 
@@ -63,6 +64,22 @@ python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.
 
 ```bash
 pip install -r requirements.txt
+```
+
+If you want the machine-learning baselines, install the optional ML extra instead of the core-only package:
+
+```bash
+pip install .[ml]
+```
+
+That extra pulls in the scikit-learn dependency used by `ghostparser.ml.random_forest` and `ghostparser.ml.multi_knn`.
+
+The same extra also enables `ghostparser.ml.hyper_tune`, which reads a `hyperparameter_tuning` config section and can run either grid search or random search across the supported ML trainers.
+
+Run the tuner directly with:
+
+```bash
+python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_random_forest.yaml
 ```
 
 #### Poetry 2.x+ Alternative
@@ -124,6 +141,7 @@ GhostParser is configurable (discordant test, backend, thresholds, summary stati
 
 **Common optional:**
 - `--output-folder`
+- `--no-overwrite`
 - `--triplet-filter`
 - `--processes`
 - `--generate-summary-stats`
@@ -179,6 +197,7 @@ Useful CLI options for focused runs and debugging:
 
 - `--triplet-filter`
 - `--output-folder`
+- `--no-overwrite`
 - `--min-support-value`
 - `--processes`
 - `--no-multiprocessing`
@@ -387,6 +406,7 @@ Core defaults are centralized in orchestrator config/CLI normalization and in mo
 
 - `processes`: `0` (all available CPU cores)
 - `output_folder` (orchestrator/tree_parser): `./results`
+- `overwrite` (orchestrator/tree_parser): `true`
 - `triplet_output_format` (orchestrator/tree_parser): `parquet`
 - `input_format` (triplet_processor): `parquet`
 - `parquet_partitions`: `128`
@@ -398,6 +418,30 @@ Core defaults are centralized in orchestrator config/CLI normalization and in mo
 - `bootstrap_options.seed`: unset
 - `bootstrap_options.summary_only`: `false`
 
+### Machine Learning (ghostparser.ml)
+
+A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the pipeline) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see `ML.md` for full usage and the data contract.
+
+Run example:
+
+```bash
+python -m ghostparser.ml.random_forest -i results/summary_statistics.tsv -o results/ml_out
+```
+
+Or explicitly dispatch via the package entrypoint:
+
+```bash
+python -m ghostparser.ml --model random_forest -i results/summary_statistics.tsv -o results/ml_out
+```
+
+The KNN baseline is available as:
+
+```bash
+python -m ghostparser.ml.multi_knn -i results/summary_statistics.tsv -o results/ml_out
+```
+
+Note: `python -m ghostparser.ml` will not redirect to any model by default — you must pass `--model` to dispatch.
+
 **Backend Details:**
 
 - `stats_backend`: `standard` (Uses `scipy.stats` and `statsmodels` for DCT and KS tests)
@@ -405,6 +449,215 @@ Core defaults are centralized in orchestrator config/CLI normalization and in mo
 **Configuration Precedence:**
 
 `ghostparser.orchestrator` supports `-c/--config-file`; `tree_parser` and `triplet_processor` accept CLI parameters.
+
+---
+
+## Handled Errors
+
+This section summarizes user-facing errors and validation failures that GhostParser modules can raise or report during execution.
+
+### Orchestrator (`ghostparser.orchestrator`)
+
+- `Error: Species tree file not found: ...` / `Error: Gene trees file not found: ...`
+   Orchestrator exits early when required input files are missing.
+- `✗ Error processing species tree: ...`
+   Species-tree cleaning/parsing failed (typically malformed Newick, missing taxa, or filtering issues).
+- `✗ Error generating triplets: ...`
+   Triplet-generation setup failed (for example rooting/pruning/mapping failures).
+- `✗ Error processing gene trees: ...`
+   Gene-tree cleaning/rooting stage failed before extraction.
+- `✗ Error in triplet inference or introgression inference stage: ...`
+   A downstream extraction/inference/consolidation exception occurred; the appended message is the originating module error.
+
+### Config Loading (`ghostparser.config`)
+
+- `Config file not found: ...`
+   The config path does not exist.
+- `YAML support requires PyYAML to be installed`
+   YAML config was provided but `PyYAML` is unavailable.
+- `Config file must be .json, .yaml, or .yml`
+   Unsupported config extension.
+- `Config root must be a key/value object`
+   Top-level config payload is not a mapping.
+- `Missing required config field: ...`
+   A required field (for example species path, gene path, or output-critical key) is absent or empty.
+- `Missing required config field: outgroup(s)`
+   No usable outgroup taxa were provided.
+- `Config field ... must be a non-empty string when provided`
+   Optional string/path fields were passed as empty or wrong type.
+- `Config field ... must be an integer >= 0`
+   Non-negative integer settings (for example `processes`, `parquet_partitions`) are invalid.
+- `Config field ... must be a boolean when provided` / `Config field ... must be a numeric value`
+   Boolean/float-style fields were provided with incompatible types.
+- `Config field ... must be one of: ...`
+   Choice-constrained fields (test/statistic/backend/format/correction) contain unsupported values.
+- `Config field bootstrap_options.* ...`
+   Bootstrap options failed validation (`iterations >= 1`, integer seed, boolean debug/summary flags).
+
+### Tree Parsing and Extraction (`ghostparser.tree_parser`)
+
+- `Tree file not found: ...`
+   Input tree file path is missing.
+- `Invalid Newick format in ...` (including `Tree <idx> has no terminal nodes`)
+   Tree parsing failed, file is empty/invalid, or parsed trees are structurally unusable.
+- `Missing required CLI argument: --outgroups`
+   CLI outgroup argument is empty after parsing.
+- `CLI argument --processes must be an integer >= 0`
+   Process count is invalid.
+- `species_triplet_trees is required and cannot be None`
+   Internal extraction writer was called without required species-triplet mapping.
+- `Missing species subtree mapping for triplets: ...`
+   Some triplets have no mapped species subtree and cannot be serialized.
+- `Missing species subtree for triplet header: ...` / `Missing topology summary for triplet header: ...`
+   A triplet output header is missing required metadata fields.
+- `Parquet output requires pyarrow to be installed`
+   Parquet export requested but `pyarrow` is unavailable.
+- `parquet_partitions must be >= 1`
+   Invalid parquet partition count.
+- `Triplet subtree labels do not match expected triplet`
+   Extracted subtree taxa do not match the target triplet labels.
+- `Could not determine sister-pair MRCA`
+   Internal branch metric could not be computed because sister MRCA resolution failed.
+
+### Triplet Topology Utilities (`ghostparser.triplet_utils`)
+
+- `Triplet tree must contain exactly 3 terminal taxa`
+   A triplet tree has missing/extra terminal taxa labels.
+- `Could not determine rooted sister pair for triplet tree`
+   Rooted triplet is unresolved/ambiguous (commonly polytomy or ambiguous rooting).
+- `Tree taxa do not match provided ABC triplet`
+   Topology classification was requested with an incompatible ABC taxon mapping.
+
+### Triplet Processing (`ghostparser.triplet_processor`)
+
+- `Unsupported ...` for discordant test, stats backend, summary statistic, tree-height strategy, p-value correction, or input format
+   A selected method/format is outside supported choices.
+- `Unknown triplet topology` / `Resolved topology roles require a valid species topology` / `Invalid species topology: ...`
+   Internal topology state is inconsistent with supported canonical topologies.
+- `Triplet tree must contain exactly 3 terminal taxa`
+   Per-tree triplet metrics require exactly three labeled leaves.
+- `species_triplet is required for tree height strategies A, B, and C`
+   Taxon-specific height strategies were requested without ABC triplet labels.
+- `Selected taxon ... not found in triplet tree`
+   A/B/C-selected taxon is absent from the observed triplet tree.
+- `Could not determine sister-pair MRCA for triplet tree`
+   Sister-pair branch metrics could not be resolved for a triplet.
+- `Invalid dis1_topology '...'. Expected 'BC' or 'AC'.`
+   Inference text generation got an invalid discordant topology label.
+- `borderline_margin must be >= 0`
+   Hybrid KS helper margin parameter is invalid.
+- `Unsupported summary statistic name: ...`
+   Unsupported statistic requested in summary metric computation.
+- `Bootstrap payload is not JSON-serializable: ...`
+   Bootstrap debug output could not be converted to TSV-safe JSON.
+- `alpha must be in (0, 1) for fdr_tsbh`
+   Two-stage BH correction requires a strict `(0,1)` alpha.
+- `Missing worker triplet entry for: ...`
+   Multiprocessing worker was asked to analyze a triplet absent from its entry map.
+- `CLI argument --processes must be an integer >= 0` / `--bootstrap-iterations must be an integer >= 1`
+   Triplet processor runtime arguments are invalid.
+
+### Triplet Text Input Validation (`parse_triplet_gene_trees_file`)
+
+- `Invalid triplet header format (expected 5 tab-separated fields): ...`
+   Triplet section header is malformed.
+- `Invalid triplet header: ...` / `Invalid triplet count in header: ...` / `Invalid species tree in header: ...`
+   Header fields are missing or cannot be parsed.
+- `Invalid ABC label mapping in header: ...` / `Triplet/header label mapping mismatch ...`
+   Header ABC mapping is malformed or inconsistent with listed taxa.
+- `Invalid topology summary in header: ...` / `Invalid discordant role assignment in header: ...`
+   Topology count/role metadata is malformed or logically inconsistent.
+- `Triplet count/header mismatch ...`
+   Header count disagrees with summary totals or parsed gene-tree rows.
+- `Invalid triplet section format: expected blank line after header`
+   Required blank separator after header is missing.
+- `Invalid gene-tree line (expected Newick ending with ';'): ...`
+   Gene-tree line is malformed text in triplet payload.
+- `Duplicate triplet header encountered: ...`
+   The same triplet appears more than once in a single input payload.
+
+### Triplet Parquet Input Validation (`parse_triplet_gene_trees_parquet`)
+
+- `Parquet input requires pyarrow to be installed`
+   Parquet input parsing requested without `pyarrow`.
+- `Invalid parquet triplet dataset: expected 'triplets/' and 'observations/' directories`
+   Dataset directory layout does not match expected schema.
+- `Duplicate triplet header encountered: ...`
+   Duplicate triplet rows exist in parquet triplet metadata.
+- `Invalid discordant role assignment in parquet row for ...`
+   Parquet role metadata is inconsistent.
+- `Observation references unknown triplet_id: ...`
+   Observation partition references a missing triplet metadata row.
+- `Triplet count/header mismatch ...`
+   Observed row count does not match declared triplet count.
+
+### ML Package Entrypoint (`ghostparser.ml.__main__`)
+
+- `RuntimeError: Model module ... does not expose a 'main' function`
+   Dispatch target module is importable but missing required CLI entry function.
+
+### ML Dataset and Feature Validation (`ghostparser.ml.ml_utils`)
+
+- `Input TSV is missing a header row` / `Input TSV contains no data rows`
+   Training input file is structurally incomplete.
+- `Invalid classes label: ... expected a 6-character 0/1 bitstring`
+   Class label format is invalid for multi-label decoding.
+- `Missing required target column: ...`
+   Target column is absent from the TSV header.
+- `No feature columns found after excluding the target column`
+   Input has no usable predictors.
+- `Missing feature value for '...'`
+   At least one required feature cell is empty.
+- `Non-numeric feature value for '...': ... string-valued columns must have at most 7 distinct values`
+   Categorical feature expansion exceeded supported cardinality cap.
+- `Cannot run stratified cross-validation because at least one class has fewer than 2 samples`
+   Rare-class policy `error` blocks CV when class support is too low.
+
+### ML Config Validation (`ghostparser.ml.config` and `ghostparser.ml.random_forest`)
+
+- `Config file not found: ...` / `YAML support requires PyYAML to be installed`
+   ML config file is missing or YAML dependency is unavailable.
+- `Config file must be .json, .yaml, or .yml` / `Config root must be a key/value object`
+   Unsupported config format or wrong top-level payload shape.
+- `Missing required config field: ...` and typed validation messages (`must be ...`)
+   Required runtime/model/evaluation fields are missing or typed incorrectly.
+- `Do not place model hyperparameters or evaluation reporting controls at the top level ...`
+   ML config shape is invalid; expected nested `model` and `evaluation` sections.
+- `Place 'random_state' and 'n_jobs' at the top level, not under 'model'. ...`
+   Runtime controls were placed in the wrong config section.
+- `ConfigError(str(exc))` wrapping `rows_to_matrix` failures
+   Random-forest CLI forwards TSV/feature validation failures as config errors.
+
+### Hyperparameter Tuning (`ghostparser.ml.hyper_tune`)
+
+- `Failed to initialize Weights & Biases for hyperparameter tuning ...`
+   W&B initialization failed (authentication/network/mode setup).
+- `Missing required config field: hyperparameter_tuning`
+   Tuning config block is mandatory.
+- `Unexpected top-level keys in hyperparameter_tuning config: ...`
+   Config includes unsupported top-level keys.
+- `Do not place ... at the top level in hyperparameter_tuning configs ...`
+   Runtime/search/model/evaluation fields are in invalid sections.
+- `Config field hyperparameter_tuning.search_space must be a mapping/object ...`
+   Search-space block has invalid type.
+- `Search space lists must contain at least one value`
+   A tunable parameter list is empty.
+- `Config field search_space must define at least one parameter`
+   No search dimensions were provided.
+- `Do not place runtime fields inside hyperparameter_tuning.search_space ...`
+   Runtime keys were incorrectly placed inside search-space.
+- `Unsupported search_space keys for ...`
+   Search parameters do not match the selected model.
+- `Cross-validation results do not include objective metric: ...`
+   Objective metric name is not present in candidate CV output.
+- `Unsupported tuning model: ...`
+   Tuner received a model name outside supported model backends.
+- `Hyperparameter tuning requires a feasible cross-validation split ...`
+   CV fold setup is infeasible for class distribution/policy.
+- `Search space expands to ... exceeds max_candidates=...`
+   Grid size exceeded configured candidate cap.
+- `No candidates were evaluated`
+   Search loop finished without any valid candidate evaluation.
 
 ---
 

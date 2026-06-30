@@ -8,6 +8,7 @@ import pytest
 from ghostparser.config import (
     ConfigError,
     load_orchestrator_config,
+    prepare_output_directory,
 )
 
 
@@ -131,7 +132,9 @@ def test_load_orchestrator_config_invalid_choice_fields(tmp_path, field, bad_val
         ("D", True),
     ],
 )
-def test_load_orchestrator_config_tree_height_strategy_validation(tmp_path, strategy, should_raise):
+def test_load_orchestrator_config_tree_height_strategy_validation(
+    tmp_path, strategy, should_raise
+):
     config_path = tmp_path / f"orchestrator_tree_height_{strategy}.json"
     payload = {
         "species_tree_path": "species.nwk",
@@ -172,6 +175,45 @@ def test_load_orchestrator_config_defaults_processes_to_zero(tmp_path):
         "debug_mode": False,
         "summary_only": False,
     }
+    assert config["overwrite"] is True
+
+
+def test_prepare_output_directory_overwrites_or_suffixes(tmp_path):
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    stale_file = results_dir / "stale.txt"
+    stale_file.write_text("old contents")
+
+    prepared = prepare_output_directory(results_dir)
+    assert prepared == str(results_dir.resolve())
+    assert results_dir.exists()
+    assert not stale_file.exists()
+
+    (results_dir / "fresh.txt").write_text("fresh contents")
+    (tmp_path / "results_1").mkdir()
+    (tmp_path / "results_3").mkdir()
+
+    suffixed = prepare_output_directory(results_dir, overwrite=False)
+    assert suffixed == str((tmp_path / "results_2").resolve())
+    assert (tmp_path / "results_2").exists()
+    assert (results_dir / "fresh.txt").exists()
+
+
+def test_load_orchestrator_config_honors_overwrite_flag(tmp_path):
+    config_path = tmp_path / "config_overwrite_false.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "species_tree_path": "species.nwk",
+                "gene_trees_path": "genes.nwk",
+                "outgroup": "OutA",
+                "overwrite": False,
+            }
+        )
+    )
+
+    config = load_orchestrator_config(str(config_path))
+    assert config["overwrite"] is False
 
 
 def test_load_orchestrator_config_allows_disabling_consolidation(tmp_path):
@@ -194,12 +236,18 @@ def test_load_orchestrator_config_allows_disabling_consolidation(tmp_path):
 @pytest.mark.parametrize(
     "species_path,genes_path,output_path",
     [
-        ("/absolute/path/to/species.nwk", "/absolute/path/to/genes.nwk", "/absolute/path/to/output"),
+        (
+            "/absolute/path/to/species.nwk",
+            "/absolute/path/to/genes.nwk",
+            "/absolute/path/to/output",
+        ),
         ("data/species.nwk", "./genes.nwk", "results"),
         ("~/data/species.nwk", "~/data/genes.nwk", None),
     ],
 )
-def test_path_resolution_for_absolute_relative_and_home_paths(tmp_path, species_path, genes_path, output_path):
+def test_path_resolution_for_absolute_relative_and_home_paths(
+    tmp_path, species_path, genes_path, output_path
+):
     config_path = tmp_path / "path_resolution.json"
     payload = {
         "species_tree_path": species_path,
@@ -216,4 +264,3 @@ def test_path_resolution_for_absolute_relative_and_home_paths(tmp_path, species_
     assert config["gene_trees"] == str(Path(genes_path).expanduser().resolve())
     if output_path is not None:
         assert config["output"] == str(Path(output_path).expanduser().resolve())
-
