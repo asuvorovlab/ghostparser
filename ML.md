@@ -252,6 +252,7 @@ Stratified here means we try to preserve the frequency of each 6-bit label combi
 - `*_overall_metrics.json` — Structured metrics, timings, and the consolidated dataset summary
 - `*_metrics.txt` — Human-readable summary of metrics, dataset summary, and diagnostic notes
 - `*_confusion_matrices.png` — Heatmap grid of all confusion matrices, colored from red (smaller counts) to green (larger counts)
+- `*_confusion_matrix_64_classes.png` — Heatmap of the full 64-class confusion matrix across all possible 6-bit labels
 - `feature_importances.tsv` — Ranked features and importance scores (tree-based for RF, permutation for KNN)
 - `predictions.tsv` — Per-row predictions with true/pred bit flags, exact-match indicator, and matched-bit count
 

@@ -277,8 +277,12 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     prediction_build_seconds = time.perf_counter() - prediction_start
 
     confusion_matrices = None
+    confusion_matrix_64_classes = None
     if report_confusion_matrix and include_diagnostic:
         confusion_matrices = _build_confusion_matrices(y_test, test_predictions)
+        confusion_matrix_64_classes = shared.build_64_class_confusion_matrix(
+            y_test, test_predictions
+        )
 
     confusion_matrix_plot_path = output_dir / "random_forest_confusion_matrices.png"
     if confusion_matrices is not None:
@@ -287,6 +291,16 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         )
     else:
         confusion_matrix_plot_path = None
+
+    confusion_matrix_64_plot_path = (
+        output_dir / "random_forest_confusion_matrix_64_classes.png"
+    )
+    if confusion_matrix_64_classes is not None:
+        confusion_matrix_64_plot_path = shared.save_64_class_confusion_matrix_plot(
+            confusion_matrix_64_classes, confusion_matrix_64_plot_path
+        )
+    else:
+        confusion_matrix_64_plot_path = None
 
     metrics_payload = {
         "objective": "multi-label classification",
@@ -320,12 +334,16 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         metrics_payload["classification_report"] = test_metrics["classification_report"]
         if confusion_matrices is not None:
             metrics_payload["confusion_matrices"] = confusion_matrices
+        if confusion_matrix_64_classes is not None:
+            metrics_payload["confusion_matrix_64_classes"] = confusion_matrix_64_classes
     if include_per_bit:
         metrics_payload["per_bit"] = test_metrics["per_bit"]
     if feature_rows is not None:
         metrics_payload["feature_importance"] = feature_rows
     if confusion_matrix_plot_path is not None:
         metrics_payload["confusion_matrix_plot"] = confusion_matrix_plot_path
+    if confusion_matrix_64_plot_path is not None:
+        metrics_payload["confusion_matrix_64_plot"] = confusion_matrix_64_plot_path
 
     model_path = output_dir / "random_forest_model.pkl"
     metrics_json_path = output_dir / "random_forest_overall_metrics.json"
@@ -382,6 +400,15 @@ def train_random_forest(config: argparse.Namespace) -> dict:
             text_lines.extend(
                 shared.format_confusion_matrix_section(confusion_matrices)
             )
+        if confusion_matrix_64_classes is not None:
+            text_lines.extend(
+                [
+                    "",
+                    "64-class confusion matrix:",
+                    f"  Plot: {confusion_matrix_64_plot_path}",
+                    "  Note: matrix includes all 64 possible 6-bit labels (000000 to 111111).",
+                ]
+            )
     if report_class_distribution:
         text_lines.extend(["", "Dataset summary:"])
         text_lines.append("  Label map:")
@@ -424,6 +451,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         if feature_importance_path is not None
         else None,
         "confusion_matrix_plot_path": confusion_matrix_plot_path,
+        "confusion_matrix_64_plot_path": confusion_matrix_64_plot_path,
         "predictions_path": str(predictions_path)
         if predictions_path is not None
         else None,

@@ -372,8 +372,10 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
     present_forbidden_top_level_keys = forbidden_top_level_keys & set(payload)
     if present_forbidden_top_level_keys:
         raise ConfigError(
-            "Do not place model sections, evaluation controls, or model hyperparameters at the top level in hyperparameter_tuning configs. "
-            "Use only the runtime keys plus 'hyperparameter_tuning'. Offending keys: "
+            "Do not place model sections, evaluation controls, or model "
+            "hyperparameters at the top level in hyperparameter_tuning configs. "
+            "Use only the runtime keys plus 'hyperparameter_tuning'. "
+            "Offending keys: "
             f"{', '.join(sorted(present_forbidden_top_level_keys))}"
         )
 
@@ -640,6 +642,12 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             "candidate/elapsed_seconds": time.perf_counter() - candidate_start,
             "candidate/remaining": total_candidates - candidate_index,
         }
+        candidate_log["candidate/bitwise_accuracy_mean"] = float(
+            aggregate.get("bitwise_accuracy_mean", 0.0)
+        )
+        candidate_log["candidate/overall_accuracy_mean"] = float(
+            aggregate.get("exact_match_accuracy_mean", 0.0)
+        )
         candidate_log.update(
             {f"candidate/param/{key}": value for key, value in candidate_params.items()}
         )
@@ -664,7 +672,9 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             )
 
         _log_progress(
-            f"[{candidate_index}/{total_candidates}] done in {_format_seconds(time.perf_counter() - candidate_start)}; cv_score={score:.6f}"
+            f"[{candidate_index}/{total_candidates}] done in "
+            f"{_format_seconds(time.perf_counter() - candidate_start)}; "
+            f"cv_score={score:.6f}"
         )
     search_seconds = time.perf_counter() - search_start
 
@@ -805,6 +815,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             "timing/artifact_write_seconds": artifact_seconds,
             "timing/total_seconds": results_payload["timings_seconds"]["total"],
             "final/exact_match_accuracy": test_metrics["exact_match_accuracy"],
+            "final/overall_accuracy": test_metrics["exact_match_accuracy"],
             "final/hamming_loss": test_metrics["hamming_loss"],
             "final/bitwise_accuracy": test_metrics["bitwise_accuracy"],
             "final/micro_f1": test_metrics["micro_f1"],

@@ -391,10 +391,18 @@ def format_confusion_matrix_section(
 ) -> list[str]:
     lines: list[str] = []
     for bit_label, matrix_values in confusion_matrices.items():
+        matrix_array = np.asarray(matrix_values, dtype=float)
+        total = float(matrix_array.sum())
+
+        def _cell_text(row_index: int, col_index: int) -> str:
+            count = int(matrix_values[row_index][col_index])
+            pct = (count / total * 100.0) if total > 0 else 0.0
+            return f"{count} ({pct:.1f}%)"
+
         lines.append(f"  {bit_label}:")
         lines.append("           pred=0  pred=1")
-        lines.append(f"    true=0  {matrix_values[0][0]:>6}  {matrix_values[0][1]:>6}")
-        lines.append(f"    true=1  {matrix_values[1][0]:>6}  {matrix_values[1][1]:>6}")
+        lines.append(f"    true=0  {_cell_text(0, 0):>11}  {_cell_text(0, 1):>11}")
+        lines.append(f"    true=1  {_cell_text(1, 0):>11}  {_cell_text(1, 1):>11}")
     return lines
 
 
@@ -427,19 +435,33 @@ def save_confusion_matrix_plot(
     for axis_index, (bit_label, matrix_values) in enumerate(matrix_items):
         ax = axes_array[axis_index]
         data = np.asarray(matrix_values, dtype=int)
+        total = float(data.sum())
+        if total > 0:
+            label_grid = np.asarray(
+                [
+                    [f"{value}\n({value / total * 100:.1f}%)" for value in row]
+                    for row in data
+                ],
+                dtype=object,
+            )
+        else:
+            label_grid = np.asarray(
+                [[f"{value}\n(0.0%)" for value in row] for row in data],
+                dtype=object,
+            )
         sns.heatmap(
             data,
             ax=ax,
             cmap=cmap,
             vmin=0,
             vmax=max_value,
-            annot=True,
-            fmt="d",
+            annot=label_grid,
+            fmt="",
             square=True,
             cbar=False,
             linewidths=1,
             linecolor="white",
-            annot_kws={"size": 13, "weight": "bold"},
+            annot_kws={"size": 11, "weight": "bold"},
         )
         ax.set_title(f"{bit_label}", fontsize=12)
         ax.set_xlabel("Predicted label (0 = predicted zero, 1 = predicted one)")
@@ -462,6 +484,64 @@ def save_confusion_matrix_plot(
         pad=0.02,
         label="Count",
     )
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_path)
+
+
+def build_64_class_confusion_matrix(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+) -> dict[str, object]:
+    powers = (2 ** np.arange(BIT_COUNT - 1, -1, -1)).astype(int)
+    true_indices = (np.asarray(y_true, dtype=int) * powers).sum(axis=1)
+    pred_indices = (np.asarray(y_pred, dtype=int) * powers).sum(axis=1)
+
+    matrix = np.zeros((2**BIT_COUNT, 2**BIT_COUNT), dtype=int)
+    for true_idx, pred_idx in zip(true_indices, pred_indices):
+        matrix[int(true_idx), int(pred_idx)] += 1
+
+    class_labels = [format(index, f"0{BIT_COUNT}b") for index in range(2**BIT_COUNT)]
+    return {
+        "class_labels": class_labels,
+        "matrix": matrix.tolist(),
+    }
+
+
+def save_64_class_confusion_matrix_plot(
+    class_confusion: dict[str, object],
+    output_path: Path,
+) -> str:
+    labels = [str(label) for label in class_confusion["class_labels"]]
+    data = np.asarray(class_confusion["matrix"], dtype=int)
+
+    fig, ax = plt.subplots(figsize=(18, 16), constrained_layout=True)
+    cmap = sns.color_palette("RdYlGn", as_cmap=True)
+    vmax = max(int(data.max()), 1)
+    sns.heatmap(
+        data,
+        ax=ax,
+        cmap=cmap,
+        vmin=0,
+        vmax=vmax,
+        square=True,
+        cbar=True,
+        cbar_kws={"label": "Count"},
+        xticklabels=False,
+        yticklabels=False,
+        linewidths=0,
+    )
+    tick_step = 4
+    tick_positions = np.arange(0, len(labels), tick_step) + 0.5
+    tick_labels = [labels[index] for index in range(0, len(labels), tick_step)]
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=90, fontsize=8)
+    ax.set_yticks(tick_positions)
+    ax.set_yticklabels(tick_labels, rotation=0, fontsize=8)
+    ax.set_xlabel("Predicted 6-bit class")
+    ax.set_ylabel("True 6-bit class")
+    ax.set_title("Confusion matrix across all 64 possible 6-bit classes")
+
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     return str(output_path)
