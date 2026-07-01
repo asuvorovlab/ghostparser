@@ -3,11 +3,10 @@
 
 ## v0.1.2 - Unreleased
 
-- Added overwrite control for result directories across orchestrator, tree parser, introgression map generation, and ML trainers. The default behavior keeps reusing the configured output folder, while `--no-overwrite` or `overwrite: false` appends a numeric suffix such as `_1` when the target directory already exists.
-- Updated tests and documentation to cover the new output-directory behavior.
-- Expanded the ML module with a standalone hyperparameter tuner (`ghostparser.ml.hyper_tune`) supporting grid/random search under a dedicated `hyperparameter_tuning` config section, with stricter config validation and default fallback handling for omitted model parameters.
-- Updated ML reporting artifacts and docs: text metrics renamed to `*_metrics.txt`, JSON kept as `*_overall_metrics.json`, `predictions.tsv` now includes `matched_label_count`, metrics include timing summaries and consolidated `dataset_summary`, and confusion matrices are exported both as formatted text blocks and as a combined heatmap PNG (`*_confusion_matrices.png`).
-- Improved ML documentation and test coverage for split strategy behavior, feature-importance interpretation, tuner config constraints, and new ML artifact contracts.
+- Added overwrite control for result directories across orchestrator, tree parser, introgression mapper, and ML trainers (`--no-overwrite` / `overwrite: false`). Default behavior reuses/overwrites configured output directories; disabled overwrite writes to an auto-suffixed sibling directory using a one-scan smallest-missing-suffix allocator. Mapper cleanup was also hardened to avoid removing species-tree inputs when paths overlap.
+- Added new machine-learning subpackage `ghostparser.ml`, including `random_forest` and `multi_knn` trainers for multi-label prediction workflows, plus a standalone hyperparameter tuner (`ghostparser.ml.hyper_tune`). This release also adds stricter `hyperparameter_tuning` config validation and defaults/observability updates (WandB run naming, optional `wandb_detailed_payloads`, and KNN tuning example).
+- Updated ML artifacts and diagnostics: text metrics are now `*_metrics.txt`, JSON remains `*_overall_metrics.json`, `predictions.tsv` includes `matched_label_count`, metrics include timing + consolidated `dataset_summary`, confusion matrices include percentages and export as both text blocks and plots (`*_confusion_matrices.png`, `*_confusion_matrix_64_classes.png`).
+- Updated consolidation plotting, tests, and documentation: species names on consolidation axes are now italicized, and docs/tests were refreshed for overwrite behavior, tuner constraints, split strategy behavior, and feature-importance guidance.
 
 
 ## v0.1.1 - May 17, 2026
