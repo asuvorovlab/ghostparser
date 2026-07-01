@@ -541,6 +541,7 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
                 ha="center",
                 va="top",
                 fontsize=src_fontsize,
+                fontstyle="italic",
                 clip_on=False,
             )
 
@@ -581,6 +582,7 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     for tick in ax_label.get_yticklabels():
         tick.set_horizontalalignment("center")
         tick.set_x(0.5)
+        tick.set_fontstyle("italic")
 
     # --- ghost bar chart ---
     values = [ghost_avg.get(taxon, 0.0) for taxon in taxa_order]
@@ -643,7 +645,25 @@ def generate_introgression_maps(
             (e.g. outgroup taxa used for rooting).  When ``None`` or empty no
             taxa are excluded.
     """
+    # Tests often place the species tree inside the requested output directory.
+    # When overwrite=True, output_dir reset would otherwise delete that input.
+    species_tree_source = Path(species_tree_path).expanduser().resolve()
+    output_source = Path(output_dir).expanduser().resolve()
+    preserved_species_tree_text: str | None = None
+    if (
+        overwrite
+        and output_source.exists()
+        and species_tree_source.exists()
+        and species_tree_source.is_file()
+        and output_source in species_tree_source.parents
+    ):
+        preserved_species_tree_text = species_tree_source.read_text(encoding="utf-8")
+
     output_path = Path(prepare_output_directory(output_dir, overwrite=overwrite))
+
+    if preserved_species_tree_text is not None:
+        species_tree_source.parent.mkdir(parents=True, exist_ok=True)
+        species_tree_source.write_text(preserved_species_tree_text, encoding="utf-8")
 
     outgroup_set = set(outgroups) if outgroups else set()
 
