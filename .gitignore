@@ -49,3 +49,7 @@ configs/
 # Everything except GitHub Actions
 .github/*
 !.github/workflows/
+
+# Generated docs build artifacts
+site/
+site_docs/

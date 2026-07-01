@@ -10,7 +10,7 @@ Install the optional ML dependency set with `pip install .[ml]` if you want to r
 - [Data contract](#data-contract)
 - [Usage](#usage)
 - [Configuration](#configuration)
-- [Effects of configuration keys](#effects-of-configuration-keys)
+- [Evaluation config keys](#evaluation-config-keys)
 - [Evaluation argument](#evaluation-argument)
 - [Random Forest settings](#random-forest-settings)
 - [Multi-label KNN settings](#multi-label-knn-settings)
@@ -234,7 +234,7 @@ Both baselines convert the 6-bit target string into a multi-label problem with s
 
 If you change the number of labels in the future, the inference interpretation changes only in the obvious way: per-label metrics still measure each label independently, but exact-match accuracy becomes stricter as the label count increases. The current code does not infer a new label count automatically, so changing that target shape requires code changes rather than a config tweak.
 
-The sample config files in [sample_configs/random_forest_minimal.yaml](sample_configs/random_forest_minimal.yaml) and [sample_configs/multi_knn_minimal.yaml](sample_configs/multi_knn_minimal.yaml) are good references for the respective trainers.
+The sample config files in [random_forest_minimal.yaml](https://github.com/asif256000/ghostparser/blob/main/sample_configs/random_forest_minimal.yaml) and [multi_knn_minimal.yaml](https://github.com/asif256000/ghostparser/blob/main/sample_configs/multi_knn_minimal.yaml) are good references for the respective trainers.
 
 
 ## Cross-validation and reproducibility
