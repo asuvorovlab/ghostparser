@@ -446,7 +446,7 @@ Purpose: validate triplet-processor runtime argument resolution behavior.
 
 - `test_train_random_forest_smoke`
   - Inputs: `summary_statistics_tsv` fixture (small TSV with `class`, a low-cardinality string feature, and numeric feature columns), runtime config (small forest for speed, `cv_folds=3`, `random_state=7`).
-  - Expected outputs: training completes, artifacts exist (`random_forest_model.pkl`, `random_forest_overall_metrics.json`, `random_forest_metrics.txt`, `random_forest_confusion_matrices.png`, `predictions.tsv`), metrics contain `primary_metrics`, `diagnostic_metrics`, `dataset_summary`, and `timings_seconds`, and the prediction TSV includes `matched_label_count`.
+  - Expected outputs: training completes, artifacts exist (`random_forest_model.pkl`, `random_forest_overall_metrics.json`, `random_forest_metrics.txt`, `random_forest_confusion_matrices.png`, `random_forest_confusion_matrix_64_classes.png`, `predictions.tsv`), metrics contain `primary_metrics`, `diagnostic_metrics`, `dataset_summary`, and `timings_seconds`, and the prediction TSV includes `matched_label_count`.
   - Purpose: smoke-test end-to-end training flow, evaluation, and artifact writing.
 
 - `test_train_random_forest_creates_bitwise_metrics_report`
@@ -470,7 +470,7 @@ Purpose: validate triplet-processor runtime argument resolution behavior.
 
 - `test_multi_knn_train_smoke`
   - Inputs: `summary_statistics_tsv` fixture with a low-cardinality string column and numeric features, KNN runtime config (`n_neighbors=5`, `cv_folds=3`, `random_state=7`, `weights=uniform`).
-  - Expected outputs: training completes, artifacts exist (`multi_knn_model.pkl`, `multi_knn_overall_metrics.json`, `multi_knn_metrics.txt`, `multi_knn_confusion_matrices.png`, `predictions.tsv`), metrics include `classifier: multi_knn`, the `knn` details block is present, and the prediction TSV includes `matched_label_count`.
+  - Expected outputs: training completes, artifacts exist (`multi_knn_model.pkl`, `multi_knn_overall_metrics.json`, `multi_knn_metrics.txt`, `multi_knn_confusion_matrices.png`, `multi_knn_confusion_matrix_64_classes.png`, `predictions.tsv`), metrics include `classifier: multi_knn`, the `knn` details block is present, and the prediction TSV includes `matched_label_count`.
   - Purpose: smoke-test the multi-label KNN baseline end to end.
 
 - `test_multi_knn_build_model_caps_neighbors_to_training_size`

@@ -45,6 +45,7 @@ def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
     assert metrics["dataset_summary"]["bit_distribution"]["overall"]
     assert metrics["cv"] is not None
     assert metrics["knn"]["configured_n_neighbors"] == 5
+    assert "confusion_matrix_64_classes" in metrics
 
     metrics_json = json.loads(
         (tmp_path / "ml_out" / "multi_knn_overall_metrics.json").read_text()
@@ -62,6 +63,7 @@ def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
     model_path = tmp_path / "ml_out" / "multi_knn_model.pkl"
     assert model_path.exists()
     assert (tmp_path / "ml_out" / "multi_knn_confusion_matrices.png").exists()
+    assert (tmp_path / "ml_out" / "multi_knn_confusion_matrix_64_classes.png").exists()
     assert not (tmp_path / "ml_out" / "label_map.json").exists()
     assert not (tmp_path / "ml_out" / "class_distribution.tsv").exists()
     assert not (tmp_path / "ml_out" / "bit_distribution.tsv").exists()
