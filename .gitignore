@@ -49,6 +49,7 @@ configs/
 # Everything except GitHub Actions
 .github/*
 !.github/workflows/
+*DE.md
 
 # Generated docs build artifacts
 site/
