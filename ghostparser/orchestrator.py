@@ -653,6 +653,10 @@ def main():
                     plot_taxa=plot_taxa,
                     outgroups=outgroup_taxa,
                     overwrite=args.overwrite,
+                    # The run directory was already prepared at startup; do not
+                    # reset it here or it would delete this run's results TSV,
+                    # processed trees, and open metrics file.
+                    reset_output_dir=False,
                 )
 
                 map_wall_time, map_cpu_time = _elapsed_times(

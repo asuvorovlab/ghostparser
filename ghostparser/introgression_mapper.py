@@ -633,6 +633,7 @@ def generate_introgression_maps(
     plot_taxa=None,
     outgroups=None,
     overwrite=True,
+    reset_output_dir=True,
 ):
     """Generate non-ghost heatmap and ghost target-strength bar plot.
 
@@ -644,26 +645,43 @@ def generate_introgression_maps(
         outgroups: Optional iterable of taxon names to exclude from the plots
             (e.g. outgroup taxa used for rooting).  When ``None`` or empty no
             taxa are excluded.
+        overwrite: When ``reset_output_dir`` is ``True``, whether to overwrite an
+            existing output directory or write to an auto-suffixed sibling.
+        reset_output_dir: When ``True`` (standalone use), (re)create a clean
+            output directory for the plots. When ``False``, write into an
+            existing, already-prepared run directory without resetting it, so a
+            caller's other outputs (results TSV, processed trees, open metrics
+            file) in that directory are never deleted.
     """
-    # Tests often place the species tree inside the requested output directory.
-    # When overwrite=True, output_dir reset would otherwise delete that input.
-    species_tree_source = Path(species_tree_path).expanduser().resolve()
-    output_source = Path(output_dir).expanduser().resolve()
-    preserved_species_tree_text: str | None = None
-    if (
-        overwrite
-        and output_source.exists()
-        and species_tree_source.exists()
-        and species_tree_source.is_file()
-        and output_source in species_tree_source.parents
-    ):
-        preserved_species_tree_text = species_tree_source.read_text(encoding="utf-8")
+    if reset_output_dir:
+        # Tests often place the species tree inside the requested output
+        # directory. When overwrite=True, the reset would otherwise delete it.
+        species_tree_source = Path(species_tree_path).expanduser().resolve()
+        output_source = Path(output_dir).expanduser().resolve()
+        preserved_species_tree_text: str | None = None
+        if (
+            overwrite
+            and output_source.exists()
+            and species_tree_source.exists()
+            and species_tree_source.is_file()
+            and output_source in species_tree_source.parents
+        ):
+            preserved_species_tree_text = species_tree_source.read_text(
+                encoding="utf-8"
+            )
 
-    output_path = Path(prepare_output_directory(output_dir, overwrite=overwrite))
+        output_path = Path(prepare_output_directory(output_dir, overwrite=overwrite))
 
-    if preserved_species_tree_text is not None:
-        species_tree_source.parent.mkdir(parents=True, exist_ok=True)
-        species_tree_source.write_text(preserved_species_tree_text, encoding="utf-8")
+        if preserved_species_tree_text is not None:
+            species_tree_source.parent.mkdir(parents=True, exist_ok=True)
+            species_tree_source.write_text(
+                preserved_species_tree_text, encoding="utf-8"
+            )
+    else:
+        # Write into the caller's already-prepared run directory without
+        # resetting it, so its existing outputs are preserved.
+        output_path = Path(output_dir).expanduser().resolve()
+        output_path.mkdir(parents=True, exist_ok=True)
 
     outgroup_set = set(outgroups) if outgroups else set()
 
