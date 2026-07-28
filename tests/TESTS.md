@@ -247,6 +247,56 @@ Expected outputs: base bootstrap columns (`bootstrap_value`, `all_bootstrap`) ar
 Inputs: bootstrap-enabled result written with debug mode enabled and `summary_only=false`.
 Expected outputs: TSV includes `bootstrap_gene_tree_heights` and stores the raw per-triplet tree-height list.
 
+### `tests/pipeline/`
+
+Shared fixtures (`tests/pipeline/conftest.py`): `pipeline_species_tree` and `pipeline_gene_trees` write a small 5-taxon species tree and a set of gene trees that all carry the `OUT` outgroup so rooting produces real observations.
+
+`tests/pipeline/test_pipeline_inference.py`:
+
+- `test_analyze_triplet_matches_analyze_triplet_entry`
+Inputs: one triplet with fixed gene subtrees and species subtree, parametrized across `discordant_test` (chi-square/z-test), `summary_statistic` (mean/median/mode), `stats_backend` (custom/standard), and tree-height `strategy` (AVG/A/B/C/SIS/INT), with a fixed bootstrap seed.
+Expected outputs: `pipeline.inference.analyze_triplet` equals `triplet_processor.analyze_triplet_entry` on every non-bootstrap field (counts, DCT/KS statistics and p-values, classification, summaries), and the pipeline result's bootstrap aggregates are well formed. Bootstrap values are excluded from the equality because the pipeline resamples with NumPy. Purpose: prove the ported inference math stays bit-for-bit equal.
+
+- `test_analyze_triplet_from_observations_matches_newick_path`
+Inputs: observations serialized from fixed gene subtrees, and the same subtrees as Newick, with a fixed seed.
+Expected outputs: `analyze_triplet_from_observations` equals `analyze_triplet` on all non-bootstrap fields, and (same observations + same seed) identical bootstrap aggregates.
+
+- `test_bootstrap_is_deterministic_under_seed`
+Inputs: two `analyze_triplet` calls with the same fixed seed.
+Expected outputs: identical `all_bootstrap` and `bootstrap_value`. Purpose: the NumPy bootstrap is reproducible under a seed.
+
+- `test_analyze_triplet_empty_observations`
+Inputs: a triplet with zero gene subtrees.
+Expected outputs: `analyzed_trees == 0`, `n_con == 0`, classification `no_introgression`.
+
+`tests/pipeline/test_pipeline_trees.py`:
+
+- `test_species_preprocessing_matches_tree_parser`
+Inputs: the `pipeline_species_tree` fixture.
+Expected outputs: pipeline cleaning, outgroup rooting/pruning, ingroup set, normalized A/B/C triplets, and species-subtree map all equal `tree_parser`'s.
+
+- `test_gene_tree_cleaning_matches_tree_parser`
+Inputs: the `pipeline_gene_trees` fixture.
+Expected outputs: pipeline gene-tree cleaning/rooting output file and parsed Newick list equal `tree_parser`'s.
+
+`tests/pipeline/test_pipeline.py`:
+
+- `test_run_pipeline_matches_reference`
+Inputs: `run_pipeline` (serial) on the fixtures with a fixed bootstrap seed and consolidation disabled.
+Expected outputs: per-triplet results equal a reference built independently from `tree_parser` extraction plus `triplet_processor.analyze_triplet_entry` and run-wide correction. Purpose: end-to-end parity with the orchestrator path.
+
+- `test_run_pipeline_writes_results_tsv`
+Inputs: a `run_pipeline` run.
+Expected outputs: `pipeline_triplet_results.tsv` exists with the expected header (`triplet`, `classification`, `bootstrap_value`) and one row per result.
+
+- `test_consolidation_preserves_run_outputs`
+Inputs: a `run_pipeline` run with consolidation enabled.
+Expected outputs: the run folder still contains `pipeline_triplet_results.tsv`, `metrics.txt`, and both processed trees, and the consolidation artifacts land in a non-empty `consolidation/` subfolder. Purpose: regression guard that consolidation's output-directory reset does not delete the run's primary outputs.
+
+- `test_parallel_modes_match_serial`
+Inputs: `run_pipeline` in `taxon` and `gene` modes with two workers, versus a serial run.
+Expected outputs: identical per-triplet results across modes (bootstrap is deterministic per triplet under a fixed seed).
+
 ### `tests/test_ml_config.py`
 
 - `test_load_ml_config_defaults_target_column_to_class`
@@ -322,6 +372,11 @@ Purpose: verify configuration-controlled enable/disable behavior for consolidati
 Inputs: results containing a triplet with a taxon designated as outgroup via the `outgroups` parameter.
 Expected outputs/behavior: outgroup taxon is absent from the matrix TSV column headers, ghost strength TSV rows, and the reported `taxa_count`.
 Purpose: verify that the `outgroups` parameter correctly filters taxa from all consolidation outputs.
+
+- Tests: `test_generate_introgression_maps_preserves_run_dir_when_reset_disabled`
+Inputs: an output directory containing a pre-existing `orchestrator_triplet_results.tsv`, with `reset_output_dir=False`.
+Expected outputs/behavior: the pre-existing file survives and the combined plot is written into the same directory (no reset, no suffixed sibling).
+Purpose: regression guard that consolidation invoked by the orchestrator/pipeline does not delete the caller's already-written run outputs.
 
 - Tests: `test_collect_counts_non_ghost_denominator_is_all_co_occurring_triplets`
 Inputs: three synthetic results — one classified inflow, one no_introgression, one unrelated triplet (ABD).

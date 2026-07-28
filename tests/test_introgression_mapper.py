@@ -1,5 +1,6 @@
 """Tests for introgression mapper module."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from ghostparser.introgression_mapper import (
@@ -113,6 +114,40 @@ def test_generate_introgression_maps_appends_suffix_when_overwrite_disabled(tmp_
         suffixed_output_dir / "introgression_combined.png"
     )
     assert (existing_output_dir / "stale.txt").exists()
+
+
+def test_generate_introgression_maps_preserves_run_dir_when_reset_disabled(tmp_path):
+    species_tree = tmp_path / "species.tree"
+    species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
+
+    results = [
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="inflow_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.5,
+        ),
+    ]
+
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    existing = output_dir / "orchestrator_triplet_results.tsv"
+    existing.write_text("keep me")
+
+    artifacts = generate_introgression_maps(
+        results,
+        species_tree_path=str(species_tree),
+        output_dir=str(output_dir),
+        overwrite=True,
+        reset_output_dir=False,
+    )
+
+    # With reset disabled, a caller's pre-existing outputs must survive and the
+    # plots are written into the same directory (not a reset/suffixed one).
+    assert existing.exists()
+    assert existing.read_text() == "keep me"
+    assert artifacts.plot_path == str(output_dir / "introgression_combined.png")
+    assert Path(artifacts.plot_path).exists()
 
 
 def test_scaled_consolidation_text_sizes_grow_with_taxa_count():
