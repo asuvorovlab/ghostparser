@@ -178,6 +178,17 @@ Heatmap consolidation details:
 - By default, the plots use the processed species tree after outgroup pruning; when a triplet filter is supplied, the plotted tree can be pruned to the taxa represented in that filtered set.
 - Consolidation is enabled by default and can be disabled with `--no-consolidation`.
 
+### Streaming pipeline (`ghostparser.pipeline`)
+
+`ghostparser.pipeline` fuses triplet subtree extraction and per-triplet inference into a single streaming pass, so the intermediate triplet-gene-trees dataset is never materialized. Use it for large gene-tree sets where the orchestrator's two-stage design exhausts memory.
+
+```bash
+python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup
+python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup --processes 0 --parallelization-mode auto
+```
+
+It is CLI-only (no config-file mode). Required flags are `-st/--species-tree-path`, `-gt/--gene-trees-path`, and `-og/--outgroups`; optional flags are `--output-folder`, `--triplet-filter`, `--processes`, `--parallelization-mode {auto,taxon,gene}`, `--no-consolidation`, and `--no-bootstrap`. Remaining settings are pinned to the shared defaults. Results are written to `pipeline_triplet_results.tsv`. See [ghostparser/pipeline/PIPELINE.md](ghostparser/pipeline/PIPELINE.md) for the full reference and design.
+
 ### Tree Parser (Submodule)
 
 Use this module when you only want preprocessing + triplet extraction.
