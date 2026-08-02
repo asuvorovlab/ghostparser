@@ -64,8 +64,8 @@ Config+CLI options (settable on the CLI or in a config file):
 | `--parallelization-mode` | `parallelization_mode` | `auto` | `taxon`, `gene`, or `auto` (see below). |
 | `--alpha-dct` | `alpha_dct` | `0.05` | DCT significance threshold. |
 | `--alpha-ks` | `alpha_ks` | `0.05` | KS significance threshold. |
-| `--p-value-correction` | `p_value_correction` | `no` | Run-wide multiple-testing correction. |
-| `--summary-statistic` | `summary_statistic` | `median` | Statistic for the con-vs-dis1 comparison (`mean`/`median`/`mode`). |
+| `--p-value-correction` | `p_value_correction` | `bfn` | Run-wide multiple-testing correction. |
+| `--summary-statistic` | `summary_statistic` | `mean` | Statistic for the con-vs-dis1 comparison (`mean`/`median`/`mode`). |
 | `--no-consolidation` | `consolidation` | consolidation on | Disable the introgression map/plot stage. |
 | `--no-bootstrap` | `bootstrap` | bootstrap columns on | Omit the bootstrap columns from the results TSV. |
 
@@ -133,7 +133,7 @@ parent process regardless of mode.
 ghostparser/pipeline/
   __init__.py    exports run_pipeline
   __main__.py    python -m ghostparser.pipeline entry point: main() wires parsing -> run_pipeline
-  config.py      argparse + config-file resolution (build_argument_parser, resolve_config, load_pipeline_config, normalize_pipeline_payload)
+  config.py      self-contained config foundation: defaults/choices, ConfigError, validation + config-file loading, prepare_output_directory, CLI/config resolution (build_argument_parser, resolve_config, load_pipeline_config, normalize_pipeline_payload)
   trees.py       PORTED tree/triplet preprocessing (from tree_parser)
   inference.py   PORTED per-triplet inference + summary stats + result type + TSV writers (from triplet_processor)
   stream.py      fused extract+infer streaming engine
@@ -144,21 +144,28 @@ ghostparser/pipeline/
 ### Port-vs-import boundary
 
 The pipeline is self-contained: it does **not** import from `orchestrator`,
-`tree_parser`, or `triplet_processor` (the modules slated for deletion once the
-pipeline is a proven replacement). The logic it needs from `tree_parser` and
-`triplet_processor` is **ported** into `trees.py` and `inference.py` — copied and
-cleaned of the deferred/unused paths (intermediate-file machinery, parquet I/O,
-the custom statistical backend, standalone CLIs). The computation of every ported
-function is kept identical so results match the orchestrator's scipy/statsmodels
-backend (verified by the parity tests in `tests/pipeline/`).
+`tree_parser`, `triplet_processor`, `config`, or `cli_config` (the modules slated
+for deletion or restructuring once the pipeline is a proven replacement). The
+logic it needs from `tree_parser`/`triplet_processor` is **ported** into
+`trees.py` and `inference.py`, and the config/CLI foundation from
+`config`/`cli_config` is **ported** into `config.py` (defaults and choices,
+`ConfigError`, the config-file loading/validation helpers,
+`prepare_output_directory`, and the CLI/config resolver). Ported logic is copied
+and cleaned of the deferred/unused paths (intermediate-file machinery, parquet
+I/O, the custom statistical backend, standalone CLIs). The computation of every
+ported inference function is kept identical so results match the orchestrator's
+scipy/statsmodels backend (verified by the parity tests in `tests/pipeline/`).
 
-It **imports** the independent shared foundation that is not slated for deletion:
+It **imports** only the two shared foundation modules that are not slated for
+deletion:
 
-- `ghostparser.config` — `DEFAULT_*`/`*_CHOICES` constants, `ConfigError`,
-  `prepare_output_directory`.
 - `ghostparser.triplet_utils` — pure topology helpers.
 - `ghostparser.introgression_mapper` — `generate_introgression_maps` for the
   consolidation stage.
+
+Because the pipeline owns its config defaults, its `p_value_correction` default
+(`bfn`) and `summary_statistic` default (`mean`) can differ from the shared
+orchestrator defaults without touching any shared module.
 
 ### Fused streaming engine
 
