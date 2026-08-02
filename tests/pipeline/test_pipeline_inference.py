@@ -1,8 +1,17 @@
-"""Assert pipeline.inference.analyze_triplet reproduces triplet_processor.analyze_triplet_entry on identical inputs (the ported inference must stay bit-for-bit equal)."""
+"""Verify pipeline.inference derives topology counts, tree heights, the DCT/KS tests, and classification from their definitions.
+
+Expected values are recomputed inside each test from the primitive quantities of
+the input Newick strings (root-to-tip distances and the sister-pair internal
+branch, hand-derived and tabulated in ``_LEAF_GEOMETRY``) plus direct calls to
+the reference statistical libraries (SciPy / statsmodels). Nothing here compares
+against another GhostParser module. See ``tests/TEST_IO.md`` for the full
+derivation of every literal below.
+"""
 
 import pytest
+from scipy import stats
+from statsmodels.stats.proportion import proportions_ztest
 
-from ghostparser import triplet_processor as tp
 from ghostparser.pipeline import inference as pinf
 
 _TRIPLET = ("A", "B", "C")
@@ -20,74 +29,215 @@ _GENE_SUBTREES = [
     "((A:0.11,B:0.13):0.10,C:0.31);",
 ]
 
+# Hand-derived geometry of each gene subtree above, in input order:
+#   (topology, root-to-tip A, root-to-tip B, root-to-tip C, sister-pair internal
+#    branch length).
+# The topology label names the sister pair; the sister pair's root-to-tip
+# distance is (its own edge + the internal branch), while the third taxon hangs
+# directly off the root. Example for index 0, "((A:0.10,B:0.10):0.10,C:0.30);":
+# A = 0.10 + 0.10 = 0.20, B = 0.10 + 0.10 = 0.20, C = 0.30, internal = 0.10.
+_LEAF_GEOMETRY = [
+    ("((A,B),C)", 0.20, 0.20, 0.30, 0.10),
+    ("((A,B),C)", 0.21, 0.20, 0.32, 0.09),
+    ("((A,B),C)", 0.30, 0.25, 0.40, 0.10),
+    ("((B,C),A)", 0.50, 0.30, 0.30, 0.10),
+    ("((B,C),A)", 0.55, 0.35, 0.32, 0.10),
+    ("((A,C),B)", 0.40, 0.70, 0.40, 0.10),
+    ("((A,B),C)", 0.27, 0.27, 0.35, 0.12),
+    ("((B,C),A)", 0.65, 0.45, 0.45, 0.10),
+    ("((A,C),B)", 0.28, 0.60, 0.26, 0.10),
+    ("((A,B),C)", 0.21, 0.23, 0.31, 0.10),
+]
+
+_SISTER_TAXA = {
+    "((A,B),C)": ("A", "B"),
+    "((B,C),A)": ("B", "C"),
+    "((A,C),B)": ("A", "C"),
+}
+_CONCORDANT = "((A,B),C)"
+
 _SEED = 20240724
 _ITERATIONS = 40
 
-_COMPARED_FIELDS = (
-    "triplet",
-    "species_tree",
-    "most_frequent_matches_concordant",
-    "n_con",
-    "n_dis1",
-    "n_dis2",
-    "dis1_topology",
-    "dct_statistic",
-    "dct_p_value",
-    "dct_p_value_corrected",
-    "dct_significant",
-    "ks_statistic",
-    "ks_p_value",
-    "ks_p_value_corrected",
-    "ks_significant",
-    "summary_con",
-    "summary_dis",
-    "classification",
-    "analyzed_trees",
-)
-# bootstrap_value / all_bootstrap are intentionally excluded: the pipeline
-# resamples with NumPy's RNG, so its bootstrap aggregates are statistically
-# equivalent to triplet_processor's random.Random ones but not identical.
 
-
-def _assert_results_equal(pipeline_result, reference_result):
-    """Assert two results agree on every non-bootstrap compared field.
+def _expected_height(entry, strategy):
+    """Compute H(T) for one gene subtree straight from the strategy definition.
 
     Args:
-        pipeline_result: The pipeline's ``TripletPipelineResult``.
-        reference_result: The reference ``TripletPipelineResult``.
+        entry: A ``_LEAF_GEOMETRY`` row.
+        strategy: One of ``AVG``/``A``/``B``/``C``/``SIS``/``INT``.
+
+    Returns:
+        The expected tree-height value as a float.
     """
-    for field in _COMPARED_FIELDS:
-        pipeline_value = getattr(pipeline_result, field)
-        reference_value = getattr(reference_result, field)
-        if isinstance(reference_value, float):
-            assert pipeline_value == pytest.approx(reference_value), field
+    topology, dist_a, dist_b, dist_c, internal = entry
+    by_taxon = {"A": dist_a, "B": dist_b, "C": dist_c}
+
+    if strategy == "AVG":
+        return (dist_a + dist_b + dist_c) / 3.0
+    if strategy in {"A", "B", "C"}:
+        return by_taxon[strategy]
+    left, right = _SISTER_TAXA[topology]
+    if strategy == "SIS":
+        return by_taxon[left] + by_taxon[right] - 2.0 * internal
+    return internal  # INT
+
+
+def _expected_summary(values, statistic):
+    """Compute a summary statistic from its definition.
+
+    Args:
+        values: The numeric sample.
+        statistic: ``mean``, ``median``, or ``mode`` (binned to 3 decimals,
+            ties resolved to the largest value).
+
+    Returns:
+        The summary value, or ``None`` for an empty sample.
+    """
+    if not values:
+        return None
+    ordered = sorted(values)
+    if statistic == "mean":
+        return sum(ordered) / len(ordered)
+    if statistic == "median":
+        mid = len(ordered) // 2
+        if len(ordered) % 2 == 1:
+            return ordered[mid]
+        return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+    counts = {}
+    for value in ordered:
+        counts[round(value, 3)] = counts.get(round(value, 3), 0) + 1
+    top = max(counts.values())
+    return max(value for value, count in counts.items() if count == top)
+
+
+def _expected_dct(n_dis1, n_dis2, discordant_test):
+    """Compute the expected DCT statistic/p-value with the reference libraries.
+
+    Args:
+        n_dis1: Count of the discordant1 topology.
+        n_dis2: Count of the discordant2 topology.
+        discordant_test: ``chi-square`` or ``z-test``.
+
+    Returns:
+        A tuple ``(statistic, p_value)``.
+    """
+    if discordant_test == "chi-square":
+        result = stats.chisquare([n_dis1, n_dis2])
+        return float(result.statistic), float(result.pvalue)
+    total = n_dis1 + n_dis2
+    statistic, p_value = proportions_ztest(
+        count=[n_dis1, n_dis2], nobs=[total, total], alternative="two-sided"
+    )
+    return float(statistic), float(p_value)
+
+
+def _expected_result(strategy, summary_statistic, discordant_test, alpha=0.05):
+    """Derive every asserted inference field for the shared fixture.
+
+    Groups the hand-derived heights by topology, ranks the two discordant
+    topologies, runs the DCT and the con-vs-dis1 KS test through SciPy /
+    statsmodels, and applies the GhostParser decision logic.
+
+    Args:
+        strategy: The tree-height strategy.
+        summary_statistic: ``mean``/``median``/``mode``.
+        discordant_test: ``chi-square``/``z-test``.
+        alpha: Significance threshold shared by both tests.
+
+    Returns:
+        A dict of the expected field values.
+    """
+    heights = {topology: [] for topology in _SISTER_TAXA}
+    for entry in _LEAF_GEOMETRY:
+        heights[entry[0]].append(_expected_height(entry, strategy))
+
+    # Rank the two non-concordant topologies; ties fall to the first listed.
+    discordant = [t for t in ("((B,C),A)", "((A,C),B)") if t != _CONCORDANT]
+    first, second = discordant[0], discordant[1]
+    if len(heights[first]) >= len(heights[second]):
+        dis1, dis2 = first, second
+    else:
+        dis1, dis2 = second, first
+
+    n_con, n_dis1, n_dis2 = (
+        len(heights[_CONCORDANT]),
+        len(heights[dis1]),
+        len(heights[dis2]),
+    )
+
+    dct_statistic, dct_p_value = _expected_dct(n_dis1, n_dis2, discordant_test)
+    dct_significant = dct_p_value < alpha
+
+    ks_result = stats.ks_2samp(
+        heights[_CONCORDANT], heights[dis1], alternative="two-sided", method="auto"
+    )
+    ks_statistic, ks_p_value = float(ks_result.statistic), float(ks_result.pvalue)
+    ks_significant = ks_p_value < alpha
+
+    summary_con = _expected_summary(heights[_CONCORDANT], summary_statistic)
+    summary_dis = _expected_summary(heights[dis1], summary_statistic)
+
+    # GhostParser decision logic: DCT gate, then the tree-height test, then the
+    # concordant-vs-discordant summary comparison.
+    if not dct_significant:
+        classification = "no_introgression"
+    elif not ks_significant:
+        classification = "inflow_introgression"
+    elif summary_con > summary_dis:
+        classification = "outflow_introgression"
+    elif summary_con < summary_dis:
+        classification = "ghost_introgression"
+    else:
+        classification = "unresolved"
+
+    return {
+        "n_con": n_con,
+        "n_dis1": n_dis1,
+        "n_dis2": n_dis2,
+        "dis1_topology": "BC" if dis1 == "((B,C),A)" else "AC",
+        "most_frequent_matches_concordant": n_con >= n_dis1 and n_con >= n_dis2,
+        "dct_statistic": dct_statistic,
+        "dct_p_value": dct_p_value,
+        "dct_significant": dct_significant,
+        "ks_statistic": ks_statistic,
+        "ks_p_value": ks_p_value,
+        "ks_significant": ks_significant,
+        "summary_con": summary_con,
+        "summary_dis": summary_dis,
+        "classification": classification,
+        "analyzed_trees": len(_LEAF_GEOMETRY),
+    }
+
+
+def _assert_matches_expected(result, expected):
+    """Assert a result equals a derived expectation field by field.
+
+    Args:
+        result: The ``TripletPipelineResult`` under test.
+        expected: The mapping returned by :func:`_expected_result`.
+    """
+    for field, expected_value in expected.items():
+        actual = getattr(result, field)
+        if isinstance(expected_value, float):
+            assert actual == pytest.approx(expected_value), field
         else:
-            assert pipeline_value == reference_value, field
-
-
-def _assert_valid_bootstrap(result):
-    """Assert a result's bootstrap aggregates are well formed.
-
-    Args:
-        result: A ``TripletPipelineResult``.
-    """
-    assert 0.0 <= result.bootstrap_value <= 1.0
-    assert result.all_bootstrap is not None
-    assert sum(result.all_bootstrap.values()) == pytest.approx(1.0)
+            assert actual == expected_value, field
 
 
 @pytest.mark.parametrize("discordant_test", ["chi-square", "z-test"])
 @pytest.mark.parametrize("summary_statistic", ["mean", "median", "mode"])
 @pytest.mark.parametrize("strategy", ["AVG", "A", "B", "C", "SIS", "INT"])
-def test_analyze_triplet_matches_analyze_triplet_entry(
+def test_analyze_triplet_matches_derived_expectation(
     discordant_test, summary_statistic, strategy
 ):
-    """analyze_triplet equals analyze_triplet_entry across every parameter combination.
+    """analyze_triplet reproduces values derived from the definitions.
 
-    The pipeline uses only the scipy/statsmodels backend, so the orchestrator
-    reference is pinned to ``stats_backend="standard"``.
+    Covers every tree-height strategy, summary statistic, and discordant-count
+    test combination on the shared 10-gene-subtree fixture.
     """
-    pipeline_result = pinf.analyze_triplet(
+    result = pinf.analyze_triplet(
         _TRIPLET,
         _GENE_SUBTREES,
         species_subtree=_SPECIES_SUBTREE,
@@ -100,23 +250,25 @@ def test_analyze_triplet_matches_analyze_triplet_entry(
         triplet_seed=_SEED,
     )
 
-    reference_result = tp.analyze_triplet_entry(
-        _TRIPLET,
-        {"species_tree": _SPECIES_SUBTREE, "gene_trees": _GENE_SUBTREES},
-        alpha_dct=0.05,
-        alpha_ks=0.05,
-        discordant_test=discordant_test,
-        summary_statistic=summary_statistic,
-        stats_backend="standard",
-        tree_height_calculation_strategy=strategy,
-        generate_summary_stats=False,
-        bootstrap=True,
-        bootstrap_options={"iterations": _ITERATIONS},
-        triplet_seed=_SEED,
+    _assert_matches_expected(
+        result, _expected_result(strategy, summary_statistic, discordant_test)
     )
+    assert tuple(result.triplet) == _TRIPLET
+    assert result.species_tree == "((A,B),C);"
+    assert 0.0 <= result.bootstrap_value <= 1.0
+    assert sum(result.all_bootstrap.values()) == pytest.approx(1.0)
 
-    _assert_results_equal(pipeline_result, reference_result)
-    _assert_valid_bootstrap(pipeline_result)
+
+@pytest.mark.parametrize("strategy", ["AVG", "A", "B", "C", "SIS", "INT"])
+def test_observation_heights_match_derived_geometry(strategy):
+    """Serialized observations carry the hand-derived topology and H(T) per strategy."""
+    observations = pinf._serialize_triplet_gene_trees(
+        _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy=strategy
+    )
+    assert len(observations) == len(_LEAF_GEOMETRY)
+    for observation, entry in zip(observations, _LEAF_GEOMETRY):
+        assert observation[0] == entry[0]
+        assert observation[1] == pytest.approx(_expected_height(entry, strategy))
 
 
 def test_analyze_triplet_from_observations_matches_newick_path():
@@ -139,7 +291,9 @@ def test_analyze_triplet_from_observations_matches_newick_path():
         bootstrap_options={"iterations": _ITERATIONS},
         triplet_seed=_SEED,
     )
-    _assert_results_equal(from_obs, from_newick)
+    expected = _expected_result("AVG", "mean", "chi-square")
+    _assert_matches_expected(from_obs, expected)
+    _assert_matches_expected(from_newick, expected)
     # Same observations + same seed -> identical NumPy bootstrap.
     assert from_obs.bootstrap_value == from_newick.bootstrap_value
     assert from_obs.all_bootstrap == from_newick.all_bootstrap

@@ -1,22 +1,21 @@
 """End-to-end pipeline tests.
 
-``run_pipeline`` reproduces the orchestrator's per-triplet inference (built from
-tree_parser + triplet_processor's parquet-style observation path) on every
-non-bootstrap field, and all parallelization modes agree bit-for-bit (bootstrap
-included, since it is deterministic per triplet under a fixed seed).
+``run_pipeline`` produces per-triplet results matching values derived by hand
+from the shared fixture (topology counts read off the gene-tree Newick strings,
+test statistics recomputed with SciPy, Bonferroni correction applied by
+definition), and all parallelization modes agree bit-for-bit (bootstrap
+included, since it is deterministic per triplet under a fixed seed). See
+``tests/TEST_IO.md`` for the derivation of every expected value.
 """
 
 import argparse
 
-import dendropy
 import pytest
+from scipy import stats
 
-from ghostparser import triplet_processor as tp
-from ghostparser import tree_parser as tpz
 from ghostparser.pipeline.config import resolve_config
 from ghostparser.pipeline.runner import run_pipeline
 
-_OUTGROUP = ["OUT"]
 _SEED = 20240724
 _ITERATIONS = 40
 
@@ -43,14 +42,17 @@ _ALL_FIELDS = (
     "bootstrap_value",
     "all_bootstrap",
 )
-# Fields compared against the orchestrator reference: bootstrap is excluded
-# because the pipeline resamples with NumPy (statistically equivalent, not
-# identical to triplet_processor's random.Random).
-_NON_BOOTSTRAP_FIELDS = _ALL_FIELDS[:-2]
 
 
 def _make_config(
-    species_path, genes_path, output_folder, *, mode, processes, consolidation=False
+    species_path,
+    genes_path,
+    output_folder,
+    *,
+    mode,
+    processes,
+    consolidation=False,
+    bootstrap=True,
 ):
     """Build a resolved pipeline config for a run with a fixed bootstrap seed.
 
@@ -61,6 +63,7 @@ def _make_config(
         mode: Parallelization mode.
         processes: Worker process count.
         consolidation: Whether to enable consolidation.
+        bootstrap: Whether to enable bootstrap resampling.
 
     Returns:
         The resolved config dict with a fixed bootstrap seed and iterations.
@@ -80,7 +83,7 @@ def _make_config(
         p_value_correction=None,
         summary_statistic=None,
         consolidation=consolidation,
-        bootstrap=True,
+        bootstrap=bootstrap,
     )
     config = resolve_config(args)
     config["bootstrap_seed"] = _SEED
@@ -88,76 +91,50 @@ def _make_config(
     return config
 
 
-def _reference_results(species_path, genes_path, tmp_path):
-    """Reproduce per-triplet results using tree_parser and triplet_processor.
+# Hand-derived topology counts for the shared fixture.
+#
+# The pruned species tree is (((A,B),C),D), giving 4 triplets. Every gene tree
+# has the shape ((((X,Y),Z),D),OUT), so for any triplet containing D the two
+# non-D taxa always sit inside the ((X,Y),Z) clade with D outside -- the
+# concordant topology is the only one observed (12/0/0). Only triplet (A,B,C)
+# varies: reading the innermost sister pair off each of the 12 gene trees gives
+# (A,B) in trees 0,1,4,6,8,10,11 -> 7 concordant; (B,C) in trees 3,5,9 -> 3; and
+# (A,C) in trees 2,7 -> 2. Ranking the discordant pair puts BC first (3 >= 2).
+_EXPECTED_COUNTS = {
+    ("A", "B", "C"): (7, 3, 2, "((A,B),C);"),
+    ("A", "B", "D"): (12, 0, 0, "((A,B),D);"),
+    ("A", "C", "D"): (12, 0, 0, "((A,C),D);"),
+    ("B", "C", "D"): (12, 0, 0, "((B,C),D);"),
+}
+_N_TRIPLETS = len(_EXPECTED_COUNTS)
+
+
+def _expected_dct(n_dis1, n_dis2):
+    """Compute the expected chi-square DCT statistic and p-value.
 
     Args:
-        species_path: Path to the species tree.
-        genes_path: Path to the gene trees.
-        tmp_path: Pytest temporary directory for intermediate files.
+        n_dis1: Count of the discordant1 topology.
+        n_dis2: Count of the discordant2 topology.
 
     Returns:
-        A dict mapping each triplet to its reference ``TripletPipelineResult``.
+        A tuple ``(statistic, p_value)``; an all-zero pair is a no-op test.
     """
-    out_s = tmp_path / "ref_species.tree"
-    out_g = tmp_path / "ref_genes.tree"
+    if n_dis1 + n_dis2 == 0:
+        return 0.0, 1.0
+    result = stats.chisquare([n_dis1, n_dis2])
+    return float(result.statistic), float(result.pvalue)
 
-    tpz.clean_and_save_trees(str(species_path), str(out_s), min_avg_support=0.5)
-    species_trees = tpz.read_tree_file(str(out_s))
-    pruned, _excluded, _missing, ingroup = tpz._root_tree_on_outgroup(
-        species_trees[0], _OUTGROUP
-    )
-    sp_newick = tpz.format_newick_with_precision(pruned)
-    dendro = dendropy.Tree.get(
-        data=sp_newick, schema="newick", preserve_underscores=True
-    )
-    raw_triplets = tpz.generate_triplets(sorted(ingroup), [])
-    triplets, species_map, _skipped = tpz._build_species_triplet_metadata(
-        dendro, raw_triplets
-    )
 
-    tpz.clean_and_save_gene_trees(
-        str(genes_path), str(out_g), _OUTGROUP, min_avg_support=0.5
-    )
-    gene_newick = tpz._read_gene_trees_file(str(out_g))
+def _bonferroni(p_value):
+    """Apply the pipeline's default Bonferroni correction across all triplets.
 
-    reference = []
-    for triplet in triplets:
-        # Build observation rows the way the orchestrator's parquet path does:
-        # metrics computed from the extracted subtree object (unrounded), which
-        # is what the pipeline now uses instead of a serialize-then-reparse.
-        rows = []
-        for newick in gene_newick:
-            tree = dendropy.Tree.get(
-                data=newick, schema="newick", preserve_underscores=True
-            )
-            taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
-            if set(triplet).issubset(taxa):
-                subtree = tpz.extract_triplet_subtree(tree, triplet)
-                if subtree:
-                    rows.append(tpz._build_observation_metrics(subtree, triplet))
-        entry = {"species_tree": species_map[triplet], "observation_rows": rows}
-        reference.append(
-            tp.analyze_triplet_entry(
-                triplet,
-                entry,
-                summary_statistic="mean",
-                stats_backend="standard",
-                generate_summary_stats=False,
-                bootstrap=True,
-                bootstrap_options={"iterations": _ITERATIONS},
-                triplet_seed=_SEED,
-            )
-        )
-    # Match the pipeline's defaults: mean summary statistic and bfn correction.
-    reference = tp._apply_triplet_result_p_value_correction(
-        reference,
-        alpha_dct=0.05,
-        alpha_ks=0.05,
-        method="bfn",
-        stats_backend="standard",
-    )
-    return {result.triplet: result for result in reference}
+    Args:
+        p_value: The uncorrected p-value.
+
+    Returns:
+        ``min(1.0, p_value * number_of_triplets)``.
+    """
+    return min(1.0, p_value * _N_TRIPLETS)
 
 
 def _assert_result_matches(pipeline_result, reference_result, fields):
@@ -177,10 +154,10 @@ def _assert_result_matches(pipeline_result, reference_result, fields):
             assert pipeline_value == reference_value, field
 
 
-def test_run_pipeline_matches_reference(
+def test_run_pipeline_matches_derived_expectation(
     pipeline_species_tree, pipeline_gene_trees, tmp_path
 ):
-    """run_pipeline (serial) reproduces the tree_parser + triplet_processor reference."""
+    """run_pipeline (serial) reproduces the hand-derived per-triplet expectation."""
     config = _make_config(
         pipeline_species_tree,
         pipeline_gene_trees,
@@ -189,15 +166,31 @@ def test_run_pipeline_matches_reference(
         processes=1,
     )
     results = run_pipeline(config)
-    reference = _reference_results(pipeline_species_tree, pipeline_gene_trees, tmp_path)
 
-    assert results
-    assert len(results) == len(reference)
+    assert len(results) == _N_TRIPLETS
+    assert {result.triplet for result in results} == set(_EXPECTED_COUNTS)
+
     for result in results:
-        assert result.triplet in reference
-        _assert_result_matches(
-            result, reference[result.triplet], _NON_BOOTSTRAP_FIELDS
+        n_con, n_dis1, n_dis2, species_topology = _EXPECTED_COUNTS[result.triplet]
+        assert result.n_con == n_con
+        assert result.n_dis1 == n_dis1
+        assert result.n_dis2 == n_dis2
+        assert result.species_tree == species_topology
+        assert result.analyzed_trees == 12
+        assert result.most_frequent_matches_concordant is True
+
+        dct_statistic, dct_p_value = _expected_dct(n_dis1, n_dis2)
+        assert result.dct_statistic == pytest.approx(dct_statistic)
+        assert result.dct_p_value == pytest.approx(dct_p_value)
+        assert result.dct_p_value_corrected == pytest.approx(_bonferroni(dct_p_value))
+        # Every triplet's corrected DCT p-value stays well above alpha (0.05),
+        # so the decision logic stops at the first gate for all of them.
+        assert result.dct_significant is False
+        assert result.ks_p_value_corrected == pytest.approx(
+            _bonferroni(result.ks_p_value)
         )
+        assert result.classification == "no_introgression"
+
         assert 0.0 <= result.bootstrap_value <= 1.0
         assert sum(result.all_bootstrap.values()) == pytest.approx(1.0)
 
@@ -224,6 +217,34 @@ def test_run_pipeline_writes_results_tsv(
     assert "classification" in header
     assert "bootstrap_value" in header
     assert len(lines) - 1 == len(results)
+
+
+def test_no_bootstrap_omits_the_bootstrap_columns(
+    pipeline_species_tree, pipeline_gene_trees, tmp_path
+):
+    """Disabling bootstrap drops its TSV columns while keeping the inference fields."""
+    output_folder = tmp_path / "out"
+    config = _make_config(
+        pipeline_species_tree,
+        pipeline_gene_trees,
+        output_folder,
+        mode="taxon",
+        processes=1,
+        bootstrap=False,
+    )
+    results = run_pipeline(config)
+
+    header = (
+        (output_folder / "pipeline_triplet_results.tsv")
+        .read_text()
+        .splitlines()[0]
+        .split("\t")
+    )
+    assert "bootstrap_value" not in header
+    assert "all_bootstrap" not in header
+    # The inference columns are still present and the triplets still resolved.
+    assert "classification" in header
+    assert len(results) == _N_TRIPLETS
 
 
 def test_consolidation_preserves_run_outputs(
