@@ -78,12 +78,15 @@ def _assert_valid_bootstrap(result):
 
 @pytest.mark.parametrize("discordant_test", ["chi-square", "z-test"])
 @pytest.mark.parametrize("summary_statistic", ["mean", "median", "mode"])
-@pytest.mark.parametrize("stats_backend", ["custom", "standard"])
 @pytest.mark.parametrize("strategy", ["AVG", "A", "B", "C", "SIS", "INT"])
 def test_analyze_triplet_matches_analyze_triplet_entry(
-    discordant_test, summary_statistic, stats_backend, strategy
+    discordant_test, summary_statistic, strategy
 ):
-    """analyze_triplet equals analyze_triplet_entry across every parameter combination."""
+    """analyze_triplet equals analyze_triplet_entry across every parameter combination.
+
+    The pipeline uses only the scipy/statsmodels backend, so the orchestrator
+    reference is pinned to ``stats_backend="standard"``.
+    """
     pipeline_result = pinf.analyze_triplet(
         _TRIPLET,
         _GENE_SUBTREES,
@@ -92,7 +95,6 @@ def test_analyze_triplet_matches_analyze_triplet_entry(
         alpha_ks=0.05,
         discordant_test=discordant_test,
         summary_statistic=summary_statistic,
-        stats_backend=stats_backend,
         tree_height_calculation_strategy=strategy,
         bootstrap_options={"iterations": _ITERATIONS},
         triplet_seed=_SEED,
@@ -105,7 +107,7 @@ def test_analyze_triplet_matches_analyze_triplet_entry(
         alpha_ks=0.05,
         discordant_test=discordant_test,
         summary_statistic=summary_statistic,
-        stats_backend=stats_backend,
+        stats_backend="standard",
         tree_height_calculation_strategy=strategy,
         generate_summary_stats=False,
         bootstrap=True,

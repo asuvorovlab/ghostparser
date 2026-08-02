@@ -254,7 +254,7 @@ Shared fixtures (`tests/pipeline/conftest.py`): `pipeline_species_tree` and `pip
 `tests/pipeline/test_pipeline_inference.py`:
 
 - `test_analyze_triplet_matches_analyze_triplet_entry`
-Inputs: one triplet with fixed gene subtrees and species subtree, parametrized across `discordant_test` (chi-square/z-test), `summary_statistic` (mean/median/mode), `stats_backend` (custom/standard), and tree-height `strategy` (AVG/A/B/C/SIS/INT), with a fixed bootstrap seed.
+Inputs: one triplet with fixed gene subtrees and species subtree, parametrized across `discordant_test` (chi-square/z-test), `summary_statistic` (mean/median/mode), and tree-height `strategy` (AVG/A/B/C/SIS/INT), with a fixed bootstrap seed. The orchestrator reference is pinned to `stats_backend="standard"` since the pipeline has only the scipy/statsmodels backend.
 Expected outputs: `pipeline.inference.analyze_triplet` equals `triplet_processor.analyze_triplet_entry` on every non-bootstrap field (counts, DCT/KS statistics and p-values, classification, summaries), and the pipeline result's bootstrap aggregates are well formed. Bootstrap values are excluded from the equality because the pipeline resamples with NumPy. Purpose: prove the ported inference math stays bit-for-bit equal.
 
 - `test_analyze_triplet_from_observations_matches_newick_path`
@@ -293,9 +293,43 @@ Expected outputs: `pipeline_triplet_results.tsv` exists with the expected header
 Inputs: a `run_pipeline` run with consolidation enabled.
 Expected outputs: the run folder still contains `pipeline_triplet_results.tsv`, `metrics.txt`, and both processed trees, and the consolidation artifacts land in a non-empty `consolidation/` subfolder. Purpose: regression guard that consolidation's output-directory reset does not delete the run's primary outputs.
 
+- `test_generate_summary_stats_writes_tsv`
+Inputs: a `run_pipeline` run with `generate_summary_stats` enabled.
+Expected outputs: `summary_statistics.tsv` exists, its header contains the expected metric columns and exactly 63 `concordant_`/`discordant1_`/`discordant2_` columns, and at least one result carries `topology_metric_statistics`. Purpose: verify the ported summary-statistics feature.
+
+- `test_bootstrap_debug_mode_writes_debug_columns`
+Inputs: a `run_pipeline` run with `bootstrap_debug_mode` enabled.
+Expected outputs: `pipeline_triplet_results.tsv` header includes the bootstrap-debug columns (`bootstrap_dct_stats`, `bootstrap_dct_p_value`, `bootstrap_ks_stats`, `bootstrap_ks_p_value`, `bootstrap_gene_tree_heights`) and at least one result has populated debug fields. Purpose: verify the bootstrap-debug feature.
+
 - `test_parallel_modes_match_serial`
 Inputs: `run_pipeline` in `taxon` and `gene` modes with two workers, versus a serial run.
 Expected outputs: identical per-triplet results across modes (bootstrap is deterministic per triplet under a fixed seed).
+
+`tests/pipeline/test_pipeline_config.py`:
+
+- `test_cli_defaults_resolve`
+Inputs: a CLI-only namespace with required inputs and everything else defaulted.
+Expected outputs: config+CLI keys take their defaults, config-file-only keys (`discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `bootstrap_iterations`, `bootstrap_seed`, `generate_summary_stats`, `bootstrap_debug_mode`, `bootstrap_summary_only`) take their defaults, and there is no `stats_backend` key.
+
+- `test_cli_overrides_for_config_plus_cli_options`
+Inputs: a namespace setting `alpha_dct`, `alpha_ks`, `summary_statistic`, `p_value_correction`, and `--no-overwrite`.
+Expected outputs: each overridden value appears in the resolved config, and `overwrite` is `False`.
+
+- `test_config_only_keys_read_from_config_file`
+Inputs: a JSON config file setting config-file-only keys plus a nested `bootstrap_options` block.
+Expected outputs: `load_pipeline_config` resolves each config-only key (including `bootstrap_iterations`/`seed`/`debug_mode`/`summary_only` from `bootstrap_options`).
+
+- `test_config_file_wins_over_cli`
+Inputs: a config file plus a namespace with `config_file` set and conflicting CLI flags.
+Expected outputs: the file's values win, the ignored CLI flags print a `--config-file provided` warning, and the resolved species path comes from the file.
+
+- `test_missing_required_field_raises`
+Inputs: a CLI namespace missing `species_tree_path`.
+Expected outputs: `resolve_config` raises `ConfigError`.
+
+- `test_parser_exposes_config_file_and_new_flags`
+Inputs: parsed argv with `--alpha-dct`, `--alpha-ks`, `--p-value-correction`, `--summary-statistic`, `--no-overwrite`.
+Expected outputs: the parser exposes `-c/--config-file` (default `None`) and each new config+CLI flag parses to the expected value.
 
 ### `tests/test_ml_config.py`
 

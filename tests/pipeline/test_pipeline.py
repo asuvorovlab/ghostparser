@@ -66,13 +66,19 @@ def _make_config(
         The resolved config dict with a fixed bootstrap seed and iterations.
     """
     args = argparse.Namespace(
+        config_file=None,
         species_tree_path=str(species_path),
         gene_trees_path=str(genes_path),
         outgroups="OUT",
         output_folder=str(output_folder),
         triplet_filter=None,
+        no_overwrite=None,
         processes=processes,
         parallelization_mode=mode,
+        alpha_dct=None,
+        alpha_ks=None,
+        p_value_correction=None,
+        summary_statistic=None,
         consolidation=consolidation,
         bootstrap=True,
     )
@@ -241,6 +247,64 @@ def test_consolidation_preserves_run_outputs(
     # Consolidation artifacts land in their own subfolder.
     assert (output_folder / "consolidation").is_dir()
     assert any((output_folder / "consolidation").iterdir())
+
+
+def test_generate_summary_stats_writes_tsv(
+    pipeline_species_tree, pipeline_gene_trees, tmp_path
+):
+    """generate_summary_stats writes summary_statistics.tsv with the 63 metric columns."""
+    output_folder = tmp_path / "out"
+    config = _make_config(
+        pipeline_species_tree,
+        pipeline_gene_trees,
+        output_folder,
+        mode="taxon",
+        processes=1,
+    )
+    config["generate_summary_stats"] = True
+    results = run_pipeline(config)
+
+    summary_tsv = output_folder / "summary_statistics.tsv"
+    assert summary_tsv.exists()
+    header = summary_tsv.read_text().splitlines()[0].split("\t")
+    assert "concordant_avg_tree_height_mean" in header
+    assert "discordant2_sister_distance_max" in header
+    metric_columns = [
+        column
+        for column in header
+        if column.startswith(("concordant_", "discordant1_", "discordant2_"))
+    ]
+    assert len(metric_columns) == 63
+    # The per-triplet metric statistics are populated on the results too.
+    assert any(result.topology_metric_statistics for result in results)
+
+
+def test_bootstrap_debug_mode_writes_debug_columns(
+    pipeline_species_tree, pipeline_gene_trees, tmp_path
+):
+    """bootstrap_debug_mode adds the bootstrap-debug columns and populates them."""
+    output_folder = tmp_path / "out"
+    config = _make_config(
+        pipeline_species_tree,
+        pipeline_gene_trees,
+        output_folder,
+        mode="taxon",
+        processes=1,
+    )
+    config["bootstrap_debug_mode"] = True
+    results = run_pipeline(config)
+
+    tsv_path = output_folder / "pipeline_triplet_results.tsv"
+    header = tsv_path.read_text().splitlines()[0].split("\t")
+    for column in (
+        "bootstrap_dct_stats",
+        "bootstrap_dct_p_value",
+        "bootstrap_ks_stats",
+        "bootstrap_ks_p_value",
+        "bootstrap_gene_tree_heights",
+    ):
+        assert column in header
+    assert any(result.bootstrap_dct_stats is not None for result in results)
 
 
 @pytest.mark.parametrize(
