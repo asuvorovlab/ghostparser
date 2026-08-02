@@ -14,8 +14,7 @@ subtrees, runs its inference immediately, keeps only the small per-triplet resul
 object, and discards the subtrees — bounding live memory to one chunk of subtrees
 plus the shared gene-tree list plus the accumulating results.
 
-For the full-featured run (config-file mode, summary-statistics TSV, parquet
-intermediates) use `ghostparser.orchestrator`.
+For parquet intermediate storage use `ghostparser.orchestrator`.
 
 ## Running it
 
@@ -32,34 +31,59 @@ python -m ghostparser.pipeline \
 python -m ghostparser.pipeline \
     -st species.tree -gt genes.tree -og OutGroup \
     --triplet-filter triplets.txt --no-consolidation
+
+# config-file mode (JSON or YAML); other CLI flags are ignored
+python -m ghostparser.pipeline -c run_config.yaml
 ```
+
+### Config-file mode
+
+`-c/--config-file` (CLI-only) points at a JSON or YAML file. When it is given,
+the file supplies every setting and the other CLI flags are ignored with a
+warning (config wins). The file may set both the config+CLI options and the
+config-file-only options listed below, using the same key names, and accepts the
+nested `bootstrap_options` block (`iterations`, `seed`, `debug_mode`,
+`summary_only`).
 
 ### CLI flags
 
-Required:
+Required (in CLI mode; supplied by the file in config-file mode):
 
 - `-st, --species-tree-path` — species tree in Newick format.
 - `-gt, --gene-trees-path` — gene trees in Newick format.
 - `-og, --outgroups` — outgroup taxon identifier(s), comma-separated.
 
-Optional:
+Config+CLI options (settable on the CLI or in a config file):
 
-| Flag | Default | Meaning |
+| Flag | Config key | Default | Meaning |
+| --- | --- | --- | --- |
+| `--output-folder` | `output_folder` | `results` | Output directory. |
+| `--triplet-filter` | `triplet_filter` | (none) | File of comma-separated taxa triplets, one per line. |
+| `--no-overwrite` | `overwrite` | overwrite on | Write to an auto-suffixed sibling directory when the output folder exists. |
+| `--processes` | `processes` | `0` | Worker processes; `0` uses all cores. |
+| `--parallelization-mode` | `parallelization_mode` | `auto` | `taxon`, `gene`, or `auto` (see below). |
+| `--alpha-dct` | `alpha_dct` | `0.05` | DCT significance threshold. |
+| `--alpha-ks` | `alpha_ks` | `0.05` | KS significance threshold. |
+| `--p-value-correction` | `p_value_correction` | `no` | Run-wide multiple-testing correction. |
+| `--summary-statistic` | `summary_statistic` | `median` | Statistic for the con-vs-dis1 comparison (`mean`/`median`/`mode`). |
+| `--no-consolidation` | `consolidation` | consolidation on | Disable the introgression map/plot stage. |
+| `--no-bootstrap` | `bootstrap` | bootstrap columns on | Omit the bootstrap columns from the results TSV. |
+
+Config-file-only options (no CLI flag; default unless set in a config file):
+
+| Config key | Default | Meaning |
 | --- | --- | --- |
-| `--output-folder` | `results` | Output directory. |
-| `--triplet-filter` | (none) | File of comma-separated taxa triplets, one per line. |
-| `--processes` | `0` | Worker processes; `0` uses all cores. |
-| `--parallelization-mode` | `auto` | `taxon`, `gene`, or `auto` (see below). |
-| `--no-consolidation` | consolidation on | Disable the introgression map/plot stage. |
-| `--no-bootstrap` | bootstrap columns on | Omit the bootstrap columns from the results TSV. |
+| `discordant_test` | `chi-square` | Discordant count test (`chi-square` or `z-test`). |
+| `tree_height_calculation_strategy` | `AVG` | Tree-height strategy (`AVG`/`A`/`B`/`C`/`SIS`/`INT`). |
+| `min_support_value` | `0.5` | Support threshold for tree cleaning. |
+| `bootstrap_iterations` | `100` | Bootstrap iterations per triplet. |
+| `bootstrap_seed` | (none) | Bootstrap RNG seed for reproducibility. |
+| `generate_summary_stats` | `false` | Also write `summary_statistics.tsv`. |
+| `bootstrap_debug_mode` | `false` | Add the bootstrap-debug columns to the results TSV. |
+| `bootstrap_summary_only` | `false` | With debug mode, emit compact summaries instead of per-iteration lists. |
 
-Everything else is pinned to the shared `ghostparser.config` defaults and is not
-exposed as a flag: `min_support_value=0.5`, `discordant_test="chi-square"`,
-`summary_statistic="median"`, `stats_backend="standard"`,
-`tree_height_calculation_strategy="AVG"`, `p_value_correction="no"`,
-`alpha_dct=0.05`, `alpha_ks=0.05`, `bootstrap_iterations=100`,
-`bootstrap_seed=None`. Summary-statistics gathering and config-file mode are not
-part of this module.
+The statistical tests always use the scipy/statsmodels backend; there is no
+selectable stats backend.
 
 ### Outputs
 
@@ -67,7 +91,14 @@ Written under the output folder:
 
 - `pipeline_triplet_results.tsv` — one row per triplet with topology counts,
   DCT/KS statistics, classification, inference description, and (unless
-  `--no-bootstrap`) bootstrap columns.
+  `--no-bootstrap`) the bootstrap columns. With `bootstrap_debug_mode` the
+  bootstrap-debug columns (`bootstrap_dct_stats`, `bootstrap_dct_p_value`,
+  `bootstrap_ks_stats`, `bootstrap_ks_p_value`, `bootstrap_con_<statistic>`,
+  `bootstrap_dis_<statistic>`, `bootstrap_gene_tree_heights`) are appended.
+- `summary_statistics.tsv` — written only when `generate_summary_stats` is set;
+  per-triplet topology/metric summary statistics (63 metric columns covering
+  mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/
+  sister-distance for concordant/discordant1/discordant2).
 - `processed_<species tree>` / `processed_<gene trees>` — cleaned, rooted trees.
 - `metrics.txt` — per-stage wall/CPU timing and run parameters.
 - `consolidation/` — a subfolder holding the consolidation artifacts (combined
@@ -102,9 +133,9 @@ parent process regardless of mode.
 ghostparser/pipeline/
   __init__.py    exports run_pipeline
   __main__.py    python -m ghostparser.pipeline entry point: main() wires parsing -> run_pipeline
-  config.py      argparse + default resolution (build_argument_parser, resolve_config)
+  config.py      argparse + config-file resolution (build_argument_parser, resolve_config, load_pipeline_config, normalize_pipeline_payload)
   trees.py       PORTED tree/triplet preprocessing (from tree_parser)
-  inference.py   PORTED per-triplet inference + result type + TSV writer (from triplet_processor)
+  inference.py   PORTED per-triplet inference + summary stats + result type + TSV writers (from triplet_processor)
   stream.py      fused extract+infer streaming engine
   runner.py      run_pipeline coordinator (cleaning -> streaming -> correction -> writing -> consolidation)
   PIPELINE.md    this document
@@ -117,9 +148,9 @@ The pipeline is self-contained: it does **not** import from `orchestrator`,
 pipeline is a proven replacement). The logic it needs from `tree_parser` and
 `triplet_processor` is **ported** into `trees.py` and `inference.py` — copied and
 cleaned of the deferred/unused paths (intermediate-file machinery, parquet I/O,
-summary-statistics collection, standalone CLIs). The computation of every ported
-function is kept identical so results match the orchestrator (verified by the
-parity tests in `tests/pipeline/`).
+the custom statistical backend, standalone CLIs). The computation of every ported
+function is kept identical so results match the orchestrator's scipy/statsmodels
+backend (verified by the parity tests in `tests/pipeline/`).
 
 It **imports** the independent shared foundation that is not slated for deletion:
 
@@ -133,8 +164,10 @@ It **imports** the independent shared foundation that is not slated for deletion
 
 The per-triplet unit is `inference.analyze_triplet_from_observations(triplet,
 observations, species_subtree, ...)`, which takes precomputed `(topology,
-tree-height)` observations, runs the discordant count test and the KS tree-height
-test, classifies the triplet, and aggregates a bootstrap value.
+tree-height, metrics)` observations, runs the discordant count test and the KS
+tree-height test, classifies the triplet, and aggregates a bootstrap value. The
+third observation element carries the per-tree summary metrics and is `None`
+unless `generate_summary_stats` is enabled.
 
 The processing unit is a chunk of triplets that share one parse pass over the
 gene trees. For each parsed gene tree the engine extracts every in-chunk

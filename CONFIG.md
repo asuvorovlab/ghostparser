@@ -3,7 +3,7 @@
 This guide is organized around the main pipeline entry point, `ghostparser.orchestrator`, and then the three submodules (`tree_parser`, `triplet_processor`, `introgression_mapper`).
 Only `ghostparser.orchestrator` supports config files.
 
-The streaming module `ghostparser.pipeline` is CLI-only and has no config-file mode; its flags and defaults are documented in [ghostparser/pipeline/PIPELINE.md](ghostparser/pipeline/PIPELINE.md).
+The streaming module `ghostparser.pipeline` has its own CLI and config-file mode; its flags, config keys, and defaults are documented in [ghostparser/pipeline/PIPELINE.md](ghostparser/pipeline/PIPELINE.md).
 
 ## Path Resolution
 

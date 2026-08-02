@@ -185,9 +185,10 @@ Heatmap consolidation details:
 ```bash
 python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup
 python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup --processes 0 --parallelization-mode auto
+python -m ghostparser.pipeline -c run_config.yaml
 ```
 
-It is CLI-only (no config-file mode). Required flags are `-st/--species-tree-path`, `-gt/--gene-trees-path`, and `-og/--outgroups`; optional flags are `--output-folder`, `--triplet-filter`, `--processes`, `--parallelization-mode {auto,taxon,gene}`, `--no-consolidation`, and `--no-bootstrap`. Remaining settings are pinned to the shared defaults. Results are written to `pipeline_triplet_results.tsv`. See [ghostparser/pipeline/PIPELINE.md](ghostparser/pipeline/PIPELINE.md) for the full reference and design.
+It supports both CLI flags and a JSON/YAML config file (`-c/--config-file`, config-file mode; the file wins over other CLI flags). Required inputs are `-st/--species-tree-path`, `-gt/--gene-trees-path`, and `-og/--outgroups`. Config+CLI options include `--output-folder`, `--triplet-filter`, `--no-overwrite`, `--processes`, `--parallelization-mode {auto,taxon,gene}`, `--alpha-dct`, `--alpha-ks`, `--p-value-correction`, `--summary-statistic`, `--no-consolidation`, and `--no-bootstrap`; further knobs (including `generate_summary_stats` and the bootstrap-debug options) are config-file-only. The statistical tests always use the scipy/statsmodels backend. Results are written to `pipeline_triplet_results.tsv`. See [ghostparser/pipeline/PIPELINE.md](ghostparser/pipeline/PIPELINE.md) for the full reference and design.
 
 ### Tree Parser (Submodule)
 
