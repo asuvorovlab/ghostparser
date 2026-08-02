@@ -69,7 +69,7 @@ python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_rand
 
 ## Configuration
 
-The ML loaders enforce a strict nested layout. For the full schema and examples, see [CONFIG.md](CONFIG.md#machine-learning-ghostparserml), but the most important user-facing idea is simple: the top level tells the trainer where the data is and how to split it, `model` controls the estimator itself, and `evaluation` controls what you want reported or saved. The loader handles numeric features directly and one-hot encodes low-cardinality string features for you.
+The ML loaders enforce a strict nested layout. For the full schema and examples, see [CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml), but the most important user-facing idea is simple: the top level tells the trainer where the data is and how to split it, `model` controls the estimator itself, and `evaluation` controls what you want reported or saved. The loader handles numeric features directly and one-hot encodes low-cardinality string features for you.
 
 ### Core run controls
 
@@ -284,5 +284,5 @@ The loaded model expects the encoded feature matrix that Ghostparser builds duri
 
 ## See also
 
-- Configuration: [CONFIG.md](CONFIG.md#machine-learning-ghostparserml)
+- Configuration: [CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml)
 
