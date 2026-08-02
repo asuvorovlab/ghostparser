@@ -432,7 +432,7 @@ Core defaults are centralized in orchestrator config/CLI normalization and in mo
 
 ### Machine Learning (ghostparser.ml)
 
-A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the pipeline) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see `ML.md` for full usage and the data contract.
+A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the pipeline) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see [ghostparser/ml/ML.md](ghostparser/ml/ML.md) for full usage and the data contract.
 
 Run example:
 
