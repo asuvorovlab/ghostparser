@@ -1,11 +1,21 @@
-"""Configuration helpers for Ghostparser ML workflows."""
+"""Configuration helpers for Ghostparser ML workflows.
+
+Owns the ML defaults/choices and the ML-specific validation rules (for example
+``test_size`` must be a fraction strictly between 0 and 1). The helpers shared
+verbatim with the pipeline are imported from the :mod:`ghostparser.config`
+trunk.
+"""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-from ..config import DEFAULT_OVERWRITE, ConfigError, _validate_overwrite_flag
+from ..config import (
+    DEFAULT_OVERWRITE,
+    ConfigError,
+    _load_raw_config,
+    _resolve_path,
+    _validate_overwrite_flag,
+    _validate_required_path,
+)
 
 DEFAULT_ML_OUTPUT_DIR = "ml_results"
 DEFAULT_TARGET_COLUMN = "class"
@@ -37,42 +47,6 @@ RARE_CLASS_POLICY_CHOICES = ("warn_reduce_cv", "warn_skip_cv", "error")
 KNN_WEIGHT_CHOICES = ("uniform", "distance")
 KNN_ALGORITHM_CHOICES = ("auto", "ball_tree", "kd_tree", "brute")
 EVALUATION_METRICS_CHOICES = ("all", "primary", "diagnostic", "per_bit")
-
-
-def _resolve_path(path_str: str) -> str:
-    return str(Path(path_str).expanduser().resolve())
-
-
-def _load_raw_config(config_file: str) -> dict:
-    path = Path(config_file)
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_file}")
-
-    suffix = path.suffix.lower()
-    if suffix == ".json":
-        with open(path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    elif suffix in {".yaml", ".yml"}:
-        try:
-            import yaml
-        except ImportError as exc:
-            raise ConfigError("YAML support requires PyYAML to be installed") from exc
-
-        with open(path, "r", encoding="utf-8") as handle:
-            payload = yaml.safe_load(handle)
-    else:
-        raise ConfigError("Config file must be .json, .yaml, or .yml")
-
-    if not isinstance(payload, dict):
-        raise ConfigError("Config root must be a key/value object")
-    return payload
-
-
-def _validate_required_path(payload: dict, key: str) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"Missing required config field: {key}")
-    return _resolve_path(value.strip())
 
 
 def _validate_optional_path(payload: dict, key: str, default: str) -> str:
