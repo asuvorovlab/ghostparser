@@ -1,20 +1,12 @@
 # ghostparser.pipeline
 
-`ghostparser.pipeline` is a self-contained streaming introgression pipeline. It
-fuses triplet subtree extraction and per-triplet inference into a single pass so
+`ghostparser.pipeline` is GhostParser's introgression engine. It fuses triplet
+subtree extraction and per-triplet inference into a single streaming pass, so
 the intermediate triplet-gene-trees dataset is never written to disk or reloaded
 into memory.
 
-## When to use it
-
-Use the pipeline for large gene-tree sets where the orchestrator's two-stage
-design (extract every triplet's subtrees to one intermediate file, then reload
-that whole file for inference) exhausts memory. The pipeline extracts a triplet's
-subtrees, runs its inference immediately, keeps only the small per-triplet result
-object, and discards the subtrees — bounding live memory to one chunk of subtrees
-plus the shared gene-tree list plus the accumulating results.
-
-For parquet intermediate storage use `ghostparser.orchestrator`.
+This document explains how the module works. The complete reference for every
+flag and config key lives in [CONFIG.md](../../CONFIG.md#pipeline-primary-module).
 
 ## Running it
 
@@ -36,82 +28,122 @@ python -m ghostparser.pipeline \
 python -m ghostparser.pipeline -c run_config.yaml
 ```
 
-### Config-file mode
+## Configuration
 
-`-c/--config-file` (CLI-only) points at a JSON or YAML file. When it is given,
-the file supplies every setting and the other CLI flags are ignored with a
-warning (config wins). The file may set both the config+CLI options and the
-config-file-only options listed below, using the same key names, and accepts the
-nested `bootstrap_options` block (`iterations`, `seed`, `debug_mode`,
-`summary_only`).
+Three inputs are required — the species tree (`-st`), the gene trees (`-gt`),
+and the outgroup(s) (`-og`) — and everything else has a default.
+`-c/--config-file` is the only CLI-only option; when given, the file supplies
+every setting and the other CLI flags are ignored with a warning.
 
-### CLI flags
+A handful of settings are config-file-only (`discordant_test`,
+`tree_height_calculation_strategy`, `min_support_value`,
+`generate_summary_stats`, and the `bootstrap_options` block). Two defaults are
+worth calling out: `p_value_correction` defaults to `bfn` (Bonferroni) and
+`summary_statistic` defaults to `mean`.
 
-Required (in CLI mode; supplied by the file in config-file mode):
+See [CONFIG.md](../../CONFIG.md#pipeline-primary-module) for every key, its
+default, and its allowed values.
 
-- `-st, --species-tree-path` — species tree in Newick format.
-- `-gt, --gene-trees-path` — gene trees in Newick format.
-- `-og, --outgroups` — outgroup taxon identifier(s), comma-separated.
+## Pipeline summary
 
-Config+CLI options (settable on the CLI or in a config file):
+`runner.run_pipeline(config)` coordinates the run:
 
-| Flag | Config key | Default | Meaning |
-| --- | --- | --- | --- |
-| `--output-folder` | `output_folder` | `results` | Output directory. |
-| `--triplet-filter` | `triplet_filter` | (none) | File of comma-separated taxa triplets, one per line. |
-| `--no-overwrite` | `overwrite` | overwrite on | Write to an auto-suffixed sibling directory when the output folder exists. |
-| `--processes` | `processes` | `0` | Worker processes; `0` uses all cores. |
-| `--parallelization-mode` | `parallelization_mode` | `auto` | `taxon`, `gene`, or `auto` (see below). |
-| `--alpha-dct` | `alpha_dct` | `0.05` | DCT significance threshold. |
-| `--alpha-ks` | `alpha_ks` | `0.05` | KS significance threshold. |
-| `--p-value-correction` | `p_value_correction` | `bfn` | Run-wide multiple-testing correction. |
-| `--summary-statistic` | `summary_statistic` | `mean` | Statistic for the con-vs-dis1 comparison (`mean`/`median`/`mode`). |
-| `--no-consolidation` | `consolidation` | consolidation on | Disable the introgression map/plot stage. |
-| `--no-bootstrap` | `bootstrap` | bootstrap columns on | Omit the bootstrap columns from the results TSV. |
+1. **Species preprocessing** — `trees.clean_and_save_trees` standardizes the
+   species tree and drops trees whose mean internal support is below
+   `min_support_value`. `trees._root_tree_on_outgroup` roots on the outgroup
+   MRCA and prunes the outgroup, returning the ingroup taxa.
+2. **Triplet setup** — `trees.generate_triplets` enumerates every ingroup
+   triplet (or `trees.read_triplet_filter_file` plus
+   `trees.filter_triplets_by_taxa` restricts them).
+   `trees._build_species_triplet_metadata` normalizes each triplet to
+   `(A, B, C)` with A and B the species-tree sisters, and builds the triplet's
+   species subtree.
+3. **Gene-tree preprocessing** — `trees.clean_and_save_gene_trees` cleans each
+   gene tree and roots it on the outgroup.
+4. **Fused extraction + inference** — `stream.stream_triplet_results` walks the
+   triplets, extracts each one's subtree per gene tree, converts it directly to
+   an observation (`inference.observation_from_subtree`), and immediately runs
+   `inference.analyze_triplet_from_observations`. Only the small result object
+   is retained; the subtrees are discarded.
+5. **Run-wide correction** —
+   `inference._apply_triplet_result_p_value_correction` applies the
+   multiple-testing correction once across all triplets, because a global
+   correction needs every p-value in a single pass.
+6. **Writing** — `inference.write_pipeline_results` emits
+   `pipeline_triplet_results.tsv`; `inference.write_summary_statistics_tsv`
+   emits `summary_statistics.tsv` when `generate_summary_stats` is set.
+7. **Consolidation** — `introgression_mapper.generate_introgression_maps`
+   writes the map artifacts into a `consolidation/` subfolder.
 
-Config-file-only options (no CLI flag; default unless set in a config file):
+## Per-triplet inference
 
-| Config key | Default | Meaning |
-| --- | --- | --- |
-| `discordant_test` | `chi-square` | Discordant count test (`chi-square` or `z-test`). |
-| `tree_height_calculation_strategy` | `AVG` | Tree-height strategy (`AVG`/`A`/`B`/`C`/`SIS`/`INT`). |
-| `min_support_value` | `0.5` | Support threshold for tree cleaning. |
-| `bootstrap_iterations` | `100` | Bootstrap iterations per triplet. |
-| `bootstrap_seed` | (none) | Bootstrap RNG seed for reproducibility. |
-| `generate_summary_stats` | `false` | Also write `summary_statistics.tsv`. |
-| `bootstrap_debug_mode` | `false` | Add the bootstrap-debug columns to the results TSV. |
-| `bootstrap_summary_only` | `false` | With debug mode, emit compact summaries instead of per-iteration lists. |
+For each triplet the engine classifies every gene tree's subtree into one of
+three topologies — concordant (matching the species tree) plus two discordant
+alternatives — and records a tree height H(T) per the configured strategy. It
+then applies a three-gate decision:
 
-The statistical tests always use the scipy/statsmodels backend; there is no
-selectable stats backend.
+1. **Discordant count test (DCT)** — compares the two discordant counts
+   (`inference.run_discordant_count_test`, chi-square or z-test). If the
+   corrected p-value is not below `alpha_dct`, the triplet is
+   `no_introgression` and the remaining gates are skipped.
+2. **Tree-height test** — a two-sample KS test between the concordant and
+   discordant1 height distributions (`inference.run_two_sample_ks_test`). If it
+   is *not* significant, the triplet is `inflow_introgression`.
+3. **Summary comparison** — otherwise the configured `summary_statistic` over
+   the concordant heights is compared with the same statistic over the
+   discordant1 heights: con > dis gives `outflow_introgression`, con < dis gives
+   `ghost_introgression`, and equal or missing gives `unresolved`.
 
-### Outputs
+`inference._classify_introgression` implements this decision table directly.
+
+Bootstrap resampling (on by default) repeats the analysis over resampled
+observations and aggregates the per-iteration classifications into
+`bootstrap_value`.
+
+## Outputs
 
 Written under the output folder:
 
-- `pipeline_triplet_results.tsv` — one row per triplet with topology counts,
-  DCT/KS statistics, classification, inference description, and (unless
-  `--no-bootstrap`) the bootstrap columns. With `bootstrap_debug_mode` the
-  bootstrap-debug columns (`bootstrap_dct_stats`, `bootstrap_dct_p_value`,
-  `bootstrap_ks_stats`, `bootstrap_ks_p_value`, `bootstrap_con_<statistic>`,
-  `bootstrap_dis_<statistic>`, `bootstrap_gene_tree_heights`) are appended.
-- `summary_statistics.tsv` — written only when `generate_summary_stats` is set;
+- `pipeline_triplet_results.tsv` — one row per triplet.
+- `summary_statistics.tsv` — only when `generate_summary_stats` is set;
   per-triplet topology/metric summary statistics (63 metric columns covering
   mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/
   sister-distance for concordant/discordant1/discordant2).
 - `processed_<species tree>` / `processed_<gene trees>` — cleaned, rooted trees.
 - `metrics.txt` — per-stage wall/CPU timing and run parameters.
-- `consolidation/` — a subfolder holding the consolidation artifacts (combined
-  heatmap/bar-chart plot and TSV matrices) from `introgression_mapper`, unless
-  `--no-consolidation` is given. Consolidation writes into this dedicated
-  subfolder so its own output-directory reset never removes the run folder's
-  results TSV, processed trees, or the open `metrics.txt`.
+- `consolidation/` — the combined heatmap/bar-chart plot and TSV matrices from
+  `introgression_mapper`, unless `--no-consolidation` is given. Consolidation
+  writes into this dedicated subfolder so its own output-directory reset never
+  removes the run folder's results TSV, processed trees, or the open
+  `metrics.txt`.
 
-The results TSV is named `pipeline_triplet_results.tsv` (distinct from the
-orchestrator's `orchestrator_triplet_results.tsv`) so a pipeline run and an
-orchestrator run can share an output folder without colliding.
+### How each results column is produced
 
-### Parallelization modes
+| Column | Source | Method |
+| --- | --- | --- |
+| `triplet` | Triplet setup | The normalized `(A, B, C)` labels, A and B being the species-tree sisters. |
+| `species_tree` | Triplet setup | The triplet's species subtree, serialized topology-only (branch lengths omitted). |
+| `dis1_topology` | Topology ranking | `BC` or `AC` — whichever discordant topology is more frequent; ties resolve to the first listed. |
+| `most_frequent_matches_concordant` | Topology counts | True when the concordant count is at least both discordant counts. |
+| `n_con` / `n_dis1` / `n_dis2` | Topology counts | Gene trees observed with each topology. |
+| `analyzed_trees` | Extraction | Gene trees from which a subtree for this triplet was extracted. |
+| `dct_statistic` / `dct_p_value` | DCT | SciPy chi-square or statsmodels z-test over `[n_dis1, n_dis2]`. An all-zero discordant split short-circuits to `(0.0, 1.0)`. |
+| `dct_p_value_<method>_corr` | Correction | Run-wide correction over every triplet's DCT p-value. |
+| `dct_significant` | Decision gate 1 | Corrected DCT p-value below `alpha_dct`. |
+| `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. |
+| `ks_p_value_<method>_corr` | Correction | Run-wide correction over every triplet's KS p-value. |
+| `ks_significant` | Decision gate 2 | Corrected KS p-value below `alpha_ks`. |
+| `summary_con` / `summary_dis` | Decision gate 3 | The configured statistic over the concordant / discordant1 heights. |
+| `classification` | Decision logic | `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `unresolved`. |
+| `inference_description` | Reporting | Human-readable direction naming the actual species. |
+| `bootstrap_value` / `all_bootstrap` | Bootstrap | Fraction of iterations agreeing with the final classification, plus the full class-fraction map. Present unless `--no-bootstrap`. |
+| `bootstrap_*` debug columns | Bootstrap debug | Per-iteration DCT/KS statistics, con/dis summaries, and gene-tree heights. Present only with `bootstrap_debug_mode`. |
+
+The results TSV is named `pipeline_triplet_results.tsv`, distinct from the
+inputs a standalone `introgression_mapper` run consumes, so both can share an
+output folder without colliding.
+
+## Parallelization modes
 
 - `taxon` — triplets are split into chunks and dispatched across workers; each
   worker runs the fused extract-then-infer loop for its chunk over the shared
@@ -133,48 +165,36 @@ parent process regardless of mode.
 ghostparser/pipeline/
   __init__.py    exports run_pipeline
   __main__.py    python -m ghostparser.pipeline entry point: main() wires parsing -> run_pipeline
-  config.py      self-contained config foundation: defaults/choices, ConfigError, validation + config-file loading, prepare_output_directory, CLI/config resolution (build_argument_parser, resolve_config, load_pipeline_config, normalize_pipeline_payload)
-  trees.py       PORTED tree/triplet preprocessing (from tree_parser)
-  inference.py   PORTED per-triplet inference + summary stats + result type + TSV writers (from triplet_processor)
+  config.py      pipeline defaults/choices, validation, CLI parser, and CLI/config resolution
+  trees.py       tree/triplet preprocessing
+  inference.py   per-triplet inference + summary stats + result type + TSV writers
   stream.py      fused extract+infer streaming engine
   runner.py      run_pipeline coordinator (cleaning -> streaming -> correction -> writing -> consolidation)
   PIPELINE.md    this document
 ```
 
-### Port-vs-import boundary
+### Shared dependencies
 
-The pipeline is self-contained: it does **not** import from `orchestrator`,
-`tree_parser`, `triplet_processor`, `config`, or `cli_config` (the modules slated
-for deletion or restructuring once the pipeline is a proven replacement). The
-logic it needs from `tree_parser`/`triplet_processor` is **ported** into
-`trees.py` and `inference.py`, and the config/CLI foundation from
-`config`/`cli_config` is **ported** into `config.py` (defaults and choices,
-`ConfigError`, the config-file loading/validation helpers,
-`prepare_output_directory`, and the CLI/config resolver). Ported logic is copied
-and cleaned of the deferred/unused paths (intermediate-file machinery, parquet
-I/O, the custom statistical backend, standalone CLIs). The computation of every
-ported inference function is kept identical so results match the orchestrator's
-scipy/statsmodels backend (verified by the parity tests in `tests/pipeline/`).
+The pipeline owns its tree preprocessing, inference, and configuration. It
+imports only four things from the rest of the package:
 
-It **imports** only the two shared foundation modules that are not slated for
-deletion:
-
+- `ghostparser.config` — the shared configuration trunk (`ConfigError`, path
+  resolution, raw config-file loading, required-path validation, overwrite
+  resolution, `prepare_output_directory`). Pipeline-specific defaults, choices,
+  and validators live in `pipeline/config.py`, which is why the pipeline can set
+  its own `bfn`/`mean` defaults without affecting the ML subpackage.
+- `ghostparser.cli_config` — the generic `resolve_cli_or_config_args` resolver
+  implementing config-file-wins precedence.
 - `ghostparser.triplet_utils` — pure topology helpers.
 - `ghostparser.introgression_mapper` — `generate_introgression_maps` for the
   consolidation stage.
-
-Because the pipeline owns its config defaults, its `p_value_correction` default
-(`bfn`) and `summary_statistic` default (`mean`) can differ from the shared
-orchestrator defaults without touching any shared module.
 
 ### Fused streaming engine
 
 The per-triplet unit is `inference.analyze_triplet_from_observations(triplet,
 observations, species_subtree, ...)`, which takes precomputed `(topology,
-tree-height, metrics)` observations, runs the discordant count test and the KS
-tree-height test, classifies the triplet, and aggregates a bootstrap value. The
-third observation element carries the per-tree summary metrics and is `None`
-unless `generate_summary_stats` is enabled.
+tree-height, metrics)` observations. The third element carries the per-tree
+summary metrics and is `None` unless `generate_summary_stats` is enabled.
 
 The processing unit is a chunk of triplets that share one parse pass over the
 gene trees. For each parsed gene tree the engine extracts every in-chunk
@@ -186,34 +206,24 @@ chunk while amortizing the DendroPy parse cost across the chunk's triplets. Gene
 trees are loaded once in the parent and shared read-only to workers via a
 fork/forkserver initializer.
 
-Because observations are computed from the (unrounded) subtree objects, tree
-heights match the orchestrator's **parquet** observation path rather than its
-Newick round-trip path.
-
-The bootstrap resampling is vectorized with NumPy: per-triplet resample indices
-are drawn with a seeded `numpy.random.Generator` and topology counts and
+Bootstrap resampling is vectorized with NumPy: per-triplet resample indices are
+drawn with a seeded `numpy.random.Generator`, and topology counts and
 per-topology height groups are computed with array operations. Bootstrap values
-are therefore statistically equivalent to, but not bit-for-bit identical with,
-the orchestrator's `random.Random`-based bootstrap; they remain deterministic
-under a fixed `bootstrap_seed` (the per-triplet seed is derived from the run seed
-and the triplet), so parallelization modes agree exactly.
-
-`stream.stream_triplet_results(...)` accumulates the per-triplet results and
-applies the p-value correction once across all of them
-(`_apply_triplet_result_p_value_correction`) — global correction requires every
-p-value in one pass, matching the orchestrator's run-wide correction.
+are deterministic under a fixed `bootstrap_seed` — the per-triplet seed is
+derived from the run seed and the triplet, so every parallelization mode agrees
+exactly.
 
 ### Memory rationale
 
 - No intermediate triplet-gene-trees file is written or reloaded.
-- Peak memory ≈ shared gene-tree Newick list + one chunk of transient subtrees +
-  the accumulating list of small result objects.
+- Peak memory is roughly the shared gene-tree Newick list, plus one chunk of
+  transient subtrees, plus the accumulating list of small result objects.
 - Result objects must be accumulated because global p-value correction needs all
   p-values in a single pass.
 
 ### Consolidation interface contract
 
-`generate_introgression_maps` reads only four fields from each result (`triplet`,
-`classification`, `dis1_topology`, `bootstrap_value`) via its duck-typed
-`_extract_result_fields`. The ported `TripletPipelineResult` keeps those four
+`generate_introgression_maps` reads only four fields from each result
+(`triplet`, `classification`, `dis1_topology`, `bootstrap_value`) via its
+duck-typed `_extract_result_fields`. `TripletPipelineResult` keeps those four
 fields; treat field parity on them as a maintenance constraint.

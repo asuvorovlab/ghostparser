@@ -2,9 +2,8 @@
 
 Covers topology classification, the discordant count test, the KS tree-height
 test, bootstrap aggregation (with optional debug metrics), summary-statistics
-gathering, run-wide p-value correction, and TSV writing. Ported from
-``triplet_processor`` (scipy/statsmodels backend only) so the pipeline stays
-self-contained.
+gathering, run-wide p-value correction, and TSV writing. All statistics use the
+scipy/statsmodels backend.
 """
 
 from __future__ import annotations

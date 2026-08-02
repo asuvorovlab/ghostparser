@@ -1,8 +1,8 @@
 """Tree and triplet preprocessing for the streaming pipeline.
 
 Provides cleaning, rooting, pruning, triplet generation, and species-triplet
-normalization. Ported from ``tree_parser`` and cleaned of the intermediate-file
-machinery so the pipeline stays self-contained.
+normalization, without any of the intermediate-file machinery the streaming
+pass makes unnecessary.
 """
 
 from __future__ import annotations
