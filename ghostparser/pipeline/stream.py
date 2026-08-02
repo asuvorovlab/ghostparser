@@ -14,9 +14,11 @@ from multiprocessing import cpu_count
 
 import dendropy
 
-from ghostparser.config import DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY
-
-from .config import AUTO_GENE_TREES_THRESHOLD, AUTO_TAXA_SMALL_THRESHOLD
+from .config import (
+    AUTO_GENE_TREES_THRESHOLD,
+    AUTO_TAXA_SMALL_THRESHOLD,
+    DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+)
 from .inference import (
     _apply_triplet_result_p_value_correction,
     analyze_triplet_from_observations,

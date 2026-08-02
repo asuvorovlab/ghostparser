@@ -7,10 +7,9 @@ from pathlib import Path
 
 import dendropy
 
-from ghostparser.config import prepare_output_directory
 from ghostparser.introgression_mapper import generate_introgression_maps
 
-from .config import resolve_config
+from .config import prepare_output_directory, resolve_config
 from .inference import write_pipeline_results, write_summary_statistics_tsv
 from .stream import resolve_parallelization_mode, stream_triplet_results
 from .trees import (

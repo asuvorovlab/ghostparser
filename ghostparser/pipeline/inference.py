@@ -20,7 +20,16 @@ from scipy import stats
 from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportions_ztest
 
-from ghostparser.config import (
+from ghostparser.triplet_utils import (
+    ALL_TOPOLOGIES,
+    TOPOLOGY_AB,
+    TOPOLOGY_AC,
+    TOPOLOGY_BC,
+    classify_triplet_topology_string,
+    find_sister_pair,
+)
+
+from .config import (
     DEFAULT_ALPHA_DCT,
     DEFAULT_ALPHA_KS,
     DEFAULT_BOOTSTRAP,
@@ -35,14 +44,6 @@ from ghostparser.config import (
     P_VALUE_CORRECTION_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
-)
-from ghostparser.triplet_utils import (
-    ALL_TOPOLOGIES,
-    TOPOLOGY_AB,
-    TOPOLOGY_AC,
-    TOPOLOGY_BC,
-    classify_triplet_topology_string,
-    find_sister_pair,
 )
 
 Classification = str

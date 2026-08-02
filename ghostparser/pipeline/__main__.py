@@ -6,9 +6,7 @@ runner, keeping the CLI orchestration separate from config handling.
 
 from __future__ import annotations
 
-from ghostparser.config import ConfigError
-
-from .config import build_argument_parser, resolve_config
+from .config import ConfigError, build_argument_parser, resolve_config
 from .runner import run_pipeline
 
 
