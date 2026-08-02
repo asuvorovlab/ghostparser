@@ -1,7 +1,8 @@
 """Shared triplet topology utilities.
 
-Utilities in this module are used by both ``tree_parser`` and
-``triplet_processor`` to keep triplet topology handling consistent.
+Utilities in this module keep triplet topology handling consistent across the
+package; ``ghostparser.pipeline`` uses them for both preprocessing and
+inference.
 """
 
 from __future__ import annotations

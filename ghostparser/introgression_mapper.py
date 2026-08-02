@@ -787,7 +787,7 @@ def generate_introgression_maps(
 
 def _build_standalone_parser():
     parser = _argparse.ArgumentParser(
-        description="Generate introgression maps from a GhostParser orchestrator results TSV."
+        description="Generate introgression maps from a GhostParser pipeline results TSV."
     )
     parser.add_argument(
         "-r",
@@ -830,7 +830,7 @@ def _parse_outgroups_arg(value):
 
 
 def _read_results_tsv(path):
-    """Read orchestrator results TSV into a list of dicts."""
+    """Read a pipeline results TSV into a list of dicts."""
     rows = []
     with open(path, newline="") as fh:
         import csv
