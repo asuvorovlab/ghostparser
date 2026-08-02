@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from ghostparser.config import ConfigError
 from ghostparser.pipeline.config import (
+    ConfigError,
     build_argument_parser,
     load_pipeline_config,
     resolve_config,
@@ -49,8 +49,9 @@ def test_cli_defaults_resolve():
     config = resolve_config(_base_cli_args())
     assert config["alpha_dct"] == 0.05
     assert config["alpha_ks"] == 0.05
-    assert config["p_value_correction"] == "no"
-    assert config["summary_statistic"] == "median"
+    # Pipeline-specific defaults (differ from the shared orchestrator defaults).
+    assert config["p_value_correction"] == "bfn"
+    assert config["summary_statistic"] == "mean"
     assert config["overwrite"] is True
     # Config-file-only keys take their defaults in CLI mode.
     assert config["discordant_test"] == "chi-square"
@@ -132,7 +133,9 @@ def test_config_file_wins_over_cli(tmp_path, capsys):
     config = resolve_config(args)
 
     assert config["alpha_dct"] == 0.03
-    assert config["summary_statistic"] == "median"  # from file defaults, not CLI
+    # The file omits summary_statistic, so it takes the pipeline default (not the
+    # CLI value "mode"), proving the CLI flag was ignored.
+    assert config["summary_statistic"] == "mean"
     assert config["species_tree"].endswith("file_species.tree")
     assert "--config-file provided" in capsys.readouterr().out
 

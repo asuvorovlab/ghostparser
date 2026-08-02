@@ -141,17 +141,20 @@ def _reference_results(species_path, genes_path, tmp_path):
             tp.analyze_triplet_entry(
                 triplet,
                 entry,
+                summary_statistic="mean",
+                stats_backend="standard",
                 generate_summary_stats=False,
                 bootstrap=True,
                 bootstrap_options={"iterations": _ITERATIONS},
                 triplet_seed=_SEED,
             )
         )
+    # Match the pipeline's defaults: mean summary statistic and bfn correction.
     reference = tp._apply_triplet_result_p_value_correction(
         reference,
         alpha_dct=0.05,
         alpha_ks=0.05,
-        method="no",
+        method="bfn",
         stats_backend="standard",
     )
     return {result.triplet: result for result in reference}
