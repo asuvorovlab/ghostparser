@@ -28,26 +28,29 @@ from .trees import _get_mp_context, extract_triplet_subtree
 _GENE_TREES: list[str] = []
 _SPECIES_TRIPLET_TREES: dict[tuple[str, str, str], str] = {}
 _STRATEGY: str = DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY
+_COLLECT_SUMMARY: bool = False
 _ANALYSIS_KWARGS: dict = {}
 
 
 def _split_inference_kwargs(inference_kwargs):
-    """Split the tree-height strategy (used at extraction) from analysis kwargs.
+    """Split the extraction-time keys from the per-triplet analysis kwargs.
 
     Args:
         inference_kwargs: Combined kwargs, optionally containing
-            ``tree_height_calculation_strategy``.
+            ``tree_height_calculation_strategy`` and
+            ``collect_summary_statistics``.
 
     Returns:
-        A tuple ``(strategy, analysis_kwargs)`` where ``analysis_kwargs`` is a
-        copy without the strategy key (safe to forward to
-        :func:`analyze_triplet_from_observations`).
+        A tuple ``(strategy, collect_summary_statistics, analysis_kwargs)`` where
+        ``analysis_kwargs`` is a copy without the extraction-time keys (safe to
+        forward to :func:`analyze_triplet_from_observations`).
     """
     kwargs = dict(inference_kwargs or {})
     strategy = kwargs.pop(
         "tree_height_calculation_strategy", DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY
     )
-    return strategy, kwargs
+    collect_summary_statistics = kwargs.pop("collect_summary_statistics", False)
+    return strategy, collect_summary_statistics, kwargs
 
 
 def _chunk_list(items, chunk_size):
@@ -97,17 +100,21 @@ def resolve_parallelization_mode(mode, n_taxa, n_gene_trees):
     return "taxon"
 
 
-def _extract_chunk_observations(triplet_chunk, gene_trees, strategy):
+def _extract_chunk_observations(
+    triplet_chunk, gene_trees, strategy, collect_summary_statistics=False
+):
     """Compute every triplet's observations in one pass over the gene trees.
 
     Args:
         triplet_chunk: Iterable of triplets in this chunk.
         gene_trees: Iterable of gene-tree Newick strings.
         strategy: Tree-height strategy used to compute each observation.
+        collect_summary_statistics: When ``True``, each observation also carries
+            its per-tree summary metrics.
 
     Returns:
-        A dict mapping each triplet to its list of ``(topology, tree_height)``
-        observations.
+        A dict mapping each triplet to its list of
+        ``(topology, tree_height, summary_metrics)`` observations.
     """
     observations = {triplet: [] for triplet in triplet_chunk}
     for newick_str in gene_trees:
@@ -121,14 +128,21 @@ def _extract_chunk_observations(triplet_chunk, gene_trees, strategy):
             subtree = extract_triplet_subtree(tree, triplet)
             if subtree is None:
                 continue
-            observation = observation_from_subtree(subtree, triplet, strategy)
+            observation = observation_from_subtree(
+                subtree, triplet, strategy, collect_summary_statistics
+            )
             if observation is not None:
                 observations[triplet].append(observation)
     return observations
 
 
 def _analyze_chunk(
-    triplet_chunk, gene_trees, species_triplet_trees, strategy, analysis_kwargs
+    triplet_chunk,
+    gene_trees,
+    species_triplet_trees,
+    strategy,
+    collect_summary_statistics,
+    analysis_kwargs,
 ):
     """Run the fused extract-then-infer loop for one triplet chunk.
 
@@ -137,13 +151,17 @@ def _analyze_chunk(
         gene_trees: Iterable of gene-tree Newick strings.
         species_triplet_trees: Mapping of triplet to its species subtree Newick.
         strategy: Tree-height strategy used to compute observations.
+        collect_summary_statistics: When ``True``, gather per-triplet summary
+            statistics during extraction.
         analysis_kwargs: Keyword arguments forwarded to
             :func:`analyze_triplet_from_observations`.
 
     Returns:
         A list of ``TripletPipelineResult`` objects for the chunk.
     """
-    observations = _extract_chunk_observations(triplet_chunk, gene_trees, strategy)
+    observations = _extract_chunk_observations(
+        triplet_chunk, gene_trees, strategy, collect_summary_statistics
+    )
     results = []
     for triplet in triplet_chunk:
         results.append(
@@ -167,11 +185,14 @@ def _init_stream_worker(gene_trees, species_triplet_trees, inference_kwargs):
         inference_kwargs: Combined inference kwargs (split into strategy and
             analysis kwargs).
     """
-    global _GENE_TREES, _SPECIES_TRIPLET_TREES, _STRATEGY, _ANALYSIS_KWARGS
+    global _GENE_TREES, _SPECIES_TRIPLET_TREES, _STRATEGY, _COLLECT_SUMMARY
+    global _ANALYSIS_KWARGS
     if gene_trees is not None:
         _GENE_TREES = gene_trees
     _SPECIES_TRIPLET_TREES = species_triplet_trees or {}
-    _STRATEGY, _ANALYSIS_KWARGS = _split_inference_kwargs(inference_kwargs)
+    _STRATEGY, _COLLECT_SUMMARY, _ANALYSIS_KWARGS = _split_inference_kwargs(
+        inference_kwargs
+    )
 
 
 def _analyze_chunk_worker(triplet_chunk):
@@ -187,7 +208,12 @@ def _analyze_chunk_worker(triplet_chunk):
     """
     start_cpu = time.process_time()
     results = _analyze_chunk(
-        triplet_chunk, _GENE_TREES, _SPECIES_TRIPLET_TREES, _STRATEGY, _ANALYSIS_KWARGS
+        triplet_chunk,
+        _GENE_TREES,
+        _SPECIES_TRIPLET_TREES,
+        _STRATEGY,
+        _COLLECT_SUMMARY,
+        _ANALYSIS_KWARGS,
     )
     return results, time.process_time() - start_cpu
 
@@ -217,7 +243,9 @@ def _extract_triplet_range_worker(args):
         subtree = extract_triplet_subtree(tree, triplet)
         if subtree is None:
             continue
-        observation = observation_from_subtree(subtree, triplet, _STRATEGY)
+        observation = observation_from_subtree(
+            subtree, triplet, _STRATEGY, _COLLECT_SUMMARY
+        )
         if observation is not None:
             out.append(observation)
     return out, time.process_time() - start_cpu
@@ -280,7 +308,9 @@ def _run_gene_mode(triplets, species_triplet_trees, gene_trees, worker_count, in
         workers. Per-triplet inference and bootstrap run in the parent, so their
         CPU is captured by the caller's own timing.
     """
-    _strategy, analysis_kwargs = _split_inference_kwargs(inference_kwargs)
+    _strategy, _collect_summary, analysis_kwargs = _split_inference_kwargs(
+        inference_kwargs
+    )
     n_gene_trees = len(gene_trees)
     range_chunk = max(1, n_gene_trees // (worker_count * 4))
     ranges = [
@@ -343,8 +373,7 @@ def stream_triplet_results(
         processes: Requested worker count; ``0`` means all cores.
         inference_kwargs: Keyword arguments for the per-triplet analysis (also
             the source of ``tree_height_calculation_strategy`` used at
-            extraction and ``alpha_dct``/``alpha_ks``/``stats_backend`` used for
-            correction).
+            extraction and ``alpha_dct``/``alpha_ks`` used for correction).
         p_value_correction: Correction method applied across all triplets.
         return_worker_cpu: When ``True``, also return the CPU seconds spent in
             pool workers (which the caller's own ``process_time`` cannot see).
@@ -365,9 +394,16 @@ def stream_triplet_results(
     worker_cpu_seconds = 0.0
     if worker_count <= 1:
         # Serial: work runs in the parent, so its CPU is captured by the caller.
-        strategy, analysis_kwargs = _split_inference_kwargs(inference_kwargs)
+        strategy, collect_summary, analysis_kwargs = _split_inference_kwargs(
+            inference_kwargs
+        )
         results = _analyze_chunk(
-            triplets, gene_trees, species_triplet_trees, strategy, analysis_kwargs
+            triplets,
+            gene_trees,
+            species_triplet_trees,
+            strategy,
+            collect_summary,
+            analysis_kwargs,
         )
     elif resolved_mode == "gene":
         results, worker_cpu_seconds = _run_gene_mode(
@@ -383,7 +419,6 @@ def stream_triplet_results(
         alpha_dct=inference_kwargs.get("alpha_dct"),
         alpha_ks=inference_kwargs.get("alpha_ks"),
         method=p_value_correction,
-        stats_backend=inference_kwargs.get("stats_backend", "standard"),
     )
 
     if return_worker_cpu:

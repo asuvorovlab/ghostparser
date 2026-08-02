@@ -1,14 +1,16 @@
 """Per-triplet GhostParser inference for the streaming pipeline.
 
 Covers topology classification, the discordant count test, the KS tree-height
-test, bootstrap aggregation, run-wide p-value correction, and TSV writing.
-Ported from ``triplet_processor`` (non-summary-statistics path only) so the
-pipeline stays self-contained.
+test, bootstrap aggregation (with optional debug metrics), summary-statistics
+gathering, run-wide p-value correction, and TSV writing. Ported from
+``triplet_processor`` (scipy/statsmodels backend only) so the pipeline stays
+self-contained.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from dataclasses import dataclass, replace
 
@@ -22,15 +24,15 @@ from ghostparser.config import (
     DEFAULT_ALPHA_DCT,
     DEFAULT_ALPHA_KS,
     DEFAULT_BOOTSTRAP,
+    DEFAULT_BOOTSTRAP_DEBUG_MODE,
     DEFAULT_BOOTSTRAP_ITERATIONS,
+    DEFAULT_BOOTSTRAP_SUMMARY_ONLY,
     DEFAULT_DISCORDANT_TEST,
     DEFAULT_P_VALUE_CORRECTION,
-    DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     DISCORDANT_TEST_CHOICES,
     P_VALUE_CORRECTION_CHOICES,
-    STATS_BACKEND_CHOICES,
     SUMMARY_STATISTIC_CHOICES,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
 )
@@ -44,7 +46,7 @@ from ghostparser.triplet_utils import (
 )
 
 Classification = str
-SerializedTripletObservation = tuple[str, float]
+SerializedTripletObservation = tuple[str, float, dict | None]
 
 DISCORDANT1_TOPOLOGY_CHOICES = ("BC", "AC")
 
@@ -56,6 +58,17 @@ _BOOTSTRAP_CLASSES = [
     "unresolved",
 ]
 
+# Per-iteration bootstrap-debug accumulator keys, aligned with the metric tuple
+# returned by ``_iteration_full`` (excluding the leading classification).
+_BOOTSTRAP_DEBUG_KEYS = (
+    "dct_stats",
+    "dct_p_values",
+    "ks_stats",
+    "ks_p_values",
+    "con_summaries",
+    "dis_summaries",
+)
+
 _TOPOLOGY_TO_PAIR = {
     TOPOLOGY_AB: frozenset(("A", "B")),
     TOPOLOGY_BC: frozenset(("B", "C")),
@@ -65,6 +78,16 @@ _PAIR_TO_TOPOLOGY = {pair: topology for topology, pair in _TOPOLOGY_TO_PAIR.item
 
 # Integer codes for the canonical topologies, used by the vectorized bootstrap.
 _TOPOLOGY_CODE = {TOPOLOGY_AB: 0, TOPOLOGY_BC: 1, TOPOLOGY_AC: 2}
+
+# Summary-statistics layout: 3 topologies x 3 metrics x 7 statistics = 63 columns.
+SUMMARY_STATISTICS = ("mean", "median", "mode", "variance", "entropy", "min", "max")
+SUMMARY_TOPOLOGY_LABELS = ("concordant", "discordant1", "discordant2")
+SUMMARY_METRIC_LABELS = ("avg_tree_height", "internal_branch", "sister_distance")
+SUMMARY_TOPOLOGY_TO_CANONICAL = {
+    "concordant": TOPOLOGY_AB,
+    "discordant1": TOPOLOGY_BC,
+    "discordant2": TOPOLOGY_AC,
+}
 
 
 @dataclass(frozen=True)
@@ -94,6 +117,7 @@ class TripletPipelineResult:
     summary_dis: float | None
     classification: Classification
     analyzed_trees: int = 0
+    topology_metric_statistics: dict[str, float | None] | None = None
     bootstrap_value: float | None = None
     all_bootstrap: dict | None = None
     bootstrap_dct_stats: dict | list | None = None
@@ -160,8 +184,9 @@ def _compute_triplet_tree_metrics(
     tree,
     species_triplet=None,
     tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+    collect_summary_statistics=False,
 ):
-    """Compute the selected tree-height value H(T) for one triplet tree.
+    """Compute the selected tree-height value H(T) and optional summary metrics.
 
     Args:
         tree: A rooted 3-tip DendroPy tree.
@@ -169,9 +194,14 @@ def _compute_triplet_tree_metrics(
             ``C`` strategies.
         tree_height_calculation_strategy: One of ``AVG``/``A``/``B``/``C``/
             ``SIS``/``INT``.
+        collect_summary_statistics: When ``True``, also compute the per-tree
+            ``avg_tree_height``/``internal_branch``/``sister_distance`` metrics
+            used for summary-statistics gathering.
 
     Returns:
-        The selected tree-height value H(T) as a float.
+        A tuple ``(selected_tree_height, summary_metrics)`` where
+        ``summary_metrics`` is a dict of the three metrics when
+        ``collect_summary_statistics`` is ``True`` (else ``None``).
 
     Raises:
         ValueError: If the strategy is unsupported, the tree does not have
@@ -211,7 +241,8 @@ def _compute_triplet_tree_metrics(
     elif tree_height_calculation_strategy == "AVG":
         selected_tree_height = avg_tree_height
 
-    if tree_height_calculation_strategy in {"SIS", "INT"}:
+    summary_metrics = None
+    if collect_summary_statistics or tree_height_calculation_strategy in {"SIS", "INT"}:
         sister_pair = find_sister_pair(tree)
         left_label, right_label = tuple(sister_pair)
         sister_mrca = tree.mrca(taxon_labels=[left_label, right_label])
@@ -230,13 +261,20 @@ def _compute_triplet_tree_metrics(
         elif tree_height_calculation_strategy == "INT":
             selected_tree_height = internal_branch
 
+        if collect_summary_statistics:
+            summary_metrics = {
+                "avg_tree_height": avg_tree_height,
+                "internal_branch": internal_branch,
+                "sister_distance": sister_distance,
+            }
+
     if selected_tree_height is None:
         raise ValueError(
             f"Unsupported tree height calculation strategy: {tree_height_calculation_strategy}. "
             f"Choose one of: {', '.join(TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES)}"
         )
 
-    return selected_tree_height
+    return selected_tree_height, summary_metrics
 
 
 def compute_tree_height_statistic(
@@ -252,11 +290,12 @@ def compute_tree_height_statistic(
     Returns:
         The tree-height value H(T) as a float.
     """
-    return _compute_triplet_tree_metrics(
+    selected_tree_height, _ = _compute_triplet_tree_metrics(
         tree,
         species_triplet=species_triplet,
         tree_height_calculation_strategy=strategy,
     )
+    return selected_tree_height
 
 
 def _resolve_topology_roles(topology_counts, species_topology):
@@ -300,204 +339,40 @@ def _resolve_topology_roles(topology_counts, species_topology):
     )
 
 
-def pearson_discordant_chi_square_test(n_dis1, n_dis2):
-    """Run the custom Pearson chi-square test for discordant count imbalance.
-
-    Uses equal expected frequencies with the analytic df=1 p-value.
+def run_discordant_count_test(n_dis1, n_dis2, method="chi-square"):
+    """Run the discordant count test (SciPy/statsmodels backend).
 
     Args:
         n_dis1: Count of the discordant1 topology.
         n_dis2: Count of the discordant2 topology.
-
-    Returns:
-        A tuple ``(statistic, p_value)``.
-    """
-    total = n_dis1 + n_dis2
-    if total == 0:
-        return 0.0, 1.0
-
-    expected = total / 2.0
-    chi2_stat = ((n_dis1 - expected) ** 2) / expected + (
-        (n_dis2 - expected) ** 2
-    ) / expected
-
-    p_value = math.erfc(math.sqrt(chi2_stat / 2.0))
-    return float(chi2_stat), float(p_value)
-
-
-def _pearson_discordant_chi_square_test_scipy(n_dis1, n_dis2):
-    """Run the SciPy Pearson chi-square backend for discordant counts.
-
-    Args:
-        n_dis1: Count of the discordant1 topology.
-        n_dis2: Count of the discordant2 topology.
-
-    Returns:
-        A tuple ``(statistic, p_value)``.
-    """
-    total = n_dis1 + n_dis2
-    if total == 0:
-        return 0.0, 1.0
-
-    result = stats.chisquare([n_dis1, n_dis2])
-    return float(result.statistic), float(result.pvalue)
-
-
-def _two_proportion_discordant_z_test_statsmodels(n_dis1, n_dis2):
-    """Run the statsmodels two-proportion z-test backend for discordant counts.
-
-    Args:
-        n_dis1: Count of the discordant1 topology.
-        n_dis2: Count of the discordant2 topology.
-
-    Returns:
-        A tuple ``(z_score, p_value)``.
-    """
-    total = n_dis1 + n_dis2
-    if total == 0:
-        return 0.0, 1.0
-
-    z_score, p_value = proportions_ztest(
-        count=[n_dis1, n_dis2],
-        nobs=[total, total],
-        alternative="two-sided",
-    )
-    return float(z_score), float(p_value)
-
-
-def two_proportion_discordant_z_test(n_dis1, n_dis2):
-    """Run the custom two-proportion z-test for discordant count imbalance.
-
-    Args:
-        n_dis1: Count of the discordant1 topology.
-        n_dis2: Count of the discordant2 topology.
-
-    Returns:
-        A tuple ``(z_score, p_value)``.
-    """
-    total = n_dis1 + n_dis2
-    if total == 0:
-        return 0.0, 1.0
-
-    p_dis1 = n_dis1 / total
-    p_dis2 = n_dis2 / total
-    pooled = (n_dis1 + n_dis2) / (2 * total)
-    standard_error = (pooled * (1.0 - pooled) * ((1.0 / total) + (1.0 / total))) ** 0.5
-    if standard_error == 0.0:
-        return 0.0, 1.0
-
-    z_score = (p_dis1 - p_dis2) / standard_error
-    p_value = 2.0 * stats.norm.sf(abs(z_score))
-    return float(z_score), float(p_value)
-
-
-def run_discordant_count_test(
-    n_dis1, n_dis2, method="chi-square", stats_backend="custom"
-):
-    """Dispatch the discordant count test by method and backend.
-
-    Args:
-        n_dis1: Count of the discordant1 topology.
-        n_dis2: Count of the discordant2 topology.
-        method: ``chi-square`` or ``z-test``.
-        stats_backend: ``custom`` or ``standard``.
+        method: ``chi-square`` (SciPy Pearson chi-square) or ``z-test``
+            (statsmodels two-proportion z-test).
 
     Returns:
         A tuple ``(statistic, p_value)``.
 
     Raises:
-        ValueError: If the backend or method is unsupported.
+        ValueError: If the method is unsupported.
     """
-    if stats_backend not in STATS_BACKEND_CHOICES:
-        raise ValueError(
-            f"Unsupported stats backend: {stats_backend}. "
-            f"Choose one of: {', '.join(STATS_BACKEND_CHOICES)}"
-        )
+    total = n_dis1 + n_dis2
+    if total == 0:
+        return 0.0, 1.0
 
     if method == "chi-square":
-        if stats_backend == "standard":
-            return _pearson_discordant_chi_square_test_scipy(n_dis1, n_dis2)
-        return pearson_discordant_chi_square_test(n_dis1, n_dis2)
+        result = stats.chisquare([n_dis1, n_dis2])
+        return float(result.statistic), float(result.pvalue)
     if method == "z-test":
-        if stats_backend == "standard":
-            return _two_proportion_discordant_z_test_statsmodels(n_dis1, n_dis2)
-        return two_proportion_discordant_z_test(n_dis1, n_dis2)
+        z_score, p_value = proportions_ztest(
+            count=[n_dis1, n_dis2],
+            nobs=[total, total],
+            alternative="two-sided",
+        )
+        return float(z_score), float(p_value)
     raise ValueError(f"Unsupported discordant test method: {method}")
 
 
-def two_sample_ks_test(sample_a, sample_b):
-    """Run the custom two-sample KS test with an asymptotic p-value.
-
-    Args:
-        sample_a: First sample of numeric values.
-        sample_b: Second sample of numeric values.
-
-    Returns:
-        A tuple ``(D, p_value)``.
-    """
-    if not sample_a or not sample_b:
-        return 0.0, 1.0
-
-    data_a = sorted(float(value) for value in sample_a)
-    data_b = sorted(float(value) for value in sample_b)
-    n1 = len(data_a)
-    n2 = len(data_b)
-
-    i = 0
-    j = 0
-    cdf_a = 0.0
-    cdf_b = 0.0
-    d_stat = 0.0
-
-    while i < n1 and j < n2:
-        a_val = data_a[i]
-        b_val = data_b[j]
-        if a_val <= b_val:
-            while i < n1 and data_a[i] == a_val:
-                i += 1
-            cdf_a = i / n1
-        if b_val <= a_val:
-            while j < n2 and data_b[j] == b_val:
-                j += 1
-            cdf_b = j / n2
-        d_stat = max(d_stat, abs(cdf_a - cdf_b))
-
-    while i < n1:
-        i += 1
-        cdf_a = i / n1
-        d_stat = max(d_stat, abs(cdf_a - cdf_b))
-
-    while j < n2:
-        j += 1
-        cdf_b = j / n2
-        d_stat = max(d_stat, abs(cdf_a - cdf_b))
-
-    en = (n1 * n2) / (n1 + n2)
-    if en <= 0:
-        return float(d_stat), 1.0
-
-    sqrt_en = math.sqrt(en)
-    lam = (sqrt_en + 0.12 + 0.11 / sqrt_en) * d_stat
-
-    if lam <= 0:
-        p_value = 1.0
-    else:
-        series_sum = 0.0
-        for k in range(1, 101):
-            term = math.exp(-2.0 * (k**2) * (lam**2))
-            if k % 2 == 1:
-                series_sum += term
-            else:
-                series_sum -= term
-            if term < 1e-12:
-                break
-        p_value = max(0.0, min(1.0, 2.0 * series_sum))
-
-    return float(d_stat), float(p_value)
-
-
-def _two_sample_ks_test_scipy(sample_a, sample_b):
-    """Run the SciPy two-sample KS backend.
+def run_two_sample_ks_test(sample_a, sample_b):
+    """Run the two-sample KS test (SciPy backend).
 
     Args:
         sample_a: First sample of numeric values.
@@ -511,31 +386,6 @@ def _two_sample_ks_test_scipy(sample_a, sample_b):
 
     result = stats.ks_2samp(sample_a, sample_b, alternative="two-sided", method="auto")
     return float(result.statistic), float(result.pvalue)
-
-
-def run_two_sample_ks_test(sample_a, sample_b, stats_backend="custom"):
-    """Dispatch the two-sample KS test by backend.
-
-    Args:
-        sample_a: First sample of numeric values.
-        sample_b: Second sample of numeric values.
-        stats_backend: ``custom`` or ``standard``.
-
-    Returns:
-        A tuple ``(D, p_value)``.
-
-    Raises:
-        ValueError: If the backend is unsupported.
-    """
-    if stats_backend not in STATS_BACKEND_CHOICES:
-        raise ValueError(
-            f"Unsupported stats backend: {stats_backend}. "
-            f"Choose one of: {', '.join(STATS_BACKEND_CHOICES)}"
-        )
-
-    if stats_backend == "standard":
-        return _two_sample_ks_test_scipy(sample_a, sample_b)
-    return two_sample_ks_test(sample_a, sample_b)
 
 
 def _median(values):
@@ -595,6 +445,157 @@ def _mode_binned(values, decimals=3):
     max_frequency = max(counts.values())
     modes = [value for value, count in counts.items() if count == max_frequency]
     return max(modes)
+
+
+def _variance(values):
+    """Compute the population variance of a numeric iterable.
+
+    Args:
+        values: Iterable of numeric values.
+
+    Returns:
+        The population variance as a float, or ``None`` if ``values`` is empty.
+    """
+    if not values:
+        return None
+    values_float = [float(value) for value in values]
+    mean_value = _mean(values_float)
+    if mean_value is None:
+        return None
+    return sum((value - mean_value) ** 2 for value in values_float) / len(values_float)
+
+
+def _entropy_binned(values, decimals=3):
+    """Compute Shannon entropy (base 2) over rounded value frequencies.
+
+    Args:
+        values: Iterable of numeric values.
+        decimals: Number of decimal places used for binning.
+
+    Returns:
+        The Shannon entropy as a float, or ``None`` if ``values`` is empty.
+    """
+    if not values:
+        return None
+
+    counts = {}
+    for value in values:
+        rounded = round(float(value), decimals)
+        counts[rounded] = counts.get(rounded, 0) + 1
+
+    total = sum(counts.values())
+    if total <= 0:
+        return None
+
+    entropy = 0.0
+    for count in counts.values():
+        probability = count / total
+        if probability > 0.0:
+            entropy -= probability * math.log2(probability)
+    return entropy
+
+
+def _compute_summary_statistic(values, statistic_name):
+    """Compute one named summary statistic over a numeric iterable.
+
+    Args:
+        values: Iterable of numeric values.
+        statistic_name: One of ``mean``/``median``/``mode``/``variance``/
+            ``entropy``/``min``/``max``.
+
+    Returns:
+        The computed statistic as a float, or ``None`` if undefined for the
+        input.
+
+    Raises:
+        ValueError: If ``statistic_name`` is unsupported.
+    """
+    if statistic_name == "mean":
+        return _mean(values)
+    if statistic_name == "median":
+        return _median(values)
+    if statistic_name == "mode":
+        return _mode_binned(values, decimals=3)
+    if statistic_name == "variance":
+        return _variance(values)
+    if statistic_name == "entropy":
+        return _entropy_binned(values, decimals=3)
+    if statistic_name == "min":
+        return min(values) if values else None
+    if statistic_name == "max":
+        return max(values) if values else None
+    raise ValueError(f"Unsupported summary statistic name: {statistic_name}")
+
+
+def _summary_statistics_column_names():
+    """Return the stable ordered summary-statistics column names.
+
+    Returns:
+        A list of ``<topology>_<metric>_<statistic>`` column names covering
+        every topology/metric/statistic combination.
+    """
+    columns = []
+    for topology_label in SUMMARY_TOPOLOGY_LABELS:
+        for metric_label in SUMMARY_METRIC_LABELS:
+            for statistic_name in SUMMARY_STATISTICS:
+                columns.append(f"{topology_label}_{metric_label}_{statistic_name}")
+    return columns
+
+
+def _build_empty_metric_buckets():
+    """Build empty per-topology metric buckets for summary-statistics gathering.
+
+    Returns:
+        A dict keyed by canonical topology, each mapping metric label to an
+        empty list.
+    """
+    return {
+        topology: {
+            "avg_tree_height": [],
+            "internal_branch": [],
+            "sister_distance": [],
+        }
+        for topology in ALL_TOPOLOGIES
+    }
+
+
+def _build_topology_metric_statistics(
+    species_triplet, species_topology, metric_buckets
+):
+    """Build canonical topology/metric summary statistics for one triplet.
+
+    Args:
+        species_triplet: The ``(A, B, C)`` triplet.
+        species_topology: The concordant (species-tree) topology.
+        metric_buckets: Per-topology metric buckets from
+            :func:`_build_empty_metric_buckets`.
+
+    Returns:
+        A dict mapping each ``<topology>_<metric>_<statistic>`` column name to
+        its computed value (or ``None`` when undefined).
+    """
+    topology_counts = {
+        topology: len(metric_buckets[topology]["avg_tree_height"])
+        for topology in ALL_TOPOLOGIES
+    }
+
+    _, _, canonical_to_original_topology, _ = _canonicalize_triplet_labels(
+        species_triplet,
+        species_topology,
+        topology_counts,
+    )
+
+    statistics = {}
+    for topology_label in SUMMARY_TOPOLOGY_LABELS:
+        canonical_topology = SUMMARY_TOPOLOGY_TO_CANONICAL[topology_label]
+        original_topology = canonical_to_original_topology[canonical_topology]
+        for metric_label in SUMMARY_METRIC_LABELS:
+            values = metric_buckets[original_topology][metric_label]
+            for statistic_name in SUMMARY_STATISTICS:
+                key = f"{topology_label}_{metric_label}_{statistic_name}"
+                statistics[key] = _compute_summary_statistic(values, statistic_name)
+
+    return statistics
 
 
 def _classify_introgression(dct_significant, ks_significant, summary_con, summary_dis):
@@ -705,8 +706,13 @@ def _build_triplet_np_rng(seed, triplet):
     return np.random.default_rng(int.from_bytes(digest[:8], "little"))
 
 
-def observation_from_subtree(subtree, triplet, tree_height_calculation_strategy):
-    """Compute a ``(topology, tree_height)`` observation from a subtree object.
+def observation_from_subtree(
+    subtree,
+    triplet,
+    tree_height_calculation_strategy,
+    collect_summary_statistics=False,
+):
+    """Compute a ``(topology, tree_height, metrics)`` observation from a subtree.
 
     Computes the observation directly from the extracted DendroPy subtree,
     avoiding a serialize-then-reparse round trip.
@@ -715,10 +721,14 @@ def observation_from_subtree(subtree, triplet, tree_height_calculation_strategy)
         subtree: The extracted triplet subtree as a DendroPy tree.
         triplet: The ``(A, B, C)`` triplet.
         tree_height_calculation_strategy: Tree-height strategy to apply.
+        collect_summary_statistics: When ``True``, also compute the per-tree
+            summary metrics stored as the observation's third element.
 
     Returns:
-        A ``(topology, tree_height)`` tuple, or ``None`` if the subtree's labels
-        do not match the triplet or metric computation fails.
+        A ``(topology, tree_height, summary_metrics)`` tuple where
+        ``summary_metrics`` is ``None`` unless ``collect_summary_statistics`` is
+        ``True``, or ``None`` if the subtree's labels do not match the triplet or
+        metric computation fails.
     """
     labels = {
         leaf.taxon.label
@@ -730,15 +740,16 @@ def observation_from_subtree(subtree, triplet, tree_height_calculation_strategy)
 
     try:
         topology = classify_triplet_topology_string(subtree, triplet)
-        tree_height = _compute_triplet_tree_metrics(
+        tree_height, summary_metrics = _compute_triplet_tree_metrics(
             subtree,
             species_triplet=triplet,
             tree_height_calculation_strategy=tree_height_calculation_strategy,
+            collect_summary_statistics=collect_summary_statistics,
         )
     except ValueError:
         return None
 
-    return (topology, tree_height)
+    return (topology, tree_height, summary_metrics)
 
 
 def _relabel_topology(topology, old_to_new_labels):
@@ -851,8 +862,9 @@ def _serialize_triplet_gene_trees(
     species_triplet,
     triplet_gene_trees,
     tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+    collect_summary_statistics=False,
 ):
-    """Parse rooted triplet Newicks into (topology, tree-height) observations.
+    """Parse rooted triplet Newicks into observations.
 
     Trees whose leaf set does not match the triplet, or that fail metric
     computation, are skipped.
@@ -861,9 +873,12 @@ def _serialize_triplet_gene_trees(
         species_triplet: The ``(A, B, C)`` triplet.
         triplet_gene_trees: Iterable of rooted triplet Newick strings.
         tree_height_calculation_strategy: Tree-height strategy to apply.
+        collect_summary_statistics: When ``True``, also compute each
+            observation's summary metrics (third tuple element).
 
     Returns:
-        A list of ``(topology, tree_height)`` observation tuples.
+        A list of ``(topology, tree_height, summary_metrics)`` observation
+        tuples.
     """
     observations: list[SerializedTripletObservation] = []
     species_set = set(species_triplet)
@@ -885,15 +900,16 @@ def _serialize_triplet_gene_trees(
 
         try:
             topology = classify_triplet_topology_string(tree, species_triplet)
-            tree_height = _compute_triplet_tree_metrics(
+            tree_height, summary_metrics = _compute_triplet_tree_metrics(
                 tree,
                 species_triplet=species_triplet,
                 tree_height_calculation_strategy=tree_height_calculation_strategy,
+                collect_summary_statistics=collect_summary_statistics,
             )
         except ValueError:
             continue
 
-        observations.append((topology, tree_height))
+        observations.append((topology, tree_height, summary_metrics))
 
     return observations
 
@@ -905,7 +921,6 @@ def _run_triplet_pipeline_from_observations(
     alpha_ks=DEFAULT_ALPHA_KS,
     discordant_test=DEFAULT_DISCORDANT_TEST,
     summary_statistic=DEFAULT_SUMMARY_STATISTIC,
-    stats_backend=DEFAULT_STATS_BACKEND,
     species_topology=TOPOLOGY_AB,
     species_tree_newick=None,
 ):
@@ -918,7 +933,6 @@ def _run_triplet_pipeline_from_observations(
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
         summary_statistic: ``mean``, ``median``, or ``mode``.
-        stats_backend: ``custom`` or ``standard``.
         species_topology: The concordant (species-tree) topology.
         species_tree_newick: Species subtree Newick stored on the result.
 
@@ -929,8 +943,15 @@ def _run_triplet_pipeline_from_observations(
         ValueError: If ``summary_statistic`` is unsupported.
     """
     heights = {topology: [] for topology in ALL_TOPOLOGIES}
-    for topology, tree_height in observations:
+    collect_summary_statistics = bool(observations) and observations[0][2] is not None
+    metric_buckets = _build_empty_metric_buckets() if collect_summary_statistics else None
+    for topology, tree_height, summary_metrics in observations:
         heights[topology].append(tree_height)
+        if metric_buckets is not None and summary_metrics is not None:
+            for metric_label in SUMMARY_METRIC_LABELS:
+                metric_buckets[topology][metric_label].append(
+                    summary_metrics[metric_label]
+                )
 
     topology_counts = {topology: len(heights[topology]) for topology in ALL_TOPOLOGIES}
     analyzed_trees = sum(topology_counts.values())
@@ -971,14 +992,12 @@ def _run_triplet_pipeline_from_observations(
         n_dis1,
         n_dis2,
         method=discordant_test,
-        stats_backend=stats_backend,
     )
     dct_significant = dct_p_value <= alpha_dct
 
     ks_statistic, ks_p_value = run_two_sample_ks_test(
         canonical_heights[dis1_topology],
         canonical_heights[con_topology],
-        stats_backend=stats_backend,
     )
     ks_significant = ks_p_value <= alpha_ks
 
@@ -998,6 +1017,12 @@ def _run_triplet_pipeline_from_observations(
         summary_con,
         summary_dis,
     )
+
+    topology_metric_statistics = None
+    if metric_buckets is not None:
+        topology_metric_statistics = _build_topology_metric_statistics(
+            canonical_triplet, TOPOLOGY_AB, metric_buckets
+        )
 
     return TripletPipelineResult(
         triplet=canonical_triplet,
@@ -1019,6 +1044,7 @@ def _run_triplet_pipeline_from_observations(
         summary_dis=summary_dis,
         classification=classification,
         analyzed_trees=analyzed_trees,
+        topology_metric_statistics=topology_metric_statistics,
     )
 
 
@@ -1031,7 +1057,6 @@ def _iteration_classification(
     alpha_ks,
     discordant_test,
     summary_statistic,
-    stats_backend,
 ):
     """Classify one bootstrap iteration from its resampled per-topology heights.
 
@@ -1048,7 +1073,6 @@ def _iteration_classification(
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
         summary_statistic: ``mean``, ``median``, or ``mode``.
-        stats_backend: ``custom`` or ``standard``.
 
     Returns:
         The iteration classification string.
@@ -1057,13 +1081,11 @@ def _iteration_classification(
         return "unresolved"
 
     _, dct_p_value = run_discordant_count_test(
-        n_dis1, n_dis2, method=discordant_test, stats_backend=stats_backend
+        n_dis1, n_dis2, method=discordant_test
     )
     dct_significant = dct_p_value <= alpha_dct
 
-    _, ks_p_value = run_two_sample_ks_test(
-        dis1_heights, con_heights, stats_backend=stats_backend
-    )
+    _, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
     ks_significant = ks_p_value <= alpha_ks
 
     if summary_statistic == "mean":
@@ -1081,6 +1103,185 @@ def _iteration_classification(
     )
 
 
+def _iteration_full(
+    n_dis1,
+    n_dis2,
+    con_heights,
+    dis1_heights,
+    alpha_dct,
+    alpha_ks,
+    discordant_test,
+    summary_statistic,
+):
+    """Classify one bootstrap iteration and return its per-iteration metrics.
+
+    Unlike :func:`_iteration_classification` (the fast path), this always
+    computes the DCT/KS statistics and summary values so they can be collected
+    for bootstrap-debug output.
+
+    Args:
+        n_dis1: Discordant1 count in the resample.
+        n_dis2: Discordant2 count in the resample.
+        con_heights: Concordant tree heights (Python list).
+        dis1_heights: Discordant1 tree heights (Python list).
+        alpha_dct: Significance threshold for the discordant count test.
+        alpha_ks: Significance threshold for the KS test.
+        discordant_test: ``chi-square`` or ``z-test``.
+        summary_statistic: ``mean``, ``median``, or ``mode``.
+
+    Returns:
+        A tuple ``(classification, dct_statistic, dct_p_value, ks_statistic,
+        ks_p_value, summary_con, summary_dis)``.
+    """
+    dct_statistic, dct_p_value = run_discordant_count_test(
+        n_dis1, n_dis2, method=discordant_test
+    )
+    dct_significant = dct_p_value <= alpha_dct
+
+    ks_statistic, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
+    ks_significant = ks_p_value <= alpha_ks
+
+    if summary_statistic == "mean":
+        summary_con = _mean(con_heights)
+        summary_dis = _mean(dis1_heights)
+    elif summary_statistic == "mode":
+        summary_con = _mode_binned(con_heights, decimals=3)
+        summary_dis = _mode_binned(dis1_heights, decimals=3)
+    else:
+        summary_con = _median(con_heights)
+        summary_dis = _median(dis1_heights)
+
+    if not con_heights or not dis1_heights:
+        classification = "unresolved"
+    else:
+        classification = _classify_introgression(
+            dct_significant, ks_significant, summary_con, summary_dis
+        )
+
+    return (
+        classification,
+        dct_statistic,
+        dct_p_value,
+        ks_statistic,
+        ks_p_value,
+        summary_con,
+        summary_dis,
+    )
+
+
+def _numeric_summary(values):
+    """Build a compact summary of an iterable that may contain ``None`` values.
+
+    Args:
+        values: Iterable of numeric values (or ``None`` entries).
+
+    Returns:
+        A dict with ``count``/``non_null_count``/``mean``/``median``/``min``/
+        ``max``.
+    """
+    cleaned = [float(value) for value in values if value is not None]
+    if not cleaned:
+        return {
+            "count": len(values),
+            "non_null_count": 0,
+            "mean": None,
+            "median": None,
+            "min": None,
+            "max": None,
+        }
+
+    return {
+        "count": len(values),
+        "non_null_count": len(cleaned),
+        "mean": _mean(cleaned),
+        "median": _median(cleaned),
+        "min": min(cleaned),
+        "max": max(cleaned),
+    }
+
+
+def _finalize_bootstrap_metric(values, summary_only):
+    """Return a compact summary of a bootstrap metric, or the raw per-iteration list.
+
+    Args:
+        values: Per-iteration metric values.
+        summary_only: When ``True``, return a compact numeric summary instead of
+            the full list.
+
+    Returns:
+        A numeric-summary dict when ``summary_only`` is ``True``, else ``values``
+        unchanged.
+    """
+    if summary_only:
+        return _numeric_summary(values)
+    return values
+
+
+def _serialize_bootstrap_value(value):
+    """Serialize a bootstrap-debug structure for TSV output as strict JSON.
+
+    Args:
+        value: The bootstrap-debug payload (list or dict), or ``None``.
+
+    Returns:
+        A compact JSON string, or an empty string when ``value`` is ``None``.
+
+    Raises:
+        ValueError: If ``value`` is not JSON-serializable.
+    """
+    if value is None:
+        return ""
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Bootstrap payload is not JSON-serializable: {value!r}"
+        ) from exc
+
+
+def _append_iteration_debug(debug, metrics):
+    """Append one iteration's debug metrics to the accumulator lists.
+
+    Args:
+        debug: Accumulator dict keyed by :data:`_BOOTSTRAP_DEBUG_KEYS`.
+        metrics: The six per-iteration metric values, in
+            :data:`_BOOTSTRAP_DEBUG_KEYS` order.
+    """
+    for key, value in zip(_BOOTSTRAP_DEBUG_KEYS, metrics):
+        debug[key].append(value)
+
+
+def _bootstrap_payload(bootstrap_value, fractions, debug, summary_only):
+    """Assemble the bootstrap payload with optional finalized debug metrics.
+
+    Args:
+        bootstrap_value: The top class fraction.
+        fractions: Per-class fractions.
+        debug: The per-iteration debug accumulator, or ``None`` when disabled.
+        summary_only: When ``True``, finalize debug metrics as compact summaries.
+
+    Returns:
+        A dict with ``bootstrap_value``, ``all_bootstrap``, and the six
+        ``bootstrap_*`` debug entries (each ``None`` when ``debug`` is ``None``).
+    """
+    payload = {"bootstrap_value": bootstrap_value, "all_bootstrap": fractions}
+    debug_columns = (
+        "bootstrap_dct_stats",
+        "bootstrap_dct_p_value",
+        "bootstrap_ks_stats",
+        "bootstrap_ks_p_value",
+        "bootstrap_con_summary",
+        "bootstrap_dis_summary",
+    )
+    if debug is None:
+        for column in debug_columns:
+            payload[column] = None
+    else:
+        for column, key in zip(debug_columns, _BOOTSTRAP_DEBUG_KEYS):
+            payload[column] = _finalize_bootstrap_metric(debug[key], summary_only)
+    return payload
+
+
 def _run_bootstrap_iterations(
     observations,
     iterations,
@@ -1088,53 +1289,77 @@ def _run_bootstrap_iterations(
     alpha_ks,
     discordant_test,
     summary_statistic,
-    stats_backend,
     rng,
+    debug_mode=False,
+    summary_only=False,
 ):
     """Resample observations and aggregate per-iteration classifications.
 
     The resample indices are drawn with NumPy's vectorized RNG and the topology
     counts and per-topology height groups are computed with array operations,
     replacing the per-element Python resampling loop. Assumes the concordant
-    topology is ``((A,B),C)`` (always true on the pipeline path).
+    topology is ``((A,B),C)`` (always true on the pipeline path). When
+    ``debug_mode`` is set, per-iteration DCT/KS statistics and con/dis summaries
+    are collected too.
 
     Args:
-        observations: List of ``(topology, tree_height)`` tuples.
+        observations: List of ``(topology, tree_height, metrics)`` tuples.
         iterations: Number of bootstrap iterations.
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
         summary_statistic: ``mean``, ``median``, or ``mode``.
-        stats_backend: ``custom`` or ``standard``.
         rng: A ``numpy.random.Generator`` used for resampling.
+        debug_mode: When ``True``, collect per-iteration debug metrics.
+        summary_only: When ``True`` (and debug), emit compact summaries instead
+            of full per-iteration lists.
 
     Returns:
-        A dict with ``bootstrap_value`` (top class fraction) and
-        ``all_bootstrap`` (per-class fractions).
+        A dict with ``bootstrap_value`` (top class fraction), ``all_bootstrap``
+        (per-class fractions), and the six ``bootstrap_*`` debug entries (each
+        ``None`` unless ``debug_mode``).
     """
     class_counts = {label: 0 for label in _BOOTSTRAP_CLASSES}
+    debug = {key: [] for key in _BOOTSTRAP_DEBUG_KEYS} if debug_mode else None
+
+    def _record(classification):
+        if classification not in class_counts:
+            class_counts[classification] = 0
+        class_counts[classification] += 1
 
     if iterations <= 0:
         fractions = {label: 0.0 for label in sorted(class_counts)}
-        return {"bootstrap_value": 0.0, "all_bootstrap": fractions}
+        return _bootstrap_payload(0.0, fractions, debug, summary_only)
 
     valid_count = len(observations)
     if valid_count == 0:
-        # Every iteration has zero analyzed trees, i.e. unresolved.
-        class_counts["unresolved"] = iterations
+        for _ in range(iterations):
+            if debug_mode:
+                metrics = _iteration_full(
+                    0, 0, [], [], alpha_dct, alpha_ks, discordant_test,
+                    summary_statistic,
+                )
+                _record(metrics[0])
+                _append_iteration_debug(debug, metrics[1:])
+            else:
+                _record("unresolved")
         fractions = {
             label: class_counts.get(label, 0) / float(iterations)
             for label in sorted(class_counts)
         }
-        return {"bootstrap_value": max(fractions.values()), "all_bootstrap": fractions}
+        return _bootstrap_payload(
+            max(fractions.values()), fractions, debug, summary_only
+        )
 
     topo_codes = np.fromiter(
-        (_TOPOLOGY_CODE[topology] for topology, _ in observations),
+        (_TOPOLOGY_CODE[topology] for topology, _, _ in observations),
         dtype=np.int64,
         count=valid_count,
     )
     heights = np.fromiter(
-        (height for _, height in observations), dtype=np.float64, count=valid_count
+        (height for _, height, _ in observations),
+        dtype=np.float64,
+        count=valid_count,
     )
 
     for _ in range(iterations):
@@ -1153,20 +1378,32 @@ def _run_bootstrap_iterations(
         con_heights = sampled_heights[sampled_topo == 0].tolist()
         dis1_heights = sampled_heights[sampled_topo == dis1_code].tolist()
 
-        classification = _iteration_classification(
-            n_dis1,
-            n_dis2,
-            con_heights,
-            dis1_heights,
-            alpha_dct,
-            alpha_ks,
-            discordant_test,
-            summary_statistic,
-            stats_backend,
-        )
-        if classification not in class_counts:
-            class_counts[classification] = 0
-        class_counts[classification] += 1
+        if debug_mode:
+            metrics = _iteration_full(
+                n_dis1,
+                n_dis2,
+                con_heights,
+                dis1_heights,
+                alpha_dct,
+                alpha_ks,
+                discordant_test,
+                summary_statistic,
+            )
+            _record(metrics[0])
+            _append_iteration_debug(debug, metrics[1:])
+        else:
+            _record(
+                _iteration_classification(
+                    n_dis1,
+                    n_dis2,
+                    con_heights,
+                    dis1_heights,
+                    alpha_dct,
+                    alpha_ks,
+                    discordant_test,
+                    summary_statistic,
+                )
+            )
 
     fractions = {
         label: class_counts.get(label, 0) / float(iterations)
@@ -1174,7 +1411,7 @@ def _run_bootstrap_iterations(
     }
     top_fraction = max(fractions.values()) if fractions else 0.0
 
-    return {"bootstrap_value": top_fraction, "all_bootstrap": fractions}
+    return _bootstrap_payload(top_fraction, fractions, debug, summary_only)
 
 
 def _finalize_triplet_analysis(
@@ -1186,7 +1423,6 @@ def _finalize_triplet_analysis(
     alpha_ks,
     discordant_test,
     summary_statistic,
-    stats_backend,
     bootstrap_options,
     triplet_seed,
 ):
@@ -1203,8 +1439,8 @@ def _finalize_triplet_analysis(
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
         summary_statistic: ``mean``, ``median``, or ``mode``.
-        stats_backend: ``custom`` or ``standard``.
-        bootstrap_options: Optional dict; only ``iterations`` is read.
+        bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
+            ``summary_only`` are read.
         triplet_seed: Optional base seed for deterministic bootstrap.
 
     Returns:
@@ -1218,13 +1454,18 @@ def _finalize_triplet_analysis(
         alpha_ks=alpha_ks,
         discordant_test=discordant_test,
         summary_statistic=summary_statistic,
-        stats_backend=stats_backend,
         species_topology=TOPOLOGY_AB,
         species_tree_newick=species_tree_topology,
     )
 
     options = dict(bootstrap_options or {})
     iterations = int(options.get("iterations", DEFAULT_BOOTSTRAP_ITERATIONS))
+    debug_mode = bool(options.get("debug_mode", DEFAULT_BOOTSTRAP_DEBUG_MODE))
+    summary_only = (
+        bool(options.get("summary_only", DEFAULT_BOOTSTRAP_SUMMARY_ONLY))
+        if debug_mode
+        else False
+    )
     rng = _build_triplet_np_rng(triplet_seed, triplet)
 
     bootstrap_payload = _run_bootstrap_iterations(
@@ -1234,14 +1475,29 @@ def _finalize_triplet_analysis(
         alpha_ks=alpha_ks,
         discordant_test=discordant_test,
         summary_statistic=summary_statistic,
-        stats_backend=stats_backend,
         rng=rng,
+        debug_mode=debug_mode,
+        summary_only=summary_only,
     )
+
+    bootstrap_gene_tree_heights = None
+    if debug_mode:
+        raw_heights = [tree_height for _, tree_height, _ in observations]
+        bootstrap_gene_tree_heights = _finalize_bootstrap_metric(
+            raw_heights, summary_only
+        )
 
     return replace(
         base_result,
         bootstrap_value=bootstrap_payload["bootstrap_value"],
         all_bootstrap=bootstrap_payload["all_bootstrap"],
+        bootstrap_dct_stats=bootstrap_payload["bootstrap_dct_stats"],
+        bootstrap_dct_p_value=bootstrap_payload["bootstrap_dct_p_value"],
+        bootstrap_ks_stats=bootstrap_payload["bootstrap_ks_stats"],
+        bootstrap_ks_p_value=bootstrap_payload["bootstrap_ks_p_value"],
+        bootstrap_con_summary=bootstrap_payload["bootstrap_con_summary"],
+        bootstrap_dis_summary=bootstrap_payload["bootstrap_dis_summary"],
+        bootstrap_gene_tree_heights=bootstrap_gene_tree_heights,
     )
 
 
@@ -1254,7 +1510,6 @@ def analyze_triplet_from_observations(
     alpha_ks=DEFAULT_ALPHA_KS,
     discordant_test=DEFAULT_DISCORDANT_TEST,
     summary_statistic=DEFAULT_SUMMARY_STATISTIC,
-    stats_backend=DEFAULT_STATS_BACKEND,
     bootstrap_options=None,
     triplet_seed=None,
 ):
@@ -1274,8 +1529,8 @@ def analyze_triplet_from_observations(
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
         summary_statistic: ``mean``, ``median``, or ``mode``.
-        stats_backend: ``custom`` or ``standard``.
-        bootstrap_options: Optional dict; only ``iterations`` is read.
+        bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
+            ``summary_only`` are read.
         triplet_seed: Optional base seed for deterministic bootstrap.
 
     Returns:
@@ -1290,7 +1545,6 @@ def analyze_triplet_from_observations(
         alpha_ks=alpha_ks,
         discordant_test=discordant_test,
         summary_statistic=summary_statistic,
-        stats_backend=stats_backend,
         bootstrap_options=bootstrap_options,
         triplet_seed=triplet_seed,
     )
@@ -1305,8 +1559,8 @@ def analyze_triplet(
     alpha_ks=DEFAULT_ALPHA_KS,
     discordant_test=DEFAULT_DISCORDANT_TEST,
     summary_statistic=DEFAULT_SUMMARY_STATISTIC,
-    stats_backend=DEFAULT_STATS_BACKEND,
     tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+    collect_summary_statistics=False,
     bootstrap_options=None,
     triplet_seed=None,
 ):
@@ -1325,9 +1579,11 @@ def analyze_triplet(
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
         summary_statistic: ``mean``, ``median``, or ``mode``.
-        stats_backend: ``custom`` or ``standard``.
         tree_height_calculation_strategy: Tree-height strategy to apply.
-        bootstrap_options: Optional dict; only ``iterations`` is read.
+        collect_summary_statistics: When ``True``, gather per-triplet
+            topology/metric summary statistics onto the result.
+        bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
+            ``summary_only`` are read.
         triplet_seed: Optional base seed for deterministic bootstrap.
 
     Returns:
@@ -1338,6 +1594,7 @@ def analyze_triplet(
         triplet,
         gene_subtrees,
         tree_height_calculation_strategy=tree_height_calculation_strategy,
+        collect_summary_statistics=collect_summary_statistics,
     )
     return _finalize_triplet_analysis(
         triplet,
@@ -1347,180 +1604,28 @@ def analyze_triplet(
         alpha_ks=alpha_ks,
         discordant_test=discordant_test,
         summary_statistic=summary_statistic,
-        stats_backend=stats_backend,
         bootstrap_options=bootstrap_options,
         triplet_seed=triplet_seed,
     )
 
 
-def _bonferroni_adjust_p_values_custom(p_values):
-    """Apply Bonferroni correction to a p-value list.
-
-    Args:
-        p_values: List of raw p-values.
-
-    Returns:
-        The adjusted p-value list.
-    """
-    m = len(p_values)
-    if m == 0:
-        return []
-    return [min(1.0, float(p_value) * m) for p_value in p_values]
-
-
-def _holm_adjust_p_values_custom(p_values):
-    """Apply Holm step-down FWER correction to a p-value list.
-
-    Args:
-        p_values: List of raw p-values.
-
-    Returns:
-        The adjusted p-value list.
-    """
-    m = len(p_values)
-    if m == 0:
-        return []
-
-    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda item: item[1])
-    adjusted_sorted = [0.0] * m
-    running_max = 0.0
-    for idx, (_, p_value) in enumerate(indexed):
-        scaled = min(1.0, (m - idx) * p_value)
-        running_max = max(running_max, scaled)
-        adjusted_sorted[idx] = running_max
-
-    adjusted = [0.0] * m
-    for sorted_idx, (original_idx, _) in enumerate(indexed):
-        adjusted[original_idx] = adjusted_sorted[sorted_idx]
-    return adjusted
-
-
-def _fdr_bh_adjust_p_values_custom(p_values):
-    """Apply Benjamini-Hochberg FDR correction to a p-value list.
-
-    Args:
-        p_values: List of raw p-values.
-
-    Returns:
-        The adjusted p-value list.
-    """
-    m = len(p_values)
-    if m == 0:
-        return []
-
-    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda item: item[1])
-    adjusted_sorted = [0.0] * m
-
-    prev = 1.0
-    for idx in range(m - 1, -1, -1):
-        _, p_value = indexed[idx]
-        rank = idx + 1
-        adjusted = min(1.0, (p_value * m) / rank)
-        prev = min(prev, adjusted)
-        adjusted_sorted[idx] = prev
-
-    adjusted = [0.0] * m
-    for sorted_idx, (original_idx, _) in enumerate(indexed):
-        adjusted[original_idx] = adjusted_sorted[sorted_idx]
-
-    return adjusted
-
-
-def _fdr_by_adjust_p_values_custom(p_values):
-    """Apply Benjamini-Yekutieli FDR correction to a p-value list.
-
-    Args:
-        p_values: List of raw p-values.
-
-    Returns:
-        The adjusted p-value list.
-    """
-    m = len(p_values)
-    if m == 0:
-        return []
-
-    c_m = sum(1.0 / j for j in range(1, m + 1))
-    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda item: item[1])
-    adjusted_sorted = [0.0] * m
-
-    prev = 1.0
-    for idx in range(m - 1, -1, -1):
-        _, p_value = indexed[idx]
-        rank = idx + 1
-        adjusted = min(1.0, (p_value * m * c_m) / rank)
-        prev = min(prev, adjusted)
-        adjusted_sorted[idx] = prev
-
-    adjusted = [0.0] * m
-    for sorted_idx, (original_idx, _) in enumerate(indexed):
-        adjusted[original_idx] = adjusted_sorted[sorted_idx]
-    return adjusted
-
-
-def _fdr_tsbh_adjust_p_values_custom(p_values, alpha=0.05):
-    """Apply two-stage Benjamini-Hochberg (TSBH) FDR correction.
-
-    Args:
-        p_values: List of raw p-values.
-        alpha: FDR level used to estimate the true-null count.
-
-    Returns:
-        The adjusted p-value list.
-
-    Raises:
-        ValueError: If ``alpha`` is not in the open interval (0, 1).
-    """
-    m = len(p_values)
-    if m == 0:
-        return []
-
-    if alpha <= 0 or alpha >= 1:
-        raise ValueError("alpha must be in (0, 1) for fdr_tsbh")
-
-    indexed = sorted(enumerate(float(p) for p in p_values), key=lambda item: item[1])
-    p_sorted = [p_value for _, p_value in indexed]
-
-    alpha_stage1 = alpha / (1.0 + alpha)
-    rejects_stage1 = 0
-    for idx, p_value in enumerate(p_sorted):
-        rank = idx + 1
-        if p_value <= (rank / m) * alpha_stage1:
-            rejects_stage1 = rank
-
-    m0_hat = max(1, m - rejects_stage1)
-    adjusted_sorted = [0.0] * m
-    prev = 1.0
-    for idx in range(m - 1, -1, -1):
-        rank = idx + 1
-        adjusted = min(1.0, (p_sorted[idx] * m0_hat) / rank)
-        prev = min(prev, adjusted)
-        adjusted_sorted[idx] = prev
-
-    adjusted = [0.0] * m
-    for sorted_idx, (original_idx, _) in enumerate(indexed):
-        adjusted[original_idx] = adjusted_sorted[sorted_idx]
-    return adjusted
-
-
 def _adjust_p_values(
     p_values,
     method=DEFAULT_P_VALUE_CORRECTION,
-    stats_backend=DEFAULT_STATS_BACKEND,
     alpha=0.05,
 ):
-    """Adjust p-values by the selected correction method and backend.
+    """Adjust p-values by the selected correction method (statsmodels backend).
 
     Args:
         p_values: List of raw p-values.
         method: One of the supported correction methods (or ``no``).
-        stats_backend: ``custom`` or ``standard``.
-        alpha: FDR level used by TSBH and the statsmodels backend.
+        alpha: FDR level used by TSBH and statsmodels.
 
     Returns:
         The adjusted p-value list.
 
     Raises:
-        ValueError: If the method or backend is unsupported.
+        ValueError: If the method is unsupported.
     """
     if method not in P_VALUE_CORRECTION_CHOICES:
         raise ValueError(
@@ -1528,40 +1633,23 @@ def _adjust_p_values(
             f"Choose one of: {', '.join(P_VALUE_CORRECTION_CHOICES)}"
         )
 
-    if stats_backend not in STATS_BACKEND_CHOICES:
-        raise ValueError(
-            f"Unsupported stats backend: {stats_backend}. "
-            f"Choose one of: {', '.join(STATS_BACKEND_CHOICES)}"
-        )
-
     if method == "no":
         return [float(p_value) for p_value in p_values]
 
-    if stats_backend == "standard":
-        method_map = {
-            "bfn": "bonferroni",
-            "holm": "holm",
-            "fdr_bh": "fdr_bh",
-            "fdr_by": "fdr_by",
-            "fdr_tsbh": "fdr_tsbh",
-        }
-        mapped_method = method_map[method]
-        _, corrected, _, _ = multipletests(
-            [float(p_value) for p_value in p_values],
-            alpha=alpha,
-            method=mapped_method,
-        )
-        return [float(p_value) for p_value in corrected]
-
-    if method == "bfn":
-        return _bonferroni_adjust_p_values_custom(p_values)
-    if method == "holm":
-        return _holm_adjust_p_values_custom(p_values)
-    if method == "fdr_bh":
-        return _fdr_bh_adjust_p_values_custom(p_values)
-    if method == "fdr_by":
-        return _fdr_by_adjust_p_values_custom(p_values)
-    return _fdr_tsbh_adjust_p_values_custom(p_values, alpha=alpha)
+    method_map = {
+        "bfn": "bonferroni",
+        "holm": "holm",
+        "fdr_bh": "fdr_bh",
+        "fdr_by": "fdr_by",
+        "fdr_tsbh": "fdr_tsbh",
+    }
+    mapped_method = method_map[method]
+    _, corrected, _, _ = multipletests(
+        [float(p_value) for p_value in p_values],
+        alpha=alpha,
+        method=mapped_method,
+    )
+    return [float(p_value) for p_value in corrected]
 
 
 def _apply_triplet_result_p_value_correction(
@@ -1569,7 +1657,6 @@ def _apply_triplet_result_p_value_correction(
     alpha_dct,
     alpha_ks,
     method=DEFAULT_P_VALUE_CORRECTION,
-    stats_backend=DEFAULT_STATS_BACKEND,
 ):
     """Apply run-wide p-value correction to DCT and KS p-values.
 
@@ -1582,7 +1669,6 @@ def _apply_triplet_result_p_value_correction(
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         method: Correction method (or ``no``).
-        stats_backend: ``custom`` or ``standard``.
 
     Returns:
         A new list of corrected ``TripletPipelineResult`` objects.
@@ -1594,7 +1680,6 @@ def _apply_triplet_result_p_value_correction(
     adjusted_dct = _adjust_p_values(
         dct_p_values,
         method=method,
-        stats_backend=stats_backend,
         alpha=alpha_dct,
     )
 
@@ -1605,7 +1690,6 @@ def _apply_triplet_result_p_value_correction(
     adjusted_ks_values = _adjust_p_values(
         ks_p_values,
         method=method,
-        stats_backend=stats_backend,
         alpha=alpha_ks,
     )
     adjusted_ks_map = {
@@ -1676,6 +1760,7 @@ def write_pipeline_results(
     summary_statistic=DEFAULT_SUMMARY_STATISTIC,
     p_value_correction=DEFAULT_P_VALUE_CORRECTION,
     bootstrap=DEFAULT_BOOTSTRAP,
+    bootstrap_debug_mode=DEFAULT_BOOTSTRAP_DEBUG_MODE,
 ):
     """Write per-triplet results to a TSV file.
 
@@ -1687,6 +1772,8 @@ def write_pipeline_results(
         p_value_correction: Correction method, used to name the corrected
             columns.
         bootstrap: Whether to include the bootstrap columns.
+        bootstrap_debug_mode: Whether to also include the bootstrap-debug
+            columns (only meaningful when ``bootstrap`` is ``True``).
 
     Raises:
         ValueError: If any of the method/statistic/correction values is
@@ -1717,6 +1804,8 @@ def write_pipeline_results(
 
     summary_con_column = f"{summary_statistic}_con"
     summary_dis_column = f"{summary_statistic}_dis"
+    bootstrap_con_column = f"bootstrap_con_{summary_statistic}"
+    bootstrap_dis_column = f"bootstrap_dis_{summary_statistic}"
     dct_corrected_column = f"dct_p_val_{p_value_correction}_corr"
     ks_corrected_column = f"ks_p_val_{p_value_correction}_corr"
 
@@ -1751,6 +1840,18 @@ def write_pipeline_results(
                 "all_bootstrap",
             ]
         )
+        if bootstrap_debug_mode:
+            header.extend(
+                [
+                    "bootstrap_dct_stats",
+                    "bootstrap_dct_p_value",
+                    "bootstrap_ks_stats",
+                    "bootstrap_ks_p_value",
+                    bootstrap_con_column,
+                    bootstrap_dis_column,
+                    "bootstrap_gene_tree_heights",
+                ]
+            )
 
     with open(output_filepath, "w") as out_f:
         out_f.write("\t".join(header) + "\n")
@@ -1796,6 +1897,79 @@ def write_pipeline_results(
                         else f"{result.bootstrap_value:.12g}",
                         _format_all_bootstrap(result.all_bootstrap),
                     ]
+                )
+                if bootstrap_debug_mode:
+                    row.extend(
+                        [
+                            _serialize_bootstrap_value(result.bootstrap_dct_stats),
+                            _serialize_bootstrap_value(result.bootstrap_dct_p_value),
+                            _serialize_bootstrap_value(result.bootstrap_ks_stats),
+                            _serialize_bootstrap_value(result.bootstrap_ks_p_value),
+                            _serialize_bootstrap_value(result.bootstrap_con_summary),
+                            _serialize_bootstrap_value(result.bootstrap_dis_summary),
+                            _serialize_bootstrap_value(
+                                result.bootstrap_gene_tree_heights
+                            ),
+                        ]
+                    )
+
+            out_f.write("\t".join(row) + "\n")
+
+
+def write_summary_statistics_tsv(results, output_filepath, bootstrap=DEFAULT_BOOTSTRAP):
+    """Write per-triplet topology/metric summary statistics to a TSV file.
+
+    Emits the identity fields, the 63 topology/metric/statistic columns, the
+    classification, and (when bootstrap is enabled) the bootstrap value.
+
+    Args:
+        results: List of ``TripletPipelineResult`` objects.
+        output_filepath: Destination TSV path.
+        bootstrap: Whether to include the ``bootstrap_value`` column.
+    """
+    include_bootstrap_value = bool(bootstrap)
+
+    header = [
+        "triplet",
+        "abc_mapping",
+        "species_tree",
+        "dis1_topology",
+        "n_con",
+        "n_dis1",
+        "n_dis2",
+    ]
+    header.extend(_summary_statistics_column_names())
+    header.append("classification")
+    if include_bootstrap_value:
+        header.append("bootstrap_value")
+
+    with open(output_filepath, "w") as out_f:
+        out_f.write("\t".join(header) + "\n")
+        for result in results:
+            a_taxon, b_taxon, c_taxon = result.triplet
+            abc_mapping = f"A={a_taxon};B={b_taxon};C={c_taxon}"
+
+            row = [
+                ",".join(result.triplet),
+                abc_mapping,
+                "" if result.species_tree is None else result.species_tree,
+                "" if result.dis1_topology is None else result.dis1_topology,
+                str(result.n_con),
+                str(result.n_dis1),
+                str(result.n_dis2),
+            ]
+
+            topology_metric_statistics = result.topology_metric_statistics or {}
+            for column_name in _summary_statistics_column_names():
+                value = topology_metric_statistics.get(column_name)
+                row.append("" if value is None else f"{value:.12g}")
+
+            row.append(result.classification)
+            if include_bootstrap_value:
+                row.append(
+                    ""
+                    if result.bootstrap_value is None
+                    else f"{result.bootstrap_value:.12g}"
                 )
 
             out_f.write("\t".join(row) + "\n")

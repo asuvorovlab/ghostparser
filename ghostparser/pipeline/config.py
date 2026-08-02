@@ -1,7 +1,13 @@
-"""CLI parsing and default resolution for the streaming pipeline.
+"""CLI parsing and config resolution for the streaming pipeline.
 
-Turns process argv (via an argparse ``Namespace``) into the resolved config dict
-consumed by :func:`ghostparser.pipeline.runner.run_pipeline`.
+Turns process argv (via an argparse ``Namespace``) or a JSON/YAML config file
+into the resolved config dict consumed by
+:func:`ghostparser.pipeline.runner.run_pipeline`.
+
+Config-file mode mirrors the orchestrator: ``-c/--config-file`` is CLI-only, and
+when a config file is given the other CLI flags are ignored with a warning
+(config wins). A subset of runtime knobs is exposed both on the CLI and in the
+config file; the rest are config-file-only.
 """
 
 from __future__ import annotations
@@ -9,21 +15,33 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ghostparser.cli_config import resolve_cli_or_config_args
 from ghostparser.config import (
-    ConfigError,
     DEFAULT_ALPHA_DCT,
     DEFAULT_ALPHA_KS,
-    DEFAULT_BOOTSTRAP,
-    DEFAULT_BOOTSTRAP_ITERATIONS,
     DEFAULT_CONSOLIDATION,
     DEFAULT_DISCORDANT_TEST,
+    DEFAULT_GENERATE_SUMMARY_STATS,
     DEFAULT_MIN_SUPPORT_VALUE,
     DEFAULT_OUTPUT_FOLDER,
     DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_PROCESSES,
-    DEFAULT_STATS_BACKEND,
     DEFAULT_SUMMARY_STATISTIC,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+    DISCORDANT_TEST_CHOICES,
+    P_VALUE_CORRECTION_CHOICES,
+    SUMMARY_STATISTIC_CHOICES,
+    TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
+    _load_raw_config,
+    _parse_outgroups,
+    _validate_bootstrap_options,
+    _validate_choice,
+    _validate_non_negative_int,
+    _validate_optional_bool,
+    _validate_optional_float,
+    _validate_optional_path,
+    _validate_overwrite_flag,
+    _validate_required_path,
 )
 
 # Pipeline-specific parallelization knobs (no orchestrator equivalent to reuse).
@@ -32,6 +50,29 @@ DEFAULT_PARALLELIZATION_MODE = "auto"
 # `auto` picks `gene` for small-taxa/large-gene-tree runs, else `taxon`.
 AUTO_TAXA_SMALL_THRESHOLD = 15
 AUTO_GENE_TREES_THRESHOLD = 3500
+
+# CLI argument dest names that also map to config-file payload keys. These are
+# the config+CLI options; config-file-only keys (discordant_test,
+# tree_height_calculation_strategy, min_support_value, bootstrap_iterations,
+# bootstrap_seed, generate_summary_stats, bootstrap_debug_mode,
+# bootstrap_summary_only) are intentionally absent so they are read only from a
+# config file and otherwise take their defaults.
+_PIPELINE_PAYLOAD_ARG_NAMES = [
+    "species_tree_path",
+    "gene_trees_path",
+    "outgroups",
+    "output_folder",
+    "triplet_filter",
+    "no_overwrite",
+    "processes",
+    "parallelization_mode",
+    "consolidation",
+    "alpha_dct",
+    "alpha_ks",
+    "p_value_correction",
+    "summary_statistic",
+    "bootstrap",
+]
 
 
 def _resolve_path(path_str: str) -> str:
@@ -63,21 +104,27 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "-c",
+        "--config-file",
+        default=None,
+        help="Path to a JSON or YAML config file (config-file mode; other CLI flags are ignored)",
+    )
+    parser.add_argument(
         "-st",
         "--species-tree-path",
-        required=True,
+        default=None,
         help="Path to the species tree file in Newick format",
     )
     parser.add_argument(
         "-gt",
         "--gene-trees-path",
-        required=True,
+        default=None,
         help="Path to the gene trees file in Newick format",
     )
     parser.add_argument(
         "-og",
         "--outgroups",
-        required=True,
+        default=None,
         help="Outgroup species identifier(s), comma-separated",
     )
     parser.add_argument(
@@ -89,6 +136,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--triplet-filter",
         default=None,
         help="Path to triplet filter file (comma-separated taxa per line)",
+    )
+    parser.add_argument(
+        "--no-overwrite",
+        dest="no_overwrite",
+        action="store_true",
+        default=None,
+        help="Append a numeric suffix when the output folder already exists",
     )
     parser.add_argument(
         "--processes",
@@ -107,6 +161,30 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--alpha-dct",
+        type=float,
+        default=None,
+        help=f"DCT significance threshold (default: {DEFAULT_ALPHA_DCT})",
+    )
+    parser.add_argument(
+        "--alpha-ks",
+        type=float,
+        default=None,
+        help=f"KS significance threshold (default: {DEFAULT_ALPHA_KS})",
+    )
+    parser.add_argument(
+        "--p-value-correction",
+        choices=P_VALUE_CORRECTION_CHOICES,
+        default=None,
+        help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
+    )
+    parser.add_argument(
+        "--summary-statistic",
+        choices=SUMMARY_STATISTIC_CHOICES,
+        default=None,
+        help=f"Summary statistic after the KS test (default: {DEFAULT_SUMMARY_STATISTIC})",
+    )
+    parser.add_argument(
         "--no-consolidation",
         dest="consolidation",
         action="store_false",
@@ -123,12 +201,117 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def normalize_pipeline_payload(payload: dict) -> dict:
+    """Normalize a pipeline config/CLI payload into the runtime config dict.
+
+    Validates and fills every runtime key from the payload (a parsed config file
+    or a CLI-derived dict), applying shared defaults for anything omitted.
+    Config-file-only keys default when absent, which is what happens in CLI mode
+    since they have no corresponding flag.
+
+    Args:
+        payload: Raw config/CLI key-value mapping.
+
+    Returns:
+        The resolved config dict consumed by
+        :func:`ghostparser.pipeline.runner.run_pipeline`.
+
+    Raises:
+        ConfigError: If a required field is missing or a value is invalid.
+    """
+    species_tree = _validate_required_path(payload, "species_tree_path")
+    gene_trees = _validate_required_path(payload, "gene_trees_path")
+
+    outgroups_source = payload.get("outgroups")
+    if outgroups_source is None:
+        outgroups_source = payload.get("outgroup")
+    outgroups = _parse_outgroups(outgroups_source)
+
+    output = _validate_optional_path(payload, "output_folder")
+    if output is None:
+        output = _resolve_path(DEFAULT_OUTPUT_FOLDER)
+
+    bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
+
+    return {
+        "species_tree": species_tree,
+        "gene_trees": gene_trees,
+        "outgroup": outgroups,
+        "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
+        "output": output,
+        "overwrite": _validate_overwrite_flag(payload),
+        "processes": _validate_non_negative_int(
+            payload, "processes", DEFAULT_PROCESSES
+        ),
+        "parallelization_mode": _validate_choice(
+            payload,
+            "parallelization_mode",
+            DEFAULT_PARALLELIZATION_MODE,
+            PARALLELIZATION_MODE_CHOICES,
+        ),
+        "consolidation": _validate_optional_bool(
+            payload, "consolidation", DEFAULT_CONSOLIDATION
+        ),
+        "generate_summary_stats": _validate_optional_bool(
+            payload, "generate_summary_stats", DEFAULT_GENERATE_SUMMARY_STATS
+        ),
+        "min_support_value": _validate_optional_float(
+            payload, "min_support_value", DEFAULT_MIN_SUPPORT_VALUE
+        ),
+        "discordant_test": _validate_choice(
+            payload, "discordant_test", DEFAULT_DISCORDANT_TEST, DISCORDANT_TEST_CHOICES
+        ),
+        "summary_statistic": _validate_choice(
+            payload,
+            "summary_statistic",
+            DEFAULT_SUMMARY_STATISTIC,
+            SUMMARY_STATISTIC_CHOICES,
+        ),
+        "tree_height_calculation_strategy": _validate_choice(
+            payload,
+            "tree_height_calculation_strategy",
+            DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
+            TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
+        ),
+        "p_value_correction": _validate_choice(
+            payload,
+            "p_value_correction",
+            DEFAULT_P_VALUE_CORRECTION,
+            P_VALUE_CORRECTION_CHOICES,
+        ),
+        "alpha_dct": _validate_optional_float(payload, "alpha_dct", DEFAULT_ALPHA_DCT),
+        "alpha_ks": _validate_optional_float(payload, "alpha_ks", DEFAULT_ALPHA_KS),
+        "bootstrap": bootstrap,
+        "bootstrap_iterations": bootstrap_options["iterations"],
+        "bootstrap_seed": bootstrap_options["seed"],
+        "bootstrap_debug_mode": bootstrap_options["debug_mode"],
+        "bootstrap_summary_only": bootstrap_options["summary_only"],
+    }
+
+
+def load_pipeline_config(config_file: str) -> dict:
+    """Load and normalize a pipeline config from a JSON/YAML file.
+
+    Args:
+        config_file: Path to the JSON or YAML config file.
+
+    Returns:
+        The resolved config dict consumed by
+        :func:`ghostparser.pipeline.runner.run_pipeline`.
+
+    Raises:
+        ConfigError: If the file is malformed or a value is invalid.
+    """
+    payload = _load_raw_config(config_file)
+    return normalize_pipeline_payload(payload)
+
+
 def resolve_config(args: argparse.Namespace) -> dict:
     """Resolve a parsed CLI namespace into the pipeline runtime config.
 
-    Fills in every runtime key: the resolved required paths and outgroups, the
-    exposed optional flags, and the pinned shared defaults that are not exposed
-    as flags in v1.
+    In config-file mode (``-c/--config-file``) the file is loaded and the other
+    CLI flags are ignored with a warning; otherwise the exposed CLI flags are
+    normalized directly. Config-file-only keys take their defaults in CLI mode.
 
     Args:
         args: Parsed ``argparse.Namespace`` from :func:`build_argument_parser`.
@@ -138,69 +321,12 @@ def resolve_config(args: argparse.Namespace) -> dict:
         :func:`ghostparser.pipeline.runner.run_pipeline`.
 
     Raises:
-        ConfigError: If a required argument is missing or ``--processes`` is
-            negative.
+        ConfigError: If a required argument is missing or a value is invalid.
     """
-    species_tree = getattr(args, "species_tree_path", None)
-    gene_trees = getattr(args, "gene_trees_path", None)
-    outgroups_raw = getattr(args, "outgroups", None)
-
-    if not species_tree:
-        raise ConfigError("Missing required argument: --species-tree-path")
-    if not gene_trees:
-        raise ConfigError("Missing required argument: --gene-trees-path")
-    if not outgroups_raw:
-        raise ConfigError("Missing required argument: --outgroups")
-
-    outgroups = [part.strip() for part in str(outgroups_raw).split(",") if part.strip()]
-    if not outgroups:
-        raise ConfigError("Missing required argument: --outgroups")
-
-    output_folder = getattr(args, "output_folder", None)
-    output = _resolve_path(output_folder or DEFAULT_OUTPUT_FOLDER)
-
-    triplet_filter = getattr(args, "triplet_filter", None)
-    triplet_filter = _resolve_path(triplet_filter) if triplet_filter else None
-
-    processes = getattr(args, "processes", None)
-    if processes is None:
-        processes = DEFAULT_PROCESSES
-    if not isinstance(processes, int) or processes < 0:
-        raise ConfigError("--processes must be an integer >= 0")
-
-    parallelization_mode = getattr(args, "parallelization_mode", None)
-    if parallelization_mode is None:
-        parallelization_mode = DEFAULT_PARALLELIZATION_MODE
-
-    consolidation = getattr(args, "consolidation", None)
-    if consolidation is None:
-        consolidation = DEFAULT_CONSOLIDATION
-
-    bootstrap = getattr(args, "bootstrap", None)
-    if bootstrap is None:
-        bootstrap = DEFAULT_BOOTSTRAP
-
-    return {
-        "species_tree": _resolve_path(species_tree),
-        "gene_trees": _resolve_path(gene_trees),
-        "outgroup": outgroups,
-        "triplet_filter": triplet_filter,
-        "output": output,
-        "processes": processes,
-        "parallelization_mode": parallelization_mode,
-        "consolidation": consolidation,
-        "bootstrap": bootstrap,
-        # Pinned defaults: not exposed as flags in v1.
-        "overwrite": True,
-        "min_support_value": DEFAULT_MIN_SUPPORT_VALUE,
-        "discordant_test": DEFAULT_DISCORDANT_TEST,
-        "summary_statistic": DEFAULT_SUMMARY_STATISTIC,
-        "stats_backend": DEFAULT_STATS_BACKEND,
-        "tree_height_calculation_strategy": DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
-        "p_value_correction": DEFAULT_P_VALUE_CORRECTION,
-        "alpha_dct": DEFAULT_ALPHA_DCT,
-        "alpha_ks": DEFAULT_ALPHA_KS,
-        "bootstrap_iterations": DEFAULT_BOOTSTRAP_ITERATIONS,
-        "bootstrap_seed": None,
-        "generate_summary_stats": False,
-    }
+    resolved = resolve_cli_or_config_args(
+        args,
+        load_config=load_pipeline_config,
+        normalize_payload=normalize_pipeline_payload,
+        payload_arg_names=_PIPELINE_PAYLOAD_ARG_NAMES,
+    )
+    return vars(resolved)

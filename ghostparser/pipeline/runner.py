@@ -11,7 +11,7 @@ from ghostparser.config import prepare_output_directory
 from ghostparser.introgression_mapper import generate_introgression_maps
 
 from .config import resolve_config
-from .inference import write_pipeline_results
+from .inference import write_pipeline_results, write_summary_statistics_tsv
 from .stream import resolve_parallelization_mode, stream_triplet_results
 from .trees import (
     MetricsLogger,
@@ -111,7 +111,6 @@ def run_pipeline(config):
         metrics.log(f"Outgroup: {', '.join(outgroup_taxa)}")
         metrics.log(f"Discordant count test: {config['discordant_test']}")
         metrics.log(f"Summary statistic after KS: {config['summary_statistic']}")
-        metrics.log(f"Statistical backend: {config['stats_backend']}")
         metrics.log(
             f"Tree height strategy: {config['tree_height_calculation_strategy']}"
         )
@@ -120,6 +119,8 @@ def run_pipeline(config):
         metrics.log(f"KS alpha: {config['alpha_ks']}")
         metrics.log(f"Bootstrap enabled: {config['bootstrap']}")
         metrics.log(f"Bootstrap iterations: {config['bootstrap_iterations']}")
+        metrics.log(f"Bootstrap debug mode: {config['bootstrap_debug_mode']}")
+        metrics.log(f"Generate summary statistics TSV: {config['generate_summary_stats']}")
         metrics.log(f"Parallelization mode: {config['parallelization_mode']}")
         metrics.log(f"Consolidation enabled: {config['consolidation']}")
         metrics.log(f"Support threshold: {support_threshold}")
@@ -275,11 +276,15 @@ def run_pipeline(config):
                 "alpha_ks": config["alpha_ks"],
                 "discordant_test": config["discordant_test"],
                 "summary_statistic": config["summary_statistic"],
-                "stats_backend": config["stats_backend"],
                 "tree_height_calculation_strategy": config[
                     "tree_height_calculation_strategy"
                 ],
-                "bootstrap_options": {"iterations": config["bootstrap_iterations"]},
+                "collect_summary_statistics": config["generate_summary_stats"],
+                "bootstrap_options": {
+                    "iterations": config["bootstrap_iterations"],
+                    "debug_mode": config["bootstrap_debug_mode"],
+                    "summary_only": config["bootstrap_summary_only"],
+                },
                 "triplet_seed": config["bootstrap_seed"],
             }
 
@@ -310,10 +315,20 @@ def run_pipeline(config):
                 summary_statistic=config["summary_statistic"],
                 p_value_correction=config["p_value_correction"],
                 bootstrap=config["bootstrap"],
+                bootstrap_debug_mode=config["bootstrap_debug_mode"],
             )
             metrics.log("✓ Fused extraction + inference complete")
             metrics.log(f"  Output: {final_tsv}")
             metrics.log(f"  Triplets analyzed: {len(results)}")
+
+            if config["generate_summary_stats"]:
+                summary_tsv = str(output_dir / "summary_statistics.tsv")
+                write_summary_statistics_tsv(
+                    results,
+                    summary_tsv,
+                    bootstrap=config["bootstrap"],
+                )
+                metrics.log(f"  Summary statistics: {summary_tsv}")
             _log_stage_timing(metrics, stream_wall_time, stream_cpu_time)
             metrics.log("")
 
