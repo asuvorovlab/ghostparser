@@ -15,7 +15,6 @@ dependencies = [
 	"scipy>=1.11",
 	"statsmodels>=0.14",
 	"PyYAML>=6.0",
-	"pyarrow>=15.0",
 	"matplotlib>=3.8",
 	"seaborn>=0.13",
 ]
@@ -33,5 +32,5 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 markers = [
-	"backend_parity: tests that compare custom and standard backends for equivalent behavior",
+	"parity: cross-library parity checks (DendroPy vs BioPython tree operations)",
 ]
