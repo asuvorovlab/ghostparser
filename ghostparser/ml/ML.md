@@ -53,7 +53,7 @@ Run the Random Forest trainer explicitly as the module:
 python -m ghostparser.ml.random_forest -i /path/to/summary_statistics.tsv -o ml_results/
 ```
 
-Note: there is no package-level model dispatcher here; call `python -m ghostparser.ml.random_forest` or `python -m ghostparser.ml.multi_knn` directly.
+There is no package-level model dispatcher. Call `python -m ghostparser.ml.random_forest` or `python -m ghostparser.ml.multi_knn` directly.
 
 To run the KNN baseline explicitly:
 
