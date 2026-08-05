@@ -1,5 +1,9 @@
 # Ghostparser
 
+<p align="center">
+   <img width="120" height="120" alt="GhostParser-Icon" src="https://github.com/user-attachments/assets/a8443495-0a49-44b9-9dd9-350ff5677ca5" />
+</p>
+
 ## Overview
 
 **Ghostparser** is a phylogenetic introgression pipeline built around [`ghostparser.pipeline`](#pipeline-primary-entry-point), with an optional machine-learning module, [`ghostparser.ml`](#machine-learning-ghostparserml), for training models on simulated summary statistics.
