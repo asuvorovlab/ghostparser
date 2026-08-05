@@ -2,7 +2,11 @@
 
 ## Overview
 
-**Ghostparser** is a phylogenetic introgression pipeline centered on `ghostparser.pipeline`. It fuses tree preprocessing, triplet subtree extraction, and per-triplet inference into a single streaming pass and produces triplet-level inference outputs plus consolidated introgression maps. It supports both command-line and configuration-file modes. An optional machine-learning subpackage (`ghostparser.ml`) trains multi-label classifiers on a run's summary statistics.
+**Ghostparser** is a phylogenetic introgression pipeline built around [`ghostparser.pipeline`](#pipeline-primary-entry-point), with an optional machine-learning module, [`ghostparser.ml`](#machine-learning-ghostparserml), for training models on simulated summary statistics.
+
+The core pipeline implements the DCT+THT workflow for detecting sampled and ghost introgressions in large trees. Because the method operates on species triplets, the input trees are decomposed into all possible triplets by default, or narrowed with [`triplet-filter`](#configuration) when you only want to analyze specific triplets. Results are consolidated into a heatmap (for sampled directed introgressions) and bar chart (for ghost introgression where only target of introgression is inferred). The pipeline supports both command-line and configuration-file modes.
+
+The optional machine-learning subpackage trains multi-label classifiers on a run's summary statistics and includes utilities for model selection and tuning.
 
 ---
 
@@ -14,7 +18,7 @@
    - [Machine Learning](#machine-learning-ghostparserml)
 3. [Pipeline Input/Output](#pipeline-inputoutput)
 4. [Configuration](#configuration)
-5. [Defaults](#defaults-at-a-glance)
+   - [Defaults](#defaults-at-a-glance)
 6. [Handled Errors](#handled-errors)
 7. [Testing](#testing)
 8. [For Maintainers](#for-maintainers)
@@ -53,7 +57,9 @@ python -m ghostparser.pipeline -c config.yaml
 
 python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup
 
-python -m ghostparser.ml --model random_forest -i summary_statistics.tsv -o ml_out
+python -m ghostparser.ml.random_forest -i summary_statistics.tsv -o ml_out
+
+python -m ghostparser.ml.multi_knn -i summary_statistics.tsv -o ml_out
 ```
 
 **Note:** The wheel installation installs the package into your Python environment, so you don't need to be in the project directory to run it. All module commands (`python -m ghostparser.*`) work from anywhere.
@@ -102,10 +108,7 @@ poetry run python -m ghostparser.pipeline -c run_config.yaml
 
 ### Pipeline (Primary Entry Point)
 
-`ghostparser.pipeline` is the introgression engine. It fuses tree preprocessing,
-triplet subtree extraction, and per-triplet inference into a single streaming
-pass, so the intermediate triplet-gene-trees dataset is never written to disk or
-reloaded — which is what keeps memory bounded on large gene-tree sets.
+`ghostparser.pipeline` is the introgression inference engine.
 
 Run with a config file (recommended for reproducibility):
 
@@ -128,23 +131,14 @@ python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup \
 
 #### How the Pipeline Works
 
-1. The species tree is standardized, filtered on mean internal support, rooted
-   on the outgroup MRCA, and pruned; gene trees are cleaned and rooted on the
-   outgroup.
-2. Every ingroup triplet is enumerated (or restricted by `--triplet-filter`) and
-   normalized to `(A, B, C)` with A and B the species-tree sisters.
-3. For each triplet the engine extracts its subtree from every gene tree,
-   classifies the topology as concordant or one of two discordant alternatives,
-   and records a tree height H(T).
-4. A three-gate decision follows: the discordant count test, then the KS
-   tree-height test, then a concordant-versus-discordant summary comparison.
-   Each triplet lands on `no_introgression`, `inflow_introgression`,
-   `outflow_introgression`, `ghost_introgression`, or `unresolved`.
+1. The species tree is standardized, filtered on mean internal support, rooted on the outgroup MRCA, and pruned; gene trees are also cleaned and rooted on the outgroup similarly.
+2. Every ingroup triplet is enumerated (or restricted by `--triplet-filter`) and normalized to `(A, B, C)` with A and B the species-tree sisters.
+3. For each triplet the engine extracts its subtree from every gene tree, classifies the topology as concordant or one of two discordant alternatives, and records a tree height H(T).
+4. A three-gate decision follows: the discordant count test, then the KS tree-height test, then a concordant-versus-discordant summary comparison. Each triplet lands on `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `unresolved`.
 5. Multiple-testing correction is applied once across every triplet in the run.
 6. Results are written, and consolidation renders the introgression maps.
 
-See [ghostparser/pipeline/PIPELINE.md](ghostparser/pipeline/PIPELINE.md) for the
-mechanism in detail.
+See [PIPELINE.md](ghostparser/pipeline/PIPELINE.md) for the mechanism in detail.
 
 #### Arguments
 
@@ -156,8 +150,7 @@ mechanism in detail.
 
 **Config-file mode (CLI-only):**
 
-- `-c, --config-file` — when given, the file supplies every setting and the
-  other CLI flags are ignored with a warning.
+- `-c, --config-file` — when given, the file supplies every setting and the other CLI flags are ignored with a warning.
 
 **Config + CLI:**
 
@@ -166,12 +159,9 @@ mechanism in detail.
 - `--alpha-dct`, `--alpha-ks`, `--p-value-correction`, `--summary-statistic`
 - `--no-consolidation`, `--no-bootstrap`
 
-**Config-file only:** `discordant_test`, `tree_height_calculation_strategy`,
-`min_support_value`, `generate_summary_stats`, and the `bootstrap_options` block
-(`iterations`, `seed`, `debug_mode`, `summary_only`).
+**Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, and the `bootstrap_options` block (`iterations`, `seed`, `debug_mode`, `summary_only`).
 
-The statistical tests always use the scipy/statsmodels backend. The full key
-reference is in the **[Configuration Guide](CONFIG.md#pipeline-primary-module)**.
+The statistical tests always use the scipy/statsmodels backend. The full key reference is in the **[Configuration Guide](CONFIG.md#pipeline-primary-module)**.
 
 #### Primary Outputs
 
@@ -183,35 +173,22 @@ reference is in the **[Configuration Guide](CONFIG.md#pipeline-primary-module)**
 
 Consolidation details:
 
-- The inflow/outflow heatmap and ghost target-strength bar chart share a single
-  colorbar covering both panels.
-- The species tree topology is stitched onto the plot axes so the source and
-  target axes read like tree labels.
-- By default the plots use the processed species tree after outgroup pruning;
-  with a triplet filter, the plotted tree can be pruned to the filtered taxa.
+- The inflow/outflow heatmap and ghost target-strength bar chart share a single colorbar covering both panels.
+- The species tree topology is stitched onto the plot axes so the source and target axes read like tree labels.
+- By default the plots use the processed species tree after outgroup pruning; with a triplet filter, the plotted tree can be pruned to the filtered taxa.
 - Consolidation is enabled by default; disable it with `--no-consolidation`.
-- Its artifacts go in a dedicated `consolidation/` subfolder so its own
-  output-directory reset cannot remove the run's results.
+- Its artifacts go in a dedicated `consolidation/` subfolder so its own output-directory reset cannot remove the run's results.
 
 #### Bootstrap Behavior
 
-- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`;
-  the remaining controls (`iterations`, `seed`, `debug_mode`, `summary_only`)
-  are set through the config file's `bootstrap_options` block.
-- Iterations with incomplete required metrics are counted as `unresolved` and
-  processing continues.
-- `bootstrap_value` reports the bootstrap fraction for the final
-  `classification` value after correction.
-- A fixed `seed` makes results reproducible and identical across
-  parallelization modes, because each triplet derives its own seed from it.
+- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`; the remaining controls (`iterations`, `seed`, `debug_mode`, `summary_only`) are set through the config file's `bootstrap_options` block.
+- Iterations with incomplete required metrics are counted as `unresolved` and processing continues.
+- `bootstrap_value` reports the bootstrap fraction for the final `classification` value after correction.
+- A fixed `seed` makes results reproducible and identical across parallelization modes, because each triplet derives its own seed from it.
 
----
+#### Pipeline Input/Output
 
----
-
-## Pipeline Input/Output
-
-### Input Expectations
+##### Input Expectations
 
 **Required Arguments:**
 
@@ -251,7 +228,7 @@ Consolidation details:
      per-gene-tree subtree extraction within one triplet; `auto` (default)
      chooses based on the input size.
 
-### Output Files
+##### Output Files
 
 A pipeline run generates these output files:
 
@@ -286,7 +263,7 @@ When bootstrap debug mode is enabled, the TSV also adds:
 
 Bootstrap payload columns are serialized as JSON strings by default.
 
-### Example Usage
+#### Example Usage
 
 **Species tree** (`species.tree`):
 
@@ -329,8 +306,34 @@ TaxaA,TaxaB,TaxaC	((TaxaA,TaxaB),TaxaC);	7	3	2	BC	no_introgression	0.82
 TaxaA,TaxaC,TaxaD	((TaxaA,TaxaC),TaxaD);	12	0	0	BC	no_introgression	1.00
 ```
 
-One row per triplet; the full column list is documented in
-[ghostparser/pipeline/PIPELINE.md](ghostparser/pipeline/PIPELINE.md).
+One row per triplet; the full column list is documented in [PIPELINE.md](ghostparser/pipeline/PIPELINE.md).
+
+---
+
+
+### Machine Learning (ghostparser.ml)
+
+A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the pipeline) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see [ML.md](ghostparser/ml/ML.md) for full usage and the data contract.
+
+Run the trainers directly:
+
+Run example:
+
+```bash
+python -m ghostparser.ml.random_forest -i results/summary_statistics.tsv -o results/ml_out
+```
+
+The KNN baseline is available as:
+
+```bash
+python -m ghostparser.ml.multi_knn -i results/summary_statistics.tsv -o results/ml_out
+```
+
+The package entrypoint `python -m ghostparser.ml` only prints those direct-run commands; it does not select a trainer itself.
+
+**Configuration Precedence:**
+
+`ghostparser.pipeline` and the `ghostparser.ml` trainers each support `-c/--config-file`. When a config file is given, it supplies every setting and the other CLI flags are ignored with a warning.
 
 ---
 
@@ -342,9 +345,8 @@ See the **[Configuration Guide](CONFIG.md)** for complete details on:
 - JSON/YAML configuration formats
 - Configuration precedence and CLI override rules
 
----
 
-## Defaults at a Glance
+### Defaults at a Glance
 
 Pipeline defaults are defined in `ghostparser/pipeline/config.py`:
 
@@ -371,38 +373,6 @@ Pipeline defaults are defined in `ghostparser/pipeline/config.py`:
 - `bootstrap_options.seed`: unset
 - `bootstrap_options.debug_mode`: `false`
 - `bootstrap_options.summary_only`: `false`
-
-### Machine Learning (ghostparser.ml)
-
-A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the pipeline) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see [ghostparser/ml/ML.md](ghostparser/ml/ML.md) for full usage and the data contract.
-
-Run example:
-
-```bash
-python -m ghostparser.ml.random_forest -i results/summary_statistics.tsv -o results/ml_out
-```
-
-Or explicitly dispatch via the package entrypoint:
-
-```bash
-python -m ghostparser.ml --model random_forest -i results/summary_statistics.tsv -o results/ml_out
-```
-
-The KNN baseline is available as:
-
-```bash
-python -m ghostparser.ml.multi_knn -i results/summary_statistics.tsv -o results/ml_out
-```
-
-Note: `python -m ghostparser.ml` will not redirect to any model by default — you must pass `--model` to dispatch.
-
-**Backend Details:**
-
-- The discordant count test and the KS tree-height test always use `scipy.stats` and `statsmodels`.
-
-**Configuration Precedence:**
-
-`ghostparser.pipeline` and the `ghostparser.ml` trainers each support `-c/--config-file`. When a config file is given, it supplies every setting and the other CLI flags are ignored with a warning.
 
 ---
 
@@ -489,11 +459,6 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Bootstrap payload is not JSON-serializable: ...`
    Bootstrap debug output could not be converted to TSV-safe JSON.
 
-### ML Package Entrypoint (`ghostparser.ml.__main__`)
-
-- `RuntimeError: Model module ... does not expose a 'main' function`
-   Dispatch target module is importable but missing required CLI entry function.
-
 ### ML Dataset and Feature Validation (`ghostparser.ml.ml_utils`)
 
 - `Input TSV is missing a header row` / `Input TSV contains no data rows`
@@ -567,7 +532,7 @@ Run all tests:
 pytest
 ```
 
-See [tests/TESTS.md](tests/TESTS.md) for detailed test documentation and test map.
+See [TESTS.md](tests/TESTS.md) for detailed test documentation and test map.
 
 ---
 
@@ -599,9 +564,9 @@ git tag -d v0.1.1
 git push origin --delete v0.1.1
 
 # 3) Manually delete the GitHub Release (if created)
-#    Go to: https://github.com/asif256000/ghostparser/releases
-#    Find the v0.1.1 release and click "Delete"
-#    OR use GitHub CLI:
+# Go to: https://github.com/asif256000/ghostparser/releases
+# Find the v0.1.1 release and click "Delete"
+# OR use GitHub CLI:
 gh release delete v0.1.1
 ```
 
