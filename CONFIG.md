@@ -1,8 +1,8 @@
 # Configuration Guide
 
-This guide is the complete reference for every GhostParser configuration key. It is organized around the main entry point, `ghostparser.pipeline`, followed by the machine-learning subpackage (`ghostparser.ml`) and the standalone consolidation CLI (`ghostparser.introgression_mapper`).
+This guide is the complete reference for every GhostParser configuration key. It is organized around the main entry point, `ghostparser.orchestrator`, followed by the machine-learning subpackage (`ghostparser.ml`) and the standalone consolidation CLI (`ghostparser.introgression_mapper`).
 
-Both `ghostparser.pipeline` and the `ghostparser.ml` trainers support config files. For how each module works internally, see [ghostparser/pipeline/PIPELINE.md](ghostparser/pipeline/PIPELINE.md) and [ghostparser/ml/ML.md](ghostparser/ml/ML.md).
+Both `ghostparser.orchestrator` and the `ghostparser.ml` trainers support config files. For how each module works internally, see [ghostparser/orchestrator/ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) and [ghostparser/ml/ML.md](ghostparser/ml/ML.md).
 
 ## Path Resolution
 
@@ -60,7 +60,7 @@ output_folder: /scratch/results            # Absolute path
 
 **Executed from** `/home/user/project/`:
 ```bash
-python -m ghostparser.pipeline -c configs/run.yaml
+python -m ghostparser.orchestrator -c configs/run.yaml
 ```
 
 **Resolved paths:**
@@ -71,19 +71,19 @@ python -m ghostparser.pipeline -c configs/run.yaml
 
 ---
 
-## Pipeline (Primary Module)
+## Orchestrator (Primary Module)
 
-`ghostparser.pipeline` is the end-to-end entry point. It fuses tree preprocessing, triplet subtree extraction, and per-triplet inference into a single streaming pass, then optionally consolidates the results into introgression maps.
+`ghostparser.orchestrator` is the end-to-end entry point. It fuses tree preprocessing, triplet subtree extraction, and per-triplet inference into a single streaming pass, then optionally consolidates the results into introgression maps.
 
-For how the module works internally, see [ghostparser/pipeline/PIPELINE.md](ghostparser/pipeline/PIPELINE.md).
+For how the module works internally, see [ghostparser/orchestrator/ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md).
 
 ### Run With a Config File
 
 `-c/--config-file` is the only CLI-only option. It accepts a JSON or YAML file:
 
 ```bash
-python -m ghostparser.pipeline -c run_config.yaml
-python -m ghostparser.pipeline -c run_config.json
+python -m ghostparser.orchestrator -c run_config.yaml
+python -m ghostparser.orchestrator -c run_config.json
 ```
 
 When a config file is given, **the file supplies every setting and the other CLI flags are ignored with a warning** (config wins). This is the only way to set the config-file-only keys listed below.
@@ -216,6 +216,14 @@ Settable either on the CLI or in a config file.
 - Default: `true`
 - Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV.
 
+##### `preflight_data_check`
+
+- CLI: `--preflight-data-check` (sets `preflight_data_check: true`)
+- Default: `false`
+- Runs only the structural sanity check on the species tree, gene trees, and triplets, writes `preflight_data_check.txt` into the output folder, and exits without any analysis. No results TSV, processed trees, `metrics.txt`, or consolidation artifacts are produced. Every other analysis key is ignored for that run.
+- The report lists each detected issue by category (for example `gene_tree.rooting_failed`, `triplet.unresolved_rooted_sister_pair`), a count per category, up to 25 example messages naming the offending gene-tree index and triplet, and a species-tree-versus-gene-tree attribution summary.
+- The checks are structural: they establish whether the data can be processed, not whether the result will be biologically meaningful.
+
 ### Config-File-Only Keys
 
 These have no CLI flag. They take their default unless set in a config file.
@@ -251,10 +259,10 @@ A nested block; each key may also be given flat as `bootstrap_<key>`.
 - `debug_mode` (flat: `bootstrap_debug_mode`) — default `false`. Appends the per-iteration bootstrap-debug columns to the results TSV.
 - `summary_only` (flat: `bootstrap_summary_only`) — default `false`. With debug mode on, emits compact summaries instead of full per-iteration lists.
 
-### Pipeline CLI Example
+### Orchestrator CLI Example
 
 ```bash
-python -m ghostparser.pipeline \
+python -m ghostparser.orchestrator \
   -st data/species.tree \
   -gt data/genes.tree \
   -og Out1,Out2 \
@@ -289,7 +297,7 @@ The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--
 
 - Type: string
 - Parallel CLI: `--input-path` (alias `-i`)
-- Description: path to `summary_statistics.tsv` produced by the pipeline.
+- Description: path to `summary_statistics.tsv` produced by the orchestrator.
 
 ##### `output_dir`
 
@@ -491,7 +499,7 @@ The ML sample configs illustrate the `input_path`, `output_dir`, `model`, `evalu
 
 ## Introgression Mapper (CLI Submodule)
 
-`ghostparser.introgression_mapper` can be run independently to regenerate consolidation artifacts from an existing `pipeline_triplet_results.tsv` without re-running the full pipeline.
+`ghostparser.introgression_mapper` can be run independently to regenerate consolidation artifacts from an existing `orchestrator_triplet_results.tsv` without re-running the full orchestrator.
 
 ### CLI Options
 
@@ -499,7 +507,7 @@ The ML sample configs illustrate the `input_path`, `output_dir`, `model`, `evalu
 
 ##### `-r`, `--results-tsv`
 
-- Description: path to `pipeline_triplet_results.tsv` produced by the pipeline.
+- Description: path to `orchestrator_triplet_results.tsv` produced by the orchestrator.
 
 ##### `-st`, `--species-tree-path`
 
@@ -520,7 +528,7 @@ The ML sample configs illustrate the `input_path`, `output_dir`, `model`, `evalu
 
 ```bash
 python -m ghostparser.introgression_mapper \
-  --results-tsv results/pipeline_triplet_results.tsv \
+  --results-tsv results/orchestrator_triplet_results.tsv \
   --species-tree-path results/processed_species.tree \
   --output-dir results/ \
   --outgroups Ephemera_danica,Isonychia_kiangsinensis
@@ -530,7 +538,7 @@ python -m ghostparser.introgression_mapper \
 
 - `introgression_combined.png` — combined inflow/outflow heatmap and ghost target-strength bar chart.
 - `introgression_matrix_inflow_outflow.tsv` — target × source matrix of average bootstrap support values.
-- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support.
+- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support, plus a `has_sampled_introgression` flag (`1` when that taxon is also the target of a sampled introgression edge) that sets the bar colour.
 - `introgression_taxa_order.tsv` — ordered taxa list matching the plot axes.
 
 ---
@@ -538,5 +546,5 @@ python -m ghostparser.introgression_mapper \
 ## Notes
 
 - Path values are resolved at runtime to absolute paths.
-- Config-file mode (`-c/--config-file`) is available in `ghostparser.pipeline` and the `ghostparser.ml` trainers.
+- Config-file mode (`-c/--config-file`) is available in `ghostparser.orchestrator` and the `ghostparser.ml` trainers.
 - Use `--processes 1` to run single-worker mode.

@@ -6,7 +6,7 @@
 
 ## Overview
 
-**Ghostparser** is a phylogenetic introgression pipeline built around [`ghostparser.pipeline`](#pipeline-primary-entry-point), with an optional machine-learning module, [`ghostparser.ml`](#machine-learning-ghostparserml), for training models on simulated summary statistics.
+**Ghostparser** is a phylogenetic introgression pipeline built around [`ghostparser.orchestrator`](#orchestrator-primary-entry-point), with an optional machine-learning module, [`ghostparser.ml`](#machine-learning-ghostparserml), for training models on simulated summary statistics.
 
 The core pipeline implements the DCT+THT workflow for detecting sampled and ghost introgressions in large trees. Because the method operates on species triplets, the input trees are decomposed into all possible triplets by default, or narrowed with [`triplet-filter`](#configuration) when you only want to analyze specific triplets. Results are consolidated into a heatmap (for sampled directed introgressions) and bar chart (for ghost introgression where only target of introgression is inferred). The pipeline supports both command-line and configuration-file modes.
 
@@ -18,9 +18,9 @@ The optional machine-learning subpackage trains multi-label classifiers on a run
 
 1. [Quick Start](#quick-start)
 2. [Modules](#modules)
-   - [Pipeline (Primary Entry Point)](#pipeline-primary-entry-point)
+   - [Orchestrator (Primary Entry Point)](#orchestrator-primary-entry-point)
    - [Machine Learning](#machine-learning-ghostparserml)
-3. [Pipeline Input/Output](#pipeline-inputoutput)
+3. [Orchestrator Input/Output](#orchestrator-inputoutput)
 4. [Configuration](#configuration)
    - [Defaults](#defaults-at-a-glance)
 6. [Handled Errors](#handled-errors)
@@ -57,9 +57,9 @@ pip install https://github.com/asif256000/ghostparser/releases/download/v0.1.0/g
 **After installation, users can run from any directory:**
 
 ```bash
-python -m ghostparser.pipeline -c config.yaml
+python -m ghostparser.orchestrator -c config.yaml
 
-python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 
 python -m ghostparser.ml.random_forest -i summary_statistics.tsv -o ml_out
 
@@ -103,37 +103,37 @@ Run commands with Poetry:
 
 ```bash
 poetry run pytest -q
-poetry run python -m ghostparser.pipeline -c run_config.yaml
+poetry run python -m ghostparser.orchestrator -c run_config.yaml
 ```
 
 ---
 
 ## Modules
 
-### Pipeline (Primary Entry Point)
+### Orchestrator (Primary Entry Point)
 
-`ghostparser.pipeline` is the introgression inference engine.
+`ghostparser.orchestrator` is the introgression inference engine.
 
 Run with a config file (recommended for reproducibility):
 
 ```bash
-python -m ghostparser.pipeline -c run_config.yaml
+python -m ghostparser.orchestrator -c run_config.yaml
 ```
 
 Run via CLI flags:
 
 ```bash
-python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 ```
 
 With an explicit worker count and parallelization mode:
 
 ```bash
-python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup \
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup \
     --processes 4 --parallelization-mode auto
 ```
 
-#### How the Pipeline Works
+#### How the Orchestrator Works
 
 1. The species tree is standardized, filtered on mean internal support, rooted on the outgroup MRCA, and pruned; gene trees are also cleaned and rooted on the outgroup similarly.
 2. Every ingroup triplet is enumerated (or restricted by `--triplet-filter`) and normalized to `(A, B, C)` with A and B the species-tree sisters.
@@ -142,7 +142,7 @@ python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup \
 5. Multiple-testing correction is applied once across every triplet in the run.
 6. Results are written, and consolidation renders the introgression maps.
 
-See [PIPELINE.md](ghostparser/pipeline/PIPELINE.md) for the mechanism in detail.
+See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanism in detail.
 
 #### Arguments
 
@@ -165,11 +165,22 @@ See [PIPELINE.md](ghostparser/pipeline/PIPELINE.md) for the mechanism in detail.
 
 **Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, and the `bootstrap_options` block (`iterations`, `seed`, `debug_mode`, `summary_only`).
 
-The statistical tests always use the scipy/statsmodels backend. The full key reference is in the **[Configuration Guide](CONFIG.md#pipeline-primary-module)**.
+The statistical tests always use the scipy/statsmodels backend. The full key reference is in the **[Configuration Guide](CONFIG.md#orchestrator-primary-module)**.
+
+#### Checking Your Data First
+
+Before committing to a full run, `--preflight-data-check` validates the input trees and exits without any analysis:
+
+```bash
+python -m ghostparser.orchestrator \
+    -st species.tree -gt genes.tree -og OutGroup --preflight-data-check
+```
+
+It writes `preflight_data_check.txt` into the output folder, listing every structural problem it found — gene trees missing the outgroup, polytomous triplets with no resolvable sister pair, triplet-filter lines naming unknown taxa — with counts per category, examples naming the offending gene tree and triplet, and a summary attributing the issues to the species tree or the gene trees. These are the failures that would otherwise surface as errors partway through a long run. The checks are structural only: passing means the data can be processed, not that the result will be biologically meaningful.
 
 #### Primary Outputs
 
-1. `pipeline_triplet_results.tsv` — per-triplet classification results
+1. `orchestrator_triplet_results.tsv` — per-triplet classification results
 2. `summary_statistics.tsv` — only when `generate_summary_stats` is set
 3. `processed_species.tree` / `processed_genes.tree` — cleaned, rooted trees
 4. `metrics.txt` — per-stage wall/CPU timing and run parameters
@@ -177,7 +188,8 @@ The statistical tests always use the scipy/statsmodels backend. The full key ref
 
 Consolidation details:
 
-- The inflow/outflow heatmap and ghost target-strength bar chart share a single colorbar covering both panels.
+- The figure uses the `cividis` colormap throughout. The colorbar applies to the inflow/outflow heatmap. In the ghost bar chart, bar *length* encodes the ghost bootstrap value while colour encodes only whether that taxon also has sampled introgression, using the two extremes of the same colormap: yellow for ghost-only, dark blue for ghost plus sampled. A legend above the bars states the mapping.
+- Heatmap cells with no introgression edge are left unpainted, so a sparse matrix shows its real signal rather than a wall of colour. The gridlines and panel border still mark the row and column structure.
 - The species tree topology is stitched onto the plot axes so the source and target axes read like tree labels.
 - By default the plots use the processed species tree after outgroup pruning; with a triplet filter, the plotted tree can be pruned to the filtered taxa.
 - Consolidation is enabled by default; disable it with `--no-consolidation`.
@@ -190,7 +202,7 @@ Consolidation details:
 - `bootstrap_value` reports the bootstrap fraction for the final `classification` value after correction.
 - A fixed `seed` makes results reproducible and identical across parallelization modes, because each triplet derives its own seed from it.
 
-#### Pipeline Input/Output
+#### Orchestrator Input/Output
 
 ##### Input Expectations
 
@@ -234,12 +246,12 @@ Consolidation details:
 
 ##### Output Files
 
-A pipeline run generates these output files:
+An orchestrator run generates these output files:
 
 1. **`processed_species.tree`** - Processed species tree with support values removed and outgroup rooting applied
 2. **`processed_genes.tree`** - Processed gene trees with support values removed and outgroup rooting applied
 3. **`metrics.txt`** - Metrics log with warnings, timings, and counts
-4. **`pipeline_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
+4. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
 5. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `generate_summary_stats` is enabled, including:
    - identity columns (`triplet`, `abc_mapping`, `species_tree`, `dis1_topology`)
    - topology counts (`n_con`, `n_dis1`, `n_dis2`)
@@ -285,24 +297,24 @@ Bootstrap payload columns are serialized as JSON strings by default.
 **Run:**
 
 ```bash
-python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 ```
 
 **Multiple outgroups (comma-separated):**
 
 ```bash
-python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup1,OutGroup2
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup1,OutGroup2
 ```
 
 **With triplet filter:**
 
 ```bash
-python -m ghostparser.pipeline -st species.tree -gt genes.tree -og OutGroup --triplet-filter triplets.txt
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup --triplet-filter triplets.txt
 ```
 
 When multiple outgroups are provided, the species tree is rooted on their most recent common ancestor (MRCA) and the outgroup clade is pruned. Any additional taxa that fall inside the outgroup clade are excluded from triplet generation and logged as a warning (including the full list of excluded taxa) in the metrics file.
 
-**Output** (`pipeline_triplet_results.tsv`, abbreviated):
+**Output** (`orchestrator_triplet_results.tsv`, abbreviated):
 
 ```
 triplet	species_tree	n_con	n_dis1	n_dis2	dis1_topology	classification	bootstrap_value
@@ -310,14 +322,14 @@ TaxaA,TaxaB,TaxaC	((TaxaA,TaxaB),TaxaC);	7	3	2	BC	no_introgression	0.82
 TaxaA,TaxaC,TaxaD	((TaxaA,TaxaC),TaxaD);	12	0	0	BC	no_introgression	1.00
 ```
 
-One row per triplet; the full column list is documented in [PIPELINE.md](ghostparser/pipeline/PIPELINE.md).
+One row per triplet; the full column list is documented in [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md).
 
 ---
 
 
 ### Machine Learning (ghostparser.ml)
 
-A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the pipeline) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see [ML.md](ghostparser/ml/ML.md) for full usage and the data contract.
+A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the orchestrator) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see [ML.md](ghostparser/ml/ML.md) for full usage and the data contract.
 
 Run the trainers directly:
 
@@ -337,14 +349,14 @@ The package entrypoint `python -m ghostparser.ml` only prints those direct-run c
 
 **Configuration Precedence:**
 
-`ghostparser.pipeline` and the `ghostparser.ml` trainers each support `-c/--config-file`. When a config file is given, it supplies every setting and the other CLI flags are ignored with a warning.
+`ghostparser.orchestrator` and the `ghostparser.ml` trainers each support `-c/--config-file`. When a config file is given, it supplies every setting and the other CLI flags are ignored with a warning.
 
 ---
 
 ## Configuration
 
 See the **[Configuration Guide](CONFIG.md)** for complete details on:
-- Pipeline config keys and structure
+- Orchestrator config keys and structure
 - Machine-learning configuration sections
 - JSON/YAML configuration formats
 - Configuration precedence and CLI override rules
@@ -352,7 +364,7 @@ See the **[Configuration Guide](CONFIG.md)** for complete details on:
 
 ### Defaults at a Glance
 
-Pipeline defaults are defined in `ghostparser/pipeline/config.py`:
+Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
 
 **Statistical and Processing Defaults:**
 
@@ -384,7 +396,7 @@ Pipeline defaults are defined in `ghostparser/pipeline/config.py`:
 
 This section summarizes user-facing errors and validation failures that GhostParser modules can raise or report during execution.
 
-### Pipeline (`ghostparser.pipeline`)
+### Orchestrator (`ghostparser.orchestrator`)
 
 - `Error: Species tree file not found: ...` / `Error: Gene trees file not found: ...`
    The run exits early when required input files are missing.
@@ -426,7 +438,7 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Config field bootstrap_options.* ...`
    Bootstrap options failed validation (`iterations >= 1`, integer seed, boolean debug/summary flags).
 
-### Tree Preprocessing (`ghostparser.pipeline.trees`)
+### Tree Preprocessing (`ghostparser.orchestrator.trees`)
 
 - `Tree file not found: ...`
    Input tree file path is missing.
@@ -442,7 +454,7 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Tree taxa do not match provided ABC triplet`
    Topology classification was requested with an incompatible ABC taxon mapping.
 
-### Triplet Inference (`ghostparser.pipeline.inference`)
+### Triplet Inference (`ghostparser.orchestrator.inference`)
 
 - `Unsupported discordant test method: ...` / `Unsupported summary statistic: ...` / `Unsupported tree height calculation strategy: ...` / `Unsupported p-value correction method: ...`
    A selected method is outside the supported choices; the message lists the valid ones.
