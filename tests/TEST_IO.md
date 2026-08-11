@@ -11,9 +11,9 @@ derivation is written down.
 
 ## Shared Inputs
 
-### Pipeline fixture: species tree
+### Orchestrator fixture: species tree
 
-`tests/pipeline/conftest.py` writes one species tree:
+`tests/orchestrator/conftest.py` writes one species tree:
 
 ```
 (((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2);
@@ -30,7 +30,7 @@ dissolved node's `0.2`, giving `0.3`. `OUT`'s `0.5` becomes the root edge:
 Ingroup taxa are therefore `A, B, C, D`, and the species topology is
 `(((A,B),C),D)`.
 
-### Pipeline fixture: gene trees
+### Orchestrator fixture: gene trees
 
 The same conftest writes 12 gene trees, all of the shape
 `((((X:l,Y:l):l,Z:l):l,D:l):l,OUT:l);`. Rooting on `OUT` folds `OUT`'s edge into
@@ -61,7 +61,7 @@ concordant topology: counts are **12 / 0 / 0**.
 
 ### Inference fixture: 10 gene subtrees
 
-`tests/pipeline/test_pipeline_inference.py` uses 10 three-taxon subtrees with
+`tests/orchestrator/test_orchestrator_inference.py` uses 10 three-taxon subtrees with
 species subtree `((A:1.0,B:1.0):1.0,C:2.0);` (concordant topology `((A,B),C)`).
 Each subtree's geometry is tabulated in `_LEAF_GEOMETRY` as
 `(topology, dist_A, dist_B, dist_C, internal_branch)`, where a leaf's
@@ -110,7 +110,7 @@ Worked example, index 5 — `((A:0.30,C:0.30):0.10,B:0.70);` (sisters A, C):
   count 1, so the mode is the maximum. For the AVG concordant sample
   `[0.233, 0.243, 0.317, 0.297, 0.250]` the mode is therefore `0.317`.
 
-## tests/pipeline/test_pipeline_inference.py
+## tests/orchestrator/test_orchestrator_inference.py
 
 ### `test_analyze_triplet_matches_derived_expectation`
 
@@ -182,7 +182,7 @@ bit.
 `analyzed_trees = 0` and `n_con = 0`; the DCT short-circuits on a zero total to
 `(0.0, 1.0)`, which is not significant, so gate 1 returns `no_introgression`.
 
-## tests/pipeline/test_pipeline_decision.py
+## tests/orchestrator/test_orchestrator_decision.py
 
 Observations are constructed directly as `(topology, height, None)` tuples, which
 lets each test place the triplet on a chosen branch. Bootstrap is disabled
@@ -272,7 +272,7 @@ clamps at 1: `0.01x3 = 0.03`, `0.2x3 = 0.6`, `0.5x3 = 1.5 → 1.0`.
   outside the choice tuple, so a `ValueError` naming the valid options is
   raised.
 
-## tests/pipeline/test_pipeline_trees.py
+## tests/orchestrator/test_orchestrator_trees.py
 
 ### `test_clean_and_save_trees_preserves_a_well_supported_tree`
 
@@ -303,7 +303,7 @@ output.
 
 **Input:** the cleaned species tree, outgroup `["OUT"]`.
 
-**Derivation:** see "Pipeline fixture: species tree" above — `OUT` is excluded,
+**Derivation:** see "Orchestrator fixture: species tree" above — `OUT` is excluded,
 no requested outgroup is missing, the ingroup is `[A, B, C, D]`, and the pruned
 Newick is `(((A:0.1,B:0.1):0.1,C:0.2):0.3,D:0.1):0.5;` because the `((A,B),C)`
 clade absorbs `0.1 + 0.2` when the `(D,OUT)` node dissolves.
@@ -343,7 +343,7 @@ Tree 3: `0.10 + 0.55 = 0.65` →
 **Derivation:** extraction retains only the requested taxa, so the resulting
 leaf-label set must be exactly `{A, B, C}` — `D` and `OUT` are dropped.
 
-## tests/pipeline/test_pipeline_tree_parity.py
+## tests/orchestrator/test_orchestrator_tree_parity.py
 
 **Inputs:** the three `triplet_comparison_cases`, each a
 `(newick, triplet)` pair:
@@ -364,13 +364,13 @@ compares the two collapse implementations directly to `abs=1e-12`.
 Worked check for case 1, pair `(A,B)`: both taxa hang off the `(A,B)` node at
 depth 2.0, so `d = 1.0 + 1.0 = 2.0`. Pair `(A,C)`: `d = (1.0 + 2.0) + 3.0 = 6.0`.
 
-## tests/pipeline/test_pipeline.py
+## tests/orchestrator/test_orchestrator.py
 
 All runs use the shared species tree and 12 gene trees, seed `20240724`, 40
-bootstrap iterations, and the pipeline defaults (`p_value_correction = bfn`,
+bootstrap iterations, and the orchestrator defaults (`p_value_correction = bfn`,
 `summary_statistic = mean`).
 
-### `test_run_pipeline_matches_derived_expectation`
+### `test_run_orchestrator_matches_derived_expectation`
 
 **Expected-output derivation**, from `_EXPECTED_COUNTS`:
 
@@ -381,7 +381,7 @@ bootstrap iterations, and the pipeline defaults (`p_value_correction = bfn`,
 | (A,C,D) | 12 | 0 | 0 | `((A,C),D);` |
 | (B,C,D) | 12 | 0 | 0 | `((B,C),D);` |
 
-(see "Pipeline fixture: gene trees" for how the counts are read off).
+(see "Orchestrator fixture: gene trees" for how the counts are read off).
 
 - **DCT for (A,B,C):** `chisquare([3, 2])` → statistic `0.2`, `p ~ 0.6547`.
 - **DCT for the D triplets:** `n_dis1 + n_dis2 == 0`, so the short circuit gives
@@ -401,7 +401,7 @@ bootstrap iterations, and the pipeline defaults (`p_value_correction = bfn`,
 
 ### Output-shape tests
 
-- `test_run_pipeline_writes_results_tsv` — the file must exist, its header must
+- `test_run_orchestrator_writes_results_tsv` — the file must exist, its header must
   begin with `triplet` and contain `classification` and `bootstrap_value`, and
   the data-row count must equal `len(results)` (4).
 - `test_no_bootstrap_omits_the_bootstrap_columns` — with `bootstrap=False` the
@@ -421,7 +421,130 @@ bootstrap iterations, and the pipeline defaults (`p_value_correction = bfn`,
   derived from the run seed, so mode and worker count cannot change any value;
   every compared field must be equal, bootstrap included.
 
-## tests/pipeline/test_pipeline_config.py
+## tests/orchestrator/test_orchestrator_preflight.py
+
+### Shared inputs
+
+The species tree is `(((A:1,B:1):1,C:1):1,(D:1,OUT:1):1);`. Removing the
+outgroup `OUT` leaves ingroup `{A, B, C, D}`, so the check enumerates
+`C(4,3) = 4` triplets: `A,B,C`, `A,B,D`, `A,C,D`, `B,C,D`.
+
+The clean gene-tree file holds two trees, both containing all five taxa:
+
+```
+((((A:1,B:1):1,C:1):1,D:1):1,OUT:1);
+((((A:1,C:1):1,B:1):1,D:1):1,OUT:1);
+```
+
+The defective file holds three, each planted with exactly one problem class:
+
+```
+((((A:1,B:1):1,C:1):1,D:1):1,OUT:1);   # well formed
+(((A:1,B:1,C:1):1,D:1):1,OUT:1);       # polytomy over A,B,C
+(((A:1,B:1):1,C:1):1,MISSING:1);       # no OUT label
+```
+
+### `test_clean_inputs_pass_with_no_issues`
+
+**Inputs:** the clean pair above, `outgroups=["OUT"]`.
+
+**Derivation:** both gene trees root on `OUT`, so
+`counters["gene_tree.rooted"] == 2` and `gene_tree.total_checked == 2`. Every
+one of the 4 triplets resolves a sister pair in the species tree, so
+`triplets_checked == 4`. Each gene tree is fully resolved, so no triplet check
+fails and `issues == []`, which makes `passed` `True` and selects the
+"No blocking data issues detected" branch of the report.
+
+### `test_report_is_written_to_output_dir`
+
+**Inputs:** the clean pair, with `output_dir` set to a created directory.
+
+**Derivation:** the writer joins `output_dir` with the module constant
+`PREFLIGHT_REPORT_FILENAME` (`preflight_data_check.txt`) and writes
+`report_text` verbatim, so the file content and `report_text` must be equal and
+`report_path` must equal that joined path.
+
+### `test_no_output_dir_skips_writing`
+
+**Inputs:** the clean pair with `output_dir=None`.
+
+**Derivation:** the write branch is guarded on `output_dir is not None`, so
+`report_path` stays `None` while `report_text` is still built.
+
+### `test_detects_polytomy_and_missing_outgroup`
+
+**Inputs:** the defective trio, `outgroups=["OUT"]`.
+
+**Derivation:** gene tree 3 contains no `OUT`, so `_root_tree_on_any_outgroup`
+returns no used outgroup → one `gene_tree.rooting_failed`, and that tree is
+skipped before any triplet check. Trees 1 and 2 root, so
+`gene_tree.rooted == 2` while `gene_tree.total_checked == 3`. Tree 2 collapses
+A, B and C into a single polytomous clade, so `find_sister_pair` cannot pick a
+rooted pair for triplet `A,B,C` → one
+`triplet.unresolved_rooted_sister_pair`. The other three triplets each contain
+`D`, which sits outside the polytomy, so they still resolve — hence a count of
+exactly 1, not 4. The message is formatted with the enumeration index (`Gene
+tree #2`) and the comma-joined triplet (`A,B,C`).
+
+### `test_report_attributes_issues_to_gene_trees`
+
+**Inputs:** the defective trio.
+
+**Derivation:** the two categories above start with `gene_tree.` and `triplet.`,
+both in `_GENE_CATEGORY_PREFIXES`, and neither starts with `species_tree.`,
+`species_triplet.`, or `triplet_filter.`. Summing gives 0 species-tree issues
+and 2 gene-tree issues, which the report renders as `NO (count=0)` and
+`YES (count=2)` with the fixed column padding shown in the assertions.
+
+### `test_triplet_filter_entries_are_validated`
+
+**Inputs:** the clean pair plus a filter file containing `A,B,C`, `A,B,NOPE`,
+`A,B,OUT`.
+
+**Derivation:** `NOPE` is not among the species-tree labels, so set difference
+against them is non-empty → one
+`triplet_filter.taxa_missing_in_species_tree`. `OUT` is in the outgroup set →
+one `triplet_filter.includes_outgroup`. Both lines are dropped rather than
+checked, leaving only `A,B,C`, which normalizes successfully, so
+`triplets_checked == 1`.
+
+### `test_impossible_checks_raise`
+
+**Inputs (parametrized):** `outgroups=[]`, and `outgroups=["NOT_PRESENT"]`.
+
+**Derivation:** the empty list fails the explicit guard at the top of
+`run_preflight_data_check`. `NOT_PRESENT` is absent from the species tree, so
+`_root_tree_on_any_outgroup` returns `used_outgroup=None` and the function
+raises rather than reporting — without a rooted species tree there is no
+triplet normalization to perform, so there is nothing to report on.
+
+### `test_multi_tree_species_file_raises`
+
+**Input:** the species-tree string written twice.
+
+**Derivation:** `read_tree_file` returns 2 trees, and
+`_load_single_species_tree` requires exactly 1.
+
+### `test_runner_preflight_mode_skips_analysis`
+
+**Input:** a config dict with `preflight_data_check: True` over the defective
+trio.
+
+**Derivation:** `run_orchestrator` prepares the output directory and then
+returns `_run_preflight_only(...)` before any tree cleaning, so the only write
+into that directory is the report. Listing the directory must therefore yield
+exactly `["preflight_data_check.txt"]` — no `metrics.txt`, no processed trees,
+no results TSV. `passed` is `False` because the defective trio yields 2 issues.
+
+### `test_runner_preflight_reports_unrootable_species_tree`
+
+**Input:** the same config with `outgroup="NOT_PRESENT"`.
+
+**Derivation:** the `ValueError` raised above is caught in
+`_run_preflight_only`, which prints the message and returns `None`, so the
+runner returns `None` rather than propagating.
+
+## tests/orchestrator/test_orchestrator_config.py
 
 ### `test_cli_defaults_resolve`
 
@@ -429,12 +552,15 @@ bootstrap iterations, and the pipeline defaults (`p_value_correction = bfn`,
 optional argument `None`.
 
 **Derivation:** each key falls back to its constant in
-`ghostparser/pipeline/config.py`: `alpha_dct`/`alpha_ks` `0.05`,
+`ghostparser/orchestrator/config.py`: `alpha_dct`/`alpha_ks` `0.05`,
 `p_value_correction` `"bfn"`, `summary_statistic` `"mean"`, `overwrite` `True`,
 `discordant_test` `"chi-square"`, `tree_height_calculation_strategy` `"AVG"`,
 `min_support_value` `0.5`, `bootstrap_iterations` `100`, `bootstrap_seed`
-`None`, and the three boolean feature flags `False`. `stats_backend` must be
-absent entirely, since the custom backend no longer exists.
+`None`, and the boolean feature flags `False` — including
+`preflight_data_check`, whose default `DEFAULT_PREFLIGHT_DATA_CHECK` is `False`
+so that an ordinary run is never turned into a check-only run by accident.
+`stats_backend` must be absent entirely, since the custom backend no longer
+exists.
 
 ### `test_cli_overrides_for_config_plus_cli_options`
 
@@ -464,7 +590,7 @@ plus conflicting CLI flags `alpha_dct=0.5` and `summary_statistic="mode"`.
 
 **Derivation:** in config-file mode the file supplies everything, so
 `alpha_dct` is `0.03` (not `0.5`). The decisive check is `summary_statistic`:
-the file omits it, so it must fall back to the pipeline default `"mean"` — if
+the file omits it, so it must fall back to the orchestrator default `"mean"` — if
 the CLI were consulted it would be `"mode"`. The resolved species path must come
 from the file, and a warning naming the ignored flags must be printed.
 
@@ -651,6 +777,91 @@ row keyed by the header fields.
 
 **Derivation:** the target is removed and the remaining header order is
 preserved → `("feature_1", "feature_2", "dis1_topology")`.
+
+## tests/test_introgression_mapper.py — ghost bar colouring
+
+### Shared scenario
+
+`_ghost_colour_scenario_results()` builds three results against the species tree
+`(((A:1,B:1):1,C:1):1,D:1);`. The mapping rules in `_map_event` turn them into:
+
+| Result | Rule | Produces |
+| --- | --- | --- |
+| `(A,B,C)` ghost, dis1 `BC` | ghost + `BC` → ghost target is the A-taxon | ghost target `A`, weight 0.8 |
+| `(A,B,C)` inflow, dis1 `AC` | inflow + `AC` → edge `(c_taxon, a_taxon)` | sampled edge `(C, A)`, weight 0.5 |
+| `(D,B,C)` ghost, dis1 `BC` | ghost + `BC` → ghost target is the A-taxon | ghost target `D`, weight 0.4 |
+
+So `A` is both a ghost target and the target of sampled edge `(C, A)` → flag
+`1` → `GHOST_WITH_SAMPLED_BAR_COLOR` (cividis low end, dark blue). `D` is a
+ghost target with no sampled edge pointing at it → flag `0` →
+`GHOST_ONLY_BAR_COLOR` (cividis high end, yellow).
+
+### `test_sampled_introgression_presence_flags_targets_with_sampled_edges`
+
+**Inputs:** `taxa_order = ["A","B","C","D"]` and
+`{("C","A"): 0.6, ("A","B"): 0.0, ("D","C"): 0.3}`.
+
+**Derivation:** edges are keyed `(source, target)`, so the flag looks at the
+second element. `A` is the target of `(C,A)` with weight `0.6` → `1`. `B` is the
+target of `(A,B)` but the weight is `0.0`, which is falsy, so an edge that
+carries no support does not count → `0`. `C` is the target of `(D,C)` with
+`0.3` → `1`. `D` is never a target → `0`. Expected:
+`{"A": 1, "B": 0, "C": 1, "D": 0}`.
+
+### `test_ghost_strength_tsv_records_sampled_introgression_flag`
+
+**Inputs:** the shared scenario above.
+
+**Derivation:** the header gains a third field, so it must be exactly
+`["target_taxon", "raw_strength", "has_sampled_introgression"]`. Every taxon in
+the plot order is listed (`{A, B, C, D}`), because the sheet is keyed by
+`taxa_order` rather than by which taxa have ghost signal. From the table above,
+`A → 1` and `D → 0`. Both `A` and `D` have non-zero ghost strength, confirming
+the flag is an added column rather than a replacement for the strength value.
+
+### `test_ghost_bars_use_constant_colours_by_sampled_presence`
+
+**Inputs:** the shared scenario, with `matplotlib.axes.Axes.barh` monkeypatched
+to record the `color` list and the bar widths before delegating to the original.
+
+**Derivation:** the bar chart is the only `barh` call in the figure, so the
+captured `color` list is exactly the ghost bar colours in `taxa_order`. Colour
+is a two-valued function of the flag, so the captured set must be a subset of
+`{GHOST_ONLY_BAR_COLOR, GHOST_WITH_SAMPLED_BAR_COLOR}`; a per-magnitude colormap
+would instead yield a distinct RGBA per bar. `A` maps to
+`GHOST_WITH_SAMPLED_BAR_COLOR` and `D` to `GHOST_ONLY_BAR_COLOR` per the table.
+The widths for `A` (0.8) and `D` (0.4) differ, which together with ghost-only
+taxa sharing one colour demonstrates that magnitude lives in length alone.
+
+### `test_zero_heatmap_cells_are_masked`
+
+**Inputs:** the shared ghost-colour scenario, with `sns.heatmap` monkeypatched
+to record the `data` and `mask` it receives.
+
+**Derivation:** the scenario produces exactly one sampled edge, `(C, A)` with
+weight 0.5, so in the 4x4 target-by-source matrix over `taxa_order` only the
+cell at row `A`, column `C` is non-zero; the diagonal and all 14 remaining
+off-diagonal cells are 0. The plotting code passes `mask = heat_values == 0.0`,
+so the recorded mask must equal that comparison elementwise, and the count of
+unmasked cells must be exactly 1.
+
+### `test_metrics_txt_leads_with_hyperparameters` (random forest)
+
+**Inputs:** `summary_statistics_tsv` with `n_estimators=25`, `random_state=7`,
+`test_size=0.25`, `max_depth=None`, `cv_folds=3`,
+`rare_class_policy="warn_reduce_cv"`.
+
+**Derivation:** `format_hyperparameter_section` emits the title
+`Hyperparameters:` followed by one `  {name:<width}  {value}` line per entry,
+where `width` is the longest key (`cv_folds_requested` /
+`cv_folds_effective`, 18 characters). The test splits each line on whitespace
+rather than asserting column positions, because that width shifts whenever a
+key is added. `max_depth` is `None`, which the formatter renders as the literal
+`none` so an unset knob is distinguishable from an empty string. The block is
+prepended to `text_lines` before the `Test metrics:` group, so its index in the
+file is strictly smaller. `cv_folds_requested` echoes the configured `3` while
+`cv_folds_effective` carries whatever `auto_cv_folds` resolved for the fixture's
+class distribution, which is why only the requested value is asserted.
 
 ## Remaining suites
 
