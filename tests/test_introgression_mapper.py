@@ -1,11 +1,15 @@
 """Tests for introgression mapper module."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from ghostparser.introgression_mapper import (
+    GHOST_ONLY_BAR_COLOR,
+    GHOST_WITH_SAMPLED_BAR_COLOR,
     _collect_counts,
     _collect_non_sister_counts,
     _draw_species_tree_strip,
+    _sampled_introgression_presence,
     _scaled_consolidation_text_sizes,
     generate_introgression_maps,
 )
@@ -113,6 +117,40 @@ def test_generate_introgression_maps_appends_suffix_when_overwrite_disabled(tmp_
         suffixed_output_dir / "introgression_combined.png"
     )
     assert (existing_output_dir / "stale.txt").exists()
+
+
+def test_generate_introgression_maps_preserves_run_dir_when_reset_disabled(tmp_path):
+    species_tree = tmp_path / "species.tree"
+    species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
+
+    results = [
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="inflow_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.5,
+        ),
+    ]
+
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    existing = output_dir / "orchestrator_triplet_results.tsv"
+    existing.write_text("keep me")
+
+    artifacts = generate_introgression_maps(
+        results,
+        species_tree_path=str(species_tree),
+        output_dir=str(output_dir),
+        overwrite=True,
+        reset_output_dir=False,
+    )
+
+    # With reset disabled, a caller's pre-existing outputs must survive and the
+    # plots are written into the same directory (not a reset/suffixed one).
+    assert existing.exists()
+    assert existing.read_text() == "keep me"
+    assert artifacts.plot_path == str(output_dir / "introgression_combined.png")
+    assert Path(artifacts.plot_path).exists()
 
 
 def test_scaled_consolidation_text_sizes_grow_with_taxa_count():
@@ -446,7 +484,7 @@ def test_collect_counts_correct_avg_in_generate_introgression_maps(tmp_path):
 
     ghost_map = {}
     for line in ghost_lines[1:]:
-        taxon, val = line.split("\t")
+        taxon, val, _has_sampled = line.split("\t")
         ghost_map[taxon] = float(val)
 
     raw_header = matrix_raw_lines[0].split("\t")[1:]
@@ -583,3 +621,169 @@ def test_collect_non_sister_counts_counts_non_sister_pairs():
     # wait: in (A,C,D) the sisters are A and C; so (A,D) and (C,D) are non-sisters)
     # So (A,C) comes only from (A,B,C) triplets → still 2
     assert counts.get(("A", "C"), 0) == 2
+
+
+# ---------------------------------------------------------------------------
+# Ghost bar colouring: length encodes strength, colour encodes co-occurrence
+# with sampled introgression.
+# ---------------------------------------------------------------------------
+
+
+def test_sampled_introgression_presence_flags_targets_with_sampled_edges():
+    """A taxon is flagged only when it is the target of a non-zero sampled edge."""
+    taxa_order = ["A", "B", "C", "D"]
+    # Sampled edges are keyed (source, target).
+    avg_non_ghost = {
+        ("C", "A"): 0.6,  # A is a target -> flagged
+        ("A", "B"): 0.0,  # zero weight -> B not flagged
+        ("D", "C"): 0.3,  # C is a target -> flagged
+    }
+
+    presence = _sampled_introgression_presence(taxa_order, avg_non_ghost)
+
+    assert presence == {"A": 1, "B": 0, "C": 1, "D": 0}
+
+
+def _ghost_colour_scenario_results():
+    """Build results where A has ghost + sampled and D has ghost only.
+
+    Returns:
+        A list of ``SimpleNamespace`` triplet results.
+    """
+    return [
+        # Ghost on triplet (A,B,C) with dis1 BC -> ghost target A.
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="ghost_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.8,
+        ),
+        # Inflow on triplet (A,B,C) with dis1 AC -> sampled edge (C, A), target A.
+        SimpleNamespace(
+            triplet=("A", "B", "C"),
+            classification="inflow_introgression",
+            dis1_topology="AC",
+            bootstrap_value=0.5,
+        ),
+        # Ghost on triplet (D,B,C) with dis1 BC -> ghost target D, no sampled edge.
+        SimpleNamespace(
+            triplet=("D", "B", "C"),
+            classification="ghost_introgression",
+            dis1_topology="BC",
+            bootstrap_value=0.4,
+        ),
+    ]
+
+
+def test_ghost_strength_tsv_records_sampled_introgression_flag(tmp_path):
+    """The ghost sheet gains a has_sampled_introgression 1/0 column."""
+    species_tree = tmp_path / "species.tree"
+    species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
+
+    generate_introgression_maps(
+        _ghost_colour_scenario_results(),
+        species_tree_path=str(species_tree),
+        output_dir=str(tmp_path),
+    )
+
+    lines = _consolidation_lines(
+        tmp_path / "consolidation_data", "introgression_ghost_target_strength.tsv"
+    )
+    assert lines[0].split("\t") == [
+        "target_taxon",
+        "raw_strength",
+        "has_sampled_introgression",
+    ]
+
+    flags = {}
+    strengths = {}
+    for line in lines[1:]:
+        taxon, strength, flag = line.split("\t")
+        flags[taxon] = int(flag)
+        strengths[taxon] = float(strength)
+
+    # A is a ghost target and also the target of sampled edge (C, A).
+    assert flags["A"] == 1
+    # D is a ghost target with no sampled edge pointing at it.
+    assert flags["D"] == 0
+    # Taxa with no ghost signal at all are still listed, flagged by sampled only.
+    assert set(flags) == {"A", "B", "C", "D"}
+    # Bar length still comes from the ghost strength, untouched by the flag.
+    assert strengths["A"] > 0.0
+    assert strengths["D"] > 0.0
+
+
+def test_ghost_bars_use_constant_colours_by_sampled_presence(tmp_path, monkeypatch):
+    """Bar colours are the two fixed colours, chosen by the sampled-presence flag."""
+    import matplotlib.axes
+
+    species_tree = tmp_path / "species.tree"
+    species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
+
+    captured = {}
+    original_barh = matplotlib.axes.Axes.barh
+
+    def _recording_barh(self, y, width, **kwargs):
+        captured["colors"] = kwargs.get("color")
+        captured["widths"] = list(width)
+        return original_barh(self, y, width, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "barh", _recording_barh)
+
+    generate_introgression_maps(
+        _ghost_colour_scenario_results(),
+        species_tree_path=str(species_tree),
+        output_dir=str(tmp_path),
+    )
+
+    taxa_order = [
+        line.split("\t")[1]
+        for line in _consolidation_lines(
+            tmp_path / "consolidation_data", "introgression_taxa_order.tsv"
+        )[1:]
+    ]
+    colors = dict(zip(taxa_order, captured["colors"]))
+    widths = dict(zip(taxa_order, captured["widths"]))
+
+    # Only the two constant colours are ever used -- no colormap gradient.
+    assert set(captured["colors"]) <= {
+        GHOST_ONLY_BAR_COLOR,
+        GHOST_WITH_SAMPLED_BAR_COLOR,
+    }
+    # cividis low end (dark blue) vs high end (yellow).
+    assert colors["A"] == GHOST_WITH_SAMPLED_BAR_COLOR  # ghost + sampled
+    assert colors["D"] == GHOST_ONLY_BAR_COLOR  # ghost only
+    # A and D have different ghost strengths but D shares its colour with any
+    # other ghost-only taxon, proving colour no longer tracks magnitude.
+    assert widths["A"] != widths["D"]
+
+
+def test_zero_heatmap_cells_are_masked(tmp_path, monkeypatch):
+    """Cells with no introgression edge are masked instead of painted."""
+    import numpy as np
+
+    import ghostparser.introgression_mapper as mapper
+
+    species_tree = tmp_path / "species.tree"
+    species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
+
+    captured = {}
+    original_heatmap = mapper.sns.heatmap
+
+    def _recording_heatmap(data, **kwargs):
+        captured["data"] = np.asarray(data, dtype=float)
+        captured["mask"] = np.asarray(kwargs.get("mask"))
+        return original_heatmap(data, **kwargs)
+
+    monkeypatch.setattr(mapper.sns, "heatmap", _recording_heatmap)
+
+    generate_introgression_maps(
+        _ghost_colour_scenario_results(),
+        species_tree_path=str(species_tree),
+        output_dir=str(tmp_path),
+    )
+
+    # The scenario has exactly one sampled edge, (C, A), so exactly one cell is
+    # non-zero and every other cell of the 4x4 matrix is masked.
+    assert captured["mask"].tolist() == (captured["data"] == 0.0).tolist()
+    assert int((~captured["mask"]).sum()) == 1

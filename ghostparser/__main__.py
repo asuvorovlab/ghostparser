@@ -1,10 +1,8 @@
 """Entry point for the ghostparser package.
 
 This module allows the package to be executed with `python -m ghostparser`.
-For tree parsing functionality, use `python -m ghostparser.tree_parser`.
+It prints a usage banner; the runnable work lives in the subpackages below.
 """
-
-import sys
 
 
 def main():
@@ -12,27 +10,34 @@ def main():
     print("GhostParser")
     print()
     print("Available modules:")
-    print("  tree_parser    - Parse and standardize Newick format trees")
-    print("  triplet_processor - Run Fig. 6 triplet introgression classification pipeline")
-    print("  orchestrator   - Run end-to-end tree parsing + per-triplet inference pipeline")
+    print(
+        "  orchestrator         - Run the introgression inference pipeline (primary entry point)"
+    )
+    print(
+        "  ml                   - Show ML trainer usage; run trainer modules directly on summary_statistics.tsv"
+    )
+    print(
+        "  introgression_mapper - Build introgression maps from orchestrator results"
+    )
     print()
     print("Usage:")
-    print("  python -m ghostparser.tree_parser -st <species_tree> -gt <gene_trees> -og <outgroup>")
-    print("  python -m ghostparser.triplet_processor -i <unique_triplets_gene_trees.txt>")
-    print("  python -m ghostparser.orchestrator -st <species_tree> -gt <gene_trees> -og <outgroup>")
+    print(
+        "  python -m ghostparser.orchestrator -st <species_tree> -gt <gene_trees> -og <outgroup>"
+    )
     print("  python -m ghostparser.orchestrator -c <config.yaml|config.json>")
-    print("  (Only orchestrator supports --config-file)")
+    print("  python -m ghostparser.ml.random_forest -i <input.tsv> -o <out>")
+    print("  python -m ghostparser.ml.multi_knn -i <input.tsv> -o <out>")
+    print("  python -m ghostparser.introgression_mapper --help")
     print()
     print("Example:")
-    print("  python -m ghostparser.tree_parser -st species.nwk -gt genes.nwk -og Outgroup1")
-    print("  python -m ghostparser.triplet_processor -i unique_triplets_gene_trees.txt")
-    print("  python -m ghostparser.orchestrator -st species.nwk -gt genes.nwk -og Outgroup1")
+    print(
+        "  python -m ghostparser.orchestrator -st species.nwk -gt genes.nwk -og Outgroup1"
+    )
     print("  python -m ghostparser.orchestrator -c run_config.yaml")
     print()
     print("For more information, run:")
-    print("  python -m ghostparser.tree_parser --help")
-    print("  python -m ghostparser.triplet_processor --help")
     print("  python -m ghostparser.orchestrator --help")
+    print("  python -m ghostparser.ml")
 
 
 if __name__ == "__main__":

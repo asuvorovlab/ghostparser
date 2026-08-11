@@ -1,8 +1,16 @@
 # Ghostparser
 
+<p align="center">
+   <img width="120" height="120" alt="GhostParser-Icon" src="https://github.com/user-attachments/assets/a8443495-0a49-44b9-9dd9-350ff5677ca5" />
+</p>
+
 ## Overview
 
-**Ghostparser** is a phylogenetic introgression pipeline centered on `ghostparser.orchestrator`. The orchestrator runs two internal stages (`tree_parser` and `triplet_processor`) and produces final triplet-level inference outputs. Orchestrator supports command-line and configuration-file modes, and the two submodules support CLI parameters that are useful for focused runs, debugging, and testing.
+**Ghostparser** is a phylogenetic introgression pipeline built around [`ghostparser.orchestrator`](#orchestrator-primary-entry-point), with an optional machine-learning module, [`ghostparser.ml`](#machine-learning-ghostparserml), for training models on simulated summary statistics.
+
+The core pipeline implements the DCT+THT workflow for detecting sampled and ghost introgressions in large trees. Because the method operates on species triplets, the input trees are decomposed into all possible triplets by default, or narrowed with [`triplet-filter`](#configuration) when you only want to analyze specific triplets. Results are consolidated into a heatmap (for sampled directed introgressions) and bar chart (for ghost introgression where only target of introgression is inferred). The pipeline supports both command-line and configuration-file modes.
+
+The optional machine-learning subpackage trains multi-label classifiers on a run's summary statistics and includes utilities for model selection and tuning.
 
 ---
 
@@ -10,12 +18,11 @@
 
 1. [Quick Start](#quick-start)
 2. [Modules](#modules)
-   - [Orchestrator (Primary Pipeline)](#orchestrator-primary-pipeline)
-   - [Tree Parser](#tree-parser-submodule)
-   - [Triplet Processor](#triplet-processor-submodule)
+   - [Orchestrator (Primary Entry Point)](#orchestrator-primary-entry-point)
+   - [Machine Learning](#machine-learning-ghostparserml)
 3. [Orchestrator Input/Output](#orchestrator-inputoutput)
 4. [Configuration](#configuration)
-5. [Defaults](#defaults-at-a-glance)
+   - [Defaults](#defaults-at-a-glance)
 6. [Handled Errors](#handled-errors)
 7. [Testing](#testing)
 8. [For Maintainers](#for-maintainers)
@@ -52,9 +59,11 @@ pip install https://github.com/asif256000/ghostparser/releases/download/v0.1.0/g
 ```bash
 python -m ghostparser.orchestrator -c config.yaml
 
-python -m ghostparser.tree_parser -st species.tree -gt genes.tree -og OutGroup
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 
-python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.txt
+python -m ghostparser.ml.random_forest -i summary_statistics.tsv -o ml_out
+
+python -m ghostparser.ml.multi_knn -i summary_statistics.tsv -o ml_out
 ```
 
 **Note:** The wheel installation installs the package into your Python environment, so you don't need to be in the project directory to run it. All module commands (`python -m ghostparser.*`) work from anywhere.
@@ -101,158 +110,101 @@ poetry run python -m ghostparser.orchestrator -c run_config.yaml
 
 ## Modules
 
-### Orchestrator (Primary Pipeline)
+### Orchestrator (Primary Entry Point)
 
-Run with config file (recommended for reproducibility):
+`ghostparser.orchestrator` is the introgression inference engine.
+
+Run with a config file (recommended for reproducibility):
 
 ```bash
 python -m ghostparser.orchestrator -c run_config.yaml
 ```
 
-Run the full pipeline via CLI flags:
+Run via CLI flags:
 
 ```bash
 python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 ```
 
-CLI mode with explicit worker count:
+With an explicit worker count and parallelization mode:
 
 ```bash
-python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup --processes 4
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup \
+    --processes 4 --parallelization-mode auto
 ```
 
-#### How the Pipeline Works
+#### How the Orchestrator Works
 
-- `tree_parser` standardizes species/gene trees, roots on outgroup(s), and provides triplet extraction utilities.
-- `triplet_processor` applies the GhostParser statistical decision pipeline to each triplet payload.
-- The orchestrator coordinates both steps and writes the final results table.
+1. The species tree is standardized, filtered on mean internal support, rooted on the outgroup MRCA, and pruned; gene trees are also cleaned and rooted on the outgroup similarly.
+2. Every ingroup triplet is enumerated (or restricted by `--triplet-filter`) and normalized to `(A, B, C)` with A and B the species-tree sisters.
+3. For each triplet the engine extracts its subtree from every gene tree, classifies the topology as concordant or one of two discordant alternatives, and records a tree height H(T).
+4. A three-gate decision follows: the discordant count test, then the KS tree-height test, then a concordant-versus-discordant summary comparison. Each triplet lands on `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `unresolved`.
+5. Multiple-testing correction is applied once across every triplet in the run.
+6. Results are written, and consolidation renders the introgression maps.
 
-GhostParser is configurable (discordant test, backend, thresholds, summary statistic), so execution follows the same core pipeline stages while allowing controlled method choices.
+See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanism in detail.
 
-#### Orchestrator Arguments
+#### Arguments
 
 **Required:**
+
 - `-st, --species-tree-path`
 - `-gt, --gene-trees-path`
 - `-og, --outgroups`
 
-**Config mode:**
-- `-c, --config-file`
+**Config-file mode (CLI-only):**
 
-**Common optional:**
-- `--output-folder`
-- `--no-overwrite`
-- `--triplet-filter`
-- `--processes`
-- `--generate-summary-stats`
-- `--min-support-value`
-- `--discordant-test`
-- `--summary-statistic`
-- `--stats-backend`
-- `--tree-height-calculation-strategy`
-- `--p-value-correction`
-- `--alpha-dct`, `--alpha-ks`
-- `--no-bootstrap`
-- `--bootstrap-iterations`
-- `--bootstrap-seed`
-- `--bootstrap-debug-mode`
-- `--bootstrap-summary-only`
-- `--triplet-output-format`
-- `--parquet-partitions`
-- `--parquet-compression`
-- `--no-consolidation`
+- `-c, --config-file` — when given, the file supplies every setting and the other CLI flags are ignored with a warning.
+
+**Config + CLI:**
+
+- `--output-folder`, `--no-overwrite`, `--triplet-filter`
+- `--processes`, `--parallelization-mode {auto,taxon,gene}`
+- `--alpha-dct`, `--alpha-ks`, `--p-value-correction`, `--summary-statistic`
+- `--no-consolidation`, `--no-bootstrap`
+
+**Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, and the `bootstrap_options` block (`iterations`, `seed`, `debug_mode`, `summary_only`).
+
+The statistical tests always use the scipy/statsmodels backend. The full key reference is in the **[Configuration Guide](CONFIG.md#orchestrator-primary-module)**.
+
+#### Checking Your Data First
+
+Before committing to a full run, `--preflight-data-check` validates the input trees and exits without any analysis:
+
+```bash
+python -m ghostparser.orchestrator \
+    -st species.tree -gt genes.tree -og OutGroup --preflight-data-check
+```
+
+It writes `preflight_data_check.txt` into the output folder, listing every structural problem it found — gene trees missing the outgroup, polytomous triplets with no resolvable sister pair, triplet-filter lines naming unknown taxa — with counts per category, examples naming the offending gene tree and triplet, and a summary attributing the issues to the species tree or the gene trees. These are the failures that would otherwise surface as errors partway through a long run. The checks are structural only: passing means the data can be processed, not that the result will be biologically meaningful.
 
 #### Primary Outputs
 
-1. `unique_triplets_gene_trees.parquet` (default; use `--triplet-output-format txt` to write text output)
-2. `orchestrator_triplet_results.tsv`
-3. `summary_statistics.tsv` (only when `--generate-summary-stats` is enabled)
-4. `metrics.txt`
-5. `introgression_heatmap_inflow_outflow.png` and `introgression_ghost_target_strength.png` (written when consolidation is enabled)
-6. `introgression_matrix_inflow_outflow.tsv`, `introgression_ghost_target_strength.tsv`, and `introgression_taxa_order.tsv`
+1. `orchestrator_triplet_results.tsv` — per-triplet classification results
+2. `summary_statistics.tsv` — only when `generate_summary_stats` is set
+3. `processed_species.tree` / `processed_genes.tree` — cleaned, rooted trees
+4. `metrics.txt` — per-stage wall/CPU timing and run parameters
+5. `consolidation/` — the combined figure and TSV matrices
 
-Heatmap consolidation details:
+Consolidation details:
 
-- The inflow/outflow heatmap and ghost target-strength bar chart use raw values with a shared max/min/mid color legend per plot.
-- The species tree topology is stitched onto the top and left edges of the heatmap so the source and target axes read like tree labels.
-- By default, the plots use the processed species tree after outgroup pruning; when a triplet filter is supplied, the plotted tree can be pruned to the taxa represented in that filtered set.
-- Consolidation is enabled by default and can be disabled with `--no-consolidation`.
-
-### Tree Parser (Submodule)
-
-Use this module when you only want preprocessing + triplet extraction.
-
-```bash
-python -m ghostparser.tree_parser -st species.tree -gt genes.tree -og OutGroup
-```
-
-#### Core Behavior
-
-- Removes support labels and preserves branch lengths
-- If support values are present, removes trees with average support below `min_support_value`
-- Roots on outgroup(s), prunes outgroup clade, and logs excluded taxa
-- Writes processed trees and triplet extraction output (`unique_triplets_gene_trees.parquet` by default, `unique_triplets_gene_trees.txt` when `--triplet-output-format txt` is selected)
-
-Useful CLI options for focused runs and debugging:
-
-- `--triplet-filter`
-- `--output-folder`
-- `--no-overwrite`
-- `--min-support-value`
-- `--processes`
-- `--no-multiprocessing`
-- `--triplet-output-format`
-- `--parquet-partitions`
-- `--parquet-compression`
-
-### Triplet Processor (Submodule)
-
-Use this module when you already have triplet extraction output (`unique_triplets_gene_trees.parquet` by default or `unique_triplets_gene_trees.txt`) and only need inference.
-
-```bash
-python -m ghostparser.triplet_processor --input-path unique_triplets_gene_trees.txt
-```
-
-#### Core Behavior
-
-- Runs DCT (`chi-square` or `z-test`)
-- Runs KS tree-height test when DCT is significant
-- Applies summary-statistic comparison (`median`, `mean`, or binned `mode`) for final classification
-- Supports tree-height strategy selection via `tree_height_calculation_strategy`: `AVG` (default), taxon-specific `A|B|C`, sister-distance `SIS`, or internal-branch `INT`
-- Optionally runs bootstrap sampling-with-replacement per triplet using reusable per-gene-tree observations
-
-Useful CLI options for focused runs and debugging:
-
-- `--output-path`
-- `--stats-output`
-- `--input-format`
-- `--alpha-dct`, `--alpha-ks`
-- `--discordant-test`
-- `--summary-statistic`
-- `--stats-backend`
-- `--tree-height-calculation-strategy`
-- `--p-value-correction`
-- `--bootstrap-iterations`
-- `--bootstrap-seed`
-- `--bootstrap-debug-mode`
-- `--bootstrap-summary-only`
-- `--processes`
-- `--generate-summary-stats`
-- `--no-multiprocessing`
+- The figure uses the `cividis` colormap throughout. The colorbar applies to the inflow/outflow heatmap. In the ghost bar chart, bar *length* encodes the ghost bootstrap value while colour encodes only whether that taxon also has sampled introgression, using the two extremes of the same colormap: yellow for ghost-only, dark blue for ghost plus sampled. A legend above the bars states the mapping.
+- Heatmap cells with no introgression edge are left unpainted, so a sparse matrix shows its real signal rather than a wall of colour. The gridlines and panel border still mark the row and column structure.
+- The species tree topology is stitched onto the plot axes so the source and target axes read like tree labels.
+- By default the plots use the processed species tree after outgroup pruning; with a triplet filter, the plotted tree can be pruned to the filtered taxa.
+- Consolidation is enabled by default; disable it with `--no-consolidation`.
+- Its artifacts go in a dedicated `consolidation/` subfolder so its own output-directory reset cannot remove the run's results.
 
 #### Bootstrap Behavior
 
-- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`; additional bootstrap controls are configured through orchestrator (`--bootstrap-iterations`, `--bootstrap-seed`, `--bootstrap-debug-mode`, `--bootstrap-summary-only`).
+- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`; the remaining controls (`iterations`, `seed`, `debug_mode`, `summary_only`) are set through the config file's `bootstrap_options` block.
 - Iterations with incomplete required metrics are counted as `unresolved` and processing continues.
 - `bootstrap_value` reports the bootstrap fraction for the final `classification` value after correction.
+- A fixed `seed` makes results reproducible and identical across parallelization modes, because each triplet derives its own seed from it.
 
----
+#### Orchestrator Input/Output
 
----
-
-## Orchestrator Input/Output
-
-### Input Expectations
+##### Input Expectations
 
 **Required Arguments:**
 
@@ -272,7 +224,7 @@ Useful CLI options for focused runs and debugging:
 
 - `--output-folder`
 
-   - Output folder relative to the input data folder (default: same folder as input data).
+   - Output folder for the run (default: `./results`).
 
 - `--triplet-filter`
 
@@ -282,30 +234,30 @@ Useful CLI options for focused runs and debugging:
 
 - `--processes`
 
-   - Number of worker processes for multiprocessing.
-   - Defaults to `0` (all cores).
-   - Ignored if `--no-multiprocessing` is set.
+   - Number of worker processes.
+   - Defaults to `0` (all cores). Use `--processes 1` to run serially in the
+     parent process, which is useful for debugging or constrained systems.
 
-- `--no-multiprocessing`
+- `--parallelization-mode`
 
-   - Disable multiprocessing.
-   - Processes triplets sequentially using a single worker.
-   - Useful for debugging or on systems with limited resources.
+   - `taxon` dispatches chunks of triplets across workers; `gene` parallelizes
+     per-gene-tree subtree extraction within one triplet; `auto` (default)
+     chooses based on the input size.
 
-### Output Files
+##### Output Files
 
-The orchestrator generates these output files:
+An orchestrator run generates these output files:
 
 1. **`processed_species.tree`** - Processed species tree with support values removed and outgroup rooting applied
-2. **`processed_gene_trees.tree`** - Processed gene trees with support values removed and outgroup rooting applied
-3. **`unique_triplets_gene_trees.parquet`** - Default triplet-to-gene-tree mapping output used as the input to triplet inference (`.txt` can be selected with `--triplet-output-format txt`)
-4. **`metrics.txt`** - Metrics log with warnings, timings, and counts
-5. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
-6. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `--generate-summary-stats` is enabled, including:
+2. **`processed_genes.tree`** - Processed gene trees with support values removed and outgroup rooting applied
+3. **`metrics.txt`** - Metrics log with warnings, timings, and counts
+4. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
+5. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `generate_summary_stats` is enabled, including:
    - identity columns (`triplet`, `abc_mapping`, `species_tree`, `dis1_topology`)
    - topology counts (`n_con`, `n_dis1`, `n_dis2`)
-   - 63 topology/metric summary columns (7 statistics × 3 topology classes × 3 metric types)
+   - 63 topology/metric summary columns (7 statistics x 3 topology classes x 3 metric types)
    - final `classification` and `bootstrap_value` (when bootstrap is enabled)
+6. **`consolidation/`** - Introgression map figure and TSV matrices
 
 Base TSV output includes `dis1_topology` and a topology-only `species_tree` value for each triplet.
 Base TSV output also includes an `inference` column with human-readable direction text using actual species names.
@@ -327,7 +279,7 @@ When bootstrap debug mode is enabled, the TSV also adds:
 
 Bootstrap payload columns are serialized as JSON strings by default.
 
-### Example Usage
+#### Example Usage
 
 **Species tree** (`species.tree`):
 
@@ -362,76 +314,29 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 
 When multiple outgroups are provided, the species tree is rooted on their most recent common ancestor (MRCA) and the outgroup clade is pruned. Any additional taxa that fall inside the outgroup clade are excluded from triplet generation and logged as a warning (including the full list of excluded taxa) in the metrics file.
 
-**Output** (`unique_triplets_gene_trees.txt`):
+**Output** (`orchestrator_triplet_results.tsv`, abbreviated):
 
 ```
-TaxaA,TaxaB,TaxaC	2	((TaxaA:0.1,TaxaB:0.2):0.3,TaxaC:0.4);
-
-((TaxaA:0.15,TaxaB:0.25):0.35,TaxaC:0.45);
-((TaxaA:0.13,TaxaB:0.24):0.35,TaxaC:0.46):0.57;
-
-
-TaxaA,TaxaC,TaxaD	1	((TaxaA:0.1,TaxaC:0.2):0.3,TaxaD:0.4);
-
-((TaxaA:0.11,TaxaC:0.22):0.33,TaxaD:0.44);
+triplet	species_tree	n_con	n_dis1	n_dis2	dis1_topology	classification	bootstrap_value
+TaxaA,TaxaB,TaxaC	((TaxaA,TaxaB),TaxaC);	7	3	2	BC	no_introgression	0.82
+TaxaA,TaxaC,TaxaD	((TaxaA,TaxaC),TaxaD);	12	0	0	BC	no_introgression	1.00
 ```
+
+One row per triplet; the full column list is documented in [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md).
 
 ---
 
-## Configuration
-
-See the **[Configuration Guide](CONFIG.md)** for complete details on:
-- Orchestrator-first config keys and structure
-- Module-specific configuration sections
-- JSON/YAML configuration formats
-- Configuration precedence and CLI override rules
-
----
-
-## Defaults at a Glance
-
-Core defaults are centralized in orchestrator config/CLI normalization and in module CLI runtime defaults:
-
-**Statistical and Processing Defaults:**
-
-- `discordant_test`: `chi-square`
-- `summary_statistic`: `median`
-- `stats_backend`: `standard`
-- `tree_height_calculation_strategy`: `AVG`
-- `p_value_correction`: `no`
-- `alpha_dct`: `0.05`
-- `alpha_ks`: `0.05`
-
-**Execution Defaults:**
-
-- `processes`: `0` (all available CPU cores)
-- `output_folder` (orchestrator/tree_parser): `./results`
-- `overwrite` (orchestrator/tree_parser): `true`
-- `triplet_output_format` (orchestrator/tree_parser): `parquet`
-- `input_format` (triplet_processor): `parquet`
-- `parquet_partitions`: `128`
-- `parquet_compression`: `zstd`
-- `min_support_value`: `0.5`
-- `bootstrap`: `true`
-- `bootstrap_options.debug_mode`: `false`
-- `bootstrap_options.iterations`: `100`
-- `bootstrap_options.seed`: unset
-- `bootstrap_options.summary_only`: `false`
 
 ### Machine Learning (ghostparser.ml)
 
-A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the pipeline) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see `ML.md` for full usage and the data contract.
+A small machine-learning baseline lives under `ghostparser.ml`. It consumes `summary_statistics.tsv` (the optional summary output from the orchestrator) and provides explicit trainer modules for a multi-label Random Forest and a multi-label KNN baseline. Use them for quick prototyping and diagnostics; see [ML.md](ghostparser/ml/ML.md) for full usage and the data contract.
+
+Run the trainers directly:
 
 Run example:
 
 ```bash
 python -m ghostparser.ml.random_forest -i results/summary_statistics.tsv -o results/ml_out
-```
-
-Or explicitly dispatch via the package entrypoint:
-
-```bash
-python -m ghostparser.ml --model random_forest -i results/summary_statistics.tsv -o results/ml_out
 ```
 
 The KNN baseline is available as:
@@ -440,15 +345,50 @@ The KNN baseline is available as:
 python -m ghostparser.ml.multi_knn -i results/summary_statistics.tsv -o results/ml_out
 ```
 
-Note: `python -m ghostparser.ml` will not redirect to any model by default — you must pass `--model` to dispatch.
-
-**Backend Details:**
-
-- `stats_backend`: `standard` (Uses `scipy.stats` and `statsmodels` for DCT and KS tests)
+The package entrypoint `python -m ghostparser.ml` only prints those direct-run commands; it does not select a trainer itself.
 
 **Configuration Precedence:**
 
-`ghostparser.orchestrator` supports `-c/--config-file`; `tree_parser` and `triplet_processor` accept CLI parameters.
+`ghostparser.orchestrator` and the `ghostparser.ml` trainers each support `-c/--config-file`. When a config file is given, it supplies every setting and the other CLI flags are ignored with a warning.
+
+---
+
+## Configuration
+
+See the **[Configuration Guide](CONFIG.md)** for complete details on:
+- Orchestrator config keys and structure
+- Machine-learning configuration sections
+- JSON/YAML configuration formats
+- Configuration precedence and CLI override rules
+
+
+### Defaults at a Glance
+
+Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
+
+**Statistical and Processing Defaults:**
+
+- `discordant_test`: `chi-square`
+- `summary_statistic`: `mean`
+- `tree_height_calculation_strategy`: `AVG`
+- `p_value_correction`: `bfn`
+- `alpha_dct`: `0.05`
+- `alpha_ks`: `0.05`
+
+**Execution Defaults:**
+
+- `processes`: `0` (all available CPU cores)
+- `parallelization_mode`: `auto`
+- `output_folder`: `./results`
+- `overwrite`: `true`
+- `min_support_value`: `0.5`
+- `consolidation`: `true`
+- `generate_summary_stats`: `false`
+- `bootstrap`: `true`
+- `bootstrap_options.iterations`: `100`
+- `bootstrap_options.seed`: unset
+- `bootstrap_options.debug_mode`: `false`
+- `bootstrap_options.summary_only`: `false`
 
 ---
 
@@ -459,17 +399,19 @@ This section summarizes user-facing errors and validation failures that GhostPar
 ### Orchestrator (`ghostparser.orchestrator`)
 
 - `Error: Species tree file not found: ...` / `Error: Gene trees file not found: ...`
-   Orchestrator exits early when required input files are missing.
+   The run exits early when required input files are missing.
+- `✗ Error: Triplet filter file not found: ...`
+   The path given to `--triplet-filter` does not exist.
 - `✗ Error processing species tree: ...`
    Species-tree cleaning/parsing failed (typically malformed Newick, missing taxa, or filtering issues).
 - `✗ Error generating triplets: ...`
    Triplet-generation setup failed (for example rooting/pruning/mapping failures).
 - `✗ Error processing gene trees: ...`
    Gene-tree cleaning/rooting stage failed before extraction.
-- `✗ Error in triplet inference or introgression inference stage: ...`
-   A downstream extraction/inference/consolidation exception occurred; the appended message is the originating module error.
+- `✗ Error in fused extraction/inference stage: ...`
+   An exception occurred while streaming triplet extraction and inference; the appended message is the originating error.
 
-### Config Loading (`ghostparser.config`)
+### Config Loading (`ghostparser.config` and the module config loaders)
 
 - `Config file not found: ...`
    The config path does not exist.
@@ -480,44 +422,28 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Config root must be a key/value object`
    Top-level config payload is not a mapping.
 - `Missing required config field: ...`
-   A required field (for example species path, gene path, or output-critical key) is absent or empty.
+   A required field (for example the species or gene tree path) is absent or empty.
 - `Missing required config field: outgroup(s)`
    No usable outgroup taxa were provided.
 - `Config field ... must be a non-empty string when provided`
-   Optional string/path fields were passed as empty or wrong type.
+   Optional string/path fields were passed as empty or the wrong type.
 - `Config field ... must be an integer >= 0`
-   Non-negative integer settings (for example `processes`, `parquet_partitions`) are invalid.
+   Non-negative integer settings (for example `processes`) are invalid.
 - `Config field ... must be a boolean when provided` / `Config field ... must be a numeric value`
    Boolean/float-style fields were provided with incompatible types.
 - `Config field ... must be one of: ...`
-   Choice-constrained fields (test/statistic/backend/format/correction) contain unsupported values.
+   Choice-constrained fields (discordant test, summary statistic, tree-height strategy, p-value correction, parallelization mode) contain unsupported values.
+- `Config field overwrite must be a boolean when provided` / `Config field no_overwrite must be a boolean when provided`
+   The overwrite flags were given non-boolean values.
 - `Config field bootstrap_options.* ...`
    Bootstrap options failed validation (`iterations >= 1`, integer seed, boolean debug/summary flags).
 
-### Tree Parsing and Extraction (`ghostparser.tree_parser`)
+### Tree Preprocessing (`ghostparser.orchestrator.trees`)
 
 - `Tree file not found: ...`
    Input tree file path is missing.
-- `Invalid Newick format in ...` (including `Tree <idx> has no terminal nodes`)
-   Tree parsing failed, file is empty/invalid, or parsed trees are structurally unusable.
-- `Missing required CLI argument: --outgroups`
-   CLI outgroup argument is empty after parsing.
-- `CLI argument --processes must be an integer >= 0`
-   Process count is invalid.
-- `species_triplet_trees is required and cannot be None`
-   Internal extraction writer was called without required species-triplet mapping.
-- `Missing species subtree mapping for triplets: ...`
-   Some triplets have no mapped species subtree and cannot be serialized.
-- `Missing species subtree for triplet header: ...` / `Missing topology summary for triplet header: ...`
-   A triplet output header is missing required metadata fields.
-- `Parquet output requires pyarrow to be installed`
-   Parquet export requested but `pyarrow` is unavailable.
-- `parquet_partitions must be >= 1`
-   Invalid parquet partition count.
-- `Triplet subtree labels do not match expected triplet`
-   Extracted subtree taxa do not match the target triplet labels.
-- `Could not determine sister-pair MRCA`
-   Internal branch metric could not be computed because sister MRCA resolution failed.
+- `Invalid Newick format in ...`
+   Tree parsing failed, or the file is empty/structurally unusable.
 
 ### Triplet Topology Utilities (`ghostparser.triplet_utils`)
 
@@ -528,73 +454,26 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Tree taxa do not match provided ABC triplet`
    Topology classification was requested with an incompatible ABC taxon mapping.
 
-### Triplet Processing (`ghostparser.triplet_processor`)
+### Triplet Inference (`ghostparser.orchestrator.inference`)
 
-- `Unsupported ...` for discordant test, stats backend, summary statistic, tree-height strategy, p-value correction, or input format
-   A selected method/format is outside supported choices.
-- `Unknown triplet topology` / `Resolved topology roles require a valid species topology` / `Invalid species topology: ...`
-   Internal topology state is inconsistent with supported canonical topologies.
+- `Unsupported discordant test method: ...` / `Unsupported summary statistic: ...` / `Unsupported tree height calculation strategy: ...` / `Unsupported p-value correction method: ...`
+   A selected method is outside the supported choices; the message lists the valid ones.
+- `Invalid species topology: ...` / `Resolved topology roles require a valid species topology`
+   Internal topology state is inconsistent with the supported canonical topologies.
 - `Triplet tree must contain exactly 3 terminal taxa`
    Per-tree triplet metrics require exactly three labeled leaves.
 - `species_triplet is required for tree height strategies A, B, and C`
    Taxon-specific height strategies were requested without ABC triplet labels.
 - `Selected taxon ... not found in triplet tree`
-   A/B/C-selected taxon is absent from the observed triplet tree.
+   The A/B/C-selected taxon is absent from the observed triplet tree.
 - `Could not determine sister-pair MRCA for triplet tree`
    Sister-pair branch metrics could not be resolved for a triplet.
 - `Invalid dis1_topology '...'. Expected 'BC' or 'AC'.`
    Inference text generation got an invalid discordant topology label.
-- `borderline_margin must be >= 0`
-   Hybrid KS helper margin parameter is invalid.
 - `Unsupported summary statistic name: ...`
-   Unsupported statistic requested in summary metric computation.
+   An unsupported statistic was requested during summary-metric computation.
 - `Bootstrap payload is not JSON-serializable: ...`
    Bootstrap debug output could not be converted to TSV-safe JSON.
-- `alpha must be in (0, 1) for fdr_tsbh`
-   Two-stage BH correction requires a strict `(0,1)` alpha.
-- `Missing worker triplet entry for: ...`
-   Multiprocessing worker was asked to analyze a triplet absent from its entry map.
-- `CLI argument --processes must be an integer >= 0` / `--bootstrap-iterations must be an integer >= 1`
-   Triplet processor runtime arguments are invalid.
-
-### Triplet Text Input Validation (`parse_triplet_gene_trees_file`)
-
-- `Invalid triplet header format (expected 5 tab-separated fields): ...`
-   Triplet section header is malformed.
-- `Invalid triplet header: ...` / `Invalid triplet count in header: ...` / `Invalid species tree in header: ...`
-   Header fields are missing or cannot be parsed.
-- `Invalid ABC label mapping in header: ...` / `Triplet/header label mapping mismatch ...`
-   Header ABC mapping is malformed or inconsistent with listed taxa.
-- `Invalid topology summary in header: ...` / `Invalid discordant role assignment in header: ...`
-   Topology count/role metadata is malformed or logically inconsistent.
-- `Triplet count/header mismatch ...`
-   Header count disagrees with summary totals or parsed gene-tree rows.
-- `Invalid triplet section format: expected blank line after header`
-   Required blank separator after header is missing.
-- `Invalid gene-tree line (expected Newick ending with ';'): ...`
-   Gene-tree line is malformed text in triplet payload.
-- `Duplicate triplet header encountered: ...`
-   The same triplet appears more than once in a single input payload.
-
-### Triplet Parquet Input Validation (`parse_triplet_gene_trees_parquet`)
-
-- `Parquet input requires pyarrow to be installed`
-   Parquet input parsing requested without `pyarrow`.
-- `Invalid parquet triplet dataset: expected 'triplets/' and 'observations/' directories`
-   Dataset directory layout does not match expected schema.
-- `Duplicate triplet header encountered: ...`
-   Duplicate triplet rows exist in parquet triplet metadata.
-- `Invalid discordant role assignment in parquet row for ...`
-   Parquet role metadata is inconsistent.
-- `Observation references unknown triplet_id: ...`
-   Observation partition references a missing triplet metadata row.
-- `Triplet count/header mismatch ...`
-   Observed row count does not match declared triplet count.
-
-### ML Package Entrypoint (`ghostparser.ml.__main__`)
-
-- `RuntimeError: Model module ... does not expose a 'main' function`
-   Dispatch target module is importable but missing required CLI entry function.
 
 ### ML Dataset and Feature Validation (`ghostparser.ml.ml_utils`)
 
@@ -669,7 +548,7 @@ Run all tests:
 pytest
 ```
 
-See [tests/TESTS.md](tests/TESTS.md) for detailed test documentation and test map.
+See [TESTS.md](tests/TESTS.md) for detailed test documentation and test map.
 
 ---
 
@@ -701,9 +580,9 @@ git tag -d v0.1.1
 git push origin --delete v0.1.1
 
 # 3) Manually delete the GitHub Release (if created)
-#    Go to: https://github.com/asif256000/ghostparser/releases
-#    Find the v0.1.1 release and click "Delete"
-#    OR use GitHub CLI:
+# Go to: https://github.com/asif256000/ghostparser/releases
+# Find the v0.1.1 release and click "Delete"
+# OR use GitHub CLI:
 gh release delete v0.1.1
 ```
 

@@ -1,7 +1,8 @@
 # Configuration Guide
 
-This guide is organized around the main pipeline entry point, `ghostparser.orchestrator`, and then the three submodules (`tree_parser`, `triplet_processor`, `introgression_mapper`).
-Only `ghostparser.orchestrator` supports config files.
+This guide is the complete reference for every GhostParser configuration key. It is organized around the main entry point, `ghostparser.orchestrator`, followed by the machine-learning subpackage (`ghostparser.ml`) and the standalone consolidation CLI (`ghostparser.introgression_mapper`).
+
+Both `ghostparser.orchestrator` and the `ghostparser.ml` trainers support config files. For how each module works internally, see [ghostparser/orchestrator/ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) and [ghostparser/ml/ML.md](ghostparser/ml/ML.md).
 
 ## Path Resolution
 
@@ -72,300 +73,206 @@ python -m ghostparser.orchestrator -c configs/run.yaml
 
 ## Orchestrator (Primary Module)
 
-`ghostparser.orchestrator` is the end-to-end entrypoint. It runs tree preprocessing/triplet extraction and then triplet inference in one pipeline.
+`ghostparser.orchestrator` is the end-to-end entry point. It fuses tree preprocessing, triplet subtree extraction, and per-triplet inference into a single streaming pass, then optionally consolidates the results into introgression maps.
+
+For how the module works internally, see [ghostparser/orchestrator/ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md).
 
 ### Run With a Config File
 
-Supported config file formats:
-
-- `.json`
-- `.yaml`
-- `.yml`
-
-Run with config mode:
+`-c/--config-file` is the only CLI-only option. It accepts a JSON or YAML file:
 
 ```bash
-python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
+python -m ghostparser.orchestrator -c run_config.yaml
+python -m ghostparser.orchestrator -c run_config.json
 ```
 
-If `-c/--config-file` and other CLI arguments are provided together, config mode is used and other CLI arguments are ignored.
+When a config file is given, **the file supplies every setting and the other CLI flags are ignored with a warning** (config wins). This is the only way to set the config-file-only keys listed below.
 
-### Orchestrator Config Keys and CLI Options
+Minimal YAML:
 
-#### Required keys
+```yaml
+species_tree_path: data/species.tree
+gene_trees_path: data/genes.tree
+outgroups: OutGroup
+output_folder: results
+```
+
+Fuller YAML showing the config-file-only keys and the nested bootstrap block:
+
+```yaml
+species_tree_path: data/species.tree
+gene_trees_path: data/genes.tree
+outgroups: Out1,Out2
+output_folder: results
+processes: 0
+parallelization_mode: auto
+alpha_dct: 0.05
+alpha_ks: 0.05
+p_value_correction: bfn
+summary_statistic: mean
+discordant_test: chi-square
+tree_height_calculation_strategy: AVG
+min_support_value: 0.5
+generate_summary_stats: true
+consolidation: true
+bootstrap: true
+bootstrap_options:
+  iterations: 100
+  seed: 42
+  debug_mode: false
+  summary_only: false
+```
+
+### Required Keys
+
+These must be supplied either on the CLI or in the config file.
 
 ##### `species_tree_path`
 
-- Type: string path
-- Parallel CLI: `--species-tree-path` (alias: `-st`)
-- Description: path to the species tree file in Newick format.
+- CLI: `-st, --species-tree-path`
+- Species tree in Newick format.
 
 ##### `gene_trees_path`
 
-- Type: string path
-- Parallel CLI: `--gene-trees-path` (alias: `-gt`)
-- Description: path to the gene trees file in Newick format.
+- CLI: `-gt, --gene-trees-path`
+- Gene trees in Newick format, one per line.
 
-##### `outgroups` or `outgroup`
+##### `outgroups`
 
-- Type:
-  - `outgroups`: list of strings
-  - `outgroup`: string
-- Parallel CLI: `--outgroups` (alias: `-og`)
-- Description: outgroup taxa used for rooting/pruning.
-- Accepted forms:
+- CLI: `-og, --outgroups`
+- Outgroup taxon identifier(s). Accepts a comma-separated string (`Out1,Out2`) or a YAML/JSON list. The species tree is rooted and pruned on the outgroup MRCA; gene trees are rooted on the outgroup.
+- The alias `outgroup` is also accepted in config files.
 
-```yaml
-outgroups:
-  - Taxon1
-  - Taxon2
-```
+### Config + CLI Keys
 
-```yaml
-outgroup: Taxon1
-```
-
-```yaml
-outgroup: Taxon1,Taxon2
-```
-
-#### Optional keys
-
-##### `triplet_filter`
-
-- Type: string path
-- Parallel CLI: `--triplet-filter`
-- Description: optional path to a triplet filter file (comma-separated taxa per line).
+Settable either on the CLI or in a config file.
 
 ##### `output_folder`
 
-- Type: string path
-- Parallel CLI: `--output-folder`
-- Description: output directory for pipeline artifacts.
-- Default: `./results` from the current working directory.
+- CLI: `--output-folder`
+- Default: `results`
+- Directory for all run outputs.
 
 ##### `overwrite`
 
-- Type: boolean
-- Parallel CLI: `--no-overwrite` disables overwrite when set on the CLI
-- Description: controls whether an existing output folder is cleared before the pipeline writes artifacts.
+- CLI: `--no-overwrite` (sets `overwrite: false`)
 - Default: `true`
+- When `true`, an existing output directory is reset. When `false`, the run writes to an auto-suffixed sibling (`results_1`, `results_2`, ...) using the smallest missing suffix.
 
-##### `triplet_output_format`
+##### `triplet_filter`
 
-- Type: string
-- Parallel CLI: `--triplet-output-format`
-- Allowed values: `parquet` (default), `txt`
-- Description: extraction output format from the tree parser stage.
-- Value meaning:
-  - `parquet`: writes partitioned parquet output optimized for downstream processing and larger datasets.
-  - `txt`: writes plain-text triplet blocks for manual inspection and debugging.
-
-##### `parquet_partitions`
-
-- Type: integer >= 0
-- Parallel CLI: `--parquet-partitions`
-- Description: number of hash partitions used when triplet output format is parquet.
-- Default: `128`.
-
-##### `parquet_compression`
-
-- Type: string
-- Parallel CLI: `--parquet-compression`
-- Allowed values: `zstd` (default), `snappy`, `gzip`, `brotli`, `none`
-- Description: parquet compression codec.
-- Value meaning:
-  - `zstd`: best general-purpose balance of compression ratio and speed.
-  - `snappy`: faster compression/decompression with larger output files.
-  - `gzip`: higher compression ratio with slower runtime.
-  - `brotli`: high compression ratio, typically slower than `zstd` for this workflow.
-  - `none`: no compression, largest files and fastest write path.
+- CLI: `--triplet-filter`
+- Default: none (all triplets)
+- Path to a file of comma-separated taxa triplets, one per line. Only the listed triplets are analyzed.
 
 ##### `processes`
 
-- Type: integer >= 0
-- Parallel CLI: `--processes`
-- Description: worker count for extraction and inference.
-- Notes:
-  - `0` uses all available CPU cores.
-  - `1` uses single-worker execution.
+- CLI: `--processes`
+- Default: `0`
+- Worker process count. `0` uses all available cores; `1` runs serially in the parent process.
 
-##### `generate_summary_stats`
+##### `parallelization_mode`
 
-- Type: boolean
-- Parallel CLI: `--generate-summary-stats`
-- Description: writes `summary_statistics.tsv` when enabled.
-- Default: `false`.
-
-##### `consolidation`
-
-- Type: boolean
-- Parallel CLI: `--no-consolidation` (disable switch)
-- Description: controls the introgression consolidation stage that generates heatmap/bar-chart artifacts from in-memory triplet results.
-- Default: `true`.
-- Consolidation artifacts:
-  - `introgression_combined.png` — single combined figure with inflow/outflow heatmap and ghost bar chart.
-- The TSV artifacts are written to `consolidation_data/` inside the configured results directory.
-  - `introgression_matrix_inflow_outflow.tsv`
-  - `introgression_matrix_inflow_outflow_raw_sum.tsv`
-  - `introgression_matrix_inflow_outflow_supporting_count.tsv`
-  - `introgression_ghost_target_strength.tsv`
-  - `introgression_ghost_target_strength_raw_sum.tsv`
-  - `introgression_ghost_target_strength_supporting_count.tsv`
-  - `introgression_taxa_order.tsv`
-- Average bootstrap values in the artifacts use supporting-triplet denominators: the directed-pair average is `sum(bootstrap weights) / count(triplets that produced that directed edge)`, and the ghost-target average is `sum(bootstrap weights) / count(triplets that produced that ghost target)`.
-- Outgroup taxa are automatically excluded from all consolidation plots and TSVs.
-
-##### `min_support_value`
-
-- Type: number
-- Parallel CLI: `--min-support-value`
-- Description: support threshold for species and gene tree cleaning.
-- Default: `0.5`.
-
-##### `discordant_test`
-
-- Type: string
-- Parallel CLI: `--discordant-test`
-- Allowed values: `chi-square` (default), `z-test`
-- Description: discordant count test used in triplet inference.
-- Value meaning:
-  - `chi-square`: Pearson chi-square test on discordant topology counts.
-  - `z-test`: two-proportion z-test on discordant topology frequencies.
-
-##### `summary_statistic`
-
-- Type: string
-- Parallel CLI: `--summary-statistic`
-- Allowed values: `median` (default), `mean`, `mode`
-- Description: statistic used for con/dis1 distributions after KS testing.
-- Value meaning:
-  - `median`: robust to outliers; preferred for skewed distributions.
-  - `mean`: arithmetic average; sensitive to outliers.
-  - `mode`: most frequent value after binning heights to 3 decimal places.
-
-##### `stats_backend`
-
-- Type: string
-- Parallel CLI: `--stats-backend`
-- Allowed values: `standard` (default), `custom`
-- Description: backend used for DCT and KS calculations.
-- Value meaning:
-  - `standard`: SciPy/statsmodels implementations for statistical tests.
-  - `custom`: GhostParser's internal implementations (experimental).
-
-##### `tree_height_calculation_strategy`
-
-- Type: string
-- Parallel CLI: `--tree-height-calculation-strategy`
-- Allowed values: `AVG` (default), `A`, `B`, `C`, `SIS`, `INT`
-- Description: strategy used to compute tree-height statistics.
-- Value meaning:
-  - `AVG`: mean root-to-tip distance across taxa A, B, and C.
-  - `A`/`B`/`C`: root-to-tip distance for the selected taxon only.
-  - `SIS`: sister-pair distance metric from the inferred sister taxa.
-  - `INT`: internal branch distance from sister-pair MRCA to triplet root.
-
-##### `p_value_correction`
-
-- Type: string
-- Parallel CLI: `--p-value-correction`
-- Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`
-- Description: multiple-testing correction for DCT and KS p-values.
-- Value meaning:
-  - `no`: no correction.
-  - `bfn`: Bonferroni single-step family-wise error control.
-  - `holm`: Holm step-down family-wise error control.
-  - `fdr_bh`: Benjamini-Hochberg false discovery rate control.
-  - `fdr_by`: Benjamini-Yekutieli FDR control for dependent tests.
-  - `fdr_tsbh`: two-stage Benjamini-Hochberg FDR control.
+- CLI: `--parallelization-mode`
+- Default: `auto`
+- Allowed: `auto`, `taxon`, `gene`
+- `taxon` dispatches chunks of triplets across workers; `gene` parallelizes per-gene-tree subtree extraction within one triplet; `auto` selects `gene` when the ingroup taxa count is below 15 or the gene-tree count exceeds 3500, otherwise `taxon`.
 
 ##### `alpha_dct`
 
-- Type: number
-- Parallel CLI: `--alpha-dct`
-- Description: p-value threshold for DCT.
-- Default: `0.05`.
+- CLI: `--alpha-dct`
+- Default: `0.05`
+- Significance threshold for the discordant count test (the first gate of the decision logic).
 
 ##### `alpha_ks`
 
-- Type: number
-- Parallel CLI: `--alpha-ks`
-- Description: p-value threshold for KS.
-- Default: `0.05`.
+- CLI: `--alpha-ks`
+- Default: `0.05`
+- Significance threshold for the KS tree-height test (the second gate).
+
+##### `p_value_correction`
+
+- CLI: `--p-value-correction`
+- Default: `bfn`
+- Allowed: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`
+- Multiple-testing correction applied once across every triplet in the run. Corrected p-values drive the significance decisions; the uncorrected values are retained in the output for reporting.
+
+##### `summary_statistic`
+
+- CLI: `--summary-statistic`
+- Default: `mean`
+- Allowed: `mean`, `median`, `mode`
+- Statistic used to compare concordant against discordant1 tree heights in the final classification step. `mode` bins values to three decimals and resolves ties to the largest value.
+
+##### `consolidation`
+
+- CLI: `--no-consolidation` (sets `consolidation: false`)
+- Default: `true`
+- Generates the introgression map artifacts into a `consolidation/` subfolder of the output directory.
 
 ##### `bootstrap`
 
-- Type: boolean
-- Parallel CLI: `--no-bootstrap` (disable switch)
-- Description: enables bootstrap sampling-with-replacement when true.
-- Default: `true`.
+- CLI: `--no-bootstrap` (sets `bootstrap: false`)
+- Default: `true`
+- Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV.
+
+##### `preflight_data_check`
+
+- CLI: `--preflight-data-check` (sets `preflight_data_check: true`)
+- Default: `false`
+- Runs only the structural sanity check on the species tree, gene trees, and triplets, writes `preflight_data_check.txt` into the output folder, and exits without any analysis. No results TSV, processed trees, `metrics.txt`, or consolidation artifacts are produced. Every other analysis key is ignored for that run.
+- The report lists each detected issue by category (for example `gene_tree.rooting_failed`, `triplet.unresolved_rooted_sister_pair`), a count per category, up to 25 example messages naming the offending gene-tree index and triplet, and a species-tree-versus-gene-tree attribution summary.
+- The checks are structural: they establish whether the data can be processed, not whether the result will be biologically meaningful.
+
+### Config-File-Only Keys
+
+These have no CLI flag. They take their default unless set in a config file.
+
+##### `discordant_test`
+
+- Default: `chi-square`
+- Allowed: `chi-square`, `z-test`
+- The discordant count test: SciPy's Pearson chi-square, or a statsmodels two-proportion z-test.
+
+##### `tree_height_calculation_strategy`
+
+- Default: `AVG`
+- Allowed: `AVG`, `A`, `B`, `C`, `SIS`, `INT`
+- How H(T) is computed per gene tree: `AVG` averages the three root-to-tip distances; `A`/`B`/`C` take a single taxon's root-to-tip distance; `SIS` is the sister-pair patristic distance; `INT` is the sister-MRCA-to-root internal branch.
+
+##### `min_support_value`
+
+- Default: `0.5`
+- Trees whose mean internal-node support falls below this threshold are dropped during cleaning. Trees without support labels are always kept.
+
+##### `generate_summary_stats`
+
+- Default: `false`
+- Also writes `summary_statistics.tsv` with 63 metric columns (mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/sister-distance for concordant/discordant1/discordant2).
 
 ##### `bootstrap_options`
 
-- Type: object
-- Parallel CLI:
-  - `iterations` -> `--bootstrap-iterations`
-  - `seed` -> `--bootstrap-seed`
-  - `debug_mode` -> `--bootstrap-debug-mode`
-  - `summary_only` -> `--bootstrap-summary-only`
-- Description: nested bootstrap runtime options.
-- Supported keys:
-  - `iterations` (integer >= 1), default `100`
-  - `seed` (integer, optional)
-  - `debug_mode` (boolean), default `false`
-  - `summary_only` (boolean), default `false`
+A nested block; each key may also be given flat as `bootstrap_<key>`.
 
-##### `bootstrap_iterations`
-
-- Type: integer >= 1
-- Parallel CLI: `--bootstrap-iterations`
-- Description: flat key alternative to `bootstrap_options.iterations`.
-
-##### `bootstrap_seed`
-
-- Type: integer
-- Parallel CLI: `--bootstrap-seed`
-- Description: flat key alternative to `bootstrap_options.seed`.
-
-##### `bootstrap_debug_mode`
-
-- Type: boolean
-- Parallel CLI: `--bootstrap-debug-mode`
-- Description: flat key alternative to `bootstrap_options.debug_mode`.
-
-##### `bootstrap_summary_only`
-
-- Type: boolean
-- Parallel CLI: `--bootstrap-summary-only`
-- Description: flat key alternative to `bootstrap_options.summary_only`.
+- `iterations` (flat: `bootstrap_iterations`) — default `100`. Bootstrap iterations per triplet; must be an integer >= 1.
+- `seed` (flat: `bootstrap_seed`) — default none. Base RNG seed; each triplet derives a deterministic per-triplet seed from it, so results are reproducible and independent of the parallelization mode.
+- `debug_mode` (flat: `bootstrap_debug_mode`) — default `false`. Appends the per-iteration bootstrap-debug columns to the results TSV.
+- `summary_only` (flat: `bootstrap_summary_only`) — default `false`. With debug mode on, emits compact summaries instead of full per-iteration lists.
 
 ### Orchestrator CLI Example
 
 ```bash
 python -m ghostparser.orchestrator \
-  --species-tree-path data/asuv21/species.tree \
-  --gene-trees-path data/asuv21/gene_trees.tree \
-  --outgroups Ephemera_danica,Isonychia_kiangsinensis \
-  --triplet-filter data/asuv21/asuv_all/triplet_filter.txt \
+  -st data/species.tree \
+  -gt data/genes.tree \
+  -og Out1,Out2 \
   --output-folder results \
-  --triplet-output-format parquet \
-  --parquet-partitions 128 \
-  --parquet-compression zstd \
-  --processes 8 \
-  --generate-summary-stats \
-  --no-consolidation \
-  --min-support-value 0.6 \
-  --discordant-test z-test \
-  --summary-statistic mean \
-  --stats-backend custom \
-  --tree-height-calculation-strategy B \
-  --p-value-correction fdr_bh \
-  --alpha-dct 0.02 \
-  --alpha-ks 0.1 \
-  --bootstrap-iterations 250 \
-  --bootstrap-seed 42 \
-  --bootstrap-debug-mode
+  --processes 0 \
+  --parallelization-mode auto \
+  --alpha-dct 0.05 \
+  --alpha-ks 0.05 \
+  --p-value-correction bfn \
+  --summary-statistic mean
 ```
 
 ## Machine Learning (ghostparser.ml)
@@ -390,7 +297,7 @@ The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--
 
 - Type: string
 - Parallel CLI: `--input-path` (alias `-i`)
-- Description: path to `summary_statistics.tsv` produced by the pipeline.
+- Description: path to `summary_statistics.tsv` produced by the orchestrator.
 
 ##### `output_dir`
 
@@ -585,235 +492,14 @@ python -m ghostparser.ml.multi_knn -i ./results/summary_statistics.tsv -o ./resu
 - `sample_configs/random_forest_minimal.yaml`
 - `sample_configs/multi_knn_minimal.yaml`
 - `sample_configs/hyperparameter_tuning_random_forest.yaml`
-- `sample_configs/orchestrator_minimal.yaml`
-- `sample_configs/orchestrator_full.yaml`
 
 The ML sample configs illustrate the `input_path`, `output_dir`, `model`, `evaluation`, and `hyperparameter_tuning` sections that the ML loaders expect.
-
-## Tree Parser (CLI Submodule)
-
-`ghostparser.tree_parser` performs cleaning and triplet extraction only.
-
-### CLI Options
-
-#### Required
-
-##### `--species-tree-path` (`-st`)
-
-- Parallel orchestrator key/CLI: `species_tree_path` / `--species-tree-path`
-- Description: species tree input path.
-
-##### `--gene-trees-path` (`-gt`)
-
-- Parallel orchestrator key/CLI: `gene_trees_path` / `--gene-trees-path`
-- Description: gene trees input path.
-
-##### `--outgroups` (`-og`)
-
-- Parallel orchestrator key/CLI: `outgroups` or `outgroup` / `--outgroups`
-- Description: comma-separated outgroup taxa.
-
-#### Optional
-
-##### `--triplet-filter`
-
-- Parallel orchestrator key/CLI: `triplet_filter` / `--triplet-filter`
-- Description: optional triplet filter path.
-
-##### `--output-folder`
-
-- Parallel orchestrator key/CLI: `output_folder` / `--output-folder`
-- Description: output directory for extracted artifacts.
-
-##### `--triplet-output-format`
-
-- Parallel orchestrator key/CLI: `triplet_output_format` / `--triplet-output-format`
-- Allowed values: `parquet` (default), `txt`
-- Value meaning:
-  - `parquet`: partitioned columnar output for scalable downstream processing.
-  - `txt`: plain-text output for quick inspection.
-
-##### `--parquet-partitions`
-
-- Parallel orchestrator key/CLI: `parquet_partitions` / `--parquet-partitions`
-- Description: parquet partition count.
-
-##### `--parquet-compression`
-
-- Parallel orchestrator key/CLI: `parquet_compression` / `--parquet-compression`
-- Allowed values: `zstd` (default), `snappy`, `gzip`, `brotli`, `none`
-- Value meaning: same codec semantics as orchestrator `parquet_compression`.
-
-##### `--min-support-value`
-
-- Parallel orchestrator key/CLI: `min_support_value` / `--min-support-value`
-- Description: support threshold for tree cleaning.
-
-##### `--processes`
-
-- Parallel orchestrator key/CLI: `processes` / `--processes`
-- Description: worker count for extraction (`0` uses all cores).
-
-##### `--no-multiprocessing`
-
-- Parallel orchestrator key/CLI: no direct config key
-- Description: disables multiprocessing in tree parser execution.
-
-### Tree Parser CLI Example
-
-```bash
-python -m ghostparser.tree_parser \
-  --species-tree-path data/asuv21/species.tree \
-  --gene-trees-path data/asuv21/gene_trees.tree \
-  --outgroups Ephemera_danica,Isonychia_kiangsinensis \
-  --triplet-filter data/asuv21/asuv_all/triplet_filter.txt \
-  --output-folder results \
-  --triplet-output-format parquet \
-  --parquet-partitions 128 \
-  --parquet-compression zstd \
-  --min-support-value 0.6 \
-  --processes 8
-```
-
-## Triplet Processor (CLI Submodule)
-
-`ghostparser.triplet_processor` runs inference on precomputed triplet extraction output.
-
-### CLI Options
-
-#### Required
-
-##### `--input-path`
-
-- Parallel orchestrator key/CLI: no direct key (orchestrator wires this stage internally)
-- Description: path to triplet extraction output (`.parquet` dataset or `.txt`).
-
-#### Optional
-
-##### `--input-format`
-
-- Parallel orchestrator key/CLI: no direct key
-- Allowed values: `auto` (default), `txt`, `parquet`
-- Description: input parser mode.
-- Value meaning:
-  - `auto`: infer format from input path.
-  - `txt`: force text parser.
-  - `parquet`: force parquet parser.
-
-##### `--output-path`
-
-- Parallel orchestrator key/CLI: no direct key
-- Description: output TSV path.
-
-##### `--stats-output`
-
-- Parallel orchestrator key/CLI: no direct key
-- Description: optional JSON statistics output path.
-
-##### `--alpha-dct`
-
-- Parallel orchestrator key/CLI: `alpha_dct` / `--alpha-dct`
-- Description: DCT significance threshold.
-
-##### `--alpha-ks`
-
-- Parallel orchestrator key/CLI: `alpha_ks` / `--alpha-ks`
-- Description: KS significance threshold.
-
-##### `--discordant-test`
-
-- Parallel orchestrator key/CLI: `discordant_test` / `--discordant-test`
-- Allowed values: `chi-square` (default), `z-test`
-- Value meaning: same method semantics as orchestrator `discordant_test`.
-
-##### `--summary-statistic`
-
-- Parallel orchestrator key/CLI: `summary_statistic` / `--summary-statistic`
-- Allowed values: `median` (default), `mean`, `mode`
-- Value meaning: same statistic semantics as orchestrator `summary_statistic`.
-
-##### `--stats-backend`
-
-- Parallel orchestrator key/CLI: `stats_backend` / `--stats-backend`
-- Allowed values: `standard` (default), `custom`
-- Value meaning: same backend semantics as orchestrator `stats_backend`.
-
-##### `--tree-height-calculation-strategy`
-
-- Parallel orchestrator key/CLI: `tree_height_calculation_strategy` / `--tree-height-calculation-strategy`
-- Allowed values: `AVG` (default), `A`, `B`, `C`, `SIS`, `INT`
-- Value meaning: same strategy semantics as orchestrator `tree_height_calculation_strategy`.
-
-##### `--p-value-correction`
-
-- Parallel orchestrator key/CLI: `p_value_correction` / `--p-value-correction`
-- Allowed values: `no` (default), `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`
-- Value meaning: same correction-method semantics as orchestrator `p_value_correction`.
-
-##### `--no-bootstrap`
-
-- Parallel orchestrator key/CLI: `bootstrap` / `--no-bootstrap`
-- Description: disable bootstrap sampling-with-replacement.
-
-##### `--bootstrap-iterations`
-
-- Parallel orchestrator key/CLI: `bootstrap_options.iterations` / `--bootstrap-iterations`
-- Description: iterations per triplet.
-
-##### `--bootstrap-seed`
-
-- Parallel orchestrator key/CLI: `bootstrap_options.seed` / `--bootstrap-seed`
-- Description: optional random seed.
-
-##### `--bootstrap-debug-mode`
-
-- Parallel orchestrator key/CLI: `bootstrap_options.debug_mode` / `--bootstrap-debug-mode`
-- Description: enable debug bootstrap columns.
-
-##### `--bootstrap-summary-only`
-
-- Parallel orchestrator key/CLI: `bootstrap_options.summary_only` / `--bootstrap-summary-only`
-- Description: compact bootstrap debug summaries.
-
-##### `--processes`
-
-- Parallel orchestrator key/CLI: `processes` / `--processes`
-- Description: worker count for triplet analysis (`0` uses all cores).
-
-##### `--generate-summary-stats`
-
-- Parallel orchestrator key/CLI: `generate_summary_stats` / `--generate-summary-stats`
-- Description: write `summary_statistics.tsv`.
-
-##### `--no-multiprocessing`
-
-- Parallel orchestrator key/CLI: no direct config key
-- Description: disable multiprocessing in triplet processor execution.
-
-### Triplet Processor CLI Example
-
-```bash
-python -m ghostparser.triplet_processor \
-  --input-path results/unique_triplets_gene_trees.parquet \
-  --input-format auto \
-  --output-path results/triplet_introgression_results.tsv \
-  --stats-output results/triplet_introgression_results.json \
-  --alpha-dct 0.05 \
-  --alpha-ks 0.05 \
-  --discordant-test chi-square \
-  --summary-statistic median \
-  --stats-backend standard \
-  --tree-height-calculation-strategy AVG \
-  --p-value-correction no \
-  --bootstrap-iterations 100 \
-  --processes 8
-```
 
 ---
 
 ## Introgression Mapper (CLI Submodule)
 
-`ghostparser.introgression_mapper` can be run independently to regenerate consolidation artifacts from an existing `orchestrator_triplet_results.tsv` without re-running the full pipeline.
+`ghostparser.introgression_mapper` can be run independently to regenerate consolidation artifacts from an existing `orchestrator_triplet_results.tsv` without re-running the full orchestrator.
 
 ### CLI Options
 
@@ -852,7 +538,7 @@ python -m ghostparser.introgression_mapper \
 
 - `introgression_combined.png` — combined inflow/outflow heatmap and ghost target-strength bar chart.
 - `introgression_matrix_inflow_outflow.tsv` — target × source matrix of average bootstrap support values.
-- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support.
+- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support, plus a `has_sampled_introgression` flag (`1` when that taxon is also the target of a sampled introgression edge) that sets the bar colour.
 - `introgression_taxa_order.tsv` — ordered taxa list matching the plot axes.
 
 ---
@@ -860,5 +546,5 @@ python -m ghostparser.introgression_mapper \
 ## Notes
 
 - Path values are resolved at runtime to absolute paths.
-- Config-file mode (`-c/--config-file`) is available in orchestrator only.
+- Config-file mode (`-c/--config-file`) is available in `ghostparser.orchestrator` and the `ghostparser.ml` trainers.
 - Use `--processes 1` to run single-worker mode.

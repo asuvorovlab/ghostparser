@@ -44,14 +44,14 @@ def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
     assert metrics["dataset_summary"]["class_distribution"]["overall"]
     assert metrics["dataset_summary"]["bit_distribution"]["overall"]
     assert metrics["cv"] is not None
-    assert metrics["knn"]["configured_n_neighbors"] == 5
+    assert metrics["hyperparameters"]["n_neighbors_requested"] == 5
     assert "confusion_matrix_64_classes" in metrics
 
     metrics_json = json.loads(
         (tmp_path / "ml_out" / "multi_knn_overall_metrics.json").read_text()
     )
     assert metrics_json["exact_match_is_diagnostic"] is True
-    assert metrics_json["knn"]["effective_n_neighbors"] >= 1
+    assert metrics_json["hyperparameters"]["n_neighbors_effective"] >= 1
     assert metrics_json["dataset_summary"]["split"]["train_rows"] > 0
 
     predictions_path = tmp_path / "ml_out" / "predictions.tsv"
@@ -118,9 +118,12 @@ def test_multi_knn_metrics_report_mentions_effective_neighbors(
     metrics_text = (tmp_path / "ml_out" / "multi_knn_metrics.txt").read_text()
 
     assert "Ghostparser ML multi-label KNN baseline" in metrics_text
-    assert "Configured n_neighbors:" in metrics_text
-    assert "Effective n_neighbors:" in metrics_text
+    # The requested count is capped at the training-set size, so the report
+    # carries both values in the hyperparameter block.
+    assert "Hyperparameters:" in metrics_text
+    assert "n_neighbors_requested" in metrics_text
+    assert "n_neighbors_effective" in metrics_text
     assert "Timings (seconds):" in metrics_text
-    assert result["metrics"]["knn"]["configured_n_neighbors"] == 20
-    assert result["metrics"]["knn"]["effective_n_neighbors"] <= 20
+    assert result["metrics"]["hyperparameters"]["n_neighbors_requested"] == 20
+    assert result["metrics"]["hyperparameters"]["n_neighbors_effective"] <= 20
     assert np.isfinite(result["metrics"]["primary_metrics"]["hamming_loss"])

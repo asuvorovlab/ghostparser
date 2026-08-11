@@ -302,8 +302,27 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     else:
         confusion_matrix_64_plot_path = None
 
+    # Every knob that affects the fitted model or the split it was fitted on.
+    hyperparameters = {
+        "n_estimators": int(config.n_estimators),
+        "max_depth": config.max_depth,
+        "min_samples_split": config.min_samples_split,
+        "min_samples_leaf": config.min_samples_leaf,
+        "max_features": config.max_features,
+        "class_weight": config.class_weight,
+        "n_jobs": config.n_jobs if config.n_jobs is not None else DEFAULT_N_JOBS,
+        "random_state": config.random_state,
+        "test_size": config.test_size,
+        "cv_folds_requested": config.cv_folds,
+        "cv_folds_effective": cv_folds,
+        "rare_class_policy": config.rare_class_policy,
+        "target_column": config.target_column,
+    }
+
     metrics_payload = {
         "objective": "multi-label classification",
+        "classifier": "random_forest",
+        "hyperparameters": hyperparameters,
         "metric_set": metric_set,
         "exact_match_is_diagnostic": True,
         "split_notes": split_notes,
@@ -371,6 +390,10 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         "Primary objective: multi-label classification on the 6-bit classes bitstring.",
         "Exact-match accuracy is diagnostic; bitwise metrics are primary.",
         "",
+    ]
+    text_lines.extend(shared.format_hyperparameter_section(hyperparameters))
+    text_lines.extend([
+        "",
         "Test metrics:",
         f"  Hamming loss: {test_metrics['hamming_loss']:.6f}",
         f"  Bitwise accuracy: {test_metrics['bitwise_accuracy']:.6f}",
@@ -380,7 +403,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         f"  Weighted F1: {test_metrics['weighted_f1']:.6f}",
         "",
         "Per-bit metrics:",
-    ]
+    ])
     if include_per_bit:
         for bit_label, values in test_metrics["per_bit"].items():
             text_lines.append(

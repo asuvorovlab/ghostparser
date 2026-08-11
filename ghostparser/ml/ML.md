@@ -1,7 +1,7 @@
 
 # Machine Learning Module
 
-This document describes the machine-learning baselines included with Ghostparser under `ghostparser.ml`. It focuses on what the configuration keys control, what they change for a training run, and how the evaluation metrics behave. The random forest baseline is the primary focus; multi-label KNN remains available as a secondary baseline.
+This document describes the machine-learning baselines included with Ghostparser under `ghostparser.ml`. It focuses on how the trainers work — the data contract, the training and evaluation flow, and how to read the outputs. The random forest baseline is the primary focus; multi-label KNN remains available as a secondary baseline. The full configuration reference lives in [CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml).
 
 Install the optional ML dependency set with `pip install .[ml]` if you want to run these baselines. The ML extra includes `scikit-learn` and `wandb`.
 
@@ -10,10 +10,10 @@ Install the optional ML dependency set with `pip install .[ml]` if you want to r
 - [Data contract](#data-contract)
 - [Usage](#usage)
 - [Configuration](#configuration)
-- [Evaluation config keys](#evaluation-config-keys)
-- [Evaluation argument](#evaluation-argument)
-- [Random Forest settings](#random-forest-settings)
-- [Multi-label KNN settings](#multi-label-knn-settings)
+- [Choosing an evaluation mode](#choosing-an-evaluation-mode)
+- [Hyperparameter tuning](#hyperparameter-tuning)
+- [Tuning the estimators](#tuning-the-estimators)
+- [Feature Importance](#feature-importance)
 - [What the model outputs mean](#what-the-model-outputs-mean)
 - [Cross-validation and reproducibility](#cross-validation-and-reproducibility)
 - [Outputs](#outputs)
@@ -53,7 +53,7 @@ Run the Random Forest trainer explicitly as the module:
 python -m ghostparser.ml.random_forest -i /path/to/summary_statistics.tsv -o ml_results/
 ```
 
-Note: there is no package-level model dispatcher here; call `python -m ghostparser.ml.random_forest` or `python -m ghostparser.ml.multi_knn` directly.
+There is no package-level model dispatcher. Call `python -m ghostparser.ml.random_forest` or `python -m ghostparser.ml.multi_knn` directly.
 
 To run the KNN baseline explicitly:
 
@@ -69,63 +69,51 @@ python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_rand
 
 ## Configuration
 
-The ML loaders enforce a strict nested layout. For the full schema and examples, see [CONFIG.md](CONFIG.md#machine-learning-ghostparserml), but the most important user-facing idea is simple: the top level tells the trainer where the data is and how to split it, `model` controls the estimator itself, and `evaluation` controls what you want reported or saved. The loader handles numeric features directly and one-hot encodes low-cardinality string features for you.
+The ML loaders enforce a strict nested layout. For the full schema and examples, see [CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml), but the most important user-facing idea is simple: the top level tells the trainer where the data is and how to split it, `model` controls the estimator itself, and `evaluation` controls what you want reported or saved. The loader handles numeric features directly and one-hot encodes low-cardinality string features for you.
 
-### Core run controls
+The top-level keys point the trainer at the data and control the split
+(`input_path`, `output_dir`, `overwrite`, `target_column`, `test_size`,
+`cv_folds`, `random_state`, `n_jobs`, `rare_class_policy`); `model` holds the
+estimator hyperparameters; `evaluation` selects what gets reported and saved.
+Every key, its default, and its allowed values are documented in
+[CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml).
 
-- `input_path`: path to the TSV input file.
-- `output_dir`: directory where artifacts are written.
-- `overwrite`: when `true`, existing output directories are cleared before trainer artifacts are written; when `false`, a suffix such as `_1` is appended.
-- `target_column`: the label column containing the fixed-length binary target string, which defaults to `class`.
-- `test_size`: fraction reserved for hold-out evaluation.
-- `cv_folds`: how many cross-validation folds to attempt.
-- `random_state`: seed for reproducible splits and model randomness.
-- `n_jobs`: CPU parallelism control; `-1` uses all available CPU cores for operations that support parallelism, and it does not use the GPU.
-- `rare_class_policy`: what to do if a requested CV split is not feasible because some label combinations are too rare.
+### Choosing an evaluation mode
 
-### Evaluation argument
+`evaluation.metrics` decides which view of correctness you get, and the right
+choice depends on how you want a near-miss to count:
 
-Use `evaluation.metrics: all` if you want both per-label metrics and the strict exact-match view. That setting keeps the label-level scores, the exact-match accuracy, and the per-bit breakdown together, which is the most useful mode when you want to know both “how many labels were right?” and “did the whole 6-bit pattern match exactly?”
+- `all` (the default) keeps everything together — the label-level scores, the
+  exact-match accuracy, and the per-bit breakdown. Use it when you want to know
+  both "how many labels were right?" and "did the whole 6-bit pattern match?"
+- `primary` keeps the core aggregate/per-label metrics and hamming loss: a
+  compact view for comparing models.
+- `diagnostic` adds the strict exact-match accuracy, the full classification
+  report, and (when `report_confusion_matrix` is on) per-bit confusion matrices.
+- `per_bit` returns the label-by-label breakdown only.
 
-The other options are narrower slices: `primary` keeps the core label-level metrics, `diagnostic` adds the strict exact-match and classification report, and `per_bit` adds the label-by-label breakdown. If your goal is one mistaken bit should still count as mostly correct, use the per-label metrics; if your goal is the full 6-bit pattern must match exactly, use the exact-match metric alongside the per-label ones.
+If one mistaken bit should still count as mostly correct, read the per-label
+metrics; if the full 6-bit pattern must match, read exact-match accuracy
+alongside them.
 
-### Evaluation config keys
-
-The trainers accept an `evaluation` mapping in the config that controls which metrics are computed and which artifacts are written to disk. Keys and effects:
-
-- `metrics` (string, default: `all`): one of `all`, `primary`, `diagnostic`, `per_bit`.
-  - `all`: compute and include per-bit metrics, aggregate/per-label metrics (micro/macro/weighted F1, precision/recall), and diagnostic outputs (exact-match accuracy, classification report).
-  - `primary`: compute the core aggregate/per-label metrics and hamming loss (a compact view for model comparison).
-  - `diagnostic`: compute strict diagnostics such as exact-match accuracy, the full classification report, and confusion matrices (confusion matrices are produced only when `report_confusion_matrix` is enabled).
-  - `per_bit`: compute and return the per-label breakdown for each bit separately.
-
-- `report_class_distribution` (bool, default: `true`): when enabled, the text report repeats the dataset summary. The overall metrics JSON always contains the label map plus the class and bit distributions for the overall file and the train/test split.
-
-- `report_confusion_matrix` (bool, default: `true`): when enabled and `metrics` includes diagnostic outputs (`diagnostic` or `all`), compute confusion matrices for each bit and include them in the metrics payload and as a persisted artifact. The trainers also render a single heatmap-style PNG with one subplot per bit so the true/false and predicted 0/1 counts are easy to compare visually.
-
-- `report_feature_importance` (bool, default: `true`): when enabled, compute and persist `feature_importances.tsv`. For tree-based models this is fast (built-in feature importances); for non-tree models (KNN) this uses permutation importance and can be slow.
-
-- `save_label_map` (bool, default: `true`): the label map is embedded in the overall metrics JSON so downstream parsing can read it alongside the split summary.
-
-- `save_predictions` (bool, default: `true`): persist `predictions.tsv` containing per-row true/predicted bit flags, an exact-match indicator, and the number of matched bits.
-
-These keys let you trade computation and storage cost for diagnostic depth: enabling `report_feature_importance` and the `diagnostic` metrics gives the richest outputs but increases runtime and disk usage.
+The `report_*` and `save_*` keys trade runtime and disk for diagnostic depth.
+`report_feature_importance` is cheap for the random forest (built-in
+importances) but slow for KNN (permutation importance). The label map and the
+class/bit distributions are always embedded in the overall metrics JSON.
 
 ### Hyperparameter tuning
 
 The `hyperparameter_tuning` section configures the standalone tuner in `ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so the search strategy stays explicit and easy to read. For the tuner, only the runtime keys (`input_path`, `output_dir`, `overwrite`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, `n_jobs`) plus `hyperparameter_tuning` are allowed at the top level. Do not provide `evaluation` or `model` sections in a tuning config; the tuner does not read them.
 
-Suggested keys:
-
-- `model` (string, default: `random_forest`): which ML module to tune. Choices are `random_forest` and `multi_knn`.
-- `method` (string, default: `grid`): `grid` evaluates every combination in the search space, while `random` samples `n_iter` combinations from that space.
-- `objective` (string, default: `exact_match_accuracy`): metric used to rank candidates. Choices match the trainer metrics such as `exact_match_accuracy`, `hamming_loss`, `bitwise_accuracy`, `micro_f1`, `macro_f1`, and `weighted_f1`.
-- `top_k` (int, default: `10`): how many of the best candidates to keep in the human-readable summary.
-- `n_iter` (int, default: `20`): how many candidates to sample when `method: random` is selected.
-- `max_candidates` (int, default: `5000`): safety limit for `method: grid`; if the full grid would exceed this value, the tuner rejects the config.
-- `wandb_detailed_payloads` (bool, default: `false`): when `true`, send additional detailed candidate payloads (aggregate and fold-level CV JSON) to Weights & Biases; use this only when network/storage overhead is acceptable.
-- `search_space` (mapping): parameter grid for the selected model. Each key should be one supported hyperparameter and each value should be a list of candidate values.
-- `search_space` (mapping): parameter grid for the selected model. Each key should be one supported hyperparameter and each value should be a list of candidate values. If you omit a parameter from `search_space`, the tuner uses the trainer default for that parameter.
+`method: grid` evaluates every combination in the search space and is rejected
+if the full grid would exceed `max_candidates`; `method: random` samples
+`n_iter` combinations instead, which is what you want once the space is large.
+Candidates are ranked by `objective` (any trainer metric, such as
+`exact_match_accuracy` or `micro_f1`), and the best `top_k` are kept in the
+human-readable summary. Any parameter omitted from `search_space` falls back to
+the trainer default. See
+[CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml) for the full key
+reference.
 
 Supported `search_space` keys are:
 
@@ -197,27 +185,29 @@ If you set `hyperparameter_tuning.wandb_detailed_payloads: true`, the tuner also
 
 To keep network and memory overhead low on long runs, the integration logs scalar summaries only (no per-fold raw prediction payload uploads and no large artifact uploads to WandB by default).
 
-### Random Forest settings
+### Tuning the estimators
 
-- `n_estimators`: more trees usually make the model steadier, but training takes longer and uses more memory.
-- `max_depth`: limits how deep each tree can grow; smaller values usually reduce overfitting and make the model faster. A `null` value leaves tree depth unconstrained, so each tree can expand until the split rules stop it.
-- `min_samples_split`: requires more samples before a node can split, which makes the trees less sensitive to noise. Larger values make the trees more conservative, which can help when the training set is smaller, noisier, or the model is overfitting.
-- `min_samples_leaf`: forces each leaf to contain more samples, which smooths predictions and can help generalization. Larger values make the model smoother and less sensitive to tiny, unstable groups.
-- `max_features`: controls how many features each split considers; smaller values increase tree diversity, larger values make each tree more greedy. A `null` value means the estimator uses its default feature-selection behavior for each split.
-- `class_weight`: lets you weight label classes differently if you want to favor rare outcomes. A `null` value means no class weighting is applied, so all classes are treated equally.
+Both estimators are wrapped in a `MultiOutputClassifier`, so each hyperparameter
+applies to all six one-vs-rest models. The keys and their defaults are listed in
+[CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml); the practical
+intuition is:
 
-For `min_samples_split` and `min_samples_leaf`, leave the keys out if you want the configured defaults. The model does not infer these values from the data, and `null` is rejected by the loader.
+- **Random forest** — `n_estimators` trades stability for runtime and memory.
+  `max_depth`, `min_samples_split`, and `min_samples_leaf` all constrain how far
+  the trees can chase noise, so raising them makes the model more conservative
+  (useful on small or noisy training sets). `max_features` controls per-split
+  feature sampling: smaller values make the trees more diverse, larger values
+  make each tree greedier. `class_weight` can favour rare outcomes.
+- **Multi-label KNN** — `n_neighbors` sets how local a prediction is, and
+  `weights: distance` lets closer neighbours dominate. `algorithm` and
+  `leaf_size` affect search performance rather than the model's meaning, while
+  `metric` and `p` define the distance function (`p: 1` is Manhattan, `p: 2` is
+  Euclidean).
 
-If your TSV contains string-valued columns, the loader will one-hot encode them only when they have 7 or fewer distinct values.
-
-### Multi-label KNN settings
-
-- `n_neighbors`: controls how many nearby training examples vote for a prediction; smaller values are more local, larger values are smoother.
-- `weights`: `uniform` treats all neighbors equally, while `distance` gives closer neighbors more influence.
-- `algorithm`: chooses the neighbor-search strategy; this mostly changes performance, not the final meaning of the model.
-- `leaf_size`: tuning knob for tree-based neighbor search performance and memory usage.
-- `metric`: distance function used to compare samples.
-- `p`: the Minkowski distance power, where `1` behaves like Manhattan distance and `2` behaves like Euclidean distance.
+`min_samples_split` and `min_samples_leaf` are not inferred from the data and
+the loader rejects `null` for them — omit the keys to accept the defaults.
+Note that KNN caps `n_neighbors` at the training-set size when the configured
+value would exceed it.
 
 ### Feature Importance
 
@@ -250,9 +240,9 @@ Stratified here means we try to preserve the frequency of each 6-bit label combi
 
 - `*_model.pkl` — Pickled trained `MultiOutputClassifier` (prefix: `random_forest_` or `multi_knn_`)
 - `*_overall_metrics.json` — Structured metrics, timings, and the consolidated dataset summary
-- `*_metrics.txt` — Human-readable summary of metrics, dataset summary, and diagnostic notes
-- `*_confusion_matrices.png` — Heatmap grid of all confusion matrices, colored from red (smaller counts) to green (larger counts)
-- `*_confusion_matrix_64_classes.png` — Heatmap of the full 64-class confusion matrix across all possible 6-bit labels
+- `*_metrics.txt` — Human-readable summary. Opens with a `Hyperparameters:` block listing every knob that shaped the run — the estimator settings, `test_size`, the requested and effective `cv_folds`, `rare_class_policy`, and `target_column` — followed by the metrics, dataset summary, and diagnostic notes. The same mapping is available under the `hyperparameters` key of `*_overall_metrics.json`.
+- `*_confusion_matrices.png` — Heatmap grid of all confusion matrices on the `cividis` scale, dark for smaller counts and bright for larger ones
+- `*_confusion_matrix_64_classes.png` — Heatmap of the full 64-class confusion matrix across all possible 6-bit labels, on the same scale
 - `feature_importances.tsv` — Ranked features and importance scores (tree-based for RF, permutation for KNN)
 - `predictions.tsv` — Per-row predictions with true/pred bit flags, exact-match indicator, and matched-bit count
 
@@ -284,5 +274,5 @@ The loaded model expects the encoded feature matrix that Ghostparser builds duri
 
 ## See also
 
-- Configuration: [CONFIG.md](CONFIG.md#machine-learning-ghostparserml)
+- Configuration: [CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml)
 

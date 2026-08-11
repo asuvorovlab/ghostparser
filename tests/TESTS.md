@@ -1,537 +1,521 @@
 # Test Suite Documentation
 
-This document lists the current tests, fixtures, and marker-based slices, with function-level input/output expectations.
-Each test is documented either as an individual entry or inside a grouped entry that provides inputs, expected behavior, and test purpose for that set of tests.
+This is the test map: every test function, the inputs and fixtures it uses, and
+the behavior it asserts. For the concrete input values and a step-by-step
+derivation of each expected result, see the companion [TEST_IO.md](TEST_IO.md).
 
 ## Running Tests
 
-Run all tests:
-
 ```bash
+# Everything
 pytest
+
+# One file / one test
+pytest tests/orchestrator/test_orchestrator_inference.py
+pytest tests/orchestrator/test_orchestrator_decision.py::test_classify_ghost_when_discordant_heights_exceed_concordant
+
+# Only the cross-library parity tests (DendroPy vs BioPython)
+pytest -m parity
 ```
 
-Run one file:
+On the SLURM cluster, route the suite onto a compute node rather than running it
+on a login node.
 
-```bash
-pytest tests/test_triplet_processor.py
-```
+## Test Philosophy
 
-Run one function:
-
-```bash
-pytest tests/test_triplet_processor.py::test_adjust_p_values_standard_matches_statsmodels_for_supported_methods
-```
-
-Run backend parity tests only:
-
-```bash
-pytest -m backend_parity
-```
-
-Run only config tests:
-
-```bash
-pytest tests/test_config.py
-```
+Expected values are **derived from definitions**, not captured from a reference
+implementation: topology counts are read off the input Newick strings by hand,
+tree heights are recomputed from root-to-tip distances, and test statistics are
+recomputed inline with SciPy/statsmodels. The one intentional exception is the
+`@pytest.mark.parity` pair, which exists specifically to check that DendroPy's
+triplet extraction agrees with an independent BioPython implementation.
 
 ## Fixtures In Use
 
-Shared fixtures are exported via `tests/conftest.py` from `tests/fixtures.py`.
+Shared fixtures live in `tests/fixtures.py` and are re-exported to the whole
+suite by `tests/conftest.py`. Orchestrator-specific fixtures live in
+`tests/orchestrator/conftest.py`.
 
-- `simple_newick_file`
-Inputs: one rooted Newick with branch lengths and one outgroup.
-Expected usage: tree read/format/clean path, no support labels present.
-
-- `newick_with_support_file`
-Inputs: Newick containing internal support labels.
-Expected usage: support extraction/removal and support-aware cleaning checks.
-
-- `multiple_trees_file`
-Inputs: file containing 3 trees.
-Expected usage: multi-tree read/write and count-preservation checks.
-
-- `low_support_tree_file`
-Inputs: mixed high-support and low-support trees.
-Expected usage: support-threshold filtering checks.
-
-- `simple_species_tree`, `simple_gene_trees`
-Inputs: minimal species/gene trees for integration-style parser workflows.
-Expected usage: end-to-end triplet extraction paths.
-
-- `triplet_comparison_cases`
-Inputs: `(newick, triplet)` cases for DendroPy vs BioPython consistency checks.
-Expected usage: numeric branch-length/partristic-distance parity checks.
-
-Local fixture in `tests/test_tree_parser.py`:
-
-- `gene_trees_missing_outgroup_file`
-Inputs: one valid gene tree plus one missing required outgroup.
-Expected output: missing-outgroup tree is discarded during cleaning.
+- `simple_newick_file` — Inputs: one rooted Newick tree containing `OutGroup`.
+  Expected usage: basic tree reading/standardization.
+- `newick_with_support_file` — Inputs: a Newick tree with internal support
+  labels. Expected usage: support parsing and stripping.
+- `multiple_trees_file` — Inputs: three Newick trees, one per line. Expected
+  usage: multi-tree file reading.
+- `low_support_tree_file` — Inputs: two trees, one with supports
+  (0.95, 0.99, 0.98) and one with (0.30, 0.20, 0.40). Expected usage: mean
+  support filtering at a 0.5 threshold.
+- `simple_species_tree` / `simple_gene_trees` — Inputs: a minimal species tree
+  and three gene trees. Expected usage: small parser integration checks.
+- `triplet_comparison_cases` — Inputs: three `(newick, triplet)` pairs with
+  known branch lengths. Expected usage: the DendroPy-vs-BioPython parity tests.
+- `summary_statistics_tsv` / `summary_statistics_tsv_tuning` — Inputs: feature
+  tables with a `class` bitstring column, `dis1_topology`, and `feature_1..4`.
+  Expected usage: ML trainer and tuner tests.
+- `orchestrator_species_tree` — Inputs: the 5-taxon species tree
+  `(((A,B),C),(D,OUT))`. Expected usage: orchestrator preprocessing and end-to-end
+  runs.
+- `orchestrator_gene_trees` — Inputs: 12 gene trees, each containing
+  `A,B,C,D,OUT` so rooting always succeeds. Expected usage: orchestrator
+  preprocessing and end-to-end runs.
 
 ## Function-Level Coverage
 
-### `tests/test_config.py`
-
-- `test_load_orchestrator_config_json`
-Inputs: full orchestrator JSON config (paths, methods, thresholds, bootstrap settings).
-Expected outputs: normalized absolute paths, parsed outgroups list, preserved explicit values, and default parquet-orchestrator settings.
-
-- `test_load_orchestrator_config_yaml`
-Inputs: minimal YAML config with comma-separated outgroup string.
-Expected outputs: `outgroup` normalized to list.
-
-- `test_load_orchestrator_config_single_outgroup_string_is_single_taxon`
-Inputs: single outgroup string.
-Expected outputs: one-element outgroup list.
-
-- `test_load_orchestrator_config_missing_required`
-Inputs: config missing required fields.
-Expected outputs: `ConfigError` with missing-field message.
-
-- `test_load_orchestrator_config_invalid_choice_fields` (parametrized)
-Inputs: invalid values for `discordant_test`, `summary_statistic`, `stats_backend`.
-Expected outputs: `ConfigError` referencing offending field.
-
-- `test_load_orchestrator_config_tree_height_strategy_validation` (parametrized)
-Inputs: supported values (`AVG`, `A`, `B`, `C`, `SIS`, `INT`) and an invalid value (`D`).
-Expected outputs: supported values load successfully; invalid value raises `ConfigError`.
-
-- `test_load_orchestrator_config_defaults_processes_to_zero`
-Inputs: no `processes` key.
-Expected outputs: `processes == 0`.
-
-- `test_load_orchestrator_config_honors_overwrite_flag`
-Inputs: orchestrator JSON config with `overwrite: false`.
-Expected outputs: normalized config preserves `overwrite == False`.
-
-- `test_prepare_output_directory_overwrites_or_suffixes`
-Inputs: an existing results directory with stale files, plus a second existing target path.
-Expected outputs: the first directory is cleared when overwrite is enabled and the second call returns a suffixed directory path.
-
-- `test_load_orchestrator_config_allows_disabling_consolidation`
-Inputs: config with `consolidation: false`.
-Expected outputs: normalized orchestrator config preserves `consolidation == False`.
-
-- Only orchestrator config loading is covered in `tests/test_config.py`.
-
-- `test_path_resolution_for_absolute_relative_and_home_paths` (parametrized)
-Inputs: absolute paths, relative paths, and `~` paths.
-Expected outputs: all normalized to resolved absolute paths.
-
-### `tests/test_orchestrator.py`
-
-- `test_resolve_processes_zero_uses_all_cores`
-Inputs: `processes` in `{0, None, 4}` with monkeypatched CPU count.
-Expected outputs: `0 -> cpu_count`, `None -> None`, explicit value preserved.
-
-- `test_resolve_parallel_mode`
-Inputs: `{0, 1, 4}` with monkeypatched CPU count.
-Expected outputs: `(processes, use_multiprocessing)` toggles correctly (`1` disables multiprocessing).
-
-- `test_resolve_runtime_args_cli_defaults_and_overrides` (parametrized)
-Inputs: CLI defaults and a CLI override scenario (`processes`, bootstrap options).
-Expected outputs: default statistical settings/path resolution, default parquet output settings, default `consolidation=True`, and preserved CLI overrides.
-
-- `test_resolve_runtime_args_config_with_cli_warns_and_ignores`
-Inputs: config file + conflicting CLI args.
-Expected outputs: warning emitted; config values/defaults win over CLI extras, including default parquet orchestrator settings.
-
-- `test_resolve_runtime_args_config_processes_behavior` (parametrized)
-Inputs: config with explicit `processes` and config without `processes`.
-Expected outputs: preserves configured value or defaults to `0`.
-
-- `test_write_triplet_gene_trees_parquet_multiprocess`
-Inputs: one triplet, a small set of gene-tree Newick strings, and a species-triplet map.
-Expected outputs: parquet dataset directory is created with `triplets/` and `observations/` subdirectories, parquet part files are written, and the returned counts reflect extracted subtrees.
-
-- `test_parse_and_analyze_triplet_gene_trees_parquet`
-Inputs: parquet triplet dataset created from one triplet and three gene trees.
-Expected outputs: parquet parser returns a populated triplet entry with cached observation rows, and analysis succeeds when `input_format="parquet"` is selected.
-
-### `tests/test_tree_parser.py`
-
-Runtime-arg resolution:
-
-- `test_resolve_runtime_args_tree_parser_cli_processes` (parametrized)
-Inputs: CLI defaults and explicit `processes=6`.
-Expected outputs: path resolution, outgroup parsing, default `min_support_value`, and expected process behavior.
-
-- Tree-parser runtime arg tests cover CLI defaults and overrides.
-
-Tree IO and cleaning:
-
-- `test_read_tree_file_single_tree`, `test_read_tree_file_multiple_trees`
-Inputs: one-tree and multi-tree files.
-Expected outputs: correct tree counts and tree object types.
-
-- `test_read_tree_file_not_found`
-Inputs: nonexistent file path.
-Expected outputs: `FileNotFoundError`.
-
-- `test_read_tree_file_invalid_inputs_raise_value_error` (parametrized)
-Inputs: malformed Newick, random invalid text, empty file.
-Expected outputs: `ValueError("Invalid Newick format")`.
-
-- `test_calculate_average_support_with_values` / `test_calculate_average_support_no_values`
-Inputs: tree with support labels vs tree without labels.
-Expected outputs: numeric average support vs `None`.
-
-- `test_remove_support_values`, `test_standardize_tree_removes_support`
-Inputs: supported tree.
-Expected outputs: supports removed (`None` average support afterwards).
-
-- `test_standardize_tree_preserves_branch_lengths`
-Inputs: branch-length tree.
-Expected outputs: branch lengths unchanged within tolerance.
-
-Triplet generation/writer/integration tests:
-
-- Covers `generate_triplets`, filter parsing, taxa filtering, and triplet writing.
-Inputs: taxa sets, outgroup forms (single/list/comma-separated), optional filter files.
-Expected outputs: correct triplet counts/content, outgroup exclusion, valid sectioned output formats.
-
-- Covers single-process, streaming, and multiprocess triplet writers.
-Inputs: triplet collections with varying sizes/empties.
-Expected outputs: stable output shape, correct separators/headers, no crashes on edge cases.
-
-- Cross-library consistency tests (`test_triplet_branch_lengths_match`, `test_triplet_collapse_consistency_dendropy_vs_biopython`).
-Inputs: fixture case set from `triplet_comparison_cases`.
-Expected outputs: pairwise distances agree across implementations.
-
-### `tests/test_triplet_processor.py`
-
-Core statistic helpers:
-
-- `test_compute_tree_height_statistic_matches_definition`
-Inputs: known tree with explicit branch lengths.
-Expected outputs: exact formula match for AVG strategy.
-
-- `test_compute_tree_height_statistic_supports_extended_strategies` (parametrized)
-Inputs: rooted triplets with expected values for `A`, `B`, `C`, `SIS`, and `INT`.
-Expected outputs: each strategy returns its expected branch-length-based statistic.
-
-- `test_compute_tree_height_statistic_rejects_unknown_strategy`
-Inputs: invalid strategy.
-Expected outputs: `ValueError`.
-
-- `test_compute_tree_height_statistic_requires_species_triplet_for_taxon_specific_strategies`
-Inputs: taxon-specific strategy without `species_triplet`.
-Expected outputs: `ValueError`.
-
-Topology classification and pipeline behavior:
-
-- Tests cover concordant/discordant label mapping, tie behavior, deterministic discordant role assignment, and the 5 output classes (`no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, `unresolved` where applicable).
-Inputs: controlled synthetic topology distributions and tree-height profiles.
-Expected outputs: deterministic role counts, significance states, and final classification strings.
-
-- `test_run_triplet_pipeline_bootstrap_unresolved_when_metrics_missing`
-Inputs: concordant-only synthetic trees with bootstrap enabled.
-Expected outputs: bootstrap unresolved fraction is 1.0 and `bootstrap_value` is 1.0.
-
-- `test_run_bootstrap_iterations_joins_tied_classes`
-Inputs: monkeypatched per-iteration classifications split evenly across two classes.
-Expected outputs: bootstrap support equals the tied fraction (`0.5`).
-
-Parser/writer behavior:
-
-- Roundtrip parsing/writing and dynamic column tests.
-Inputs: sectioned `unique_triplets_gene_trees.txt` test content and generated pipeline results.
-Expected outputs: header validation, dynamic summary columns, dynamic corrected columns (`dct_p_val_<method>_corr`, `ks_p_val_<method>_corr`), required error paths for unsupported settings.
-
-- `test_write_pipeline_results_adds_bootstrap_columns_when_enabled`
-Inputs: bootstrap-enabled triplet result written to TSV.
-Expected outputs: base bootstrap columns (`bootstrap_value`, `all_bootstrap`) are present, debug bootstrap columns are present when debug mode is enabled. The `all_bootstrap` cell is formatted as comma-separated `classification=value` pairs (e.g. `no_introgression=0.5,ghost_introgression=0.5`). Debug array columns (e.g. `bootstrap_gene_tree_heights`) remain JSON-serialized.
-
-- `test_write_pipeline_results_adds_bootstrap_gene_tree_heights_when_summary_only_false`
-Inputs: bootstrap-enabled result written with debug mode enabled and `summary_only=false`.
-Expected outputs: TSV includes `bootstrap_gene_tree_heights` and stores the raw per-triplet tree-height list.
-
-### `tests/test_ml_config.py`
-
-- `test_load_ml_config_defaults_target_column_to_class`
-Inputs: minimal ML config containing only `input_path` and `output_dir`.
-Expected outputs: `target_column` defaults to `class` and `overwrite` defaults to `True`.
-
-- `test_load_ml_config_accepts_explicit_class_target_column`
-Inputs: minimal ML config with `target_column: class` and one model parameter.
-Expected outputs: explicit `class` target is preserved and model parameters load correctly.
-
-- `test_load_ml_config_defaults_min_samples_parameters`
-Inputs: minimal ML config without `min_samples_split` or `min_samples_leaf`.
-Expected outputs: the loader fills in the default RF values for both keys.
-
-- `test_load_ml_config_honors_overwrite_flag`
-Inputs: ML config with `overwrite: false`.
-Expected outputs: normalized config preserves `overwrite == False`.
-
-### `tests/test_ml_utils.py`
-
-- `test_rows_to_matrix_uses_numeric_features_and_excludes_target_column`
-Inputs: TSV-like rows containing only numeric feature columns and the `class` target bitstring.
-Expected outputs: the target column is excluded from features, numeric columns are used directly, and the label bitstrings are preserved for training.
-
-- `test_rows_to_matrix_rejects_string_features`
-Inputs: TSV-like rows containing one string-valued feature column and the `class` target bitstring.
-Expected outputs: `ValueError` indicating that the non-target feature must be numeric.
-
-P-value correction behavior:
-
-- `test_adjust_p_values_custom_fdr_matches_known_bh_example`
-Inputs: fixed BH example p-values.
-Expected outputs: known corrected values.
-
-- `test_adjust_p_values_standard_matches_statsmodels_for_supported_methods`
-Inputs: same p-values for `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`.
-Expected outputs: exact match to `statsmodels.multipletests` outputs.
-
-- `test_adjust_p_values_custom_matches_standard_randomized` (parametrized)
-Inputs: randomized p-values across correction methods and optional alpha.
-Expected outputs: custom backend equals standard backend within tight tolerance.
-
-Runtime-arg resolution:
-
-- Covers CLI defaults and `processes` default/preservation behavior.
-Inputs: CLI args.
-Expected outputs: resolved defaults and expected process semantics.
-
-### Explicit Grouped Test Names
-
-This addendum lists tests that are intentionally grouped in the narrative sections above and named explicitly.
-
-#### tests/test_orchestrator.py
-
-- Tests: `test_main_uses_file_backed_pipeline`
-Inputs: orchestrator runtime with normalized species/gene trees and triplet metadata.
-Expected outputs/behavior: orchestrator always runs file-backed triplet extraction to `unique_triplets_gene_trees.txt`, then runs inference from that file, and runs consolidation stage by default.
-Purpose: verify the orchestrator executes the canonical two-stage file-backed pipeline.
-
-- Tests: `test_main_skips_consolidation_stage_when_disabled`
-Inputs: orchestrator runtime with `consolidation=False`.
-Expected outputs/behavior: extraction and inference still run, while consolidation/map generation is skipped.
-Purpose: verify configuration-controlled enable/disable behavior for consolidation artifacts.
-
-#### tests/test_introgression_mapper.py
-
-- Tests: `test_generate_introgression_maps_creates_expected_outputs`, `test_generate_introgression_maps_appends_suffix_when_overwrite_disabled`, `test_generate_introgression_maps_uses_full_species_tree_by_default`, `test_generate_introgression_maps_prunes_requested_plot_taxa`, `test_generate_introgression_maps_uses_raw_values_with_separate_scales`
-  Inputs: synthetic triplet results with inflow/outflow/ghost classifications and bootstrap weights.
-  Expected outputs/behavior: mapper writes expected plot/TSV artifacts (including `introgression_matrix_sampled_non_sister.tsv`), uses the full processed species tree by default, optionally prunes to requested plot taxa when supplied, average bootstrap values use population-level denominators, source taxon labels appear on top of the heatmap (between the tree strip and the heatmap cells), and the species tree strip is drawn above that.
-  Purpose: validate consolidation artifact generation, plot layout semantics, and denominator correctness.
-
-- Tests: `test_generate_introgression_maps_excludes_outgroups`
-Inputs: results containing a triplet with a taxon designated as outgroup via the `outgroups` parameter.
-Expected outputs/behavior: outgroup taxon is absent from the matrix TSV column headers, ghost strength TSV rows, and the reported `taxa_count`.
-Purpose: verify that the `outgroups` parameter correctly filters taxa from all consolidation outputs.
-
-- Tests: `test_collect_counts_non_ghost_denominator_is_all_co_occurring_triplets`
-Inputs: three synthetic results — one classified inflow, one no_introgression, one unrelated triplet (ABD).
-Expected outputs/behavior: `non_ghost_counts[(C, B)]` equals 2 (both ABC rows, regardless of classification); `non_ghost_counts[(B, D)]` equals 1 (only ABD).
-Purpose: verify that the non-ghost denominator counts all triplets where both taxa co-occur, not just classified ones.
-
-- Tests: `test_collect_counts_ghost_denominator_is_all_triplets_containing_taxon`
-Inputs: three synthetic results across triplets (A,B,C) ×2 and (A,C,D) ×1.
-Expected outputs/behavior: `ghost_counts[A]` = 3, `ghost_counts[C]` = 3, `ghost_counts[D]` = 1, `ghost_counts[B]` = 2.
-Purpose: verify that the ghost denominator counts all triplets where a taxon appears in any position.
-
-- Tests: `test_collect_counts_correct_avg_in_generate_introgression_maps`
-Inputs: triplets (A,B,C) with one inflow (weight 0.6) and one no_introgression; triplet (A,B,D) with one ghost (weight 0.8).
-Expected outputs/behavior: matrix TSV cell `B←C` = 0.3 (0.6/2); ghost TSV cell `A` ≈ 0.2667 (0.8/3).
-Purpose: end-to-end verification that population-level denominators flow through to TSV output values.
-
-- Tests: `test_draw_species_tree_strip_suppresses_leaf_labels`, `test_draw_species_tree_strip_shows_leaf_labels_by_default`
-  Inputs: three-taxon species tree; `show_leaf_labels=False` vs default (`True`).
-  Expected outputs/behavior: with `False`, no Text artists with taxon names appear on the axis; with default `True`, one Text artist per leaf taxon is present.
-  Purpose: verify the `show_leaf_labels` parameter controls leaf annotation rendering on the tree strip axis.
-
-- Tests: `test_collect_non_sister_counts_counts_non_sister_pairs`
-  Inputs: two results for triplet (A,B,C) (inflow and no_introgression) and one result for triplet (A,C,D) (ghost).
-  Expected outputs/behavior: `counts[(A,C)]` = 2; `counts[(B,C)]` = 2; `counts[(A,B)]` = 0 (sister pair, never incremented); `counts[(A,D)]` = 1; `counts[(C,D)]` = 1.
-  Purpose: verify that `_collect_non_sister_counts` increments only non-sister pairs and accumulates counts across multiple triplet rows.
-
-#### tests/test_tree_parser.py
-
-- Tests: `test_write_clean_trees_outputs_expected_tree_count`, `test_clean_and_save_trees_filters_low_support`, `test_clean_and_save_trees_no_filters`, `test_clean_and_save_trees_creates_output_file`, `test_clean_and_save_gene_trees_discards_missing_outgroup`
-Inputs: single/multiple trees, low-support trees, gene trees missing outgroup.
-Expected outputs/behavior: clean outputs are written, support filtering behaves correctly, invalid/missing-outgroup trees are excluded where required.
-Purpose: validate cleaned-tree persistence and support/outgroup filtering behavior.
-
-- Tests: `test_get_taxa_from_tree_correct_names`, `test_generate_triplets_count`, `test_generate_triplets_excludes_outgroup`, `test_generate_triplets_content`, `test_generate_triplets_large_set`, `test_generate_triplets_multiple_outgroups`, `test_generate_triplets_outgroup_comma_separated_with_spaces`
-Inputs: rooted species trees with varying taxa sets and outgroup forms.
-Expected outputs/behavior: taxa extraction is correct; triplets are generated with correct count/content and outgroup exclusions.
-Purpose: verify triplet generation semantics across small and larger taxa sets.
-
-- Tests: `test_write_triplets_to_file`, `test_write_triplets_to_file_empty`, `test_read_triplet_filter_file_parses_valid_and_skips_invalid`, `test_filter_triplets_by_taxa_skips_missing_taxa`
-Inputs: generated triplet collections, empty collections, valid/invalid triplet-filter file lines, taxa-subset filters.
-Expected outputs/behavior: triplet files are written in expected format; empty handling is stable; filter parsing and taxa-based filtering are correct.
-Purpose: validate triplet-file IO and filter utility behavior.
-
-- Tests: `test_format_newick_with_precision_trailing_zeros`, `test_format_newick_with_precision_default_places`, `test_format_newick_with_custom_precision`, `test_format_newick_with_precision_triplet_parser`
-Inputs: branch-length Newick trees with precision options.
-Expected outputs/behavior: formatted Newick strings preserve intended precision and representation.
-Purpose: ensure deterministic and configurable Newick formatting.
-
-- Tests: `test_extract_triplet_subtree_all_taxa_present`, `test_extract_triplet_subtree_missing_taxa`, `test_extract_triplet_subtree_preserves_branch_lengths`, `test_process_gene_trees_for_triplets`, `test_process_gene_trees_for_triplets_empty`, `test_build_species_triplet_metadata_normalizes_abc`
-Inputs: gene-tree triplet extraction requests with complete/missing taxa and species-triplet metadata setup.
-Expected outputs/behavior: extraction succeeds only when all taxa are present, preserves branch lengths, handles empty cases, and normalizes species metadata to A/B/C conventions.
-Purpose: validate extraction core and metadata normalization used by downstream inference.
-
-- Tests: `test_write_triplet_gene_trees`, `test_write_triplet_gene_trees_includes_species_tree_header`, `test_write_triplet_gene_trees_empty_triplet`, `test_triplet_gene_trees_separator_format`, `test_write_triplet_gene_trees_streaming`
-Inputs: triplet-to-gene-tree mappings in normal, empty, and streaming write modes.
-Expected outputs/behavior: mapping file sections, species-tree header, and separators are correctly serialized.
-Purpose: verify canonical serialization format for triplet gene-tree mapping output.
-
-- Tests: `test_write_triplet_gene_trees_multiprocess_with_workers`, `test_write_triplet_gene_trees_multiprocess_includes_species_header`, `test_multiprocessing_triplet_writer_handles_empty_triplets`, `test_write_triplet_gene_trees_multiprocess_triplets_single_worker`, `test_write_triplet_gene_trees_multiprocess_accepts_list`
-Inputs: multiprocess writer invocations across worker-count and input-shape variants.
-Expected outputs/behavior: output format remains valid; species header persists; empty and list-based inputs are handled safely; optional worker CPU telemetry (`return_worker_cpu=True`) returns a non-negative CPU-seconds value.
-Purpose: validate robust multiprocess mapping-file writer behavior.
-
-- Tests: `test_get_clean_filename_variants`, `test_metrics_logger_context_manager`, `test_metrics_logger_file_not_opened_before_enter`
-Inputs: filename variants and metrics-logger lifecycle usage.
-Expected outputs/behavior: cleaned output filenames are formed correctly; logger opens/writes only in expected context-manager lifecycle.
-Purpose: verify utility helpers that support parser CLI workflows.
-
-- Tests: `test_integration_full_workflow`, `test_integration_triplets_workflow`, `test_integration_full_triplet_extraction_workflow`
-Inputs: integration-style species/gene tree fixtures and output destinations.
-Expected outputs/behavior: end-to-end parsing, triplet generation/extraction, and file outputs complete successfully.
-Purpose: ensure combined parser workflow remains functional.
-
-#### tests/test_triplet_processor.py
-
-- Tests: `test_classify_triplet_topology_string_for_all_three_topologies`, `test_classify_triplet_topology_labels_concordant_and_discordants`, `test_balanced_discordant_count_tests_are_not_significant`
-Inputs: representative topology strings and balanced discordant count scenarios.
-Expected outputs/behavior: topology labels map correctly and balanced discordant tests remain non-significant.
-Purpose: validate baseline topology classification and count-test behavior.
-
-- Tests: `test_run_triplet_pipeline_uses_species_concordant_and_frequency_ranked_discordants`, `test_run_triplet_pipeline_supports_z_test_for_discordant_counts`, `test_run_triplet_pipeline_supports_standard_stats_backend`, `test_run_triplet_pipeline_supports_median_summary_statistic`, `test_run_triplet_pipeline_supports_mode_summary_statistic`, `test_run_triplet_pipeline_supports_taxon_specific_tree_height_strategy`, `test_run_triplet_pipeline_breaks_discordant_ties_by_first_topology`, `test_run_triplet_pipeline_selects_ac_as_discordant1_when_ac_is_more_frequent`, `test_run_triplet_pipeline_no_introgression_when_dct_not_significant`, `test_run_triplet_pipeline_inflow_when_ks_not_significant`, `test_run_triplet_pipeline_outflow_when_con_summary_higher`, `test_run_triplet_pipeline_ghost_when_dis_summary_higher`
-Inputs: synthetic per-triplet topology/tree-height distributions, configurable test/stat backends, and strategy variants.
-Expected outputs/behavior: discordant role assignment, statistical backend selection, summary-stat selection, and final classification outcomes match expected logic.
-Purpose: validate triplet inference decision logic across major branches.
-
-- Tests: `test_analyze_triplet_gene_tree_file_with_multiprocessing`, `test_parse_analyze_and_write_pipeline_roundtrip_with_species_header`, `test_collect_triplet_statistics_returns_dict_list`
-Inputs: mapping files and pipeline run settings, including multiprocessing.
-Expected outputs/behavior: analyze/parse/write pipeline roundtrips successfully, multiprocessing analysis can return optional worker CPU telemetry (`return_worker_cpu=True`) with a non-negative value, and statistics collection returns expected dictionary-list structures.
-Purpose: validate end-to-end processing API behavior.
-
-- Tests: `test_analyze_triplet_gene_tree_file_rejects_unsupported_runtime_options`, `test_parse_triplet_gene_trees_file_rejects_malformed_sections`
-Inputs: invalid configuration values and malformed mapping-file headers/content.
-Expected outputs/behavior: parser/analyzer rejects invalid inputs with explicit error paths.
-Purpose: verify input validation and defensive error handling.
-
-- Tests: `test_analyze_triplet_gene_tree_file_applies_selected_correction`, `test_two_sample_ks_test_hybrid_uses_scipy_near_threshold`, `test_two_sample_ks_test_hybrid_keeps_custom_when_not_borderline`, `test_two_sample_ks_test_hybrid_rejects_negative_margin`
-Inputs: p-value correction selections and KS hybrid-mode threshold conditions.
-Expected outputs/behavior: selected correction is applied; KS hybrid dispatches to expected backend and validates margin constraints.
-Purpose: validate statistical-dispatch control flow.
-
-- Tests: `test_write_pipeline_results_includes_dis1_topology_and_omits_removed_topology_columns`, `test_write_pipeline_results_uses_dynamic_summary_column_names`, `test_write_pipeline_results_uses_dct_chi_stats_column_for_chi_square`, `test_write_pipeline_results_uses_dct_z_score_column_for_z_test`, `test_write_pipeline_results_uses_mode_summary_columns_for_mode`, `test_write_pipeline_results_uses_dynamic_corrected_p_value_column_names`, `test_write_pipeline_results_includes_abc_mapping_column`, `test_write_pipeline_results_ghost_inference_uses_dis1_outgroup_recipient`, `test_write_pipeline_results_rejects_mixed_discordant_test_outputs`, `test_write_pipeline_results_rejects_unsupported_p_value_correction`, `test_write_pipeline_results_rejects_unsupported_summary_statistic`, `test_write_pipeline_statistics_json`, `test_serialize_bootstrap_value_rejects_non_json_value`
-Inputs: synthetic pipeline result rows across discordant-test/summary-stat/correction settings and serialization targets.
-Expected outputs/behavior: TSV/JSON outputs contain expected dynamic columns (including `inference`), enforce strict bootstrap JSON serialization, and reject unsupported or mixed output states.
-Purpose: validate output-schema stability and writer safeguards.
-
-- Tests: `test_run_triplet_pipeline_skips_summary_metric_collection_when_disabled`, `test_write_summary_statistics_tsv_includes_expected_columns_and_counts`, `test_write_summary_statistics_tsv_includes_bootstrap_value_when_enabled`
-Inputs: pipeline runs with summary-stat metric collection disabled/enabled and summary-statistics payloads with bootstrap disabled/enabled.
-Expected outputs/behavior: topology summary metrics are skipped when disabled; when enabled, summary TSV includes required 63-stat topology metrics plus identity/count/classification fields and bootstrap_value when enabled.
-Purpose: verify summary-statistics gating and summary-statistics file schema/conditional bootstrap column behavior.
-
-- Tests: `test_resolve_runtime_args_triplet_processor_cli_defaults_and_overrides`
-Inputs: CLI-mode argument combinations, including processes handling.
-Expected outputs/behavior: runtime args resolve defaults/overrides correctly.
-Purpose: validate triplet-processor runtime argument resolution behavior.
-
-## Machine Learning tests (`tests/test_ml_random_forest.py`)
-
-- `test_parse_classes_returns_binary_matrix`
-  - Inputs: two example 6-bit bitstrings (`"101001"`, `"010010"`).
-  - Expected outputs: a (2,6) binary numpy matrix and the original string labels preserved.
-  - Purpose: verify `classes` parsing enforces a 6-character 0/1 bitstring and converts to binary targets.
-
-- `test_train_random_forest_smoke`
-  - Inputs: `summary_statistics_tsv` fixture (small TSV with `class`, a low-cardinality string feature, and numeric feature columns), runtime config (small forest for speed, `cv_folds=3`, `random_state=7`).
-  - Expected outputs: training completes, artifacts exist (`random_forest_model.pkl`, `random_forest_overall_metrics.json`, `random_forest_metrics.txt`, `random_forest_confusion_matrices.png`, `random_forest_confusion_matrix_64_classes.png`, `predictions.tsv`), metrics contain `primary_metrics`, `diagnostic_metrics`, `dataset_summary`, and `timings_seconds`, and the prediction TSV includes `matched_label_count`.
-  - Purpose: smoke-test end-to-end training flow, evaluation, and artifact writing.
-
-- `test_train_random_forest_creates_bitwise_metrics_report`
-  - Inputs: same TSV fixture, compact training config (`n_estimators=15`, `cv_folds=2`, `random_state=11`).
-  - Expected outputs: human-readable metrics file includes per-bit metrics, diagnostic statements, dataset summary, and timings; primary metrics (hamming loss, micro/macro/weighted f1) are present and finite.
-  - Purpose: ensure textual and JSON metric artifacts include per-bit breakdowns, consolidated dataset metadata, and primary/diagnostic distinctions.
-
-## Machine Learning config tests (`tests/test_ml_config.py`)
-
-- `test_load_ml_config_defaults_target_column_to_class`
-  - Inputs: minimal JSON config with only `input_path` and `output_dir`.
-  - Expected outputs: normalized ML config defaults `target_column` to `class`.
-  - Purpose: verify the default ML target column matches the dataframe shape used for random forest training.
-
-- `test_load_ml_config_accepts_explicit_class_target_column`
-  - Inputs: JSON config with `input_path`, `output_dir`, explicit `target_column: class`, and a simple `model.n_estimators` override.
-  - Expected outputs: normalized ML config preserves `target_column: class` and carries through model hyperparameters.
-  - Purpose: verify explicit target column handling and basic nested config parsing.
-
-## Machine Learning tests (`tests/test_ml_multi_knn.py`)
-
-- `test_multi_knn_train_smoke`
-  - Inputs: `summary_statistics_tsv` fixture with a low-cardinality string column and numeric features, KNN runtime config (`n_neighbors=5`, `cv_folds=3`, `random_state=7`, `weights=uniform`).
-  - Expected outputs: training completes, artifacts exist (`multi_knn_model.pkl`, `multi_knn_overall_metrics.json`, `multi_knn_metrics.txt`, `multi_knn_confusion_matrices.png`, `multi_knn_confusion_matrix_64_classes.png`, `predictions.tsv`), metrics include `classifier: multi_knn`, the `knn` details block is present, and the prediction TSV includes `matched_label_count`.
-  - Purpose: smoke-test the multi-label KNN baseline end to end.
-
-- `test_multi_knn_build_model_caps_neighbors_to_training_size`
-  - Inputs: direct model build request with `n_neighbors=20` and `train_size=2`.
-  - Expected outputs: effective neighbor count is capped to 2.
-  - Purpose: verify the adaptive neighbor sizing used to avoid KNN failures on small training folds.
-
-- `test_multi_knn_metrics_report_mentions_effective_neighbors`
-  - Inputs: same TSV fixture with a larger requested neighbor count (`n_neighbors=20`) and `weights=distance`.
-  - Expected outputs: text metrics report includes configured/effective neighbor details and timings, the JSON metrics include the `knn` block and dataset summary, and `feature_importances.tsv` is written.
-  - Purpose: validate the KNN-specific reporting, permutation-importance artifact, and timing summary.
-
-## Machine Learning tests (`tests/test_ml_hyper_tune.py`)
-
-- `test_load_hyper_tune_config_accepts_hyperparameter_tuning_section`
-  - Inputs: JSON config with a top-level `hyperparameter_tuning` section containing a random-forest grid search space.
-  - Expected outputs: tuner config normalizes the model, method, objective, and search space correctly.
-  - Purpose: verify the new tuning config header and nested search settings.
-
-- `test_load_hyper_tune_config_fills_model_defaults`
-  - Inputs: JSON config with a `hyperparameter_tuning` section for `random_forest` that omits optional model parameters from `search_space`.
-  - Expected outputs: normalized tuner config fills in the selected model's default parameters such as `class_weight`, `max_features`, and `min_samples_split`.
-  - Purpose: verify that omitted model parameters fall back to trainer defaults during tuning.
-
-- `test_load_hyper_tune_config_rejects_evaluation_section`
-  - Inputs: JSON config that includes a top-level `evaluation` section alongside `hyperparameter_tuning`.
-  - Expected outputs: `ConfigError` rejecting the unsupported `evaluation` section.
-  - Purpose: ensure the tuner config stays isolated from trainer-only settings.
-
-- `test_load_hyper_tune_config_requires_hyperparameter_tuning_section`
-  - Inputs: JSON config missing the `hyperparameter_tuning` section.
-  - Expected outputs: `ConfigError` requiring the new section.
-  - Purpose: ensure the tuner config is explicit and self-contained.
-
-- `test_tune_hyperparameters_grid_search_smoke`
-  - Inputs: larger shared ML tuning fixture plus a small random-forest grid search over two candidate values.
-  - Expected outputs: tuning writes best-model and results artifacts and returns two ranked candidates.
-  - Purpose: exercise the full grid-search tuning path.
-
-- `test_tune_hyperparameters_random_search_smoke`
-  - Inputs: larger shared ML tuning fixture plus a small random-forest random search space with `n_iter=1`.
-  - Expected outputs: tuning samples one candidate, writes best-model and results artifacts, and returns the best candidate rank.
-  - Purpose: exercise the random-search tuning path.
-
-## Backend Parity Tests (`@pytest.mark.backend_parity`)
-
-These tests can be run as a dedicated slice with:
-
-```bash
-pytest -m backend_parity
-```
-
-Currently marked tests:
-
-- `test_custom_chi_square_matches_scipy_reference_randomized`
-- `test_custom_z_test_matches_statsmodels_reference_randomized`
-- `test_custom_ks_matches_scipy_asymptotic_reference_randomized`
-- `test_standard_z_test_matches_statsmodels_reference_randomized`
-- `test_adjust_p_values_custom_matches_standard_randomized`
-
-Expected behavior for this slice:
-
-- Numeric agreement between custom and reference/standard implementations.
-- Stable tolerance-bounded parity across randomized samples.
+### tests/orchestrator/test_orchestrator.py
+
+End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixture.
+
+- `test_run_orchestrator_matches_derived_expectation` — Inputs: `run_orchestrator`
+  (serial, `taxon` mode, fixed bootstrap seed, consolidation off). Expected
+  outputs: all 4 triplets present with the hand-derived topology counts
+  (7/3/2 for `(A,B,C)`; 12/0/0 for each D-containing triplet), the SciPy
+  chi-square DCT statistic and p-value, Bonferroni-corrected p-values, and
+  `no_introgression` for every triplet. Purpose: end-to-end correctness against
+  values derived from the fixture rather than another module.
+- `test_run_orchestrator_writes_results_tsv` — Inputs: the same serial run.
+  Expected outputs: `orchestrator_triplet_results.tsv` exists, its header starts
+  with `triplet` and includes `classification` and `bootstrap_value`, and its
+  row count equals the number of results. Purpose: TSV shape and naming.
+- `test_no_bootstrap_omits_the_bootstrap_columns` — Inputs: a run with
+  `bootstrap=False`. Expected outputs: `bootstrap_value` and `all_bootstrap` are
+  absent from the header while `classification` remains, and all 4 triplets are
+  still produced. Purpose: the bootstrap toggle only removes bootstrap output.
+- `test_consolidation_preserves_run_outputs` — Inputs: a run with
+  `consolidation=True`. Expected outputs: the results TSV, `metrics.txt`, and
+  both processed tree files survive, and a non-empty `consolidation/` subfolder
+  exists. Purpose: regression guard against consolidation wiping the run folder.
+- `test_generate_summary_stats_writes_tsv` — Inputs: a run with
+  `generate_summary_stats=True`. Expected outputs: `summary_statistics.tsv`
+  exists with exactly 63 topology/metric columns (including
+  `concordant_avg_tree_height_mean` and `discordant2_sister_distance_max`), and
+  at least one result carries populated `topology_metric_statistics`. Purpose:
+  the summary-statistics feature and its column contract.
+- `test_bootstrap_debug_mode_writes_debug_columns` — Inputs: a run with
+  `bootstrap_debug_mode=True`. Expected outputs: the debug columns
+  (`bootstrap_dct_stats`, `bootstrap_dct_p_value`, `bootstrap_ks_stats`,
+  `bootstrap_ks_p_value`, `bootstrap_gene_tree_heights`) appear in the header
+  and at least one result has a populated `bootstrap_dct_stats`. Purpose: the
+  bootstrap-debug output path.
+- `test_parallel_modes_match_serial` — Inputs (parametrized over
+  `("taxon", 2)` and `("gene", 2)`): the same fixture run serially and in
+  parallel with a fixed seed. Expected outputs: every compared field, bootstrap
+  values included, is identical. Purpose: parallelization must not change
+  results.
+
+### tests/orchestrator/test_orchestrator_inference.py
+
+Per-triplet inference on a 10-gene-subtree fixture, with expectations recomputed
+from the tabulated tree geometry.
+
+- `test_analyze_triplet_matches_derived_expectation` — Inputs (parametrized over
+  6 tree-height strategies x 3 summary statistics x 2 discordant tests = 36
+  cases): `analyze_triplet` over the 10 gene subtrees. Expected outputs: the
+  counts, DCT/KS statistics, summary values, and classification all equal values
+  derived in-test from `_LEAF_GEOMETRY` plus direct SciPy/statsmodels calls;
+  bootstrap fractions sum to 1. Purpose: the full inference surface across every
+  parameter combination.
+- `test_observation_heights_match_derived_geometry` — Inputs (parametrized over
+  the 6 strategies): `_serialize_triplet_gene_trees`. Expected outputs: each
+  observation's topology and H(T) match the hand-derived geometry for that
+  strategy. Purpose: pins each tree-height strategy to its definition.
+- `test_analyze_triplet_from_observations_matches_newick_path` — Inputs: the same
+  triplet analyzed from precomputed observations and from Newick strings.
+  Expected outputs: both equal the derived expectation and share identical
+  bootstrap aggregates. Purpose: the observation fast path is equivalent to the
+  Newick path.
+- `test_bootstrap_is_deterministic_under_seed` — Inputs: two identical
+  `analyze_triplet` calls with the same seed. Expected outputs: identical
+  `all_bootstrap` and `bootstrap_value`. Purpose: seeded reproducibility.
+- `test_analyze_triplet_empty_observations` — Inputs: an empty gene-subtree list.
+  Expected outputs: `analyzed_trees == 0`, `n_con == 0`, classification
+  `no_introgression`. Purpose: degenerate-input safety.
+
+### tests/orchestrator/test_orchestrator_decision.py
+
+The decision logic and p-value correction, driven with crafted observation sets
+because the shared fixture never produces a significant DCT.
+
+- `test_classify_no_introgression_when_dct_not_significant` — Inputs: an even
+  10/10 discordant split. Expected outputs: DCT statistic 0, p-value 1.0, not
+  significant, `no_introgression`. Purpose: gate 1 short-circuits.
+- `test_classify_inflow_when_tree_height_test_not_significant` — Inputs: a
+  significant 30/2 discordant split with identical concordant and discordant
+  heights. Expected outputs: DCT significant, KS statistic 0 and not
+  significant, `inflow_introgression`. Purpose: gate 2 maps to inflow.
+- `test_classify_outflow_when_concordant_heights_exceed_discordant` — Inputs: a
+  significant split with fully separated heights, concordant above discordant.
+  Expected outputs: KS statistic 1.0 and significant, `summary_con >
+  summary_dis`, `outflow_introgression`. Purpose: gate 3, con > dis.
+- `test_classify_ghost_when_discordant_heights_exceed_concordant` — Inputs: the
+  mirror case, discordant above concordant. Expected outputs:
+  `summary_con < summary_dis`, `ghost_introgression`. Purpose: gate 3, con < dis.
+- `test_classify_introgression_truth_table` — Inputs (parametrized, 8 rows):
+  every combination of DCT/KS significance and summary ordering, including
+  `None` summaries. Expected outputs: the documented classification for each
+  row. Purpose: exhaustive coverage of `_classify_introgression`.
+- `test_adjust_p_values_matches_statsmodels` — Inputs (parametrized over all 6
+  correction methods): a fixed 10-value p-value list. Expected outputs: `no`
+  returns the input unchanged; every other method equals
+  `statsmodels.multipletests` called directly with the mapped method name.
+  Purpose: correction correctness against the reference library.
+- `test_adjust_p_values_bonferroni_by_definition` — Inputs: `[0.01, 0.2, 0.5]`
+  with `bfn`. Expected outputs: `[0.03, 0.6, 1.0]` — multiply by 3, clamp at 1.
+  Purpose: pins Bonferroni to its arithmetic definition.
+- `test_adjust_p_values_rejects_unknown_method` — Inputs: an unsupported method
+  name. Expected outputs: `ValueError`. Purpose: input validation.
+- `test_discordant_count_test_with_no_discordant_observations` — Inputs
+  (parametrized over both tests): `(0, 0)` counts. Expected outputs:
+  `(0.0, 1.0)`. Purpose: the zero-discordant short circuit.
+- `test_discordant_count_test_rejects_unknown_method` — Inputs: an unsupported
+  method. Expected outputs: `ValueError`. Purpose: input validation.
+- `test_ks_test_with_an_empty_sample` — Inputs (parametrized over three
+  empty/non-empty combinations). Expected outputs: `(0.0, 1.0)`. Purpose: the
+  empty-sample short circuit.
+
+### tests/orchestrator/test_orchestrator_trees.py
+
+Tree preprocessing, asserted against explicit Newick literals.
+
+- `test_clean_and_save_trees_preserves_a_well_supported_tree` — Inputs:
+  `orchestrator_species_tree` with `min_avg_support=0.5`. Expected outputs: the
+  cleaned file round-trips the input Newick verbatim and reads back as one tree.
+  Purpose: support-free trees pass the filter unchanged.
+- `test_clean_and_save_trees_drops_low_average_support` — Inputs:
+  `low_support_tree_file` with `min_avg_support=0.5`. Expected outputs: exactly
+  one tree survives (mean 0.973 kept, mean 0.300 dropped) carrying the expected
+  taxa, and support values are stripped from the output. Purpose: the mean
+  support filter.
+- `test_root_tree_on_outgroup_prunes_and_reports_ingroup` — Inputs: the cleaned
+  species tree and outgroup `OUT`. Expected outputs: `excluded == {"OUT"}`, no
+  missing taxa, ingroup `[A, B, C, D]`, and the pruned Newick
+  `(((A:0.1,B:0.1):0.1,C:0.2):0.3,D:0.1):0.5;`. Purpose: outgroup rooting folds
+  the removed node's edge into its sibling.
+- `test_generate_triplets_and_species_subtrees` — Inputs: the pruned species
+  tree. Expected outputs: the 4 sorted triplets from 4 ingroup taxa, no skipped
+  triplets, identity ABC normalization, and the exact per-triplet species
+  subtree Newick strings. Purpose: triplet enumeration and species-subtree
+  construction.
+- `test_clean_and_save_gene_trees_roots_every_tree_on_the_outgroup` — Inputs:
+  `orchestrator_gene_trees` with outgroup `OUT`. Expected outputs: all 12 trees
+  survive, each ends in `OUT:0);`, and trees 0 and 3 match their expected
+  rerooted Newick (the ingroup edge absorbs OUT's original edge length).
+  Purpose: gene-tree rooting semantics.
+- `test_extract_triplet_subtree_selects_the_triplet_taxa` — Inputs: the first
+  cleaned gene tree and triplet `(A, B, C)`. Expected outputs: a subtree whose
+  leaf set is exactly `{A, B, C}`. Purpose: subtree extraction.
+
+### tests/orchestrator/test_orchestrator_tree_parity.py
+
+The suite's only parity tests, both marked `@pytest.mark.parity`.
+
+- `test_triplet_branch_lengths_match` — Inputs (parametrized over the pairs
+  `(A,B)`, `(A,C)`, `(B,C)`): each `triplet_comparison_cases` tree, extracted
+  with DendroPy then re-read through BioPython. Expected outputs: the pairwise
+  patristic distance is the same in both libraries. Purpose: the Newick round
+  trip preserves branch lengths across libraries.
+- `test_triplet_collapse_consistency_dendropy_vs_biopython` — Inputs: the same
+  cases collapsed by `extract_triplet_subtree` and by a BioPython pruning
+  reference. Expected outputs: all three pairwise distances agree to `1e-12`.
+  Purpose: DendroPy's triplet collapsing matches standard BioPython pruning.
+
+### tests/orchestrator/test_orchestrator_preflight.py
+
+The structural preflight data check and the runner short-circuit that reaches it.
+
+- `test_clean_inputs_pass_with_no_issues` — Inputs: a 5-taxon species tree
+  `(((A,B),C),(D,OUT))` and two well-formed gene trees. Expected outputs:
+  `passed is True`, an empty `issues` list, `triplets_checked == 4`, both gene
+  trees rooted, and the "No blocking data issues detected" line in the report.
+  Purpose: a clean dataset produces no false positives.
+- `test_report_is_written_to_output_dir` — Inputs: the clean dataset with an
+  explicit output directory. Expected outputs: `report_path` points at
+  `preflight_data_check.txt` inside it and the file content equals
+  `report_text`. Purpose: the report is persisted where documented.
+- `test_no_output_dir_skips_writing` — Inputs: the clean dataset with
+  `output_dir=None`. Expected outputs: `report_path is None` and non-empty
+  `report_text`. Purpose: the check is usable without touching disk.
+- `test_detects_polytomy_and_missing_outgroup` — Inputs: gene tree 1 well
+  formed, gene tree 2 a polytomy over A/B/C, gene tree 3 with no outgroup
+  label. Expected outputs: exactly one `gene_tree.rooting_failed` and one
+  `triplet.unresolved_rooted_sister_pair`, two trees rooted out of three
+  checked, and the polytomy message naming `Gene tree #2` and `A,B,C`.
+  Purpose: each defect class is detected once and located precisely.
+- `test_report_attributes_issues_to_gene_trees` — Inputs: the same defective
+  dataset. Expected outputs: the report attributes 0 issues to the species tree
+  and 2 to the gene trees. Purpose: the attribution summary is correct.
+- `test_triplet_filter_entries_are_validated` — Inputs: a filter file with one
+  valid line, one naming an unknown taxon, one naming the outgroup. Expected
+  outputs: one `triplet_filter.taxa_missing_in_species_tree`, one
+  `triplet_filter.includes_outgroup`, and `triplets_checked == 1`. Purpose:
+  filter entries are validated rather than silently dropped.
+- `test_impossible_checks_raise` — Inputs (parametrized): an empty outgroup
+  list, and an outgroup absent from the species tree. Expected outputs:
+  `ValueError` matching "No outgroup taxa were provided" and "Could not root
+  species tree". Purpose: conditions that make the check impossible fail loudly.
+- `test_multi_tree_species_file_raises` — Inputs: a species-tree file holding
+  two trees. Expected outputs: `ValueError` matching "exactly one tree".
+  Purpose: the single-tree precondition is enforced.
+- `test_runner_preflight_mode_skips_analysis` — Inputs: a config dict with
+  `preflight_data_check: True` against the defective dataset. Expected outputs:
+  the returned result has `passed is False` and the output directory contains
+  only `preflight_data_check.txt`. Purpose: the flag runs the check and nothing
+  else.
+- `test_runner_preflight_reports_unrootable_species_tree` — Inputs: the same
+  config with an outgroup absent from the species tree. Expected outputs:
+  `run_orchestrator` returns `None` and prints "Preflight data check could not
+  run". Purpose: an impossible check is reported, not raised out of the runner.
+
+### tests/orchestrator/test_orchestrator_config.py
+
+Orchestrator config resolution and config-file precedence.
+
+- `test_cli_defaults_resolve` — Inputs: a CLI namespace with every optional arg
+  `None`. Expected outputs: `alpha_dct`/`alpha_ks` 0.05, the orchestrator-specific
+  `p_value_correction == "bfn"` and `summary_statistic == "mean"`,
+  `overwrite is True`, the config-file-only keys at their defaults,
+  `preflight_data_check is False`, and no `stats_backend` key. Purpose: default
+  resolution in CLI mode.
+- `test_cli_overrides_for_config_plus_cli_options` — Inputs: CLI values for
+  alpha-dct/alpha-ks/summary-statistic/p-value-correction/no-overwrite. Expected
+  outputs: each override is honored and `overwrite` becomes `False`. Purpose:
+  the config+CLI options are wired.
+- `test_config_only_keys_read_from_config_file` — Inputs: a JSON config setting
+  `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`,
+  `generate_summary_stats`, `alpha_dct`, and a nested `bootstrap_options` block.
+  Expected outputs: every key, including the flattened bootstrap options, is
+  read. Purpose: config-file-only keys and nested bootstrap parsing.
+- `test_config_file_wins_over_cli` — Inputs: a config file plus conflicting CLI
+  flags. Expected outputs: the file's `alpha_dct` wins, `summary_statistic`
+  falls back to the orchestrator default (proving the CLI value was ignored), the
+  file's paths are used, and a warning is printed. Purpose: config-file
+  precedence.
+- `test_missing_required_field_raises` — Inputs: a namespace missing the species
+  tree. Expected outputs: `ConfigError`. Purpose: required-field validation.
+- `test_preflight_data_check_resolves_from_config_file` — Inputs
+  (parametrized): a JSON config setting `preflight_data_check` to `true`,
+  `false`, or omitting it. Expected outputs: `True`, `False`, and `False`
+  respectively. Purpose: the flag is settable from a config file and defaults
+  to off.
+- `test_parser_exposes_config_file_and_new_flags` — Inputs: an argv list using
+  the config+CLI flags including `--preflight-data-check`. Expected outputs:
+  each parses to its expected value, `preflight_data_check is True`, and
+  `config_file` defaults to `None`. Purpose: parser surface.
+
+### tests/test_config_trunk.py
+
+The shared configuration trunk in `ghostparser.config`.
+
+- `test_resolve_path_handles_absolute_relative_and_home` — Inputs: an absolute
+  path, a relative path resolved from a chdir'd cwd, and a `~/` path. Expected
+  outputs: each resolves to the correct absolute path with no `~` remaining.
+  Purpose: path-resolution rules shared by all modules.
+- `test_load_raw_config_reads_json_and_yaml` — Inputs (parametrized over
+  `.json`, `.yaml`, `.yml`): equivalent payloads. Expected outputs: the same
+  mapping from each format. Purpose: config-file loading.
+- `test_load_raw_config_rejects_missing_unsupported_and_non_mapping` — Inputs: a
+  missing path, a `.txt` file, and a JSON list. Expected outputs:
+  `FileNotFoundError`, then `ConfigError` twice with the documented messages.
+  Purpose: loader validation.
+- `test_validate_required_path_resolves_or_raises` — Inputs: a present path, then
+  absent/empty/whitespace values. Expected outputs: resolution, then
+  `ConfigError` for each invalid case. Purpose: required-path validation.
+- `test_validate_overwrite_flag_precedence_and_validation` — Inputs: every
+  combination of `overwrite`/`no_overwrite`, an explicit default, and
+  non-boolean values. Expected outputs: `overwrite` wins over `no_overwrite`,
+  negation is applied correctly, and non-booleans raise `ConfigError`. Purpose:
+  the shared overwrite semantics.
+- `test_prepare_output_directory_overwrites_or_suffixes` — Inputs: an existing
+  directory with a stale file, then the same directory with `results_1` and
+  `results_3` already taken and `overwrite=False`. Expected outputs: the
+  directory is reset in the first case; the second returns `results_2` (the
+  smallest missing suffix) and leaves the original intact. Purpose: output
+  directory preparation and suffix allocation.
+- `test_prepare_output_directory_creates_missing_parents` — Inputs: a nested
+  path. Expected outputs: the full directory chain is created. Purpose: parent
+  creation.
+
+### tests/test_introgression_mapper.py
+
+Consolidation outputs, count aggregation, and plot rendering.
+
+- `test_generate_introgression_maps_creates_expected_outputs` — Inputs: synthetic
+  triplet results and a species tree. Expected outputs: the combined PNG and all
+  three TSVs are written. Purpose: artifact generation.
+- `test_collect_counts_correct_avg_in_generate_introgression_maps` — Inputs:
+  classified triplet results. Expected outputs: averages match the documented
+  co-occurrence denominators. Purpose: bootstrap averaging.
+- `test_collect_counts_non_ghost_denominator_is_all_co_occurring_triplets` —
+  Inputs: directed-pair results. Expected outputs: the denominator counts every
+  triplet containing both taxa. Purpose: population-level normalization.
+- `test_collect_counts_ghost_denominator_is_all_triplets_containing_taxon` —
+  Inputs: ghost-classified results. Expected outputs: the denominator counts
+  every triplet containing the target taxon. Purpose: ghost normalization.
+- `test_collect_non_sister_counts_counts_non_sister_pairs` — Inputs: results with
+  non-sister pairs. Expected outputs: only non-sister pairs are counted.
+  Purpose: pair selection.
+- `test_generate_introgression_maps_excludes_outgroups` — Inputs: an outgroup
+  list. Expected outputs: outgroup taxa are absent from plots and TSVs. Purpose:
+  outgroup exclusion.
+- `test_generate_introgression_maps_prunes_requested_plot_taxa` /
+  `test_generate_introgression_maps_uses_full_species_tree_by_default` — Inputs:
+  with and without `plot_taxa`. Expected outputs: the plotted tree is pruned or
+  left full. Purpose: plot taxa selection.
+- `test_generate_introgression_maps_uses_raw_values_with_separate_scales` —
+  Inputs: results spanning a value range. Expected outputs: raw values with
+  per-plot scales. Purpose: colour scaling.
+- `test_generate_introgression_maps_appends_suffix_when_overwrite_disabled` —
+  Inputs: an existing output directory with `overwrite=False`. Expected outputs:
+  a suffixed sibling directory. Purpose: overwrite behavior.
+- `test_generate_introgression_maps_preserves_run_dir_when_reset_disabled` —
+  Inputs: `reset_output_dir=False`. Expected outputs: pre-existing run files
+  survive. Purpose: the orchestrator's consolidation contract.
+- `test_draw_species_tree_strip_shows_leaf_labels_by_default` /
+  `test_draw_species_tree_strip_suppresses_leaf_labels` — Inputs: the tree strip
+  renderer with and without label suppression. Expected outputs: labels present
+  or absent. Purpose: plot layout.
+- `test_scaled_consolidation_text_sizes_grow_with_taxa_count` — Inputs: taxa
+  counts across a range. Expected outputs: text sizes scale and stay capped.
+  Purpose: readability on large figures.
+- `test_sampled_introgression_presence_flags_targets_with_sampled_edges` —
+  Inputs: a taxa order and a `(source, target)` weight map with one zero-weight
+  edge. Expected outputs: `{"A": 1, "B": 0, "C": 1, "D": 0}` — only taxa that
+  are the target of a non-zero sampled edge are flagged. Purpose: the flag that
+  drives ghost bar colour.
+- `test_zero_heatmap_cells_are_masked` — Inputs: the ghost-colour scenario, with
+  `sns.heatmap` monkeypatched to capture its `mask` argument. Expected outputs:
+  the mask equals `data == 0` elementwise and exactly one cell is unmasked (the
+  single sampled edge `(C, A)`). Purpose: empty cells are left unpainted rather
+  than drawn at the colormap's low end.
+- `test_ghost_strength_tsv_records_sampled_introgression_flag` — Inputs: results
+  where taxon A has both ghost and sampled introgression and taxon D has ghost
+  only. Expected outputs: the ghost TSV header is
+  `target_taxon / raw_strength / has_sampled_introgression`, with `A → 1` and
+  `D → 0`, and the strengths are unchanged by the flag. Purpose: the new column
+  and its cross-referencing against the sampled sheet.
+- `test_ghost_bars_use_constant_colours_by_sampled_presence` — Inputs: the same
+  results, with `Axes.barh` monkeypatched to capture the colours actually
+  passed. Expected outputs: only the two constants are used, `A` is
+  `GHOST_WITH_SAMPLED_BAR_COLOR` (cividis low end) and `D` is
+  `GHOST_ONLY_BAR_COLOR` (cividis high end), while their bar widths differ.
+  Purpose: colour encodes co-occurrence, not magnitude.
+
+### tests/test_ml_labels_and_metrics.py
+
+The ML label contract, evaluation metrics, distributions, and CV-fold policy.
+
+- `test_bit_labels_define_a_six_bit_contract` — Inputs: the module constants.
+  Expected outputs: `BIT_COUNT == 6` with six unique labels. Purpose: pins the
+  label contract.
+- `test_is_valid_bitstring` — Inputs (parametrized, 8 cases): valid and invalid
+  strings. Expected outputs: only six-character 0/1 strings validate. Purpose:
+  label validation.
+- `test_parse_classes_round_trips_bitstrings` — Inputs: four labels including a
+  whitespace-padded one. Expected outputs: a 4x6 binary matrix whose rows
+  re-join to the trimmed labels, with the expected total set-bit count. Purpose:
+  the bitstring/matrix round trip.
+- `test_parse_classes_rejects_malformed_labels` — Inputs (parametrized): wrong
+  length or non-binary labels. Expected outputs: `ValueError`. Purpose: label
+  validation.
+- `test_select_feature_names_excludes_the_target_column` — Inputs: a header list.
+  Expected outputs: header order preserved, target column dropped. Purpose:
+  feature selection.
+- `test_evaluate_predictions_matches_hand_computed_metrics` — Inputs: a 2x6
+  true/predicted pair differing in one bit. Expected outputs: exact-match 0.5,
+  bitwise 11/12, hamming 1/12, and the expected per-bit recall/support. Purpose:
+  metric definitions.
+- `test_build_prediction_rows_reports_matched_label_count` — Inputs: the same
+  pair. Expected outputs: per-row matched counts 6 and 5, correct exact-match
+  flags, label strings, and per-bit columns. Purpose: the predictions.tsv
+  contract.
+- `test_summarize_distribution_counts_and_fractions` — Inputs: four labels with
+  one repeat. Expected outputs: sorted labels with correct counts and fractions.
+  Purpose: class distribution.
+- `test_bit_distribution_counts_positives_per_bit` — Inputs: a 2x6 target matrix.
+  Expected outputs: per-bit positive counts and fractions. Purpose: bit
+  distribution.
+- `test_build_feature_importance_rows_sorts_descending` — Inputs: three named
+  features with scores. Expected outputs: rows ranked most-important first.
+  Purpose: importance reporting.
+- `TestAutoCvFolds` (6 tests) — Inputs: label arrays whose smallest class varies,
+  under each `rare_class_policy`. Expected outputs: folds kept, reduced to the
+  smallest class count, skipped, or raising for a singleton class; empty labels
+  return no folds. Purpose: full CV-fold policy coverage.
+- `test_read_tsv_rows_rejects_a_header_only_file` /
+  `test_read_tsv_rows_reads_records` — Inputs: a header-only TSV and a
+  two-row TSV. Expected outputs: `ValueError`, then one dict per data row.
+  Purpose: input reading.
+
+### tests/test_ml_config.py
+
+- `test_load_ml_config_defaults_target_column_to_class` — Inputs: a config
+  omitting `target_column`. Expected outputs: it defaults to `class`.
+- `test_load_ml_config_accepts_explicit_class_target_column` — Inputs: an
+  explicit `target_column`. Expected outputs: it is honored.
+- `test_load_ml_config_defaults_min_samples_parameters` — Inputs: a config
+  omitting the min-samples keys. Expected outputs: the documented defaults.
+- `test_load_ml_config_honors_overwrite_flag` — Inputs: `overwrite: false`.
+  Expected outputs: the flag is carried into the resolved config.
+
+### tests/test_ml_utils.py
+
+- `test_rows_to_matrix_uses_numeric_features_and_excludes_target_column` —
+  Inputs: rows with numeric features plus the target column. Expected outputs: a
+  numeric matrix excluding the target.
+- `test_rows_to_matrix_encodes_multiple_string_columns` — Inputs: rows with
+  low-cardinality string columns. Expected outputs: one-hot encoded features.
+- `test_rows_to_matrix_rejects_string_features` — Inputs: a string column
+  exceeding the cardinality limit. Expected outputs: an error rather than an
+  invented ordering.
+
+### tests/test_ml_random_forest.py
+
+- `test_parse_classes_returns_binary_matrix` — Inputs: label strings. Expected
+  outputs: the binary target matrix.
+- `test_train_random_forest_smoke` — Inputs: `summary_statistics_tsv`. Expected
+  outputs: training completes and writes its artifacts.
+- `test_train_random_forest_creates_bitwise_metrics_report` — Inputs: the same
+  fixture. Expected outputs: the metrics report contains the bitwise section.
+- `test_metrics_txt_leads_with_hyperparameters` — Inputs: the same fixture with
+  `n_estimators=25`, `random_state=7`, `test_size=0.25`, `max_depth=None`,
+  `cv_folds=3`. Expected outputs: `Hyperparameters:` appears before
+  `Test metrics:`; the parsed block reports those configured values with
+  `max_depth` as `none`; and `metrics["hyperparameters"]` carries the same
+  values with `cv_folds_requested == 3`. Purpose: the run's hyperparameters are
+  recorded in both the text and JSON reports.
+
+### tests/test_ml_multi_knn.py
+
+- `test_multi_knn_train_smoke` — Inputs: `summary_statistics_tsv`. Expected
+  outputs: training completes and writes its artifacts.
+- `test_multi_knn_build_model_caps_neighbors_to_training_size` — Inputs: a
+  configured `n_neighbors` larger than the training set. Expected outputs: the
+  effective neighbor count is capped.
+- `test_multi_knn_metrics_report_mentions_effective_neighbors` — Inputs: the same
+  capped run. Expected outputs: the report carries a `Hyperparameters:` block
+  naming both `n_neighbors_requested` and `n_neighbors_effective`, and
+  `metrics["hyperparameters"]` reports 20 requested with at most 20 effective.
+  Purpose: the cap is visible in both reports.
+
+### tests/test_ml_hyper_tune.py
+
+- `test_load_hyper_tune_config_accepts_hyperparameter_tuning_section` — Inputs: a
+  tuning config. Expected outputs: the section loads.
+- `test_load_hyper_tune_config_fills_model_defaults` — Inputs: a config omitting
+  model parameters. Expected outputs: trainer defaults are filled in.
+- `test_load_hyper_tune_config_accepts_wandb_detailed_payloads` — Inputs:
+  `wandb_detailed_payloads: true`. Expected outputs: the flag is honored.
+- `test_load_hyper_tune_config_rejects_evaluation_section` — Inputs: a tuning
+  config containing `evaluation`. Expected outputs: `ConfigError`.
+- `test_load_hyper_tune_config_requires_hyperparameter_tuning_section` — Inputs:
+  a config without the section. Expected outputs: `ConfigError`.
+- `test_tune_hyperparameters_grid_search_smoke` /
+  `test_tune_hyperparameters_random_search_smoke` — Inputs:
+  `summary_statistics_tsv_tuning` with each search method. Expected outputs: the
+  search completes and reports ranked candidates.
+
+## Parity Tests (`@pytest.mark.parity`)
+
+Run with `pytest -m parity`. Only the two DendroPy-vs-BioPython tests in
+`tests/orchestrator/test_orchestrator_tree_parity.py` carry this marker; every other
+test derives its expectations from definitions instead of comparing against a
+second implementation.
