@@ -9,7 +9,7 @@ guides, and every configuration key lives in [CONFIG.md](../CONFIG.md).
 
 ```
 ghostparser/
-  pipeline/             the introgression engine (primary entry point)
+  orchestrator/         the introgression engine (primary entry point)
   ml/                   optional multi-label classifiers over summary_statistics.tsv
   introgression_mapper.py  consolidation: introgression maps and matrices
   config.py             shared configuration trunk
@@ -20,19 +20,19 @@ ghostparser/
 
 | Module | Purpose | Guide |
 | --- | --- | --- |
-| `ghostparser.pipeline` | Streaming triplet extraction + introgression inference. The main entry point. | [pipeline/PIPELINE.md](pipeline/PIPELINE.md) |
-| `ghostparser.ml` | Trains multi-label classifiers on a pipeline run's `summary_statistics.tsv`. Requires `pip install .[ml]`. | [ml/ML.md](ml/ML.md) |
-| `ghostparser.introgression_mapper` | Turns per-triplet results into the combined heatmap/bar-chart figure and TSV matrices. Runs automatically as the pipeline's consolidation stage, and standalone via its own CLI. | this document |
+| `ghostparser.orchestrator` | Streaming triplet extraction + introgression inference. The main entry point. | [orchestrator/ORCHESTRATOR.md](orchestrator/ORCHESTRATOR.md) |
+| `ghostparser.ml` | Trains multi-label classifiers on an orchestrator run's `summary_statistics.tsv`. Requires `pip install .[ml]`. | [ml/ML.md](ml/ML.md) |
+| `ghostparser.introgression_mapper` | Turns per-triplet results into the combined heatmap/bar-chart figure and TSV matrices. Runs automatically as the orchestrator's consolidation stage, and standalone via its own CLI. | this document |
 
 `python -m ghostparser` prints a usage banner; the runnable entry points are
-`python -m ghostparser.pipeline`, `python -m ghostparser.ml`, and
+`python -m ghostparser.orchestrator`, `python -m ghostparser.ml`, and
 `python -m ghostparser.introgression_mapper`.
 
 ## What the modules share
 
-`pipeline` and `ml` are intentionally near-independent: each owns its own
+`orchestrator` and `ml` are intentionally near-independent: each owns its own
 defaults, choices, validation rules, and config loader, so their settings can
-diverge (the pipeline defaults `p_value_correction` to `bfn` and
+diverge (the orchestrator defaults `p_value_correction` to `bfn` and
 `summary_statistic` to `mean`, which has no bearing on the ML side). They share
 only a thin trunk of helpers whose behaviour is identical for every caller.
 
@@ -51,7 +51,7 @@ Holds exactly the pieces that behave the same everywhere:
   `overwrite` is false.
 
 Anything that differs between modules deliberately does **not** live here.
-`pipeline/config.py` and `ml/config.py` each define their own defaults and
+`orchestrator/config.py` and `ml/config.py` each define their own defaults and
 their own validators — for example both have a `_validate_optional_float`, but
 the ML one additionally requires a fraction strictly between 0 and 1.
 
@@ -68,7 +68,7 @@ list.
 
 Pure functions for triplet topology handling (`find_sister_pair`,
 `normalize_abc_from_sister_pair`, `classify_triplet_topology_string`,
-`rank_topologies_by_frequency`), used by the pipeline for both preprocessing and
+`rank_topologies_by_frequency`), used by the orchestrator for both preprocessing and
 inference.
 
 ## Introgression Mapper Module (`ghostparser.introgression_mapper`)
@@ -76,7 +76,7 @@ inference.
 
 ### Role
 
-`ghostparser.introgression_mapper` consumes per-triplet pipeline results and produces a single combined visualization and companion TSV artifacts representing introgression signal across the ingroup taxa. It is called automatically by the pipeline's consolidation stage; see [pipeline/PIPELINE.md](pipeline/PIPELINE.md) for how it is wired in.
+`ghostparser.introgression_mapper` consumes per-triplet orchestrator results and produces a single combined visualization and companion TSV artifacts representing introgression signal across the ingroup taxa. It is called automatically by the orchestrator's consolidation stage; see [orchestrator/ORCHESTRATOR.md](orchestrator/ORCHESTRATOR.md) for how it is wired in.
 
 ### `generate_introgression_maps(results, species_tree_path, output_dir, plot_taxa=None, outgroups=None, overwrite=True)`
 
@@ -95,7 +95,7 @@ Generates the combined consolidation figure and tabular outputs.
 
 - `introgression_combined.png` — combined figure with directed inflow/outflow heatmap and ghost target-strength bar chart.
 - `introgression_matrix_inflow_outflow.tsv` — target × source matrix of average bootstrap support values.
-- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support.
+- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support, plus a `has_sampled_introgression` flag (`1` when the taxon is also the target of a sampled introgression edge).
 - `introgression_taxa_order.tsv` — ordered taxa list matching the plot axes.
 
 Returns an `IntrogressionMapArtifacts` dataclass with `plot_path`, TSV paths, `taxa_count`, `non_ghost_edge_count`, and `ghost_target_count`.
@@ -125,10 +125,10 @@ The combined figure uses a three-row layout above the data panels:
 1. **Species tree strip** (top row) — topology-only tree with leaf labels suppressed.
 2. **Source taxon label strip** (middle row) — a dedicated thin row containing the source-taxon names, rotated 90°, aligned to heatmap column centres. Row height is computed from the rendered pixel-width of the longest label so labels are never clipped. Shown for datasets up to 120 taxa; suppressed beyond that.
 3. **Data panels** (bottom row, left to right):
-    - **Inflow/outflow heatmap** — rows are target taxa, columns are source taxa, coloured by average bootstrap support.
+    - **Inflow/outflow heatmap** — rows are target taxa, columns are source taxa, coloured by average bootstrap support on the `CONSOLIDATION_COLORMAP` (`cividis`) scale.
     - **Target label panel** — centred target taxon names aligned pixel-exactly to heatmap rows.
-    - **Ghost bar chart** — horizontal bars per target taxon showing average ghost bootstrap support.
-    - **Shared colorbar** — single colorbar covering both the heatmap and bar chart.
+    - **Ghost bar chart** — horizontal bars per target taxon. Bar *length* is the average ghost bootstrap support. Bar *colour* is constant per bar, drawn from the two extremes of the same colormap, and encodes only whether the taxon also has sampled introgression: the high end, yellow (`GHOST_ONLY_BAR_COLOR`) when the taxon's only signal is ghost introgression, the low end, dark blue (`GHOST_WITH_SAMPLED_BAR_COLOR`) when it is also the target of a sampled introgression edge. Every bar carries a hairline `GHOST_BAR_EDGE_COLOR` outline so its extent stays legible against the panel. The flag is computed by `_sampled_introgression_presence` and recorded in the ghost TSV's `has_sampled_introgression` column.
+    - **Colorbar** — applies to the heatmap only. A two-entry legend sits directly above the bar panel explaining the ghost bar colours, and a note above that states that uncoloured heatmap cells carry no introgression and are not on the colour scale.
 
 All three rows share `hspace=0` so they appear flush. Figure and panel widths scale dynamically with taxon count and rendered label widths.
 The shared x/y labels and colorbar text scale with taxon count and are capped to stay readable on large figures, while the species-name labels keep their separate sizing.
@@ -137,7 +137,7 @@ The shared x/y labels and colorbar text scale with taxon count and are capped to
 
 ```bash
 python -m ghostparser.introgression_mapper \
-    -r pipeline_triplet_results.tsv \
+    -r orchestrator_triplet_results.tsv \
     -st processed_species.tree \
     -o output_dir/ \
     -og OutGroup1,OutGroup2
@@ -145,7 +145,7 @@ python -m ghostparser.introgression_mapper \
 
 **Required arguments:**
 
-- `-r`, `--results-tsv`: Path to `pipeline_triplet_results.tsv`.
+- `-r`, `--results-tsv`: Path to `orchestrator_triplet_results.tsv`.
 - `-st`, `--species-tree-path`: Path to the processed species tree (Newick).
 - `-o`, `--output-dir`: Directory to write output plots and TSVs.
 - `--no-overwrite`: Append a numeric suffix when the output directory already exists.

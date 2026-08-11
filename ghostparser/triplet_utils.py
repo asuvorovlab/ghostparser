@@ -1,7 +1,7 @@
 """Shared triplet topology utilities.
 
 Utilities in this module keep triplet topology handling consistent across the
-package; ``ghostparser.pipeline`` uses them for both preprocessing and
+package; ``ghostparser.orchestrator`` uses them for both preprocessing and
 inference.
 """
 

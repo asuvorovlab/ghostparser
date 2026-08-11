@@ -9,17 +9,58 @@ bootstrap sums, supporting counts, and undiluted averages.
 from __future__ import annotations
 
 import argparse as _argparse
+import textwrap
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 import dendropy
+import numpy as np
 import seaborn as sns
 from matplotlib import pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
+from matplotlib.patches import Patch
 
 from .config import prepare_output_directory
+
+# Colormap shared by the heatmap fill and the colorbar.
+CONSOLIDATION_COLORMAP = "cividis"
+
+# Ghost bar colours, taken from the two extremes of CONSOLIDATION_COLORMAP. Bar
+# *length* encodes the ghost bootstrap value; colour encodes only whether the
+# same target taxon also has sampled introgression.
+GHOST_ONLY_BAR_COLOR = "#fee838"  # cividis high end: ghost introgression only
+GHOST_WITH_SAMPLED_BAR_COLOR = "#00224e"  # cividis low end: ghost + sampled
+# The high-end fill is only 1.25:1 against a white panel, so a hairline edge
+# keeps each bar's extent readable regardless of which colour it carries.
+GHOST_BAR_EDGE_COLOR = "#4d4d4d"
+
+# Heatmap cells with no introgression edge. Lighter than every step of
+# CONSOLIDATION_COLORMAP, so an empty cell never reads as a low-valued one.
+EMPTY_CELL_COLOR = "#f0f0f0"
+PANEL_BORDER_COLOR = "#bdbdbd"
+
+# Vertical gap between the ghost bar legend and the uncoloured-cell note above
+# it, in points so it holds at every figure size.
+NOTE_LEGEND_GAP_POINTS = 18.0
+
+HEATMAP_PANEL_TITLE = "Sampled Introgression"
+GHOST_PANEL_TITLE = "Ghost Introgression"
+# Slack around a panel title when it, rather than the data, sets panel width.
+PANEL_TITLE_PAD = 0.25
+
+# Figure margins reserved for artists that live outside the GridSpec: the
+# rotated "Target taxon" label on the left, the colorbar's label on the right,
+# and the bold panel titles underneath. GridSpec ratios divide the area left
+# after these, so reserving the space explicitly is what makes a row's ratio
+# equal its intended height in inches -- matplotlib's default subplot margins
+# would otherwise silently absorb roughly a fifth of every row.
+MARGIN_LEFT_IN = 0.55
+MARGIN_RIGHT_IN = 0.80
+MARGIN_TOP_IN = 0.25
+MARGIN_BOTTOM_IN = 0.70
 
 
 @dataclass(frozen=True)
@@ -186,11 +227,47 @@ def _write_non_ghost_matrix_tsv(path, taxa_order, matrix):
             out_f.write(target + "\t" + "\t".join(row_values) + "\n")
 
 
-def _write_ghost_strength_tsv(path, taxa_order, ghost_norm):
+def _sampled_introgression_presence(taxa_order, non_ghost_norm):
+    """Flag each taxon that is also the target of a sampled introgression edge.
+
+    Sampled (non-ghost) edges are keyed ``(source, target)``, so a taxon counts
+    as having sampled introgression when any source contributes a non-zero
+    weight to it as the target -- the same row the ghost bar chart draws.
+
+    Args:
+        taxa_order: Ordered taxa matching the plot axes.
+        non_ghost_norm: Mapping of ``(source, target)`` to a weight/average.
+
+    Returns:
+        A dict mapping each taxon to ``1`` when it also has sampled
+        introgression and ``0`` when its only signal is ghost introgression.
+    """
+    targets_with_sampled = {
+        target
+        for (_source, target), value in non_ghost_norm.items()
+        if value  # non-zero weight
+    }
+    return {taxon: int(taxon in targets_with_sampled) for taxon in taxa_order}
+
+
+def _write_ghost_strength_tsv(path, taxa_order, ghost_norm, sampled_presence=None):
+    """Write per-taxon ghost strength plus the sampled-introgression flag.
+
+    Args:
+        path: Output TSV path.
+        taxa_order: Ordered taxa matching the plot axes.
+        ghost_norm: Mapping of taxon to its ghost strength.
+        sampled_presence: Optional mapping of taxon to ``1``/``0`` indicating
+            whether that taxon also has sampled introgression. Defaults to all
+            zeros when omitted.
+    """
+    presence = sampled_presence or {}
     with open(path, "w") as out_f:
-        out_f.write("target_taxon\traw_strength\n")
+        out_f.write("target_taxon\traw_strength\thas_sampled_introgression\n")
         for target in taxa_order:
-            out_f.write(f"{target}\t{ghost_norm.get(target, 0.0):.12g}\n")
+            strength = ghost_norm.get(target, 0.0)
+            flag = int(presence.get(target, 0))
+            out_f.write(f"{target}\t{strength:.12g}\t{flag}\n")
 
 
 def _write_single_value_tsv(path, taxa_order, values, header_name):
@@ -421,16 +498,32 @@ def _scaled_consolidation_text_sizes(n):
     }
 
 
-def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
+def _plot_combined(
+    path,
+    species_tree_path,
+    taxa_order,
+    matrix_avg,
+    ghost_avg,
+    ghost_has_sampled=None,
+):
     """Plot combined heatmap (sampled introgressions) with ghost bar chart to the right.
 
     Layout (left to right):
       heatmap (with species tree on top) | centered target labels | ghost bar | colorbar
+
+    Args:
+        path: Output image path.
+        species_tree_path: Processed species tree used for the top strip.
+        taxa_order: Ordered taxa for both panels.
+        matrix_avg: Target x source matrix of sampled-introgression averages.
+        ghost_avg: Mapping of taxon to ghost strength; sets bar length.
+        ghost_has_sampled: Optional mapping of taxon to ``1``/``0`` marking taxa
+            that also have sampled introgression; sets bar colour.
     """
     from matplotlib.gridspec import GridSpec
 
     norm = Normalize(vmin=0.0, vmax=1.0)
-    cmap = plt.get_cmap("PuBuGn")
+    cmap = plt.get_cmap(CONSOLIDATION_COLORMAP)
     label_fontsize = 9
     n = len(taxa_order)
     text_sizes = _scaled_consolidation_text_sizes(n)
@@ -463,15 +556,33 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
             max_tick_lw_px, t.get_window_extent(renderer=renderer).width
         )
         t.remove()
+    # The bold panel titles sit outside their axes and are not picked up by
+    # `bbox_inches="tight"`, so each panel has to be wide enough to hold its own
+    # title. This only ever binds for small taxa counts, where the heatmap is
+    # narrower than the words underneath it.
+    panel_title_px = {}
+    for panel_title in (HEATMAP_PANEL_TITLE, GHOST_PANEL_TITLE):
+        t = temp_fig.text(
+            0, 0, panel_title, fontsize=text_sizes["axis_label"], fontweight="bold"
+        )
+        panel_title_px[panel_title] = t.get_window_extent(renderer=renderer).width
+        t.remove()
     dpi = temp_fig.dpi
     plt.close(temp_fig)
 
+    heatmap_width = max(
+        heatmap_width, panel_title_px[HEATMAP_PANEL_TITLE] / dpi + PANEL_TITLE_PAD
+    )
+
     pad_inches = (18 + 18) / 72.0
     label_panel_w = max(1.2, min(8.0, (max_lw_px / dpi) + pad_inches))
-    bar_panel_w = 3.0
+    bar_panel_w = max(
+        3.0, panel_title_px[GHOST_PANEL_TITLE] / dpi + PANEL_TITLE_PAD
+    )
     cbar_w = 0.45
+    grid_width = heatmap_width + label_panel_w + bar_panel_w + cbar_w
     fig_width = min(
-        40.0, max(8.0, heatmap_width + label_panel_w + bar_panel_w + cbar_w + 1.0)
+        40.0, max(8.0, grid_width + MARGIN_LEFT_IN + MARGIN_RIGHT_IN)
     )
 
     # --- measured label height drives the dedicated label-strip row ---
@@ -489,7 +600,8 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
 
     # Compact tree strip (no leaf labels needed; label strip handles them)
     tree_h = max(1.0, fig_height_heat * 0.18)
-    fig_height = min(40.0, tree_h + label_strip_h + fig_height_heat + 0.4)
+    grid_height = tree_h + label_strip_h + fig_height_heat
+    fig_height = min(40.0, grid_height + MARGIN_TOP_IN + MARGIN_BOTTOM_IN)
 
     fig = plt.figure(figsize=(fig_width, fig_height), dpi=150)
     gs = GridSpec(
@@ -499,6 +611,12 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
         width_ratios=[heatmap_width, label_panel_w, bar_panel_w, cbar_w],
         hspace=0.0,
         wspace=0.02,
+        # Pin the grid to the reserved margins so each ratio keeps its intended
+        # size in inches instead of being scaled into matplotlib's defaults.
+        left=MARGIN_LEFT_IN / fig_width,
+        right=1.0 - MARGIN_RIGHT_IN / fig_width,
+        top=1.0 - MARGIN_TOP_IN / fig_height,
+        bottom=MARGIN_BOTTOM_IN / fig_height,
         figure=fig,
     )
 
@@ -546,20 +664,40 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
             )
 
     # --- heatmap ---
-    sns.heatmap(
-        matrix_avg,
-        ax=ax_heat,
-        cmap=cmap,
-        norm=norm,
-        xticklabels=False,
-        yticklabels=False,
-        linewidths=0.5,
-        linecolor="white",
-        cbar=False,
-    )
+    # Zero cells mean "no introgression edge observed". Masking them keeps the
+    # sparse real signal legible: the colormap's low end is dark, so painting
+    # every empty cell with it would turn a sparse matrix into a solid block.
+    # Masked cells fall through to the axes facecolor, and the white gridlines
+    # plus panel border preserve the row/column structure underneath.
+    heat_values = np.asarray(matrix_avg, dtype=float)
+    ax_heat.set_facecolor(EMPTY_CELL_COLOR)
+    with warnings.catch_warnings():
+        # A run with no sampled introgression masks every cell, and seaborn's
+        # autoscale then takes nanmin/nanmax of an all-NaN array. The limits it
+        # computes are unused here because `norm` fixes them at 0..1, so the
+        # warning reports a calculation that cannot affect the output.
+        warnings.filterwarnings(
+            "ignore", "All-NaN slice encountered", RuntimeWarning
+        )
+        sns.heatmap(
+            heat_values,
+            ax=ax_heat,
+            cmap=cmap,
+            norm=norm,
+            mask=heat_values == 0.0,
+            xticklabels=False,
+            yticklabels=False,
+            linewidths=0.5,
+            linecolor="white",
+            cbar=False,
+        )
+    for spine in ax_heat.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(0.6)
+        spine.set_color(PANEL_BORDER_COLOR)
     ax_heat.set_ylabel("Target taxon", fontsize=text_sizes["axis_label"])
     ax_heat.set_xlabel(
-        "Sampled Introgression",
+        HEATMAP_PANEL_TITLE,
         fontweight="bold",
         fontsize=text_sizes["axis_label"],
     )
@@ -585,20 +723,29 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
         tick.set_fontstyle("italic")
 
     # --- ghost bar chart ---
+    # Bar length encodes the ghost bootstrap value. Colour is constant per bar
+    # and encodes only whether the taxon also has sampled introgression.
     values = [ghost_avg.get(taxon, 0.0) for taxon in taxa_order]
-    bar_colors = [cmap(norm(v)) for v in values]
+    presence = ghost_has_sampled or {}
+    bar_colors = [
+        GHOST_WITH_SAMPLED_BAR_COLOR
+        if presence.get(taxon)
+        else GHOST_ONLY_BAR_COLOR
+        for taxon in taxa_order
+    ]
     # bars at seaborn cell centers (i+0.5), height=0.8 to match cell boundaries
     ax_bar.barh(
         [i + 0.5 for i in range(n)],
         values,
         height=0.8,
         color=bar_colors,
-        edgecolor="none",
+        edgecolor=GHOST_BAR_EDGE_COLOR,
+        linewidth=0.5,
     )
     ax_bar.set_xlim(0.0, 1.0)
     ax_bar.set_ylim(n, 0)
     ax_bar.set_xlabel(
-        "Ghost Introgression",
+        GHOST_PANEL_TITLE,
         fontweight="bold",
         fontsize=text_sizes["axis_label"],
     )
@@ -609,7 +756,73 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
         spine.set_visible(False)
     ax_bar.spines["bottom"].set_visible(True)
 
-    # --- shared colorbar ---
+    # --- ghost bar colour legend (drawn in the empty strip above the bars) ---
+    legend_handles = [
+        Patch(
+            facecolor=GHOST_ONLY_BAR_COLOR,
+            edgecolor=GHOST_BAR_EDGE_COLOR,
+            linewidth=0.5,
+            label="Ghost only",
+        ),
+        Patch(
+            facecolor=GHOST_WITH_SAMPLED_BAR_COLOR,
+            edgecolor=GHOST_BAR_EDGE_COLOR,
+            linewidth=0.5,
+            label="Ghost + sampled",
+        ),
+    ]
+    # Anchor the legend to the bottom of the source-label strip -- the row that
+    # sits directly above the bar panel -- so it reads with the bars rather than
+    # floating near the top of the figure. It grows upward into the tree-strip
+    # row, which is empty on this side.
+    legend = ax_src_right.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.0),
+        frameon=False,
+        fontsize=text_sizes["cbar_tick"],
+        title="Ghost Introgression\nBar Color Significance",
+        title_fontsize=text_sizes["cbar_label"],
+        borderpad=0.8,
+    )
+    # The title wraps onto two lines; centre them on each other rather than
+    # leaving the shorter line ragged against the left edge.
+    legend.get_title().set_multialignment("center")
+
+    # A note explaining why parts of the heatmap are blank, so the colorbar is
+    # not read as covering those cells too. It is wrapped to the bar panel's
+    # width and sits directly on top of the legend, which means its position
+    # depends on how tall the legend rendered -- hence the draw to measure it.
+    note_font = text_sizes["cbar_tick"]
+    wrap_chars = max(18, int((bar_panel_w * 72.0) / (0.5 * note_font)))
+    note_text = textwrap.fill(
+        "Heatmap cells with no introgression are left uncoloured and are not "
+        "represented on the colour scale.",
+        width=wrap_chars,
+    )
+    try:
+        renderer = fig.canvas.get_renderer()
+    except AttributeError:  # backend without a cached renderer
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+    legend_extent = legend.get_window_extent(renderer)
+    legend_top = legend_extent.transformed(fig.transFigure.inverted()).y1
+    # Express the gap in points so the padding stays visually constant; a fixed
+    # figure fraction would shrink as `fig_height` grows with the taxa count.
+    note_gap = (NOTE_LEGEND_GAP_POINTS / 72.0) / fig_height
+    bar_position = ax_bar.get_position()
+    fig.text(
+        bar_position.x0 + bar_position.width / 2.0,
+        legend_top + note_gap,
+        note_text,
+        ha="center",
+        va="bottom",
+        fontsize=note_font,
+        fontweight="bold",
+        color="#4d4d4d",
+    )
+
+    # --- heatmap colorbar ---
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = fig.colorbar(sm, cax=ax_cbar)
@@ -617,7 +830,7 @@ def _plot_combined(path, species_tree_path, taxa_order, matrix_avg, ghost_avg):
     cbar.set_ticklabels(["0", "0.5", "1"])
     cbar.ax.tick_params(labelsize=text_sizes["cbar_tick"])
     cbar.set_label(
-        "Average Bootstrap Value",
+        "Average Bootstrap Value (heatmap)",
         labelpad=8,
         fontsize=text_sizes["cbar_label"],
     )
@@ -751,7 +964,12 @@ def generate_introgression_maps(
         supporting_ghost_values,
         "supporting_count",
     )
-    _write_ghost_strength_tsv(ghost_tsv, taxa_order, avg_ghost)
+    # Cross-reference the sampled edges so each ghost target records whether it
+    # also carries sampled introgression; this drives the bar colour.
+    ghost_has_sampled = _sampled_introgression_presence(taxa_order, avg_non_ghost)
+    _write_ghost_strength_tsv(
+        ghost_tsv, taxa_order, avg_ghost, sampled_presence=ghost_has_sampled
+    )
     _write_taxa_order_tsv(taxa_order_tsv, taxa_order)
 
     non_sister_counts = _collect_non_sister_counts(results)
@@ -759,7 +977,12 @@ def generate_introgression_maps(
     _write_non_sister_matrix_tsv(non_sister_count_tsv, taxa_order, non_sister_matrix)
 
     _plot_combined(
-        combined_plot, species_tree_path, taxa_order, avg_non_ghost_matrix, avg_ghost
+        combined_plot,
+        species_tree_path,
+        taxa_order,
+        avg_non_ghost_matrix,
+        avg_ghost,
+        ghost_has_sampled=ghost_has_sampled,
     )
 
     return IntrogressionMapArtifacts(
@@ -787,7 +1010,7 @@ def generate_introgression_maps(
 
 def _build_standalone_parser():
     parser = _argparse.ArgumentParser(
-        description="Generate introgression maps from a GhostParser pipeline results TSV."
+        description="Generate introgression maps from a GhostParser orchestrator results TSV."
     )
     parser.add_argument(
         "-r",
@@ -830,7 +1053,7 @@ def _parse_outgroups_arg(value):
 
 
 def _read_results_tsv(path):
-    """Read a pipeline results TSV into a list of dicts."""
+    """Read an orchestrator results TSV into a list of dicts."""
     rows = []
     with open(path, newline="") as fh:
         import csv
