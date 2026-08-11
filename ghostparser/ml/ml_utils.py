@@ -34,6 +34,10 @@ BIT_LABELS = (
 BIT_COUNT = len(BIT_LABELS)
 MAX_STRING_CATEGORIES = 7
 
+# Colormap for both confusion-matrix figures. Counts are a sequential quantity,
+# and cividis is perceptually uniform and colour-vision-deficiency safe.
+CONFUSION_MATRIX_COLORMAP = "cividis"
+
 
 @dataclass(frozen=True)
 class DatasetSplit:
@@ -386,6 +390,34 @@ def build_feature_importance_rows(
     return rows
 
 
+def format_hyperparameter_section(
+    hyperparameters: dict[str, object],
+    title: str = "Hyperparameters:",
+) -> list[str]:
+    """Render a trainer's hyperparameters as aligned ``key: value`` lines.
+
+    Args:
+        hyperparameters: Mapping of hyperparameter name to the value actually
+            used for the run. Insertion order is preserved in the output.
+        title: Heading placed above the block.
+
+    Returns:
+        A list of text lines: the title followed by one indented line per
+        hyperparameter, with names padded to a common width. ``None`` values
+        render as ``none`` so an unset knob is visibly distinct from an empty
+        string.
+    """
+    lines = [title]
+    if not hyperparameters:
+        lines.append("  (none)")
+        return lines
+    width = max(len(str(name)) for name in hyperparameters)
+    for name, value in hyperparameters.items():
+        rendered = "none" if value is None else str(value)
+        lines.append(f"  {str(name):<{width}}  {rendered}")
+    return lines
+
+
 def format_confusion_matrix_section(
     confusion_matrices: dict[str, list[list[int]]],
 ) -> list[str]:
@@ -430,7 +462,7 @@ def save_confusion_matrix_plot(
         constrained_layout=True,
     )
     axes_array = np.atleast_1d(axes).ravel()
-    cmap = sns.color_palette("RdYlGn", as_cmap=True)
+    cmap = plt.get_cmap(CONFUSION_MATRIX_COLORMAP)
 
     for axis_index, (bit_label, matrix_values) in enumerate(matrix_items):
         ax = axes_array[axis_index]
@@ -516,7 +548,7 @@ def save_64_class_confusion_matrix_plot(
     data = np.asarray(class_confusion["matrix"], dtype=int)
 
     fig, ax = plt.subplots(figsize=(18, 16), constrained_layout=True)
-    cmap = sns.color_palette("RdYlGn", as_cmap=True)
+    cmap = plt.get_cmap(CONFUSION_MATRIX_COLORMAP)
     vmax = max(int(data.max()), 1)
     sns.heatmap(
         data,

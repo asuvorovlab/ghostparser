@@ -2,7 +2,7 @@
 
 Owns the ML defaults/choices and the ML-specific validation rules (for example
 ``test_size`` must be a fraction strictly between 0 and 1). The helpers shared
-verbatim with the pipeline are imported from the :mod:`ghostparser.config`
+verbatim with the orchestrator are imported from the :mod:`ghostparser.config`
 trunk.
 """
 

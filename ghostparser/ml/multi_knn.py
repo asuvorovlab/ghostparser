@@ -257,23 +257,35 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     else:
         confusion_matrix_64_plot_path = None
 
+    # Every knob that affects the fitted model or the split it was fitted on.
+    # ``n_neighbors`` is reported twice: the request is capped at the training
+    # set size, so the effective value is what the estimator actually used.
+    hyperparameters = {
+        "n_neighbors_requested": int(config.n_neighbors),
+        "n_neighbors_effective": int(effective_n_neighbors),
+        "weights": config.weights,
+        "algorithm": config.algorithm,
+        "leaf_size": int(config.leaf_size),
+        "metric": config.metric,
+        "p": int(config.p),
+        "n_jobs": config.n_jobs if config.n_jobs is not None else DEFAULT_N_JOBS,
+        "random_state": config.random_state,
+        "test_size": config.test_size,
+        "cv_folds_requested": config.cv_folds,
+        "cv_folds_effective": cv_folds,
+        "rare_class_policy": config.rare_class_policy,
+        "target_column": config.target_column,
+    }
+
     metrics_payload = {
         "objective": "multi-label classification",
         "classifier": "multi_knn",
+        "hyperparameters": hyperparameters,
         "metric_set": metric_set,
         "exact_match_is_diagnostic": True,
         "split_notes": split_notes,
         "cv": cv_results,
         "cv_notes": cv_warnings,
-        "knn": {
-            "configured_n_neighbors": int(config.n_neighbors),
-            "effective_n_neighbors": int(effective_n_neighbors),
-            "weights": config.weights,
-            "algorithm": config.algorithm,
-            "leaf_size": int(config.leaf_size),
-            "metric": config.metric,
-            "p": int(config.p),
-        },
         "primary_metrics": {
             "hamming_loss": test_metrics["hamming_loss"],
             "micro_f1": test_metrics["micro_f1"],
@@ -334,8 +346,10 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
         "Ghostparser ML multi-label KNN baseline",
         "Primary objective: multi-label classification on the 6-bit classes bitstring.",
         "Exact-match accuracy is diagnostic; bitwise metrics are primary.",
-        f"Configured n_neighbors: {int(config.n_neighbors)}",
-        f"Effective n_neighbors: {int(effective_n_neighbors)}",
+        "",
+    ]
+    text_lines.extend(shared.format_hyperparameter_section(hyperparameters))
+    text_lines.extend([
         "",
         "Test metrics:",
         f"  Hamming loss: {test_metrics['hamming_loss']:.6f}",
@@ -346,7 +360,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
         f"  Weighted F1: {test_metrics['weighted_f1']:.6f}",
         "",
         "Per-bit metrics:",
-    ]
+    ])
     if include_per_bit:
         for bit_label, values in test_metrics["per_bit"].items():
             text_lines.append(

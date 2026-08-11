@@ -240,9 +240,9 @@ Stratified here means we try to preserve the frequency of each 6-bit label combi
 
 - `*_model.pkl` — Pickled trained `MultiOutputClassifier` (prefix: `random_forest_` or `multi_knn_`)
 - `*_overall_metrics.json` — Structured metrics, timings, and the consolidated dataset summary
-- `*_metrics.txt` — Human-readable summary of metrics, dataset summary, and diagnostic notes
-- `*_confusion_matrices.png` — Heatmap grid of all confusion matrices, colored from red (smaller counts) to green (larger counts)
-- `*_confusion_matrix_64_classes.png` — Heatmap of the full 64-class confusion matrix across all possible 6-bit labels
+- `*_metrics.txt` — Human-readable summary. Opens with a `Hyperparameters:` block listing every knob that shaped the run — the estimator settings, `test_size`, the requested and effective `cv_folds`, `rare_class_policy`, and `target_column` — followed by the metrics, dataset summary, and diagnostic notes. The same mapping is available under the `hyperparameters` key of `*_overall_metrics.json`.
+- `*_confusion_matrices.png` — Heatmap grid of all confusion matrices on the `cividis` scale, dark for smaller counts and bright for larger ones
+- `*_confusion_matrix_64_classes.png` — Heatmap of the full 64-class confusion matrix across all possible 6-bit labels, on the same scale
 - `feature_importances.tsv` — Ranked features and importance scores (tree-based for RF, permutation for KNN)
 - `predictions.tsv` — Per-row predictions with true/pred bit flags, exact-match indicator, and matched-bit count
 
