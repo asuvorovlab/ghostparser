@@ -1,7 +1,7 @@
 """Tests for the shared configuration trunk in ``ghostparser.config``.
 
 The trunk holds only the helpers whose behaviour is identical for every
-consumer (the pipeline, the ML subpackage, and the introgression mapper):
+consumer (the orchestrator, the ML subpackage, and the introgression mapper):
 ``ConfigError``, path resolution, raw config-file loading, required-path
 validation, overwrite-flag resolution, and output-directory preparation.
 Module-specific defaults and validators live in each module's own config.
