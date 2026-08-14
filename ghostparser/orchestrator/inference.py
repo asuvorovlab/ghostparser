@@ -1,7 +1,8 @@
 """Per-triplet GhostParser inference for the orchestrator.
 
 Covers topology classification, the discordant count test, the KS tree-height
-test, bootstrap aggregation (with optional debug metrics), summary-statistics
+test, the studentized permutation test that decides introgression direction,
+bootstrap aggregation (with optional debug metrics), summary-statistics
 gathering, run-wide p-value correction, and TSV writing. All statistics use the
 scipy/statsmodels backend.
 """
@@ -16,7 +17,6 @@ from dataclasses import dataclass, replace
 import dendropy
 import numpy as np
 from scipy import stats
-from statsmodels.stats.multitest import multipletests
 from statsmodels.stats.proportion import proportions_ztest
 
 from ghostparser.triplet_utils import (
@@ -37,12 +37,21 @@ from .config import (
     DEFAULT_BOOTSTRAP_SUMMARY_ONLY,
     DEFAULT_DISCORDANT_TEST,
     DEFAULT_P_VALUE_CORRECTION,
-    DEFAULT_SUMMARY_STATISTIC,
+    DEFAULT_PERMUTATION_MAX_RESAMPLES,
+    DEFAULT_PERMUTATION_MIN_RESAMPLES,
+    DEFAULT_PERMUTATION_TEST,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     DISCORDANT_TEST_CHOICES,
     P_VALUE_CORRECTION_CHOICES,
-    SUMMARY_STATISTIC_CHOICES,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
+)
+from .correction import adjust_p_values as _adjust_p_values
+from .permutation import (
+    DECISION_GREATER,
+    DECISION_LESS,
+    bootstrap_resample_budget,
+    median_sign_decision,
+    run_studentized_permutation_test,
 )
 
 Classification = str
@@ -55,7 +64,7 @@ _BOOTSTRAP_CLASSES = [
     "inflow_introgression",
     "outflow_introgression",
     "no_introgression",
-    "unresolved",
+    "ambiguous",
 ]
 
 # Per-iteration bootstrap-debug accumulator keys, aligned with the metric tuple
@@ -83,11 +92,10 @@ _TOPOLOGY_CODE = {TOPOLOGY_AB: 0, TOPOLOGY_BC: 1, TOPOLOGY_AC: 2}
 SUMMARY_STATISTICS = ("mean", "median", "mode", "variance", "entropy", "min", "max")
 SUMMARY_TOPOLOGY_LABELS = ("concordant", "discordant1", "discordant2")
 SUMMARY_METRIC_LABELS = ("avg_tree_height", "internal_branch", "sister_distance")
-SUMMARY_TOPOLOGY_TO_CANONICAL = {
-    "concordant": TOPOLOGY_AB,
-    "discordant1": TOPOLOGY_BC,
-    "discordant2": TOPOLOGY_AC,
-}
+# Which canonical topology each summary label refers to is resolved per triplet
+# from the observed counts, not fixed here: `discordant1` means the more
+# frequent discordant topology, matching the `dis1_topology` column and the
+# group the DCT, KS, and permutation tests all operate on.
 
 
 @dataclass(frozen=True)
@@ -113,9 +121,23 @@ class TripletPipelineResult:
     ks_p_value_corrected: float | None
     ks_statistic: float | None
     ks_significant: bool | None
-    summary_con: float | None
-    summary_dis: float | None
+    mean_con: float | None
+    mean_dis: float | None
+    median_con: float | None
+    median_dis: float | None
     classification: Classification
+    perm_decision: str | None = None
+    perm_statistic: float | None = None
+    perm_p_greater: float | None = None
+    perm_p_less: float | None = None
+    perm_p_two_sided: float | None = None
+    perm_p_greater_corrected: float | None = None
+    perm_p_less_corrected: float | None = None
+    perm_n_resamples: int | None = None
+    perm_converged: bool | None = None
+    perm_consistent: bool | None = None
+    perm_null_skewed: bool | None = None
+    perm_note: str | None = None
     analyzed_trees: int = 0
     topology_metric_statistics: dict[str, float | None] | None = None
     bootstrap_value: float | None = None
@@ -150,9 +172,23 @@ class TripletPipelineResult:
             "ks_p_value": self.ks_p_value,
             "ks_p_value_corrected": self.ks_p_value_corrected,
             "ks_significant": self.ks_significant,
-            "summary_con": self.summary_con,
-            "summary_dis": self.summary_dis,
+            "mean_con": self.mean_con,
+            "mean_dis": self.mean_dis,
+            "median_con": self.median_con,
+            "median_dis": self.median_dis,
             "classification": self.classification,
+            "perm_decision": self.perm_decision,
+            "perm_statistic": self.perm_statistic,
+            "perm_p_greater": self.perm_p_greater,
+            "perm_p_less": self.perm_p_less,
+            "perm_p_two_sided": self.perm_p_two_sided,
+            "perm_p_greater_corrected": self.perm_p_greater_corrected,
+            "perm_p_less_corrected": self.perm_p_less_corrected,
+            "perm_n_resamples": self.perm_n_resamples,
+            "perm_converged": self.perm_converged,
+            "perm_consistent": self.perm_consistent,
+            "perm_null_skewed": self.perm_null_skewed,
+            "perm_note": self.perm_note,
             "analyzed_trees": self.analyzed_trees,
             "bootstrap_value": self.bootstrap_value,
             "all_bootstrap": self.all_bootstrap,
@@ -560,15 +596,23 @@ def _build_empty_metric_buckets():
 
 
 def _build_topology_metric_statistics(
-    species_triplet, species_topology, metric_buckets
+    species_triplet, species_topology, metric_buckets, dis1_topology, dis2_topology
 ):
-    """Build canonical topology/metric summary statistics for one triplet.
+    """Build topology/metric summary statistics for one triplet.
+
+    The ``discordant1`` columns describe whichever discordant topology is more
+    frequent, so they name the same set of gene trees as the ``dis1_topology``
+    column and as the groups the DCT, KS, and permutation tests use. The roles
+    are passed in rather than recomputed here so they cannot drift from the ones
+    the decision logic resolved.
 
     Args:
         species_triplet: The ``(A, B, C)`` triplet.
         species_topology: The concordant (species-tree) topology.
         metric_buckets: Per-topology metric buckets from
             :func:`_build_empty_metric_buckets`.
+        dis1_topology: Canonical topology of the more frequent discordant.
+        dis2_topology: Canonical topology of the less frequent discordant.
 
     Returns:
         A dict mapping each ``<topology>_<metric>_<statistic>`` column name to
@@ -585,9 +629,15 @@ def _build_topology_metric_statistics(
         topology_counts,
     )
 
+    label_to_canonical = {
+        "concordant": species_topology,
+        "discordant1": dis1_topology,
+        "discordant2": dis2_topology,
+    }
+
     statistics = {}
     for topology_label in SUMMARY_TOPOLOGY_LABELS:
-        canonical_topology = SUMMARY_TOPOLOGY_TO_CANONICAL[topology_label]
+        canonical_topology = label_to_canonical[topology_label]
         original_topology = canonical_to_original_topology[canonical_topology]
         for metric_label in SUMMARY_METRIC_LABELS:
             values = metric_buckets[original_topology][metric_label]
@@ -598,30 +648,116 @@ def _build_topology_metric_statistics(
     return statistics
 
 
-def _classify_introgression(dct_significant, ks_significant, summary_con, summary_dis):
+def _classify_introgression(dct_significant, ks_significant, direction):
     """Apply the GhostParser decision logic to produce a classification.
+
+    The three tests are applied as a cascade. A non-significant discordant count
+    test means the two discordant topologies are balanced, which is what
+    incomplete lineage sorting alone produces. A significant count test with a
+    non-significant KS test means the discordant1 and concordant tree-height
+    distributions match, which is the signature of introgression between the
+    sampled taxa. When both are significant the height distributions differ and
+    the direction of that difference separates the remaining classes.
 
     Args:
         dct_significant: Whether the discordant count test is significant.
         ks_significant: Whether the KS tree-height test is significant.
-        summary_con: Concordant summary statistic value.
-        summary_dis: Discordant1 summary statistic value.
+        direction: ``greater``, ``less``, or ``ambiguous`` for the concordant
+            heights relative to the discordant1 heights.
 
     Returns:
         One of ``no_introgression``, ``inflow_introgression``,
-        ``outflow_introgression``, ``ghost_introgression``, or ``unresolved``.
+        ``outflow_introgression``, ``ghost_introgression``, or ``ambiguous``.
     """
     if not dct_significant:
         return "no_introgression"
     if not ks_significant:
         return "inflow_introgression"
-    if summary_con is None or summary_dis is None:
-        return "unresolved"
-    if summary_con > summary_dis:
+    if direction == DECISION_GREATER:
         return "outflow_introgression"
-    if summary_con < summary_dis:
+    if direction == DECISION_LESS:
         return "ghost_introgression"
-    return "unresolved"
+    # The heights differ in distribution but not detectably in mean, so the
+    # difference is in shape rather than location and no direction is defensible.
+    return "ambiguous"
+
+
+def _permutation_result_fields(permutation_result):
+    """Flatten a permutation result into ``TripletPipelineResult`` field values.
+
+    Args:
+        permutation_result: A ``PermutationTestResult``, or ``None`` when the
+            permutation test was disabled or skipped.
+
+    Returns:
+        A dict of ``perm_*`` keyword arguments, all ``None`` when no test ran.
+    """
+    if permutation_result is None:
+        return {
+            "perm_statistic": None,
+            "perm_p_greater": None,
+            "perm_p_less": None,
+            "perm_p_two_sided": None,
+            "perm_p_greater_corrected": None,
+            "perm_p_less_corrected": None,
+            "perm_n_resamples": None,
+            "perm_converged": None,
+            "perm_consistent": None,
+            "perm_null_skewed": None,
+            "perm_note": None,
+        }
+
+    return {
+        "perm_statistic": permutation_result.statistic,
+        "perm_p_greater": permutation_result.p_greater,
+        "perm_p_less": permutation_result.p_less,
+        "perm_p_two_sided": permutation_result.p_two_sided,
+        "perm_p_greater_corrected": permutation_result.p_greater_corrected,
+        "perm_p_less_corrected": permutation_result.p_less_corrected,
+        "perm_n_resamples": permutation_result.n_resamples,
+        "perm_converged": permutation_result.converged,
+        "perm_consistent": permutation_result.consistent,
+        "perm_null_skewed": permutation_result.null_skewed,
+        "perm_note": permutation_result.note,
+    }
+
+
+def _decide_direction(
+    con_heights,
+    dis1_heights,
+    *,
+    permutation_test,
+    permutation_kwargs,
+    rng,
+):
+    """Decide the concordant-vs-discordant1 direction for one sample pair.
+
+    Args:
+        con_heights: Concordant tree heights.
+        dis1_heights: Discordant1 tree heights.
+        permutation_test: When ``True``, run the studentized permutation test;
+            otherwise fall back to comparing medians.
+        permutation_kwargs: Keyword arguments forwarded to
+            :func:`~ghostparser.orchestrator.permutation.run_studentized_permutation_test`.
+        rng: A ``numpy.random.Generator`` for the permutation resampling.
+
+    Returns:
+        A tuple ``(direction, permutation_result)`` where ``permutation_result``
+        is ``None`` when the permutation test is disabled.
+    """
+    if not len(con_heights) or not len(dis1_heights):
+        return "ambiguous", None
+
+    if not permutation_test:
+        return median_sign_decision(con_heights, dis1_heights), None
+
+    result = run_studentized_permutation_test(
+        con_heights,
+        dis1_heights,
+        rng=rng,
+        **(permutation_kwargs or {}),
+    )
+    return result.decision, result
 
 
 def _generate_inference_description(triplet, classification, dis1_topology):
@@ -685,11 +821,32 @@ def _generate_inference_description(triplet, classification, dis1_topology):
     return classification
 
 
+def _build_triplet_seed_sequence(seed, triplet):
+    """Build a deterministic per-triplet seed sequence from the run's base seed.
+
+    The run carries a single configured seed; a stable per-triplet sequence is
+    derived from ``(seed, triplet)`` via SHA-256. Deriving per triplet rather
+    than drawing from one shared stream is what makes a run reproducible
+    independently of how triplets are chunked across workers, so the ``taxon``,
+    ``gene``, and serial paths all produce identical results.
+
+    Args:
+        seed: The global base seed, or ``None`` for a non-deterministic sequence.
+        triplet: The triplet used to derive a stable per-triplet seed.
+
+    Returns:
+        A ``numpy.random.SeedSequence`` instance.
+    """
+    if seed is None:
+        return np.random.SeedSequence()
+
+    triplet_key = "|".join(triplet)
+    digest = hashlib.sha256(f"{seed}|{triplet_key}".encode("utf-8")).digest()
+    return np.random.SeedSequence(int.from_bytes(digest[:8], "little"))
+
+
 def _build_triplet_np_rng(seed, triplet):
     """Build a deterministic per-triplet NumPy RNG when a base seed is given.
-
-    A stable per-triplet seed is derived from ``(seed, triplet)`` via SHA-256 so
-    every triplet resamples independently and a run is reproducible.
 
     Args:
         seed: The global base seed, or ``None`` for a non-deterministic RNG.
@@ -698,12 +855,7 @@ def _build_triplet_np_rng(seed, triplet):
     Returns:
         A ``numpy.random.Generator`` instance.
     """
-    if seed is None:
-        return np.random.default_rng()
-
-    triplet_key = "|".join(triplet)
-    digest = hashlib.sha256(f"{seed}|{triplet_key}".encode("utf-8")).digest()
-    return np.random.default_rng(int.from_bytes(digest[:8], "little"))
+    return np.random.default_rng(_build_triplet_seed_sequence(seed, triplet))
 
 
 def observation_from_subtree(
@@ -920,7 +1072,9 @@ def _run_triplet_pipeline_from_observations(
     alpha_dct=DEFAULT_ALPHA_DCT,
     alpha_ks=DEFAULT_ALPHA_KS,
     discordant_test=DEFAULT_DISCORDANT_TEST,
-    summary_statistic=DEFAULT_SUMMARY_STATISTIC,
+    permutation_test=DEFAULT_PERMUTATION_TEST,
+    permutation_kwargs=None,
+    rng=None,
     species_topology=TOPOLOGY_AB,
     species_tree_newick=None,
 ):
@@ -932,15 +1086,15 @@ def _run_triplet_pipeline_from_observations(
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
-        summary_statistic: ``mean``, ``median``, or ``mode``.
+        permutation_test: When ``True``, decide direction with the studentized
+            permutation test; otherwise compare medians.
+        permutation_kwargs: Keyword arguments forwarded to the permutation test.
+        rng: A ``numpy.random.Generator`` for the permutation resampling.
         species_topology: The concordant (species-tree) topology.
         species_tree_newick: Species subtree Newick stored on the result.
 
     Returns:
         A ``TripletPipelineResult`` with uncorrected p-values.
-
-    Raises:
-        ValueError: If ``summary_statistic`` is unsupported.
     """
     heights = {topology: [] for topology in ALL_TOPOLOGIES}
     collect_summary_statistics = bool(observations) and observations[0][2] is not None
@@ -982,12 +1136,6 @@ def _run_triplet_pipeline_from_observations(
     n_dis1 = canonical_counts[dis1_topology]
     n_dis2 = canonical_counts[dis2_topology]
 
-    if summary_statistic not in SUMMARY_STATISTIC_CHOICES:
-        raise ValueError(
-            f"Unsupported summary statistic: {summary_statistic}. "
-            f"Choose one of: {', '.join(SUMMARY_STATISTIC_CHOICES)}"
-        )
-
     dct_statistic, dct_p_value = run_discordant_count_test(
         n_dis1,
         n_dis2,
@@ -1001,27 +1149,35 @@ def _run_triplet_pipeline_from_observations(
     )
     ks_significant = ks_p_value <= alpha_ks
 
-    if summary_statistic == "mean":
-        summary_con = _mean(canonical_heights[con_topology])
-        summary_dis = _mean(canonical_heights[dis1_topology])
-    elif summary_statistic == "mode":
-        summary_con = _mode_binned(canonical_heights[con_topology], decimals=3)
-        summary_dis = _mode_binned(canonical_heights[dis1_topology], decimals=3)
-    else:
-        summary_con = _median(canonical_heights[con_topology])
-        summary_dis = _median(canonical_heights[dis1_topology])
+    con_heights = canonical_heights[con_topology]
+    dis1_heights = canonical_heights[dis1_topology]
+
+    # The point estimate always runs the direction test, even when the earlier
+    # tests are non-significant and the classification will not consult it. The
+    # p-values and the observed statistic stay in the results TSV either way,
+    # which keeps the columns populated for every triplet.
+    direction, permutation_result = _decide_direction(
+        con_heights,
+        dis1_heights,
+        permutation_test=permutation_test,
+        permutation_kwargs=permutation_kwargs,
+        rng=rng,
+    )
 
     classification = _classify_introgression(
         dct_significant,
         ks_significant,
-        summary_con,
-        summary_dis,
+        direction,
     )
 
     topology_metric_statistics = None
     if metric_buckets is not None:
         topology_metric_statistics = _build_topology_metric_statistics(
-            canonical_triplet, TOPOLOGY_AB, metric_buckets
+            canonical_triplet,
+            TOPOLOGY_AB,
+            metric_buckets,
+            dis1_topology,
+            dis2_topology,
         )
 
     return TripletPipelineResult(
@@ -1040,11 +1196,15 @@ def _run_triplet_pipeline_from_observations(
         ks_p_value_corrected=ks_p_value,
         ks_statistic=ks_statistic,
         ks_significant=ks_significant,
-        summary_con=summary_con,
-        summary_dis=summary_dis,
+        mean_con=_mean(con_heights),
+        mean_dis=_mean(dis1_heights),
+        median_con=_median(con_heights),
+        median_dis=_median(dis1_heights),
         classification=classification,
+        perm_decision=direction,
         analyzed_trees=analyzed_trees,
         topology_metric_statistics=topology_metric_statistics,
+        **_permutation_result_fields(permutation_result),
     )
 
 
@@ -1056,13 +1216,20 @@ def _iteration_classification(
     alpha_dct,
     alpha_ks,
     discordant_test,
-    summary_statistic,
+    permutation_test,
+    permutation_kwargs,
+    rng,
 ):
     """Classify one bootstrap iteration from its resampled per-topology heights.
 
-    Mirrors ``_run_triplet_pipeline_from_observations`` plus the unresolved
+    Mirrors ``_run_triplet_pipeline_from_observations`` plus the ambiguous
     fallback: an iteration with an empty concordant or discordant1 sample is
-    ``unresolved`` (its summary statistic would be undefined).
+    ``ambiguous`` (there is nothing to compare).
+
+    Unlike the point estimate, the direction test runs only when both earlier
+    tests are significant. Every other iteration is already classified by the
+    cascade, so resampling there would burn the run's largest cost centre on a
+    result that cannot change the answer.
 
     Args:
         n_dis1: Discordant1 count in the resample.
@@ -1072,35 +1239,37 @@ def _iteration_classification(
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
-        summary_statistic: ``mean``, ``median``, or ``mode``.
+        permutation_test: When ``True``, decide direction with the permutation
+            test; otherwise compare medians.
+        permutation_kwargs: Keyword arguments forwarded to the permutation test.
+        rng: A ``numpy.random.Generator`` for the permutation resampling.
 
     Returns:
         The iteration classification string.
     """
     if not con_heights or not dis1_heights:
-        return "unresolved"
+        return "ambiguous"
 
     _, dct_p_value = run_discordant_count_test(
         n_dis1, n_dis2, method=discordant_test
     )
     dct_significant = dct_p_value <= alpha_dct
+    if not dct_significant:
+        return "no_introgression"
 
     _, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
     ks_significant = ks_p_value <= alpha_ks
+    if not ks_significant:
+        return "inflow_introgression"
 
-    if summary_statistic == "mean":
-        summary_con = _mean(con_heights)
-        summary_dis = _mean(dis1_heights)
-    elif summary_statistic == "mode":
-        summary_con = _mode_binned(con_heights, decimals=3)
-        summary_dis = _mode_binned(dis1_heights, decimals=3)
-    else:
-        summary_con = _median(con_heights)
-        summary_dis = _median(dis1_heights)
-
-    return _classify_introgression(
-        dct_significant, ks_significant, summary_con, summary_dis
+    direction, _ = _decide_direction(
+        con_heights,
+        dis1_heights,
+        permutation_test=permutation_test,
+        permutation_kwargs=permutation_kwargs,
+        rng=rng,
     )
+    return _classify_introgression(True, True, direction)
 
 
 def _iteration_full(
@@ -1111,13 +1280,17 @@ def _iteration_full(
     alpha_dct,
     alpha_ks,
     discordant_test,
-    summary_statistic,
+    permutation_test,
+    permutation_kwargs,
+    rng,
 ):
     """Classify one bootstrap iteration and return its per-iteration metrics.
 
     Unlike :func:`_iteration_classification` (the fast path), this always
-    computes the DCT/KS statistics and summary values so they can be collected
-    for bootstrap-debug output.
+    computes the DCT/KS statistics and the con/dis means so they can be
+    collected for bootstrap-debug output. The direction test still runs only
+    when both earlier tests are significant, since it is the expensive step and
+    its result is not part of the debug payload.
 
     Args:
         n_dis1: Discordant1 count in the resample.
@@ -1127,11 +1300,14 @@ def _iteration_full(
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
-        summary_statistic: ``mean``, ``median``, or ``mode``.
+        permutation_test: When ``True``, decide direction with the permutation
+            test; otherwise compare medians.
+        permutation_kwargs: Keyword arguments forwarded to the permutation test.
+        rng: A ``numpy.random.Generator`` for the permutation resampling.
 
     Returns:
         A tuple ``(classification, dct_statistic, dct_p_value, ks_statistic,
-        ks_p_value, summary_con, summary_dis)``.
+        ks_p_value, mean_con, mean_dis)``.
     """
     dct_statistic, dct_p_value = run_discordant_count_test(
         n_dis1, n_dis2, method=discordant_test
@@ -1141,22 +1317,24 @@ def _iteration_full(
     ks_statistic, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
     ks_significant = ks_p_value <= alpha_ks
 
-    if summary_statistic == "mean":
-        summary_con = _mean(con_heights)
-        summary_dis = _mean(dis1_heights)
-    elif summary_statistic == "mode":
-        summary_con = _mode_binned(con_heights, decimals=3)
-        summary_dis = _mode_binned(dis1_heights, decimals=3)
-    else:
-        summary_con = _median(con_heights)
-        summary_dis = _median(dis1_heights)
+    mean_con = _mean(con_heights)
+    mean_dis = _mean(dis1_heights)
 
     if not con_heights or not dis1_heights:
-        classification = "unresolved"
+        classification = "ambiguous"
+    elif not dct_significant:
+        classification = "no_introgression"
+    elif not ks_significant:
+        classification = "inflow_introgression"
     else:
-        classification = _classify_introgression(
-            dct_significant, ks_significant, summary_con, summary_dis
+        direction, _ = _decide_direction(
+            con_heights,
+            dis1_heights,
+            permutation_test=permutation_test,
+            permutation_kwargs=permutation_kwargs,
+            rng=rng,
         )
+        classification = _classify_introgression(True, True, direction)
 
     return (
         classification,
@@ -1164,8 +1342,8 @@ def _iteration_full(
         dct_p_value,
         ks_statistic,
         ks_p_value,
-        summary_con,
-        summary_dis,
+        mean_con,
+        mean_dis,
     )
 
 
@@ -1288,8 +1466,10 @@ def _run_bootstrap_iterations(
     alpha_dct,
     alpha_ks,
     discordant_test,
-    summary_statistic,
+    permutation_test,
+    permutation_kwargs,
     rng,
+    permutation_rng,
     debug_mode=False,
     summary_only=False,
 ):
@@ -1308,8 +1488,14 @@ def _run_bootstrap_iterations(
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
-        summary_statistic: ``mean``, ``median``, or ``mode``.
+        permutation_test: When ``True``, decide direction with the permutation
+            test; otherwise compare medians.
+        permutation_kwargs: Keyword arguments forwarded to the permutation test,
+            already scaled to the reduced bootstrap resample budget.
         rng: A ``numpy.random.Generator`` used for resampling.
+        permutation_rng: A separate ``numpy.random.Generator`` for the
+            permutation tests, so the bootstrap resample sequence stays
+            independent of how many permutations each iteration happens to draw.
         debug_mode: When ``True``, collect per-iteration debug metrics.
         summary_only: When ``True`` (and debug), emit compact summaries instead
             of full per-iteration lists.
@@ -1337,12 +1523,12 @@ def _run_bootstrap_iterations(
             if debug_mode:
                 metrics = _iteration_full(
                     0, 0, [], [], alpha_dct, alpha_ks, discordant_test,
-                    summary_statistic,
+                    permutation_test, permutation_kwargs, permutation_rng,
                 )
                 _record(metrics[0])
                 _append_iteration_debug(debug, metrics[1:])
             else:
-                _record("unresolved")
+                _record("ambiguous")
         fractions = {
             label: class_counts.get(label, 0) / float(iterations)
             for label in sorted(class_counts)
@@ -1387,7 +1573,9 @@ def _run_bootstrap_iterations(
                 alpha_dct,
                 alpha_ks,
                 discordant_test,
-                summary_statistic,
+                permutation_test,
+                permutation_kwargs,
+                permutation_rng,
             )
             _record(metrics[0])
             _append_iteration_debug(debug, metrics[1:])
@@ -1401,7 +1589,9 @@ def _run_bootstrap_iterations(
                     alpha_dct,
                     alpha_ks,
                     discordant_test,
-                    summary_statistic,
+                    permutation_test,
+                    permutation_kwargs,
+                    permutation_rng,
                 )
             )
 
@@ -1422,7 +1612,8 @@ def _finalize_triplet_analysis(
     alpha_dct,
     alpha_ks,
     discordant_test,
-    summary_statistic,
+    permutation_test,
+    permutation_kwargs,
     bootstrap_options,
     triplet_seed,
 ):
@@ -1438,22 +1629,35 @@ def _finalize_triplet_analysis(
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
-        summary_statistic: ``mean``, ``median``, or ``mode``.
+        permutation_test: When ``True``, decide direction with the permutation
+            test; otherwise compare medians.
+        permutation_kwargs: Keyword arguments forwarded to the permutation test.
         bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
             ``summary_only`` are read.
-        triplet_seed: Optional base seed for deterministic bootstrap.
+        triplet_seed: Optional base seed for deterministic resampling.
 
     Returns:
         A ``TripletPipelineResult`` with uncorrected p-values and bootstrap
         aggregates.
     """
+    # One configured seed drives the whole run, but each consumer gets its own
+    # child stream. That keeps the bootstrap resample sequence identical whether
+    # or not the permutation test runs, and independent of how many resamples
+    # any single adaptive test happens to draw.
+    point_seed, bootstrap_seed, bootstrap_perm_seed = _build_triplet_seed_sequence(
+        triplet_seed, triplet
+    ).spawn(3)
+
+    permutation_kwargs = dict(permutation_kwargs or {})
     base_result = _run_triplet_pipeline_from_observations(
         triplet,
         observations,
         alpha_dct=alpha_dct,
         alpha_ks=alpha_ks,
         discordant_test=discordant_test,
-        summary_statistic=summary_statistic,
+        permutation_test=permutation_test,
+        permutation_kwargs=permutation_kwargs,
+        rng=np.random.default_rng(point_seed),
         species_topology=TOPOLOGY_AB,
         species_tree_newick=species_tree_topology,
     )
@@ -1466,7 +1670,16 @@ def _finalize_triplet_analysis(
         if debug_mode
         else False
     )
-    rng = _build_triplet_np_rng(triplet_seed, triplet)
+
+    # Each bootstrap iteration re-runs the direction test, so it uses a fraction
+    # of the configured resample budget.
+    bootstrap_permutation_kwargs = dict(permutation_kwargs)
+    scaled_min, scaled_max = bootstrap_resample_budget(
+        permutation_kwargs.get("min_resamples", DEFAULT_PERMUTATION_MIN_RESAMPLES),
+        permutation_kwargs.get("max_resamples", DEFAULT_PERMUTATION_MAX_RESAMPLES),
+    )
+    bootstrap_permutation_kwargs["min_resamples"] = scaled_min
+    bootstrap_permutation_kwargs["max_resamples"] = scaled_max
 
     bootstrap_payload = _run_bootstrap_iterations(
         observations,
@@ -1474,8 +1687,10 @@ def _finalize_triplet_analysis(
         alpha_dct=alpha_dct,
         alpha_ks=alpha_ks,
         discordant_test=discordant_test,
-        summary_statistic=summary_statistic,
-        rng=rng,
+        permutation_test=permutation_test,
+        permutation_kwargs=bootstrap_permutation_kwargs,
+        rng=np.random.default_rng(bootstrap_seed),
+        permutation_rng=np.random.default_rng(bootstrap_perm_seed),
         debug_mode=debug_mode,
         summary_only=summary_only,
     )
@@ -1509,7 +1724,8 @@ def analyze_triplet_from_observations(
     alpha_dct=DEFAULT_ALPHA_DCT,
     alpha_ks=DEFAULT_ALPHA_KS,
     discordant_test=DEFAULT_DISCORDANT_TEST,
-    summary_statistic=DEFAULT_SUMMARY_STATISTIC,
+    permutation_test=DEFAULT_PERMUTATION_TEST,
+    permutation_kwargs=None,
     bootstrap_options=None,
     triplet_seed=None,
 ):
@@ -1528,10 +1744,12 @@ def analyze_triplet_from_observations(
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
-        summary_statistic: ``mean``, ``median``, or ``mode``.
+        permutation_test: When ``True``, decide direction with the studentized
+            permutation test; otherwise compare medians.
+        permutation_kwargs: Keyword arguments forwarded to the permutation test.
         bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
             ``summary_only`` are read.
-        triplet_seed: Optional base seed for deterministic bootstrap.
+        triplet_seed: Optional base seed for deterministic resampling.
 
     Returns:
         A ``TripletPipelineResult`` with uncorrected p-values.
@@ -1544,7 +1762,8 @@ def analyze_triplet_from_observations(
         alpha_dct=alpha_dct,
         alpha_ks=alpha_ks,
         discordant_test=discordant_test,
-        summary_statistic=summary_statistic,
+        permutation_test=permutation_test,
+        permutation_kwargs=permutation_kwargs,
         bootstrap_options=bootstrap_options,
         triplet_seed=triplet_seed,
     )
@@ -1558,7 +1777,8 @@ def analyze_triplet(
     alpha_dct=DEFAULT_ALPHA_DCT,
     alpha_ks=DEFAULT_ALPHA_KS,
     discordant_test=DEFAULT_DISCORDANT_TEST,
-    summary_statistic=DEFAULT_SUMMARY_STATISTIC,
+    permutation_test=DEFAULT_PERMUTATION_TEST,
+    permutation_kwargs=None,
     tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     collect_summary_statistics=False,
     bootstrap_options=None,
@@ -1578,13 +1798,15 @@ def analyze_triplet(
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
-        summary_statistic: ``mean``, ``median``, or ``mode``.
+        permutation_test: When ``True``, decide direction with the studentized
+            permutation test; otherwise compare medians.
+        permutation_kwargs: Keyword arguments forwarded to the permutation test.
         tree_height_calculation_strategy: Tree-height strategy to apply.
         collect_summary_statistics: When ``True``, gather per-triplet
             topology/metric summary statistics onto the result.
         bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
             ``summary_only`` are read.
-        triplet_seed: Optional base seed for deterministic bootstrap.
+        triplet_seed: Optional base seed for deterministic resampling.
 
     Returns:
         A ``TripletPipelineResult`` with uncorrected p-values.
@@ -1603,53 +1825,11 @@ def analyze_triplet(
         alpha_dct=alpha_dct,
         alpha_ks=alpha_ks,
         discordant_test=discordant_test,
-        summary_statistic=summary_statistic,
+        permutation_test=permutation_test,
+        permutation_kwargs=permutation_kwargs,
         bootstrap_options=bootstrap_options,
         triplet_seed=triplet_seed,
     )
-
-
-def _adjust_p_values(
-    p_values,
-    method=DEFAULT_P_VALUE_CORRECTION,
-    alpha=0.05,
-):
-    """Adjust p-values by the selected correction method (statsmodels backend).
-
-    Args:
-        p_values: List of raw p-values.
-        method: One of the supported correction methods (or ``no``).
-        alpha: FDR level used by TSBH and statsmodels.
-
-    Returns:
-        The adjusted p-value list.
-
-    Raises:
-        ValueError: If the method is unsupported.
-    """
-    if method not in P_VALUE_CORRECTION_CHOICES:
-        raise ValueError(
-            f"Unsupported p-value correction method: {method}. "
-            f"Choose one of: {', '.join(P_VALUE_CORRECTION_CHOICES)}"
-        )
-
-    if method == "no":
-        return [float(p_value) for p_value in p_values]
-
-    method_map = {
-        "bfn": "bonferroni",
-        "holm": "holm",
-        "fdr_bh": "fdr_bh",
-        "fdr_by": "fdr_by",
-        "fdr_tsbh": "fdr_tsbh",
-    }
-    mapped_method = method_map[method]
-    _, corrected, _, _ = multipletests(
-        [float(p_value) for p_value in p_values],
-        alpha=alpha,
-        method=mapped_method,
-    )
-    return [float(p_value) for p_value in corrected]
 
 
 def _apply_triplet_result_p_value_correction(
@@ -1708,11 +1888,16 @@ def _apply_triplet_result_p_value_correction(
             ks_p_value_corrected = adjusted_ks_map[idx]
             ks_significant = ks_p_value_corrected <= alpha_ks
 
+        # The permutation p-values are corrected inside the test, across the
+        # one-tailed family, so they take no part in this run-wide pass. Its
+        # stored decision is replayed here instead of being recomputed, which
+        # is safe because correction only ever raises p-values: a triplet that
+        # is DCT+KS significant after correction was already significant
+        # before it, so its direction test has necessarily run.
         classification = _classify_introgression(
             dct_significant,
             ks_significant,
-            result.summary_con,
-            result.summary_dis,
+            result.perm_decision,
         )
         bootstrap_value = result.bootstrap_value
         if result.all_bootstrap is not None:
@@ -1731,6 +1916,18 @@ def _apply_triplet_result_p_value_correction(
         )
 
     return adjusted_results
+
+
+def _format_optional_float(value):
+    """Format an optional float for TSV output.
+
+    Args:
+        value: A float, or ``None``.
+
+    Returns:
+        The value at 12 significant digits, or an empty string for ``None``.
+    """
+    return "" if value is None else f"{value:.12g}"
 
 
 def _format_all_bootstrap(value):
@@ -1757,10 +1954,10 @@ def write_pipeline_results(
     results,
     output_filepath,
     dct_method=DEFAULT_DISCORDANT_TEST,
-    summary_statistic=DEFAULT_SUMMARY_STATISTIC,
     p_value_correction=DEFAULT_P_VALUE_CORRECTION,
     bootstrap=DEFAULT_BOOTSTRAP,
     bootstrap_debug_mode=DEFAULT_BOOTSTRAP_DEBUG_MODE,
+    permutation_test=DEFAULT_PERMUTATION_TEST,
 ):
     """Write per-triplet results to a TSV file.
 
@@ -1768,27 +1965,20 @@ def write_pipeline_results(
         results: List of ``TripletPipelineResult`` objects.
         output_filepath: Destination TSV path.
         dct_method: Discordant test method, used to name the statistic column.
-        summary_statistic: Summary statistic, used to name the con/dis columns.
         p_value_correction: Correction method, used to name the corrected
             columns.
         bootstrap: Whether to include the bootstrap columns.
         bootstrap_debug_mode: Whether to also include the bootstrap-debug
             columns (only meaningful when ``bootstrap`` is ``True``).
+        permutation_test: Whether to include the permutation-test columns.
 
     Raises:
-        ValueError: If any of the method/statistic/correction values is
-            unsupported.
+        ValueError: If the method or correction value is unsupported.
     """
     if dct_method not in DISCORDANT_TEST_CHOICES:
         raise ValueError(
             f"Unsupported discordant test method: {dct_method}. "
             f"Choose one of: {', '.join(DISCORDANT_TEST_CHOICES)}"
-        )
-
-    if summary_statistic not in SUMMARY_STATISTIC_CHOICES:
-        raise ValueError(
-            f"Unsupported summary statistic: {summary_statistic}. "
-            f"Choose one of: {', '.join(SUMMARY_STATISTIC_CHOICES)}"
         )
 
     if p_value_correction not in P_VALUE_CORRECTION_CHOICES:
@@ -1802,10 +1992,6 @@ def write_pipeline_results(
     else:
         dct_column = "dct_chi_stats"
 
-    summary_con_column = f"{summary_statistic}_con"
-    summary_dis_column = f"{summary_statistic}_dis"
-    bootstrap_con_column = f"bootstrap_con_{summary_statistic}"
-    bootstrap_dis_column = f"bootstrap_dis_{summary_statistic}"
     dct_corrected_column = f"dct_p_val_{p_value_correction}_corr"
     ks_corrected_column = f"ks_p_val_{p_value_correction}_corr"
 
@@ -1826,12 +2012,33 @@ def write_pipeline_results(
         "ks_p_value",
         ks_corrected_column,
         "ks_significant",
-        summary_con_column,
-        summary_dis_column,
-        "classification",
-        "inference",
-        "analyzed_trees",
     ]
+
+    if permutation_test:
+        header.extend(
+            [
+                "perm_statistic",
+                "perm_p_greater",
+                "perm_p_less",
+                "perm_p_two_sided",
+                f"perm_p_greater_{p_value_correction}_corr",
+                f"perm_p_less_{p_value_correction}_corr",
+                "perm_n_resamples",
+                "perm_converged",
+                "permutation_consistency_flag",
+                "perm_null_skewed",
+                "perm_note",
+            ]
+        )
+
+    header.extend(
+        [
+            "perm_decision",
+            "classification",
+            "inference",
+            "analyzed_trees",
+        ]
+    )
 
     if bootstrap:
         header.extend(
@@ -1847,8 +2054,8 @@ def write_pipeline_results(
                     "bootstrap_dct_p_value",
                     "bootstrap_ks_stats",
                     "bootstrap_ks_p_value",
-                    bootstrap_con_column,
-                    bootstrap_dis_column,
+                    "bootstrap_con_mean",
+                    "bootstrap_dis_mean",
                     "bootstrap_gene_tree_heights",
                 ]
             )
@@ -1882,12 +2089,33 @@ def write_pipeline_results(
                 if result.ks_p_value_corrected is None
                 else f"{result.ks_p_value_corrected:.12g}",
                 "" if result.ks_significant is None else str(result.ks_significant),
-                "" if result.summary_con is None else f"{result.summary_con:.12g}",
-                "" if result.summary_dis is None else f"{result.summary_dis:.12g}",
-                result.classification,
-                inference,
-                str(result.analyzed_trees),
             ]
+
+            if permutation_test:
+                row.extend(
+                    [
+                        _format_optional_float(result.perm_statistic),
+                        _format_optional_float(result.perm_p_greater),
+                        _format_optional_float(result.perm_p_less),
+                        _format_optional_float(result.perm_p_two_sided),
+                        _format_optional_float(result.perm_p_greater_corrected),
+                        _format_optional_float(result.perm_p_less_corrected),
+                        "" if result.perm_n_resamples is None else str(result.perm_n_resamples),
+                        "" if result.perm_converged is None else str(result.perm_converged),
+                        "" if result.perm_consistent is None else str(result.perm_consistent),
+                        "" if result.perm_null_skewed is None else str(result.perm_null_skewed),
+                        result.perm_note or "",
+                    ]
+                )
+
+            row.extend(
+                [
+                    result.perm_decision or "",
+                    result.classification,
+                    inference,
+                    str(result.analyzed_trees),
+                ]
+            )
 
             if bootstrap:
                 row.extend(
