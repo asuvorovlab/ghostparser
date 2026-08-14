@@ -97,7 +97,7 @@ outgroups: OutGroup
 output_folder: results
 ```
 
-Fuller YAML showing the config-file-only keys and the nested bootstrap block:
+Fuller YAML showing the config-file-only keys and the nested blocks:
 
 ```yaml
 species_tree_path: data/species.tree
@@ -108,8 +108,8 @@ processes: 0
 parallelization_mode: auto
 alpha_dct: 0.05
 alpha_ks: 0.05
+alpha_perm: 0.05
 p_value_correction: bfn
-summary_statistic: mean
 discordant_test: chi-square
 tree_height_calculation_strategy: AVG
 min_support_value: 0.5
@@ -121,6 +121,11 @@ bootstrap_options:
   seed: 42
   debug_mode: false
   summary_only: false
+permutation_test: true
+permutation_options:
+  min_resamples: 2500
+  max_resamples: 25000
+  ci_method: wilson
 ```
 
 ### Required Keys
@@ -190,19 +195,24 @@ Settable either on the CLI or in a config file.
 - Default: `0.05`
 - Significance threshold for the KS tree-height test (the second gate).
 
+##### `alpha_perm`
+
+- CLI: `--alpha-perm`
+- Default: `0.05`
+- Significance threshold for the studentized permutation test (the third gate). Applied to each of the two one-tailed p-values after they are corrected against each other, and to the two-tailed cross-check.
+
 ##### `p_value_correction`
 
 - CLI: `--p-value-correction`
 - Default: `bfn`
 - Allowed: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`
-- Multiple-testing correction applied once across every triplet in the run. Corrected p-values drive the significance decisions; the uncorrected values are retained in the output for reporting.
+- Multiple-testing correction, applied in two places. Run-wide, it adjusts every triplet's DCT and KS p-value in a single pass. Inside each permutation test, it adjusts that test's pair of one-tailed p-values against each other. Corrected p-values drive the significance decisions; the uncorrected values are retained in the output for reporting.
 
-##### `summary_statistic`
+##### `permutation_test`
 
-- CLI: `--summary-statistic`
-- Default: `mean`
-- Allowed: `mean`, `median`, `mode`
-- Statistic used to compare concordant against discordant1 tree heights in the final classification step. `mode` bins values to three decimals and resolves ties to the largest value.
+- CLI: `--no-permutation-test` (sets `permutation_test: false`)
+- Default: `true`
+- Decides the direction of the concordant-versus-discordant1 height difference with the adaptive studentized permutation test. When disabled, the direction comes from a plain comparison of the two medians instead, and only the `perm_decision` column is written. See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#gate-3--adaptive-studentized-permutation-test) for the method.
 
 ##### `consolidation`
 
@@ -248,7 +258,8 @@ These have no CLI flag. They take their default unless set in a config file.
 ##### `generate_summary_stats`
 
 - Default: `false`
-- Also writes `summary_statistics.tsv` with 63 metric columns (mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/sister-distance for concordant/discordant1/discordant2).
+- Also writes `summary_statistics.tsv` with 63 metric columns (mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/sister-distance for concordant/discordant1/discordant2). The `discordant1_*` columns describe whichever discordant topology is more frequent — the same group the `dis1_topology` column names and the statistical tests use — and `discordant2_*` the other one.
+- The results TSV never carries per-group mean or median columns regardless of this setting; the introgression direction comes from the permutation p-values, not from comparing group summaries.
 
 ##### `bootstrap_options`
 
@@ -258,6 +269,16 @@ A nested block; each key may also be given flat as `bootstrap_<key>`.
 - `seed` (flat: `bootstrap_seed`) — default none. Base RNG seed; each triplet derives a deterministic per-triplet seed from it, so results are reproducible and independent of the parallelization mode.
 - `debug_mode` (flat: `bootstrap_debug_mode`) — default `false`. Appends the per-iteration bootstrap-debug columns to the results TSV.
 - `summary_only` (flat: `bootstrap_summary_only`) — default `false`. With debug mode on, emits compact summaries instead of full per-iteration lists.
+
+##### `permutation_options`
+
+A nested block tuning the permutation test. Ignored when `permutation_test` is `false`. There is no `initial_batch` key — the first adaptive batch is always `min_resamples`, and each subsequent batch is 1.25x the previous one — and no `ci_level` key, since the interval is fixed at 95%.
+
+- `min_resamples` — default `2500`. Size of the first batch and the minimum total permutations. Must be an integer >= 1. A triplet whose pooled sample admits fewer than this many distinct group assignments is skipped with an `insufficient_permutation_support` note, because its permutation distribution cannot resolve `alpha_perm`.
+- `max_resamples` — default `25000`. Hard ceiling on total permutations. Must be an integer >= `min_resamples`. Reaching it without the confidence interval excluding `alpha_perm` sets `perm_converged` to false and records the triplet in `metrics.txt`.
+- `ci_method` — default `wilson`. Binomial interval method passed to `statsmodels.stats.proportion.proportion_confint`. Allowed: `wilson`, `beta`, `agresti_coull`, `jeffreys`, `binom_test`, `normal`. `wilson` inverts the score test, stays inside [0, 1], and holds close-to-nominal coverage for the very small proportions this test produces; `normal` degrades badly there and `beta` (Clopper–Pearson) is guaranteed-coverage but conservative, so it resamples longer than necessary. An unrecognized value is rejected when the config is parsed. See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#how-the-interval-is-computed-and-why-it-matches-the-p-value) for how the interval is derived and why it is consistent with the reported p-value.
+
+Bootstrap iterations re-run the direction test at one fifth of `min_resamples` and `max_resamples`, since the bootstrap aggregate absorbs the extra per-iteration Monte Carlo noise.
 
 ### Orchestrator CLI Example
 
@@ -271,8 +292,8 @@ python -m ghostparser.orchestrator \
   --parallelization-mode auto \
   --alpha-dct 0.05 \
   --alpha-ks 0.05 \
-  --p-value-correction bfn \
-  --summary-statistic mean
+  --alpha-perm 0.05 \
+  --p-value-correction bfn
 ```
 
 ## Machine Learning (ghostparser.ml)

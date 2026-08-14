@@ -41,9 +41,10 @@ every setting and the other CLI flags are ignored with a warning.
 
 A handful of settings are config-file-only (`discordant_test`,
 `tree_height_calculation_strategy`, `min_support_value`,
-`generate_summary_stats`, and the `bootstrap_options` block). Two defaults are
-worth calling out: `p_value_correction` defaults to `bfn` (Bonferroni) and
-`summary_statistic` defaults to `mean`.
+`generate_summary_stats`, and the `bootstrap_options` and `permutation_options`
+blocks). One default is worth calling out: `p_value_correction` defaults to
+`bfn` (Bonferroni), and it is applied both run-wide across triplets and inside
+each permutation test across its pair of one-tailed p-values.
 
 See [CONFIG.md](../../CONFIG.md#orchestrator-primary-module) for every key, its
 default, and its allowed values.
@@ -119,19 +120,305 @@ then applies a three-gate decision:
    (`inference.run_discordant_count_test`, chi-square or z-test). If the
    corrected p-value is not below `alpha_dct`, the triplet is
    `no_introgression` and the remaining gates are skipped.
-2. **Tree-height test** — a two-sample KS test between the concordant and
+2. **Tree-height test (THT)** — a two-sample KS test between the concordant and
    discordant1 height distributions (`inference.run_two_sample_ks_test`). If it
    is *not* significant, the triplet is `inflow_introgression`.
-3. **Summary comparison** — otherwise the configured `summary_statistic` over
-   the concordant heights is compared with the same statistic over the
-   discordant1 heights: con > dis gives `outflow_introgression`, con < dis gives
-   `ghost_introgression`, and equal or missing gives `unresolved`.
+3. **Direction test** — otherwise the concordant and discordant1 heights are
+   compared directionally by the studentized permutation test
+   (`permutation.run_studentized_permutation_test`): `greater` gives
+   `outflow_introgression`, `less` gives `ghost_introgression`, and no
+   resolvable direction gives `ambiguous`.
 
 `inference._classify_introgression` implements this decision table directly.
 
 Bootstrap resampling (on by default) repeats the analysis over resampled
 observations and aggregates the per-iteration classifications into
 `bootstrap_value`.
+
+## The statistical tests
+
+Each gate answers a different question, and each is computed by a named library
+routine rather than by hand. This section states what each test measures, how
+its value is obtained, and where its assumptions bite.
+
+### Gate 1 — Discordant count test
+
+**Question.** Are the two discordant topologies equally frequent?
+
+Under incomplete lineage sorting alone, the two discordant histories are
+exchangeable and should appear about equally often; an excess of one of them is
+the signal that something other than ILS — introgression — has acted (Huson et
+al. 2005, *RECOMB*, https://doi.org/10.1007/11415770_18). The test therefore
+asks only whether `n_dis1` and `n_dis2` depart from a 50/50 split, and ignores
+the concordant count entirely.
+
+Two backends, selected by `discordant_test`:
+
+- `chi-square` (default) — `scipy.stats.chisquare([n_dis1, n_dis2])`, a
+  goodness-of-fit test against equal expected counts. The statistic is
+  `sum((observed - expected)^2 / expected)` with `expected = (n_dis1 + n_dis2) / 2`,
+  compared against a chi-square distribution on one degree of freedom.
+- `z-test` — `statsmodels.stats.proportion.proportions_ztest` with
+  `count=[n_dis1, n_dis2]`, `nobs=[total, total]`, `alternative="two-sided"`,
+  a two-proportion z-test on the same counts.
+
+A zero/zero split short-circuits to `(0.0, 1.0)` rather than dividing by zero.
+Both backends test the same null and agree closely; the chi-square statistic is
+approximately the square of the z-score.
+
+### Gate 2 — Tree-height test (KS)
+
+**Question.** Do the concordant and discordant1 tree-height distributions differ
+at all — in any respect, not just in location?
+
+`scipy.stats.ks_2samp(dis1_heights, con_heights, alternative="two-sided",
+method="auto")` computes the two-sample Kolmogorov–Smirnov statistic: the
+largest absolute gap between the two empirical cumulative distribution
+functions, `D = sup_x |F_con(x) - F_dis1(x)|`. SciPy chooses an exact or
+asymptotic p-value automatically based on the sample sizes.
+
+The KS test is deliberately omnidirectional. If the two height distributions are
+indistinguishable, the discordant gene trees coalesce on the same timescale as
+the concordant ones, which is what introgression between the *sampled* taxa
+looks like — hence `inflow_introgression` when this gate is not significant. An
+empty sample yields `(0.0, 1.0)`.
+
+Because the KS statistic responds to differences in shape, spread, and tails as
+well as location, a significant result does not by itself say which direction
+the heights moved. That is gate 3's job.
+
+### Gate 3 — Adaptive studentized permutation test
+
+**Question.** Is the *mean* concordant height greater than, less than, or
+indistinguishable from the mean discordant1 height?
+
+This replaces a bare comparison of summary statistics, which reported a
+direction from any numerical difference no matter how small or how noisy. The
+permutation test attaches a p-value and a confidence statement to that
+direction. It lives in `ghostparser/orchestrator/permutation.py`.
+
+**The statistic.** For concordant sample `x` (size `nx`) and discordant1 sample
+`y` (size `ny`), the Welch-studentized mean difference is
+
+```
+T = (mean(x) - mean(y)) / sqrt(var(x)/nx + var(y)/ny)
+```
+
+with `var` the unbiased sample variance (`ddof=1`). The denominator is the Welch
+standard error, and using it rather than a pooled one is essential here: the
+concordant sample is normally much larger than the discordant1 sample and the
+two have different variances. Under that combination a permutation test of the
+raw mean difference does *not* hold its nominal level, while the studentized
+version remains asymptotically valid (Janssen 1997, *Statistics & Probability
+Letters* 36(1), 9–21, https://doi.org/10.1016/S0167-7152(97)00043-6). This is
+the permutation analogue of the Behrens–Fisher problem.
+
+**The null.** Pool all `nx + ny` heights and randomly reassign them to two
+groups of the original sizes. Recompute `T` — including recomputing both
+variances from the permuted groups, which is what preserves the studentization —
+and repeat. The resulting distribution is the null distribution of `T` under the
+hypothesis that group membership carries no information.
+
+**p-values.** Three counts accumulate over the resamples: how many permuted
+statistics are `>= T_obs`, how many are `<= T_obs`, and how many exceed
+`|T_obs|` in absolute value. Each becomes a p-value with the add-one estimator
+
+```
+p = (1 + count) / (1 + resamples)
+```
+
+which counts the observed arrangement itself. The naive `count / resamples`
+ratio can report exactly zero and understates the true type-I error rate;
+the add-one form is the correctly-sized estimator for a Monte Carlo permutation
+p-value (Phipson & Smyth 2010, *Statistical Applications in Genetics and
+Molecular Biology* 9(1), Article 39, https://doi.org/10.2202/1544-6115.1585).
+
+**Correction inside the test.** The two one-tailed p-values form a testing
+family of size two and are corrected against each other with the configured
+`p_value_correction` method before being compared to `alpha_perm`. With the
+default `bfn` this compares `2p` to `alpha_perm`, which is the conventional
+relationship between a two-sided level and its two one-sided halves. This
+correction is separate from and additional to the run-wide correction applied
+across triplets, which covers only the DCT and KS p-values.
+
+**Adaptive stopping.** A Monte Carlo p-value is an estimate, so the run keeps
+resampling until the *decision* is safe rather than until a fixed budget is
+spent. The first batch draws `min_resamples`. After each batch, a binomial
+confidence interval at 95% is placed around each one-tailed p-value and
+rescaled onto the corrected scale. If `alpha_perm` lies outside both intervals,
+no further resampling can flip the comparison and the run stops with
+`perm_converged = True`. Otherwise the batch size grows by 25% and the run
+continues to `max_resamples`, after which it stops with
+`perm_converged = False` and a `max_resamples_reached` note, listed in
+`metrics.txt`.
+
+The confidence level is fixed at 95%. It governs how sure the stopping rule must
+be before it commits — an internal precision knob rather than a statistical
+choice the analysis turns on — so it is not exposed as a config key. It is also
+a different quantity from `alpha_perm`, which is the threshold the p-value is
+compared *against*.
+
+#### How the interval is computed, and why it matches the p-value
+
+The randomness in a Monte Carlo permutation test lives entirely in one place:
+how many of the `n` drawn permutations landed beyond the observed statistic.
+That count is `Binomial(n, p_true)`, where `p_true` is the exact permutation
+p-value that full enumeration would give. Everything the stopping rule needs is
+a statement about how far the count could be from `n · p_true`.
+
+`statsmodels.stats.proportion.proportion_confint(count, nobs, alpha, method)`
+answers exactly that. Its point estimate is `q = count / nobs`, and the default
+`wilson` method inverts the **score test**: it returns every `p₀` for which the
+score statistic stays inside the normal critical value,
+
+```
+|q - p₀| / sqrt(p₀(1 - p₀) / n)  ≤  z
+```
+
+Solving that quadratic in `p₀` gives the closed form statsmodels implements:
+
+```
+center = (q + z²/2n) / (1 + z²/n)
+half   = z · sqrt( q(1-q)/n + z²/4n² ) / (1 + z²/n)
+```
+
+Note the interval is *not* centered on `q` — it is pulled toward ½ by the
+`z²/2n` term, which is precisely why Wilson keeps close-to-nominal coverage near
+0 and 1 where the plain normal ("Wald") interval fails and can even run outside
+[0, 1] (Brown, Cai & DasGupta 2001, *Statistical Science* 16(2), 101–133,
+https://doi.org/10.1214/ss/1009213286). That matters here because the p-values
+this test produces are routinely near the floor. Clopper–Pearson (`beta`) is
+also available and is guaranteed-coverage rather than approximate, but it is
+conservative, so it would keep resampling past the point where the decision is
+already settled.
+
+**On method alignment.** The p-value and its interval are not two independent
+estimates that might disagree — they are two summaries of the *same* pair of
+numbers, `count` and `n`. GhostParser reports the add-one p-value
+`(1 + count) / (1 + n)`, and passes `(count + 1, n + 1)` to
+`proportion_confint`, whose own point estimate `count / nobs` then works out to
+that identical value. So the interval brackets the quantity actually reported,
+not one differing from it by `1/n`. The one approximation is that the interval
+treats all `n + 1` arrangements as random when one of them — the observed
+arrangement the add-one term accounts for — is fixed; this makes the interval
+very slightly conservative, which is the safe direction for a stopping rule.
+
+Because both corrections are monotone in each p-value, the interval is mapped
+onto the corrected scale by the same factor the point estimate received before
+being compared against `alpha_perm`.
+
+**The sampling optimization.** A naive implementation shuffles the pooled array
+once per permutation in Python, which is far too slow to run inside every
+bootstrap iteration. `permutation._permutation_statistics` instead draws a whole
+batch at once with three changes:
+
+1. *Only the smaller group is sampled; the larger one is derived exactly.* A
+   permutation partitions the pooled values into two groups, so the larger group
+   is precisely the complement of the smaller — nothing about it is unknown or
+   estimated. The Welch statistic needs only a mean and a variance from each
+   group, and both are functions of two running totals. Writing `S` and `Q` for
+   the pooled sum and sum-of-squares (computed once, before the loop) and `s`
+   and `q` for the drawn group's:
+
+   ```
+   S = sum(pooled)        Q = sum(pooled²)
+   s = sum(drawn)         q = sum(drawn²)
+   ```
+
+   the drawn group of size `k` and its complement of size `m = n - k` have
+
+   ```
+   mean_drawn      = s / k
+   var_drawn       = (q - k · mean_drawn²) / (k - 1)
+
+   mean_complement = (S - s) / m
+   var_complement  = ((Q - q) - m · mean_complement²) / (m - 1)
+   ```
+
+   The variance lines are the `E[X²] - E[X]²` identity in unbiased (`ddof=1`)
+   form. This is an exact algebraic rearrangement, not an approximation: the
+   recovered `var_complement` equals what `numpy.var(complement, ddof=1)` would
+   return from the values themselves. The larger group's values are therefore
+   never gathered at all. Since the discordant1 sample is usually the smaller
+   one, the gathered data shrinks by roughly the size ratio.
+2. *A partial partition replaces the shuffle.* Taking the `k` smallest of `n`
+   uniform random keys yields a uniformly random size-`k` subset, and
+   `numpy.argpartition` finds them in one linear pass rather than sorting the
+   row or running Fisher–Yates over it.
+3. *The pooled array is mean-centered once up front.* Centering leaves the mean
+   difference and both variances unchanged, but it is what makes the subtraction
+   above safe in floating point. `Q - q` is a difference of two positive sums of
+   squares, and `m · mean²` is near zero once the pooled mean is zero, so
+   neither step cancels significant digits. Without centering,
+   `sum_of_squares - m · mean²` becomes a difference of two nearly equal large
+   numbers and loses most of its precision — the same failure mode as the
+   degenerate-scale guard, but silent.
+
+The exactness of step 1 is not taken on trust:
+`test_permutation_statistics_match_exhaustive_enumeration` enumerates all
+`C(9, 4) = 126` group assignments of a small case, evaluates each through the
+plain scalar statistic, and requires the vectorized sampler to emit exactly that
+set of values and nothing else. Measured directly on a 40-element pooled sample,
+the reconstructed complement variance differs from `numpy.var(complement,
+ddof=1)` by about `7e-18` — floating-point rounding, not method error — and
+centering roughly halves even that.
+
+Batches are chunked so the matrix of random keys stays near 16 MB, which matters
+because every pool worker runs its own tests concurrently.
+
+**Guards.** Four conditions short-circuit the test to `ambiguous` before any
+resampling, each recorded in the `perm_note` column:
+
+| Note | Condition | Why |
+| --- | --- | --- |
+| `insufficient_group_size` | Either group has fewer than 2 observations | No unbiased variance exists, so the statistic is undefined. |
+| `zero_pooled_variance` | All pooled values are effectively identical | Nothing to detect and no scale to measure it on. |
+| `degenerate_observed_scale` | Both groups internally constant, means differ | The statistic divides a real difference by numerical noise and reports the p-value floor regardless of how little data backs it. |
+| `insufficient_permutation_support` | `C(n, k) < min_resamples` | The permutation distribution has fewer distinct values than the requested batch, so its resolution is capped well short of `alpha_perm`. |
+
+The scale guards compare against a small fraction of the data's own magnitude
+rather than against exact zero, because a sample of nominally identical values
+such as `[0.9] * 10` has a floating-point variance around `1e-33`, not `0`.
+
+**Cross-check and the skew flag.** Two decision rules are computed. The primary
+one is the pair of corrected one-tailed tests. The cross-check gates on a
+two-tailed p-value and then takes the sign; it uses the doubled smaller tail,
+`2 * min(p_greater, p_less)`, rather than the absolute-value count, because the
+latter is only valid when the permutation null is symmetric. Disagreement
+between the two rules sets `perm_consistent = False` and is listed in
+`metrics.txt`; it should not occur.
+
+The absolute-value two-tailed p-value is still reported as `perm_p_two_sided`.
+When it fails to resolve a comparison that the directional tails do resolve,
+`perm_null_skewed` is set. That happens when a small discordant1 group carries a
+few extreme heights: reassigning them produces a strongly right-skewed null
+whose fat right tail swamps a left-tail observation. Tree heights are bounded
+below by zero and routinely right-skewed, so this flag is common rather than
+exceptional, and it never overturns the directional call — `metrics.txt` reports
+only a count.
+
+**Known limitation.** The studentized permutation test is *asymptotically*
+valid, not exact. Its type-I error rate sits close to `alpha_perm` across most
+sample shapes, but it inflates when the smaller group falls below roughly 30
+observations *and* carries the larger spread. At `n_dis1 = 20` against
+`n_con = 200` with a 3× spread ratio the empirical rate reaches about 10% at a
+nominal 5%. Treat directional calls on triplets with very few discordant1 gene
+trees as provisional; the `n_dis1` column is in the results TSV for exactly this
+reason.
+
+**Inside the bootstrap.** Each bootstrap iteration re-runs the whole decision, so
+the direction test runs there at one fifth of the configured `min_resamples` and
+`max_resamples` (`permutation.bootstrap_resample_budget`), and only for
+iterations that reach gate 3 at all. The bootstrap aggregates many iterations
+into a single support value, which absorbs the extra per-iteration Monte Carlo
+noise the reduced budget introduces. The point estimate runs the full budget and
+runs for every triplet, including ones the earlier gates already settled, so the
+permutation columns are populated throughout the results TSV.
+
+**Disabling it.** `permutation_test: false` (or `--no-permutation-test`) swaps
+gate 3 for a plain comparison of the concordant and discordant1 medians:
+`greater`, `less`, or `ambiguous` on an exact tie. This exists so the two
+inference paths can be compared on the same data.
 
 ## Outputs
 
@@ -141,7 +428,12 @@ Written under the output folder:
 - `summary_statistics.tsv` — only when `generate_summary_stats` is set;
   per-triplet topology/metric summary statistics (63 metric columns covering
   mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/
-  sister-distance for concordant/discordant1/discordant2).
+  sister-distance for concordant/discordant1/discordant2). The `discordant1_*`
+  columns describe whichever discordant topology is more frequent — the same
+  group named by the `dis1_topology` column and used by all three tests — and
+  `discordant2_*` the other one. The roles are resolved per triplet from the
+  observed counts, not fixed to a topology label, so a triplet where `AC|B`
+  outnumbers `BC|A` has its `AC|B` gene trees under `discordant1_*`.
 - `processed_<species tree>` / `processed_<gene trees>` — cleaned, rooted trees.
 - `metrics.txt` — per-stage wall/CPU timing and run parameters.
 - `consolidation/` — the combined heatmap/bar-chart plot and TSV matrices from
@@ -166,11 +458,36 @@ Written under the output folder:
 | `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. |
 | `ks_p_value_<method>_corr` | Correction | Run-wide correction over every triplet's KS p-value. |
 | `ks_significant` | Decision gate 2 | Corrected KS p-value below `alpha_ks`. |
-| `summary_con` / `summary_dis` | Decision gate 3 | The configured statistic over the concordant / discordant1 heights. |
-| `classification` | Decision logic | `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `unresolved`. |
+| `perm_statistic` | Direction test | Observed Welch-studentized mean difference. Empty when a guard fired. |
+| `perm_p_greater` / `perm_p_less` | Direction test | Raw one-tailed p-values, add-one estimator. |
+| `perm_p_two_sided` | Direction test | Raw two-tailed p-value from the absolute statistic; diagnostic only, see `perm_null_skewed`. |
+| `perm_p_greater_<method>_corr` / `perm_p_less_<method>_corr` | Direction test | The one-tailed p-values corrected against each other, and the values compared to `alpha_perm`. |
+| `perm_n_resamples` | Direction test | Permutations drawn; `0` when a guard fired. |
+| `perm_converged` | Direction test | True when the confidence interval excluded `alpha_perm` before the budget ran out. |
+| `permutation_consistency_flag` | Direction test | Whether the one-tailed rule and the two-tailed-gate-then-sign rule reached the same verdict. Bonferroni over the one-tailed pair makes the two conditions equivalent, so this should always be `True`; a `False` means the accumulated counts are internally inconsistent and the triplet is also named in `metrics.txt`. |
+| `perm_null_skewed` | Direction test | True when the absolute-value two-tailed p-value fails to resolve a comparison the directional tails resolve. Common and harmless; see above. |
+| `perm_note` | Direction test | Guard slug, or `max_resamples_reached`; empty on a clean run. |
+| `perm_decision` | Decision gate 3 | `greater`, `less`, or `ambiguous` for concordant relative to discordant1. |
+| `classification` | Decision logic | `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`. |
 | `inference_description` | Reporting | Human-readable direction naming the actual species. |
 | `bootstrap_value` / `all_bootstrap` | Bootstrap | Fraction of iterations agreeing with the final classification, plus the full class-fraction map. Present unless `--no-bootstrap`. |
-| `bootstrap_*` debug columns | Bootstrap debug | Per-iteration DCT/KS statistics, con/dis summaries, and gene-tree heights. Present only with `bootstrap_debug_mode`. |
+| `bootstrap_*` debug columns | Bootstrap debug | Per-iteration DCT/KS statistics, con/dis means, and gene-tree heights. Present only with `bootstrap_debug_mode`. |
+
+The `perm_*` columns and `permutation_consistency_flag` are present unless
+`permutation_test` is disabled, in which case only `perm_decision` remains.
+
+No per-group mean or median columns appear in this file. The results TSV reports
+the *tests*: the direction is read off `perm_p_greater` and `perm_p_less` after
+correction, never off a raw comparison of group summaries. Descriptive
+per-group statistics live in `summary_statistics.tsv`, which
+`generate_summary_stats` enables. The values are still available
+programmatically as `mean_con`/`mean_dis`/`median_con`/`median_dis` on
+`TripletPipelineResult`.
+
+Note that the two files measure different things and will not agree numerically:
+the `*_avg_tree_height_*` summary columns always average the three root-to-tip
+distances, whereas the result fields average H(T) as selected by
+`tree_height_calculation_strategy`. They coincide only under the default `AVG`.
 
 The results TSV is named `orchestrator_triplet_results.tsv`, distinct from the
 inputs a standalone `introgression_mapper` run consumes, so both can share an
@@ -199,6 +516,8 @@ ghostparser/orchestrator/
   __init__.py    exports run_orchestrator
   __main__.py    python -m ghostparser.orchestrator entry point: main() wires parsing -> run_orchestrator
   config.py      orchestrator defaults/choices, validation, CLI parser, and CLI/config resolution
+  correction.py  multiple-testing correction shared by inference.py and permutation.py
+  permutation.py adaptive studentized permutation test (decision gate 3)
   trees.py       tree/triplet preprocessing
   inference.py   per-triplet inference + summary stats + result type + TSV writers
   stream.py      fused extract+infer streaming engine

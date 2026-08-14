@@ -32,8 +32,7 @@ ghostparser/
 
 `orchestrator` and `ml` are intentionally near-independent: each owns its own
 defaults, choices, validation rules, and config loader, so their settings can
-diverge (the orchestrator defaults `p_value_correction` to `bfn` and
-`summary_statistic` to `mean`, which has no bearing on the ML side). They share
+diverge. They share
 only a thin trunk of helpers whose behaviour is identical for every caller.
 
 ### `ghostparser.config` — the configuration trunk

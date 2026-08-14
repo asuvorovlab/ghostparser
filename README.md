@@ -138,7 +138,7 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 1. The species tree is standardized, filtered on mean internal support, rooted on the outgroup MRCA, and pruned; gene trees are also cleaned and rooted on the outgroup similarly.
 2. Every ingroup triplet is enumerated (or restricted by `--triplet-filter`) and normalized to `(A, B, C)` with A and B the species-tree sisters.
 3. For each triplet the engine extracts its subtree from every gene tree, classifies the topology as concordant or one of two discordant alternatives, and records a tree height H(T).
-4. A three-gate decision follows: the discordant count test, then the KS tree-height test, then a concordant-versus-discordant summary comparison. Each triplet lands on `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `unresolved`.
+4. A three-gate decision follows: the discordant count test, then the KS tree-height test, then a studentized permutation test on the concordant-versus-discordant1 mean heights. Each triplet lands on `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`.
 5. Multiple-testing correction is applied once across every triplet in the run.
 6. Results are written, and consolidation renders the introgression maps.
 
@@ -160,7 +160,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 
 - `--output-folder`, `--no-overwrite`, `--triplet-filter`
 - `--processes`, `--parallelization-mode {auto,taxon,gene}`
-- `--alpha-dct`, `--alpha-ks`, `--p-value-correction`, `--summary-statistic`
+- `--alpha-dct`, `--alpha-ks`, `--alpha-perm`, `--p-value-correction`, `--no-permutation-test`
 - `--no-consolidation`, `--no-bootstrap`
 
 **Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, and the `bootstrap_options` block (`iterations`, `seed`, `debug_mode`, `summary_only`).
@@ -195,10 +195,19 @@ Consolidation details:
 - Consolidation is enabled by default; disable it with `--no-consolidation`.
 - Its artifacts go in a dedicated `consolidation/` subfolder so its own output-directory reset cannot remove the run's results.
 
+#### Direction Test Behavior
+
+- The third decision gate is an adaptive studentized permutation test on the concordant versus discordant1 mean tree heights. It resamples until a confidence interval around the p-value excludes `alpha_perm`, or until `max_resamples` is reached — triplets that hit the ceiling are named in `metrics.txt`.
+- Disable it with `--no-permutation-test` to fall back to a plain median comparison; the tuning knobs (`min_resamples`, `max_resamples`, `ci_method`) live in the config file's `permutation_options` block.
+- The direction is read off the corrected one-tailed p-values, not off a raw comparison of group means, so the results TSV carries no per-group mean or median columns. Descriptive per-group statistics live in `summary_statistics.tsv` (`generate_summary_stats`).
+- Triplets whose samples are too small or too degenerate to support the test are reported as `ambiguous` with the reason in the `perm_note` column, rather than being given a direction the data cannot justify.
+- See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#the-statistical-tests) for the method, its citations, and its known small-sample limitation.
+
 #### Bootstrap Behavior
 
 - Bootstrap is enabled by default and can be disabled with `--no-bootstrap`; the remaining controls (`iterations`, `seed`, `debug_mode`, `summary_only`) are set through the config file's `bootstrap_options` block.
-- Iterations with incomplete required metrics are counted as `unresolved` and processing continues.
+- Bootstrap iterations re-run the direction test at one fifth of the configured resample budget.
+- Iterations with incomplete required metrics are counted as `ambiguous` and processing continues.
 - `bootstrap_value` reports the bootstrap fraction for the final `classification` value after correction.
 - A fixed `seed` makes results reproducible and identical across parallelization modes, because each triplet derives its own seed from it.
 
@@ -251,8 +260,8 @@ An orchestrator run generates these output files:
 1. **`processed_species.tree`** - Processed species tree with support values removed and outgroup rooting applied
 2. **`processed_genes.tree`** - Processed gene trees with support values removed and outgroup rooting applied
 3. **`metrics.txt`** - Metrics log with warnings, timings, and counts
-4. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `unresolved`)
-5. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `generate_summary_stats` is enabled, including:
+4. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `ambiguous`)
+5. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `generate_summary_stats` is enabled. Its `discordant1_*` columns describe whichever discordant topology is more frequent (matching the `dis1_topology` column) and `discordant2_*` the other. It includes:
    - identity columns (`triplet`, `abc_mapping`, `species_tree`, `dis1_topology`)
    - topology counts (`n_con`, `n_dis1`, `n_dis2`)
    - 63 topology/metric summary columns (7 statistics x 3 topology classes x 3 metric types)
@@ -369,11 +378,12 @@ Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
 **Statistical and Processing Defaults:**
 
 - `discordant_test`: `chi-square`
-- `summary_statistic`: `mean`
 - `tree_height_calculation_strategy`: `AVG`
 - `p_value_correction`: `bfn`
 - `alpha_dct`: `0.05`
 - `alpha_ks`: `0.05`
+- `alpha_perm`: `0.05`
+- `permutation_test`: `true` (resamples: `2500`–`25000`, `wilson` intervals)
 
 **Execution Defaults:**
 
