@@ -34,11 +34,15 @@ DEFAULT_OUTPUT_FOLDER = "results"
 DEFAULT_PROCESSES = 0
 DEFAULT_MIN_SUPPORT_VALUE = 0.5
 DEFAULT_DISCORDANT_TEST = "chi-square"
-DEFAULT_SUMMARY_STATISTIC = "mean"
 DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY = "AVG"
 DEFAULT_P_VALUE_CORRECTION = "bfn"
 DEFAULT_ALPHA_DCT = 0.05
 DEFAULT_ALPHA_KS = 0.05
+DEFAULT_ALPHA_PERM = 0.05
+DEFAULT_PERMUTATION_TEST = True
+DEFAULT_PERMUTATION_MIN_RESAMPLES = 2500
+DEFAULT_PERMUTATION_MAX_RESAMPLES = 25000
+DEFAULT_PERMUTATION_CI_METHOD = "wilson"
 DEFAULT_BOOTSTRAP = True
 DEFAULT_BOOTSTRAP_ITERATIONS = 100
 DEFAULT_BOOTSTRAP_DEBUG_MODE = False
@@ -48,9 +52,21 @@ DEFAULT_CONSOLIDATION = True
 DEFAULT_PREFLIGHT_DATA_CHECK = False
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
-SUMMARY_STATISTIC_CHOICES = ("mean", "median", "mode")
 TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C", "SIS", "INT")
 P_VALUE_CORRECTION_CHOICES = ("no", "bfn", "holm", "fdr_bh", "fdr_by", "fdr_tsbh")
+
+# Binomial proportion interval methods accepted by statsmodels'
+# ``proportion_confint``. ``wilson`` is the default: it stays inside [0, 1] and
+# keeps close-to-nominal coverage for the very small proportions this test
+# produces, where the normal approximation degrades badly.
+PERMUTATION_CI_METHOD_CHOICES = (
+    "wilson",
+    "beta",
+    "agresti_coull",
+    "jeffreys",
+    "binom_test",
+    "normal",
+)
 
 # Parallelization knobs specific to this package.
 PARALLELIZATION_MODE_CHOICES = ("auto", "taxon", "gene")
@@ -63,8 +79,8 @@ AUTO_GENE_TREES_THRESHOLD = 3500
 # the config+CLI options; config-file-only keys (discordant_test,
 # tree_height_calculation_strategy, min_support_value, bootstrap_iterations,
 # bootstrap_seed, generate_summary_stats, bootstrap_debug_mode,
-# bootstrap_summary_only) are intentionally absent so they are read only from a
-# config file and otherwise take their defaults.
+# bootstrap_summary_only, permutation_options) are intentionally absent so they
+# are read only from a config file and otherwise take their defaults.
 _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "species_tree_path",
     "gene_trees_path",
@@ -76,10 +92,11 @@ _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "parallelization_mode",
     "alpha_dct",
     "alpha_ks",
+    "alpha_perm",
     "p_value_correction",
-    "summary_statistic",
     "consolidation",
     "bootstrap",
+    "permutation_test",
     "preflight_data_check",
 ]
 
@@ -273,6 +290,71 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
     }
 
 
+def _validate_permutation_options(payload: dict) -> tuple[bool, dict]:
+    """Validate the permutation-test toggle and its nested options block.
+
+    The toggle is exposed on both the CLI and the config file; the tuning knobs
+    inside ``permutation_options`` are config-file-only. There is no
+    ``initial_batch`` knob: the first adaptive batch is always ``min_resamples``.
+
+    Args:
+        payload: The config/CLI payload.
+
+    Returns:
+        A tuple ``(permutation_test, options)`` where ``options`` has
+        ``min_resamples``/``max_resamples``/``ci_method``.
+
+    Raises:
+        ConfigError: If any value is malformed or out of range.
+    """
+    permutation_test = _validate_optional_bool(
+        payload, "permutation_test", DEFAULT_PERMUTATION_TEST
+    )
+
+    raw_options = payload.get("permutation_options")
+    if raw_options is None:
+        raw_options = {}
+    if not isinstance(raw_options, dict):
+        raise ConfigError(
+            "Config field permutation_options must be a key/value object when provided"
+        )
+
+    min_resamples = raw_options.get("min_resamples", DEFAULT_PERMUTATION_MIN_RESAMPLES)
+    if min_resamples is None:
+        min_resamples = DEFAULT_PERMUTATION_MIN_RESAMPLES
+    if not isinstance(min_resamples, int) or min_resamples < 1:
+        raise ConfigError(
+            "Config field permutation_options.min_resamples must be an integer >= 1"
+        )
+
+    max_resamples = raw_options.get("max_resamples", DEFAULT_PERMUTATION_MAX_RESAMPLES)
+    if max_resamples is None:
+        max_resamples = DEFAULT_PERMUTATION_MAX_RESAMPLES
+    if not isinstance(max_resamples, int) or max_resamples < 1:
+        raise ConfigError(
+            "Config field permutation_options.max_resamples must be an integer >= 1"
+        )
+    if max_resamples < min_resamples:
+        raise ConfigError(
+            "Config field permutation_options.max_resamples must be >= min_resamples"
+        )
+
+    ci_method = raw_options.get("ci_method", DEFAULT_PERMUTATION_CI_METHOD)
+    if ci_method is None:
+        ci_method = DEFAULT_PERMUTATION_CI_METHOD
+    if not isinstance(ci_method, str) or ci_method not in PERMUTATION_CI_METHOD_CHOICES:
+        raise ConfigError(
+            "Config field permutation_options.ci_method must be one of: "
+            f"{', '.join(PERMUTATION_CI_METHOD_CHOICES)}"
+        )
+
+    return permutation_test, {
+        "min_resamples": min_resamples,
+        "max_resamples": max_resamples,
+        "ci_method": ci_method,
+    }
+
+
 def _parse_outgroups(value) -> list[str]:
     """Parse the outgroup(s) value into a list of taxon labels.
 
@@ -382,16 +464,27 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=f"KS significance threshold (default: {DEFAULT_ALPHA_KS})",
     )
     parser.add_argument(
+        "--alpha-perm",
+        type=float,
+        default=None,
+        help=f"Permutation test significance threshold (default: {DEFAULT_ALPHA_PERM})",
+    )
+    parser.add_argument(
         "--p-value-correction",
         choices=P_VALUE_CORRECTION_CHOICES,
         default=None,
         help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
     )
     parser.add_argument(
-        "--summary-statistic",
-        choices=SUMMARY_STATISTIC_CHOICES,
+        "--no-permutation-test",
+        dest="permutation_test",
+        action="store_false",
         default=None,
-        help=f"Summary statistic after the KS test (default: {DEFAULT_SUMMARY_STATISTIC})",
+        help=(
+            "Decide direction by comparing concordant and discordant1 medians "
+            "instead of running the studentized permutation test (default: "
+            "permutation test enabled)"
+        ),
     )
     parser.add_argument(
         "--no-consolidation",
@@ -452,6 +545,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         output = _resolve_path(DEFAULT_OUTPUT_FOLDER)
 
     bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
+    permutation_test, permutation_options = _validate_permutation_options(payload)
 
     return {
         "species_tree": species_tree,
@@ -484,12 +578,6 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "discordant_test": _validate_choice(
             payload, "discordant_test", DEFAULT_DISCORDANT_TEST, DISCORDANT_TEST_CHOICES
         ),
-        "summary_statistic": _validate_choice(
-            payload,
-            "summary_statistic",
-            DEFAULT_SUMMARY_STATISTIC,
-            SUMMARY_STATISTIC_CHOICES,
-        ),
         "tree_height_calculation_strategy": _validate_choice(
             payload,
             "tree_height_calculation_strategy",
@@ -504,6 +592,13 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         ),
         "alpha_dct": _validate_optional_float(payload, "alpha_dct", DEFAULT_ALPHA_DCT),
         "alpha_ks": _validate_optional_float(payload, "alpha_ks", DEFAULT_ALPHA_KS),
+        "alpha_perm": _validate_optional_float(
+            payload, "alpha_perm", DEFAULT_ALPHA_PERM
+        ),
+        "permutation_test": permutation_test,
+        "permutation_min_resamples": permutation_options["min_resamples"],
+        "permutation_max_resamples": permutation_options["max_resamples"],
+        "permutation_ci_method": permutation_options["ci_method"],
         "bootstrap": bootstrap,
         "bootstrap_iterations": bootstrap_options["iterations"],
         "bootstrap_seed": bootstrap_options["seed"],
