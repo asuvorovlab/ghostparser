@@ -34,10 +34,11 @@ def _base_cli_args(**overrides):
         parallelization_mode=None,
         alpha_dct=None,
         alpha_ks=None,
+        alpha_perm=None,
         p_value_correction=None,
-        summary_statistic=None,
         consolidation=None,
         bootstrap=None,
+        permutation_test=None,
         preflight_data_check=None,
     )
     for key, value in overrides.items():
@@ -52,7 +53,11 @@ def test_cli_defaults_resolve():
     assert config["alpha_ks"] == 0.05
     # Defaults specific to this package.
     assert config["p_value_correction"] == "bfn"
-    assert config["summary_statistic"] == "mean"
+    assert config["alpha_perm"] == 0.05
+    assert config["permutation_test"] is True
+    assert config["permutation_min_resamples"] == 2500
+    assert config["permutation_max_resamples"] == 25000
+    assert config["permutation_ci_method"] == "wilson"
     assert config["overwrite"] is True
     # Config-file-only keys take their defaults in CLI mode.
     assert config["discordant_test"] == "chi-square"
@@ -73,14 +78,14 @@ def test_cli_overrides_for_config_plus_cli_options():
     args = _base_cli_args(
         alpha_dct=0.01,
         alpha_ks=0.2,
-        summary_statistic="mean",
+        alpha_perm=0.02,
         p_value_correction="fdr_bh",
         no_overwrite=True,
     )
     config = resolve_config(args)
     assert config["alpha_dct"] == 0.01
     assert config["alpha_ks"] == 0.2
-    assert config["summary_statistic"] == "mean"
+    assert config["alpha_perm"] == 0.02
     assert config["p_value_correction"] == "fdr_bh"
     assert config["overwrite"] is False
 
@@ -152,14 +157,14 @@ def test_config_file_wins_over_cli(tmp_path, capsys):
     config_path.write_text(json.dumps(payload))
 
     args = _base_cli_args(
-        config_file=str(config_path), alpha_dct=0.5, summary_statistic="mode"
+        config_file=str(config_path), alpha_dct=0.5, alpha_perm=0.5
     )
     config = resolve_config(args)
 
     assert config["alpha_dct"] == 0.03
-    # The file omits summary_statistic, so it takes the orchestrator default (not the
-    # CLI value "mode"), proving the CLI flag was ignored.
-    assert config["summary_statistic"] == "mean"
+    # The file omits alpha_perm, so it takes the orchestrator default (not the
+    # CLI value 0.5), proving the CLI flag was ignored.
+    assert config["alpha_perm"] == 0.05
     assert config["species_tree"].endswith("file_species.tree")
     assert "--config-file provided" in capsys.readouterr().out
 
@@ -179,7 +184,8 @@ def test_parser_exposes_config_file_and_new_flags():
             "--alpha-dct", "0.01",
             "--alpha-ks", "0.2",
             "--p-value-correction", "fdr_bh",
-            "--summary-statistic", "mean",
+            "--alpha-perm", "0.02",
+            "--no-permutation-test",
             "--no-overwrite",
             "--preflight-data-check",
         ]
@@ -189,5 +195,6 @@ def test_parser_exposes_config_file_and_new_flags():
     assert opts.alpha_dct == 0.01
     assert opts.alpha_ks == 0.2
     assert opts.p_value_correction == "fdr_bh"
-    assert opts.summary_statistic == "mean"
+    assert opts.alpha_perm == 0.02
+    assert opts.permutation_test is False
     assert opts.no_overwrite is True

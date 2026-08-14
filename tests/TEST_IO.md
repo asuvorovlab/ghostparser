@@ -105,9 +105,10 @@ Worked example, index 5 — `((A:0.30,C:0.30):0.10,B:0.70);` (sisters A, C):
 
 - `mean` — arithmetic mean.
 - `median` — middle value (mean of the two middle values for an even count).
-- `mode` — values are **binned to 3 decimals**, the most frequent bin wins, and
-  ties resolve to the **largest** value. With all-distinct values every bin has
-  count 1, so the mode is the maximum. For the AVG concordant sample
+- `mode` — used only by the 63-column `summary_statistics.tsv` output, not by
+  the decision logic. Values are **binned to 3 decimals**, the most frequent bin
+  wins, and ties resolve to the **largest** value. With all-distinct values every
+  bin has count 1, so the mode is the maximum. For the AVG concordant sample
   `[0.233, 0.243, 0.317, 0.297, 0.250]` the mode is therefore `0.317`.
 
 ## tests/orchestrator/test_orchestrator_inference.py
@@ -115,8 +116,8 @@ Worked example, index 5 — `((A:0.30,C:0.30):0.10,B:0.70);` (sisters A, C):
 ### `test_analyze_triplet_matches_derived_expectation`
 
 **Inputs:** the 10 gene subtrees above, `alpha_dct = alpha_ks = 0.05`, and one of
-36 parameter combinations (6 strategies x 3 statistics x 2 discordant tests).
-Bootstrap runs with 40 iterations at seed `20240724`.
+24 parameter combinations (6 strategies x permutation on/off x 2 discordant
+tests). Bootstrap runs with 40 iterations at seed `20240724`.
 
 **Expected-output derivation**, performed in `_expected_result`:
 
@@ -130,7 +131,7 @@ Bootstrap runs with 40 iterations at seed `20240724`.
    `p ~ 0.6547`. z-test: `proportions_ztest(count=[3,2], nobs=[5,5])`, giving
    `z ~ 0.6325`, `p ~ 0.5271`. Both p-values exceed 0.05, so
    `dct_significant is False` and the classification is `no_introgression` for
-   **every** one of the 36 cases — the decision stops at gate 1.
+   **every** one of the 24 cases — the decision stops at gate 1.
 5. **KS** — `scipy.stats.ks_2samp(concordant_heights, dis1_heights)`. For `AVG`
    the samples are `[0.2333, 0.2433, 0.3167, 0.2967, 0.2500]` and
    `[0.3667, 0.4067, 0.5167]`; they are completely separated, so `D = 1.0` and
@@ -138,10 +139,20 @@ Bootstrap runs with 40 iterations at seed `20240724`.
    (`[0.30, 0.32, 0.40, 0.35, 0.31]` vs `[0.30, 0.32, 0.45]`), giving
    `D = 1/3` and `p ~ 0.9643`. For `INT` the values are near-constant, giving
    `D = 0.2`, `p = 1.0`.
-6. **Summaries** — apply the chosen statistic to each group. For `AVG` + `mean`:
-   concordant `(0.2333+0.2433+0.3167+0.2967+0.2500)/5 = 0.268`; discordant1
-   `(0.3667+0.4067+0.5167)/3 = 0.43`.
-7. **Classification** — gate 1 fails, so `no_introgression`.
+6. **Summaries** — the mean and median of each group are reported
+   unconditionally. For `AVG`: concordant mean
+   `(0.2333+0.2433+0.3167+0.2967+0.2500)/5 = 0.268`, discordant1 mean
+   `(0.3667+0.4067+0.5167)/3 = 0.43`; concordant median `0.2500`, discordant1
+   median `0.4067`.
+7. **Direction** — with the permutation test on, the pooled sample is
+   `n_con + n_dis1 = 5 + 3 = 8` observations, admitting only
+   `C(8, 3) = 56` distinct group assignments. That is far below the 2500
+   `min_resamples` floor, so the `insufficient_permutation_support` guard fires
+   and the direction is `ambiguous` with zero resamples. With the permutation
+   test off, the median comparison decides: for `AVG`,
+   `0.2500 < 0.4067` → `less`.
+8. **Classification** — gate 1 fails regardless, so `no_introgression` in all 24
+   cases.
 
 Also asserted: `triplet == ("A","B","C")`, `species_tree == "((A,B),C);"` (the
 species subtree serialized topology-only), and that the bootstrap class
@@ -159,9 +170,10 @@ table, independent of the implementation.
 ### `test_analyze_triplet_from_observations_matches_newick_path`
 
 **Inputs:** the same triplet, once from `_serialize_triplet_gene_trees` output
-and once from raw Newick strings, both with `AVG`/`mean`/`chi-square`.
+and once from raw Newick strings, both with `AVG`/`chi-square` and the
+permutation test enabled.
 
-**Derivation:** both must equal the `_expected_result("AVG","mean","chi-square")`
+**Derivation:** both must equal the `_expected_result("AVG", "chi-square", True)`
 expectation above. Because the observations and seed are identical, the NumPy
 bootstrap draws the same indices, so `bootstrap_value` and `all_bootstrap` must
 match exactly (not just approximately).
@@ -209,39 +221,130 @@ significant → gate 2 returns `inflow_introgression`.
 
 ### `test_classify_outflow_when_concordant_heights_exceed_discordant`
 
-**Inputs:** 10 concordant at 0.9, 30 dis1 at 0.1, 2 dis2 at 0.1.
+**Inputs:** 10 concordant heights `_HIGH = [0.85 + 0.01i for i in 0..9]`
+(i.e. `[0.85, 0.86, ..., 0.94]`), 30 dis1 heights
+`_LOW = [0.05 + 0.01i for i in 0..29]` (`[0.05, 0.06, ..., 0.34]`), 2 dis2 at
+0.1.
 
 **Derivation:** the DCT is the same significant 30-vs-2 split. The two height
-samples are disjoint with no overlap, so the CDFs separate completely:
-`D = 1.0`, and with these sample sizes `p < 0.05` → gate 2 passes. Gate 3
-compares `summary_con = 0.9` against `summary_dis = 0.1`; con > dis →
-`outflow_introgression`.
+samples are disjoint (0.94 < 0.05 is false, but max(_LOW) = 0.34 < min(_HIGH) =
+0.85), so the CDFs separate completely: `D = 1.0`, `p < 0.05` → gate 2 passes.
+
+The spread matters for gate 3. Constant samples would trip the
+`degenerate_observed_scale` guard, but these have real within-group variance, so
+the studentized statistic has a finite standard error. The pooled sample is 40
+observations giving `C(40, 10) = 847,660,528` assignments, far above the 2500
+floor, so the support guard is clear too and the test resamples. Every
+concordant value exceeds every discordant1 value, so no permutation reproduces
+the observed statistic and `p_greater` sits at the add-one floor
+`1/(2500+1) = 4.0e-4`; Bonferroni over the pair doubles it to `8.0e-4 < 0.05`
+→ `perm_decision = "greater"` → `outflow_introgression`.
 
 ### `test_classify_ghost_when_discordant_heights_exceed_concordant`
 
-**Inputs:** the mirror image — 10 concordant at 0.1, 30 dis1 at 0.9, 2 dis2 at
-0.9.
+**Inputs:** the mirror image — 10 concordant from `_LOW[:10]`
+(`[0.05, ..., 0.14]`), 30 dis1 from `_HIGH * 3`, 2 dis2 at 0.9.
 
-**Derivation:** identical DCT and KS reasoning; gate 3 now sees
-`summary_con = 0.1 < summary_dis = 0.9` → `ghost_introgression`.
+**Derivation:** identical DCT and KS reasoning; gate 3 now finds
+`mean_con < mean_dis` with `p_less` at the floor → `perm_decision = "less"` →
+`ghost_introgression`.
+
+### `test_classify_ambiguous_when_direction_is_undetectable`
+
+**Inputs:** 30 concordant alternating `0.5 +- 0.30`, 30 dis1 alternating
+`0.5 +- 0.02`, 2 dis2 at 0.5.
+
+**Derivation:** the DCT sees a 30-vs-2 split → significant. The two samples share
+the mean 0.5 but their CDFs differ sharply in spread, so the KS statistic is
+large and gate 2 passes. Gate 3 finds no difference in means: the observed
+studentized statistic is near 0, both one-tailed p-values are far above
+`alpha_perm`, and `perm_decision = "ambiguous"` → classification `ambiguous`.
+This is the case with no directional answer — the distributions differ in shape,
+not location.
+
+### `test_permutation_guard_reports_insufficient_support`
+
+**Inputs:** 4 concordant `[0.9, 0.8, 0.7, 0.6]`, 2 dis1 `[0.1, 0.2]`, 2 dis2.
+
+**Derivation:** `n = 6`, `k = min(4, 2) = 2`, so `C(6, 2) = 15` distinct group
+assignments — fewer than `min_resamples = 2500`. The permutation distribution's
+finest attainable p-value is `1/16 = 0.0625 > 0.05`, so it can never resolve
+`alpha_perm`. The guard returns `insufficient_permutation_support` with
+`perm_n_resamples == 0`.
+
+### `test_permutation_guard_reports_degenerate_scale`
+
+**Inputs:** 10 concordant at 0.9, 30 dis1 at 0.1, 2 dis2 at 0.1.
+
+**Derivation:** both groups are internally constant, so both sample variances
+are zero and the Welch standard error is zero — except that 0.9 and 0.1 are not
+exactly representable in binary floating point, so `np.var([0.9]*10, ddof=1)`
+returns roughly `1e-33` rather than `0`. Dividing the real mean difference 0.8
+by that noise gives a statistic around `1.5e17`. The guard therefore compares
+the standard error against `1e-12 x max(|pooled|, 1)` rather than against exact
+zero, catching this as `degenerate_observed_scale`.
+
+### `test_median_fallback_decides_direction_when_permutation_disabled`
+
+**Inputs:** the same degenerate heights with `permutation_test=False`.
+
+**Derivation:** with the permutation test off, gate 3 compares medians:
+`median_con = 0.9 > median_dis = 0.1` → `greater` → `outflow_introgression`.
+No permutation runs, so `perm_statistic is None`.
+
+### `test_summary_statistics_discordant1_follows_frequency_not_topology_name`
+
+**Inputs:** built by `_subtrees`, which renders each height `h` as
+`((X:h,Y:h):0.10, Z:h+0.2)` on the named topology — 10 concordant at `h = 0.30`,
+3 `BC|A` at `[0.10, 0.12, 0.14]`, and 9 `AC|B` at `[0.50, 0.51, ..., 0.58]`,
+with `collect_summary_statistics=True`.
+
+**Derivation:** with 9 `AC|B` against 3 `BC|A`, the frequency ranking makes
+`AC|B` the discordant1 role, so `dis1_topology == "AC"` and
+`(n_dis1, n_dis2) == (9, 3)`.
+
+For the avg-tree-height metric, each subtree puts the two sisters at
+`h + 0.10` (own edge plus the `0.10` internal branch) and the third taxon at
+`h + 0.20`, so
+
+```
+avg_tree_height = ((h + 0.10) + (h + 0.10) + (h + 0.20)) / 3 = h + 0.4/3
+```
+
+A group's mean avg-tree-height is therefore its mean input height plus `0.4/3`.
+The AC heights average `0.50 + 0.01·(0+…+8)/9 = 0.54`, giving
+`0.54 + 0.13333… = 0.67333…`; the BC heights average `0.12`, giving
+`0.25333…`. The assertion is that `discordant1_avg_tree_height_mean` is the
+**former** — under the previous fixed `BC|A` mapping it was the latter, a
+different set of gene trees from the one `dis1_topology` names. `result.mean_dis`
+must agree with it, since the decision logic compares that same group.
+
+### `test_summary_statistics_discordant_roles_swap_with_the_counts`
+
+**Inputs:** the same construction with the two discordant height lists
+exchanged, so `BC|A` now has 9 trees and `AC|B` has 3.
+
+**Derivation:** the ranking flips, `dis1_topology == "BC"`, and the two summary
+column families swap: `discordant1_*` now carries `0.54 + 0.4/3` and
+`discordant2_*` carries `0.12 + 0.4/3`. This confirms the role assignment
+follows the counts rather than the topology name in either direction.
 
 ### `test_classify_introgression_truth_table`
 
 **Inputs:** `_classify_introgression(dct_significant, ks_significant,
-summary_con, summary_dis)` called directly with 8 explicit rows.
+direction)` called directly with 7 explicit rows.
 
 **Derivation:** straight from the decision definition —
 
-| dct_sig | ks_sig | con | dis | Expected | Reason |
-| --- | --- | --- | --- | --- | --- |
-| False | True | 1.0 | 2.0 | `no_introgression` | gate 1 fails first |
-| False | False | 1.0 | 2.0 | `no_introgression` | gate 1 fails first |
-| True | False | 1.0 | 2.0 | `inflow_introgression` | gate 2 not significant |
-| True | True | 2.0 | 1.0 | `outflow_introgression` | con > dis |
-| True | True | 1.0 | 2.0 | `ghost_introgression` | con < dis |
-| True | True | 1.0 | 1.0 | `unresolved` | con == dis |
-| True | True | None | 1.0 | `unresolved` | missing summary |
-| True | True | 1.0 | None | `unresolved` | missing summary |
+| dct_sig | ks_sig | direction | Expected | Reason |
+| --- | --- | --- | --- | --- |
+| False | True | `greater` | `no_introgression` | gate 1 fails first |
+| False | False | `less` | `no_introgression` | gate 1 fails first |
+| True | False | `greater` | `inflow_introgression` | gate 2 not significant |
+| True | True | `greater` | `outflow_introgression` | con > dis |
+| True | True | `less` | `ghost_introgression` | con < dis |
+| True | True | `ambiguous` | `ambiguous` | no direction resolved |
+| True | True | `None` | `ambiguous` | no direction available |
 
 ### `test_adjust_p_values_matches_statsmodels`
 
@@ -271,6 +374,207 @@ clamps at 1: `0.01x3 = 0.03`, `0.2x3 = 0.6`, `0.5x3 = 1.5 → 1.0`.
   `test_discordant_count_test_rejects_unknown_method` — an unsupported name is
   outside the choice tuple, so a `ValueError` naming the valid options is
   raised.
+
+## tests/orchestrator/test_orchestrator_permutation.py
+
+Samples here are drawn from seeded generators rather than written out, so the
+derivations below name the distribution and the property being checked instead
+of a literal array.
+
+### `_random_samples`
+
+The shared input generator. Sizes are drawn uniform on `[8, 120)`, the location
+shift uniform on `[-1, 1]`, and both scales uniform on `[0.2, 2.0]`. One of
+three families is picked with equal probability: two normals, two lognormals, or
+two exponentials with the second shifted. This deliberately spans symmetric,
+right-skewed, and heavy-tailed data at unequal sizes and variances, which is the
+regime the studentization is there to handle.
+
+### `test_observed_statistic_matches_scipy`
+
+**Inputs:** five seeded sample pairs, 500 resamples.
+
+**Derivation:** the observed statistic is a deterministic function of the inputs,
+not of the resampling, so it must equal SciPy's `result.statistic` and the
+in-test reference `(mean(x) - mean(y)) / sqrt(var(x)/nx + var(y)/ny)` exactly
+(to floating-point tolerance). Any disagreement would mean the two are not
+testing the same quantity.
+
+### `test_p_values_match_scipy_within_monte_carlo_error`
+
+**Inputs:** eight seeded sample pairs, `min_resamples = max_resamples = 4000`
+(pinning the adaptive stopping off), `correction="no"` so the comparison is
+against SciPy's uncorrected p-values.
+
+**Derivation:** both implementations estimate the same quantity from independent
+resampling streams, so exact equality is not expected. Each estimate has
+binomial standard error `sqrt(p(1-p)/n)`, and the difference of two independent
+estimates has `sqrt(2)` times that. The tolerance is 5 such standard errors,
+which at `p = 0.5` and `n = 4000` is about `0.056` and at `p = 0.01` about
+`0.011`. A systematic error in the sampler or the counting would exceed this;
+ordinary Monte Carlo scatter will not.
+
+### `test_decision_matches_scipy_directional_verdict`
+
+**Inputs:** three seeded pairs, `x ~ N(1.0, 0.4^2)` at n=60 against
+`y ~ N(0.4, 0.6^2)` at n=45, 4000 resamples, `correction="bfn"`.
+
+**Derivation:** with Bonferroni over a family of two, the corrected p-value is
+`2p`, so `2p <= alpha` is the same condition as `p <= alpha/2`. The expected
+verdict is therefore computed from SciPy's raw one-tailed p-values at
+`alpha/2 = 0.025`, and must match `result.decision`.
+
+### `test_permutation_statistics_match_exhaustive_enumeration`
+
+**Inputs:** `x = [0.11, 0.24, 0.37, 0.52]` (nx=4),
+`y = [0.63, 0.71, 0.88, 0.95, 1.10]` (ny=5), 5000 sampler draws at seed 7.
+
+**Derivation:** with 9 pooled values split 4/5 there are exactly
+`C(9, 4) = 126` distinct group assignments. Enumerating all of them with
+`itertools.combinations` and evaluating each through the scalar reference
+`_studentized_mean_diff` gives the exact support of the permutation
+distribution, rounded to 9 decimals. The vectorized sampler — which never
+materializes the 5-element group, recovering its sum and sum-of-squares by
+subtracting from the pooled totals — must emit only values from that set
+(soundness). Over 5000 draws from 126 equally likely assignments the chance of
+missing any one is about `126 x (125/126)^5000 ~ 1e-15`, so all 126 must also
+appear (completeness). Together these pin the optimization to ground truth.
+
+### `test_random_inputs_preserve_test_invariants`
+
+**Inputs:** twelve seeded pairs, `min_resamples=600`, `max_resamples=3000`.
+
+**Derivation:** four properties follow from the construction regardless of data.
+p-values use the add-one estimator so they are strictly positive and at most 1.
+`count_greater` counts `T_perm >= T_obs` and `count_less` counts
+`T_perm <= T_obs`; every resample satisfies at least one and ties satisfy both,
+so the counts sum to at least `n_done` and
+`p_greater + p_less = (2 + count_greater + count_less)/(n_done+1) > 1`. The
+resample total lies within the configured bounds by the loop's construction.
+And a directional decision requires the corresponding tail to be small, which
+requires the observed statistic to sit on that side of the null, so `greater`
+implies a positive statistic and `less` a negative one.
+
+### `test_decision_rules_agree_on_random_inputs`
+
+**Inputs:** eight seeded pairs, `min_resamples=2000`, `max_resamples=6000`,
+`correction="bfn"`.
+
+**Derivation:** the primary rule fires when `2 * min(p_greater, p_less) <=
+alpha`; the cross-check gates on exactly `min(1, 2 * min(p_greater, p_less)) <=
+alpha` and then takes the sign of the mean difference, which agrees with the
+significant tail. The two rules are therefore the same condition expressed
+twice, and `consistent` must be `True`.
+
+### `test_equal_samples_give_a_zero_statistic_and_no_direction`
+
+**Inputs:** the same 8 values `[0.10, 0.22, 0.31, 0.44, 0.55, 0.61, 0.78, 0.83]`
+as both samples.
+
+**Derivation:** identical samples have identical means, so the numerator is
+exactly 0 and the statistic is 0. Half the permutation distribution lies on
+either side of 0, so both one-tailed p-values are near 0.5 and neither clears
+`alpha` → `ambiguous`.
+
+### `test_type_one_error_rate_tracks_alpha_under_unequal_variance`
+
+**Inputs:** 300 replicates, `x ~ N(1.0, 1.0^2)` at n=60 against
+`y ~ N(1.0, 0.3^2)` at n=180, `alpha = 0.05`, 1000 resamples, `correction="bfn"`.
+
+**Derivation:** both samples share the mean 1.0, so every rejection is a type-I
+error. A correctly sized test rejects with probability `alpha`, giving
+`300 x 0.05 = 15` expected rejections with standard deviation
+`sqrt(300 x 0.05 x 0.95) = 3.8`. The assertion band `[3, 30]` spans 1% to 10%,
+roughly `+-4` standard deviations, so fixed seeds make it stable while a test
+that had stopped controlling its error rate would fall outside. Unequal sizes
+paired with unequal variances is the configuration where a permutation test of
+the *raw* mean difference loses its level, so this measures what the
+studentization buys. Measured behaviour across shapes: about 4% here, about 3%
+when the smaller group has the smaller variance, and rising to about 10% at
+n=20 against n=200 when the smaller group carries a 3x larger spread — the
+small-sample limitation recorded in ORCHESTRATOR.md.
+
+### `test_guards_short_circuit_without_resampling`
+
+**Inputs and derivation**, one row per guard:
+
+| Input | Guard | Why |
+| --- | --- | --- |
+| `x=[0.4]`, `y=[0.1, 0.2, 0.3]` | `insufficient_group_size` | `nx = 1`, and `np.var(ddof=1)` needs at least 2 observations. |
+| `x=y=[0.3, 0.3, 0.3]` | `zero_pooled_variance` | All six pooled values equal, so both the spread and the mean difference are zero. |
+| `x=[0.9]*10`, `y=[0.1]*30` | `degenerate_observed_scale` | Both groups internally constant with different means; the standard error is floating-point noise near `1e-17`. |
+| `x=[0.9,0.8,0.7,0.6]`, `y=[0.1,0.2]` | `insufficient_permutation_support` | `C(6, 2) = 15 < 2500`. |
+
+Each returns `statistic is None`, `n_resamples == 0`, `converged is False`, and
+decision `ambiguous`.
+
+### `test_skewed_null_keeps_the_directional_call_and_flags_it`
+
+**Inputs:** 700 concordant heights `~ N(0.42, 0.10^2)`, and 19 discordant1
+heights of which 15 are `~ N(0.5, 0.1^2)` and 4 are `~ N(25.0, 5.0^2)`.
+2500 resamples, `correction="bfn"`.
+
+**Derivation:** the four extreme values pull `mean(y)` far above `mean(x)`, so
+the observed statistic is negative. Under permutation, the tiny 19-element group
+usually receives none of the four extremes — giving a small mean and a large
+positive statistic — but occasionally receives several. The null is therefore
+strongly right-skewed. No permutation is more negative than the observation, so
+`p_less` sits at the add-one floor and the directional call is `less`. Yet a
+large fraction of permutations exceed `|T_obs|` on the *right*, so the
+absolute-value `p_two_sided` stays above `alpha`. The directional decision is
+the correct one; `null_skewed` records the asymmetry, `note` stays `None`
+because this is expected rather than exceptional, and `consistent` remains
+`True` because the cross-check gates on the doubled smaller tail rather than on
+the absolute-value count.
+
+### `test_max_resamples_reached_is_reported`
+
+**Inputs:** two samples of 40 from the same `N(1.0, 1.0^2)`, ceiling of 200
+resamples.
+
+**Derivation:** under the null the p-values sit far from `alpha`, but 200
+resamples give a wide Wilson interval, so `alpha` may still fall inside it. The
+budget must be respected exactly, and if the run did not converge the note must
+be `max_resamples_reached` rather than silently reporting success.
+
+### `test_adaptive_run_grows_batches_until_it_converges`
+
+**Inputs:** `x ~ N(2.0, 0.2^2)` and `y ~ N(0.5, 0.2^2)`, both n=80,
+`min_resamples=1000`, `max_resamples=20000`.
+
+**Derivation:** the samples are separated by more than seven pooled standard
+deviations, so no permutation approaches the observed statistic and
+`p_greater` lands at the floor `1/1001 ~ 1.0e-3`. The Wilson interval around a
+count of 1 in 1001 is roughly `[0.0003, 0.0056]`; doubled by Bonferroni it stays
+far below `alpha = 0.05`, so `alpha` is outside it after the very first batch.
+The run therefore stops with `batches == 1`, `n_resamples == 1000`, and decision
+`greater` — an easy case must not spend the ceiling.
+
+### `test_batches_grow_by_one_quarter_until_the_budget_is_spent`
+
+**Inputs:** two 30-element samples from the same `N(1.0, 1.0^2)`,
+`min_resamples=100`, `max_resamples=1000`.
+
+**Derivation:** the samples share a distribution, so the p-values sit far from
+`alpha`, but at 100 resamples the Wilson interval is wide enough to still
+contain it, and the run keeps going. Each batch is `int(previous x 1.25)`,
+giving batch sizes 100, 125, 156, 195, 243, and then 303 clipped to the 1000
+remaining. The cumulative totals are therefore 100, 225, 381, 576, 819, 1000,
+and whichever total the run stops at must appear in that list at the position
+matching `result.batches`. This pins both the growth factor and the
+final-batch clipping.
+
+### `test_median_sign_decision_matches_definition`
+
+**Inputs and derivation:** `median([3,4,5]) = 4 > median([1,2]) = 1.5` →
+`greater`; the reverse → `less`; `median([1,2,3]) = 2 == median([2]) = 2` →
+`ambiguous`; an empty sample → `ambiguous`.
+
+### `test_bootstrap_resample_budget_scales_by_one_fifth`
+
+**Inputs and derivation:** `2500 // 5 = 500` and `25000 // 5 = 5000`. For
+`(2, 3)`, `2 // 5 = 0` and `3 // 5 = 0`, both raised to the floor of 1, and the
+maximum is held at least equal to the minimum → `(1, 1)`.
 
 ## tests/orchestrator/test_orchestrator_trees.py
 
@@ -368,7 +672,7 @@ depth 2.0, so `d = 1.0 + 1.0 = 2.0`. Pair `(A,C)`: `d = (1.0 + 2.0) + 3.0 = 6.0`
 
 All runs use the shared species tree and 12 gene trees, seed `20240724`, 40
 bootstrap iterations, and the orchestrator defaults (`p_value_correction = bfn`,
-`summary_statistic = mean`).
+the permutation test enabled).
 
 ### `test_run_orchestrator_matches_derived_expectation`
 
@@ -553,7 +857,10 @@ optional argument `None`.
 
 **Derivation:** each key falls back to its constant in
 `ghostparser/orchestrator/config.py`: `alpha_dct`/`alpha_ks` `0.05`,
-`p_value_correction` `"bfn"`, `summary_statistic` `"mean"`, `overwrite` `True`,
+`p_value_correction` `"bfn"`, `alpha_perm` `0.05`, `permutation_test` `True`
+with `permutation_min_resamples` `2500`, `permutation_max_resamples` `25000`,
+`permutation_ci_method` `"wilson"`,
+`overwrite` `True`,
 `discordant_test` `"chi-square"`, `tree_height_calculation_strategy` `"AVG"`,
 `min_support_value` `0.5`, `bootstrap_iterations` `100`, `bootstrap_seed`
 `None`, and the boolean feature flags `False` — including
@@ -564,7 +871,7 @@ exists.
 
 ### `test_cli_overrides_for_config_plus_cli_options`
 
-**Input:** `alpha_dct=0.01`, `alpha_ks=0.2`, `summary_statistic="mean"`,
+**Input:** `alpha_dct=0.01`, `alpha_ks=0.2`, `alpha_perm=0.02`,
 `p_value_correction="fdr_bh"`, `no_overwrite=True`.
 
 **Derivation:** each supplied value replaces its default. `no_overwrite=True`
@@ -586,10 +893,10 @@ them. The nested block is flattened onto `bootstrap_iterations = 25`,
 ### `test_config_file_wins_over_cli`
 
 **Input:** a config file setting `alpha_dct: 0.03` and file-specific tree paths,
-plus conflicting CLI flags `alpha_dct=0.5` and `summary_statistic="mode"`.
+plus conflicting CLI flags `alpha_dct=0.5` and `alpha_perm=0.5`.
 
 **Derivation:** in config-file mode the file supplies everything, so
-`alpha_dct` is `0.03` (not `0.5`). The decisive check is `summary_statistic`:
+`alpha_dct` is `0.03` (not `0.5`). The decisive check is `alpha_perm`:
 the file omits it, so it must fall back to the orchestrator default `"mean"` — if
 the CLI were consulted it would be `"mode"`. The resolved species path must come
 from the file, and a warning naming the ignored flags must be printed.

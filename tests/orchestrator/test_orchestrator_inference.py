@@ -88,8 +88,7 @@ def _expected_summary(values, statistic):
 
     Args:
         values: The numeric sample.
-        statistic: ``mean``, ``median``, or ``mode`` (binned to 3 decimals,
-            ties resolved to the largest value).
+        statistic: ``mean`` or ``median``.
 
     Returns:
         The summary value, or ``None`` for an empty sample.
@@ -99,17 +98,10 @@ def _expected_summary(values, statistic):
     ordered = sorted(values)
     if statistic == "mean":
         return sum(ordered) / len(ordered)
-    if statistic == "median":
-        mid = len(ordered) // 2
-        if len(ordered) % 2 == 1:
-            return ordered[mid]
-        return (ordered[mid - 1] + ordered[mid]) / 2.0
-
-    counts = {}
-    for value in ordered:
-        counts[round(value, 3)] = counts.get(round(value, 3), 0) + 1
-    top = max(counts.values())
-    return max(value for value, count in counts.items() if count == top)
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
 def _expected_dct(n_dis1, n_dis2, discordant_test):
@@ -133,7 +125,7 @@ def _expected_dct(n_dis1, n_dis2, discordant_test):
     return float(statistic), float(p_value)
 
 
-def _expected_result(strategy, summary_statistic, discordant_test, alpha=0.05):
+def _expected_result(strategy, discordant_test, permutation_test, alpha=0.05):
     """Derive every asserted inference field for the shared fixture.
 
     Groups the hand-derived heights by topology, ranks the two discordant
@@ -142,8 +134,8 @@ def _expected_result(strategy, summary_statistic, discordant_test, alpha=0.05):
 
     Args:
         strategy: The tree-height strategy.
-        summary_statistic: ``mean``/``median``/``mode``.
         discordant_test: ``chi-square``/``z-test``.
+        permutation_test: Whether the direction step uses the permutation test.
         alpha: Significance threshold shared by both tests.
 
     Returns:
@@ -176,21 +168,36 @@ def _expected_result(strategy, summary_statistic, discordant_test, alpha=0.05):
     ks_statistic, ks_p_value = float(ks_result.statistic), float(ks_result.pvalue)
     ks_significant = ks_p_value < alpha
 
-    summary_con = _expected_summary(heights[_CONCORDANT], summary_statistic)
-    summary_dis = _expected_summary(heights[dis1], summary_statistic)
+    mean_con = _expected_summary(heights[_CONCORDANT], "mean")
+    mean_dis = _expected_summary(heights[dis1], "mean")
+    median_con = _expected_summary(heights[_CONCORDANT], "median")
+    median_dis = _expected_summary(heights[dis1], "median")
+
+    if permutation_test:
+        # This fixture has 5 concordant and 3 discordant1 trees, so the pooled
+        # sample admits only C(8, 3) = 56 distinct group assignments -- far
+        # fewer than the 2500-resample minimum. The support guard fires and the
+        # direction is ambiguous without any resampling.
+        direction = "ambiguous"
+    elif median_con > median_dis:
+        direction = "greater"
+    elif median_con < median_dis:
+        direction = "less"
+    else:
+        direction = "ambiguous"
 
     # GhostParser decision logic: DCT gate, then the tree-height test, then the
-    # concordant-vs-discordant summary comparison.
+    # concordant-vs-discordant1 direction test.
     if not dct_significant:
         classification = "no_introgression"
     elif not ks_significant:
         classification = "inflow_introgression"
-    elif summary_con > summary_dis:
+    elif direction == "greater":
         classification = "outflow_introgression"
-    elif summary_con < summary_dis:
+    elif direction == "less":
         classification = "ghost_introgression"
     else:
-        classification = "unresolved"
+        classification = "ambiguous"
 
     return {
         "n_con": n_con,
@@ -204,8 +211,11 @@ def _expected_result(strategy, summary_statistic, discordant_test, alpha=0.05):
         "ks_statistic": ks_statistic,
         "ks_p_value": ks_p_value,
         "ks_significant": ks_significant,
-        "summary_con": summary_con,
-        "summary_dis": summary_dis,
+        "mean_con": mean_con,
+        "mean_dis": mean_dis,
+        "median_con": median_con,
+        "median_dis": median_dis,
+        "perm_decision": direction,
         "classification": classification,
         "analyzed_trees": len(_LEAF_GEOMETRY),
     }
@@ -227,15 +237,16 @@ def _assert_matches_expected(result, expected):
 
 
 @pytest.mark.parametrize("discordant_test", ["chi-square", "z-test"])
-@pytest.mark.parametrize("summary_statistic", ["mean", "median", "mode"])
+@pytest.mark.parametrize("permutation_test", [True, False])
 @pytest.mark.parametrize("strategy", ["AVG", "A", "B", "C", "SIS", "INT"])
 def test_analyze_triplet_matches_derived_expectation(
-    discordant_test, summary_statistic, strategy
+    discordant_test, permutation_test, strategy
 ):
     """analyze_triplet reproduces values derived from the definitions.
 
-    Covers every tree-height strategy, summary statistic, and discordant-count
-    test combination on the shared 10-gene-subtree fixture.
+    Covers every tree-height strategy and discordant-count test on the shared
+    10-gene-subtree fixture, with the direction step taken both through the
+    permutation test and through the median fallback.
     """
     result = pinf.analyze_triplet(
         _TRIPLET,
@@ -244,14 +255,14 @@ def test_analyze_triplet_matches_derived_expectation(
         alpha_dct=0.05,
         alpha_ks=0.05,
         discordant_test=discordant_test,
-        summary_statistic=summary_statistic,
+        permutation_test=permutation_test,
         tree_height_calculation_strategy=strategy,
         bootstrap_options={"iterations": _ITERATIONS},
         triplet_seed=_SEED,
     )
 
     _assert_matches_expected(
-        result, _expected_result(strategy, summary_statistic, discordant_test)
+        result, _expected_result(strategy, discordant_test, permutation_test)
     )
     assert tuple(result.triplet) == _TRIPLET
     assert result.species_tree == "((A,B),C);"
@@ -291,7 +302,7 @@ def test_analyze_triplet_from_observations_matches_newick_path():
         bootstrap_options={"iterations": _ITERATIONS},
         triplet_seed=_SEED,
     )
-    expected = _expected_result("AVG", "mean", "chi-square")
+    expected = _expected_result("AVG", "chi-square", True)
     _assert_matches_expected(from_obs, expected)
     _assert_matches_expected(from_newick, expected)
     # Same observations + same seed -> identical NumPy bootstrap.

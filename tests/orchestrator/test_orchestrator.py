@@ -35,8 +35,7 @@ _ALL_FIELDS = (
     "ks_p_value",
     "ks_p_value_corrected",
     "ks_significant",
-    "summary_con",
-    "summary_dis",
+    "perm_decision",
     "classification",
     "analyzed_trees",
     "bootstrap_value",
@@ -80,10 +79,11 @@ def _make_config(
         parallelization_mode=mode,
         alpha_dct=None,
         alpha_ks=None,
+        alpha_perm=None,
         p_value_correction=None,
-        summary_statistic=None,
         consolidation=consolidation,
         bootstrap=bootstrap,
+        permutation_test=None,
     )
     config = resolve_config(args)
     config["bootstrap_seed"] = _SEED
@@ -301,6 +301,40 @@ def test_generate_summary_stats_writes_tsv(
     assert len(metric_columns) == 63
     # The per-triplet metric statistics are populated on the results too.
     assert any(result.topology_metric_statistics for result in results)
+
+
+def test_results_tsv_carries_no_group_summary_columns(
+    orchestrator_species_tree, orchestrator_gene_trees, tmp_path
+):
+    """Per-group mean and median values belong to summary_statistics.tsv alone.
+
+    The results TSV reports the tests: the direction comes from the permutation
+    p-values, not from comparing group summaries, so no ``*_con``/``*_dis``
+    summary column is written there under any configuration.
+    """
+    output_folder = tmp_path / "out"
+    config = _make_config(
+        orchestrator_species_tree,
+        orchestrator_gene_trees,
+        output_folder,
+        mode="taxon",
+        processes=1,
+    )
+    config["generate_summary_stats"] = True
+    run_orchestrator(config)
+
+    header = (
+        (output_folder / "orchestrator_triplet_results.tsv")
+        .read_text()
+        .splitlines()[0]
+        .split("\t")
+    )
+    for column in ("mean_con", "mean_dis", "median_con", "median_dis"):
+        assert column not in header
+    # The permutation p-values that actually drive the direction are present.
+    assert "perm_p_greater" in header
+    assert "perm_p_less" in header
+    assert "permutation_consistency_flag" in header
 
 
 def test_bootstrap_debug_mode_writes_debug_columns(

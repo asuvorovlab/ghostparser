@@ -102,18 +102,31 @@ End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixt
   values included, is identical. Purpose: parallelization must not change
   results.
 
+Also in `test_orchestrator.py`:
+
+- `test_results_tsv_carries_no_group_summary_columns` — Inputs: a run with
+  `generate_summary_stats=True`. Expected outputs:
+  `mean_con`/`mean_dis`/`median_con`/`median_dis` are absent from the results
+  TSV header even under that flag, while `perm_p_greater`, `perm_p_less`, and
+  `permutation_consistency_flag` are present. Purpose: the direction comes from
+  the permutation p-values, so per-group summaries belong to
+  `summary_statistics.tsv` alone and never appear in the results TSV.
+
 ### tests/orchestrator/test_orchestrator_inference.py
 
 Per-triplet inference on a 10-gene-subtree fixture, with expectations recomputed
 from the tabulated tree geometry.
 
 - `test_analyze_triplet_matches_derived_expectation` — Inputs (parametrized over
-  6 tree-height strategies x 3 summary statistics x 2 discordant tests = 36
+  6 tree-height strategies x permutation on/off x 2 discordant tests = 24
   cases): `analyze_triplet` over the 10 gene subtrees. Expected outputs: the
-  counts, DCT/KS statistics, summary values, and classification all equal values
-  derived in-test from `_LEAF_GEOMETRY` plus direct SciPy/statsmodels calls;
-  bootstrap fractions sum to 1. Purpose: the full inference surface across every
-  parameter combination.
+  counts, DCT/KS statistics, mean/median con/dis values, `perm_decision`, and
+  classification all equal values derived in-test from `_LEAF_GEOMETRY` plus
+  direct SciPy/statsmodels calls; bootstrap fractions sum to 1. With the
+  permutation test on, the fixture's C(8, 3) = 56 possible group assignments
+  fall below `min_resamples`, so the support guard fires and the direction is
+  `ambiguous`; with it off, the median comparison decides. Purpose: the full
+  inference surface across every parameter combination, on both direction paths.
 - `test_observation_heights_match_derived_geometry` — Inputs (parametrized over
   the 6 strategies): `_serialize_triplet_gene_trees`. Expected outputs: each
   observation's topology and H(T) match the hand-derived geometry for that
@@ -143,16 +156,50 @@ because the shared fixture never produces a significant DCT.
   heights. Expected outputs: DCT significant, KS statistic 0 and not
   significant, `inflow_introgression`. Purpose: gate 2 maps to inflow.
 - `test_classify_outflow_when_concordant_heights_exceed_discordant` — Inputs: a
-  significant split with fully separated heights, concordant above discordant.
-  Expected outputs: KS statistic 1.0 and significant, `summary_con >
-  summary_dis`, `outflow_introgression`. Purpose: gate 3, con > dis.
+  significant 30/2 split with fully separated, spread-out heights (10 concordant
+  in [0.85, 0.94], 30 discordant1 in [0.05, 0.34]). Expected outputs: KS
+  statistic 1.0 and significant, `mean_con > mean_dis`, no permutation guard,
+  `perm_decision == "greater"`, `outflow_introgression`. Purpose: gate 3,
+  con > dis, with the permutation test actually resampling.
 - `test_classify_ghost_when_discordant_heights_exceed_concordant` — Inputs: the
   mirror case, discordant above concordant. Expected outputs:
-  `summary_con < summary_dis`, `ghost_introgression`. Purpose: gate 3, con < dis.
-- `test_classify_introgression_truth_table` — Inputs (parametrized, 8 rows):
-  every combination of DCT/KS significance and summary ordering, including
-  `None` summaries. Expected outputs: the documented classification for each
-  row. Purpose: exhaustive coverage of `_classify_introgression`.
+  `mean_con < mean_dis`, `perm_decision == "less"`, `ghost_introgression`.
+  Purpose: gate 3, con < dis.
+- `test_classify_ambiguous_when_direction_is_undetectable` — Inputs: a
+  significant split where concordant and discordant1 share a mean but differ
+  sharply in spread (+-0.30 versus +-0.02 around 0.5). Expected outputs: DCT and
+  KS both significant, `perm_decision == "ambiguous"`, classification
+  `ambiguous`. Purpose: the KS test separates distributions that the direction
+  test cannot order, which is the case that has no directional answer.
+- `test_permutation_guard_reports_insufficient_support` — Inputs: 4 concordant
+  and 2 discordant1 heights, giving C(6, 2) = 15 assignments. Expected outputs:
+  `perm_note == "insufficient_permutation_support"`, zero resamples, ambiguous.
+  Purpose: too-small samples are refused rather than decided.
+- `test_permutation_guard_reports_degenerate_scale` — Inputs: internally
+  constant groups with different means (`[0.9] * 10` versus `[0.1] * 30`).
+  Expected outputs: `perm_note == "degenerate_observed_scale"`, ambiguous
+  classification. Purpose: a zero standard error is caught relative to the
+  data's magnitude rather than against exact zero.
+- `test_median_fallback_decides_direction_when_permutation_disabled` — Inputs:
+  the same degenerate heights with `permutation_test=False`. Expected outputs:
+  `perm_decision == "greater"`, `perm_statistic is None`,
+  `outflow_introgression`. Purpose: the fallback path still resolves direction.
+- `test_summary_statistics_discordant1_follows_frequency_not_topology_name` —
+  Inputs: 10 concordant, 3 `BC|A`, and 9 `AC|B` gene subtrees with
+  `collect_summary_statistics=True`, so `AC|B` is the more frequent discordant.
+  Expected outputs: `dis1_topology == "AC"`, `(n_dis1, n_dis2) == (9, 3)`, and
+  `discordant1_avg_tree_height_mean` equal to the AC group's derived mean (with
+  `discordant2_*` the BC group's), matching `result.mean_dis`. Purpose: the
+  summary columns name the same gene trees as `dis1_topology` and the tests,
+  rather than a fixed topology label.
+- `test_summary_statistics_discordant_roles_swap_with_the_counts` — Inputs: the
+  same fixture with the two discordant groups exchanged. Expected outputs:
+  `dis1_topology == "BC"` and the two summary column families swap accordingly.
+  Purpose: the role assignment tracks the counts in both directions.
+- `test_classify_introgression_truth_table` — Inputs (parametrized, 7 rows):
+  every combination of DCT/KS significance and direction, including `None`.
+  Expected outputs: the documented classification for each row. Purpose:
+  exhaustive coverage of `_classify_introgression`.
 - `test_adjust_p_values_matches_statsmodels` — Inputs (parametrized over all 6
   correction methods): a fixed 10-value p-value list. Expected outputs: `no`
   returns the input unchanged; every other method equals
@@ -171,6 +218,85 @@ because the shared fixture never produces a significant DCT.
 - `test_ks_test_with_an_empty_sample` — Inputs (parametrized over three
   empty/non-empty combinations). Expected outputs: `(0.0, 1.0)`. Purpose: the
   empty-sample short circuit.
+
+### tests/orchestrator/test_orchestrator_permutation.py
+
+The adaptive studentized permutation test, checked against SciPy, against
+exhaustive enumeration, and over randomized inputs.
+
+- `test_observed_statistic_matches_scipy` — Inputs (parametrized over 5 seeds):
+  random sample pairs. Expected outputs: the observed statistic equals
+  `scipy.stats.permutation_test`'s and the in-test reference formula exactly.
+  Purpose: the statistic itself is the Welch-studentized mean difference.
+- `test_p_values_match_scipy_within_monte_carlo_error` — Inputs (parametrized
+  over 8 seeds): random sample pairs at a pinned 4000 resamples with correction
+  off. Expected outputs: both one-tailed p-values match SciPy's corresponding
+  single-alternative runs within 5 sigma of the binomial standard error of the
+  difference of two independent Monte Carlo estimates. Purpose: parity of the
+  p-value machinery, allowing for the two independent resampling streams.
+- `test_decision_matches_scipy_directional_verdict` — Inputs (parametrized over
+  3 seeds): a separated sample pair. Expected outputs: the directional decision
+  equals the verdict from SciPy's two one-tailed p-values at `alpha / 2`, which
+  is the threshold Bonferroni over the one-tailed family produces. Purpose: the
+  decision rule, not just the p-values, agrees with the reference.
+- `test_permutation_statistics_match_exhaustive_enumeration` — Inputs: a 4-vs-5
+  sample pair and 5000 draws from the vectorized sampler. Expected outputs:
+  every sampled statistic lies in the exact set obtained by enumerating all
+  `C(9, 4) = 126` group assignments through the scalar reference statistic, and
+  all 126 appear. Purpose: validates the sample-the-smaller-group-and-subtract
+  optimization against ground truth.
+- `test_random_inputs_preserve_test_invariants` — Inputs (parametrized over 12
+  seeds): random sizes (8-120), spreads, separations, and normal / lognormal /
+  exponential families. Expected outputs: a valid decision label, p-values in
+  (0, 1], `p_greater + p_less > 1` (both tails count ties), the resample count
+  inside its configured bounds, and a directional decision agreeing with the
+  sign of the statistic. Purpose: structural invariants on shapes no fixed
+  fixture covers.
+- `test_decision_rules_agree_on_random_inputs` — Inputs (parametrized over 8
+  seeds): random sample pairs with Bonferroni correction. Expected outputs:
+  `consistent is True` and the two decision rules produce the same label.
+  Purpose: the one-tailed rule and the two-tailed-gate-then-sign rule coincide.
+- `test_equal_samples_give_a_zero_statistic_and_no_direction` — Inputs: the same
+  8 values as both samples. Expected outputs: statistic 0, ambiguous. Purpose:
+  identical inputs cannot produce a direction.
+- `test_type_one_error_rate_tracks_alpha_under_unequal_variance` — Inputs: 300
+  null replicates, n=60 at sd 1.0 against n=180 at sd 0.3, alpha 0.05. Expected
+  outputs: between 3 and 30 rejections (1%-10%; nominal is 15). Purpose: the
+  studentization holds the nominal level under unequal sizes and variances,
+  which is the regime where an unstudentized permutation test fails.
+- `test_seeded_runs_are_reproducible` — Inputs: two identical calls with the
+  same seed. Expected outputs: identical results. Purpose: reproducibility.
+- `test_guards_short_circuit_without_resampling` — Inputs (parametrized, 4
+  rows): one input per guard condition. Expected outputs: the matching
+  `note`, an ambiguous decision, zero resamples, no statistic, and
+  `converged is False`. Purpose: each guard is reachable and inert.
+- `test_skewed_null_keeps_the_directional_call_and_flags_it` — Inputs: 700
+  concordant heights against 19 discordant1 heights of which 4 are extreme —
+  the shape observed on real data. Expected outputs: a negative statistic,
+  `decision == "less"`, `p_two_sided > alpha`, `null_skewed is True`,
+  `note is None`, and `consistent is True`. Purpose: an asymmetric null is
+  recorded without overturning the directional call, and the cross-check's
+  doubled-smaller-tail gate stays valid under that asymmetry.
+- `test_max_resamples_reached_is_reported` — Inputs: two near-identical samples
+  at a 200-resample ceiling. Expected outputs: the budget is respected and, if
+  unconverged, `note == "max_resamples_reached"`. Purpose: budget exhaustion is
+  surfaced rather than silently treated as convergence.
+- `test_adaptive_run_grows_batches_until_it_converges` — Inputs: a clearly
+  separated pair with `min_resamples=1000`. Expected outputs: converged after
+  exactly one batch of 1000 with decision `greater`. Purpose: an easy case stops
+  at the minimum budget instead of spending the ceiling.
+- `test_batches_grow_by_one_quarter_until_the_budget_is_spent` — Inputs: two
+  30-element samples from the same distribution, `min_resamples=100`,
+  `max_resamples=1000`. Expected outputs: the resample total lands on the
+  cumulative schedule 100, 225, 381, 576, 819, 1000 produced by `int(previous x
+  1.25)` with the last batch clipped, at the index matching `batches`. Purpose:
+  pins the 1.25 growth factor and the final-batch clipping.
+- `test_median_sign_decision_matches_definition` — Inputs: four median
+  comparisons including a tie and an empty sample. Expected outputs:
+  `greater` / `less` / `ambiguous` / `ambiguous`. Purpose: the fallback path.
+- `test_bootstrap_resample_budget_scales_by_one_fifth` — Inputs: `(2500, 25000)`
+  and `(2, 3)`. Expected outputs: `(500, 5000)` and `(1, 1)`. Purpose: the
+  bootstrap budget divisor and its floor.
 
 ### tests/orchestrator/test_orchestrator_trees.py
 
@@ -271,12 +397,13 @@ Orchestrator config resolution and config-file precedence.
 
 - `test_cli_defaults_resolve` — Inputs: a CLI namespace with every optional arg
   `None`. Expected outputs: `alpha_dct`/`alpha_ks` 0.05, the orchestrator-specific
-  `p_value_correction == "bfn"` and `summary_statistic == "mean"`,
-  `overwrite is True`, the config-file-only keys at their defaults,
+  `p_value_correction == "bfn"`, `alpha_perm == 0.05`,
+  `permutation_test is True` with its resample/CI defaults (2500, 25000,
+  `wilson`), `overwrite is True`, the config-file-only keys at their defaults,
   `preflight_data_check is False`, and no `stats_backend` key. Purpose: default
   resolution in CLI mode.
 - `test_cli_overrides_for_config_plus_cli_options` — Inputs: CLI values for
-  alpha-dct/alpha-ks/summary-statistic/p-value-correction/no-overwrite. Expected
+  alpha-dct/alpha-ks/alpha-perm/p-value-correction/no-overwrite. Expected
   outputs: each override is honored and `overwrite` becomes `False`. Purpose:
   the config+CLI options are wired.
 - `test_config_only_keys_read_from_config_file` — Inputs: a JSON config setting
@@ -285,7 +412,7 @@ Orchestrator config resolution and config-file precedence.
   Expected outputs: every key, including the flattened bootstrap options, is
   read. Purpose: config-file-only keys and nested bootstrap parsing.
 - `test_config_file_wins_over_cli` — Inputs: a config file plus conflicting CLI
-  flags. Expected outputs: the file's `alpha_dct` wins, `summary_statistic`
+  flags. Expected outputs: the file's `alpha_dct` wins, `alpha_perm`
   falls back to the orchestrator default (proving the CLI value was ignored), the
   file's paths are used, and a warning is printed. Purpose: config-file
   precedence.
