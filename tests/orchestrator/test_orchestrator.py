@@ -71,7 +71,7 @@ def _make_config(
         config_file=None,
         species_tree_path=str(species_path),
         gene_trees_path=str(genes_path),
-        outgroups="OUT",
+        outgroup="OUT",
         output_folder=str(output_folder),
         triplet_filter=None,
         no_overwrite=None,

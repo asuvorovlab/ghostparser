@@ -896,10 +896,60 @@ them. The nested block is flattened onto `bootstrap_iterations = 25`,
 plus conflicting CLI flags `alpha_dct=0.5` and `alpha_perm=0.5`.
 
 **Derivation:** in config-file mode the file supplies everything, so
-`alpha_dct` is `0.03` (not `0.5`). The decisive check is `alpha_perm`:
-the file omits it, so it must fall back to the orchestrator default `"mean"` — if
-the CLI were consulted it would be `"mode"`. The resolved species path must come
-from the file, and a warning naming the ignored flags must be printed.
+`alpha_dct` is `0.03` (not `0.5`). The decisive check is `alpha_perm`: the file
+omits it, so it must fall back to the orchestrator default `0.05` — if the CLI
+were consulted it would be `0.5`. The resolved species path must come from the
+file, and a warning naming the ignored flags must be printed.
+
+### `test_outgroup_accepts_single_comma_separated_and_list_forms`
+
+**Inputs and derivation:** every accepted shape flattens the same way — each
+entry is coerced to a string, split on commas, stripped, and empty pieces
+dropped.
+
+| Input | Result | Why |
+| --- | --- | --- |
+| `"OUT"` | `["OUT"]` | Single label, no comma to split on. |
+| `"Out1,Out2"` | `["Out1", "Out2"]` | Comma-separated string. |
+| `" Out1 , Out2 ,"` | `["Out1", "Out2"]` | Padding stripped, trailing empty piece dropped. |
+| `["Out1", "Out2"]` | `["Out1", "Out2"]` | List of labels. |
+| `("Out1", "Out2")` | `["Out1", "Out2"]` | Tuples accepted alongside lists. |
+| `["Out1,Out2", "Out3"]` | `["Out1", "Out2", "Out3"]` | List entries are themselves split, so the two forms compose. |
+
+### `test_outgroup_rejects_empty_and_non_label_values`
+
+**Inputs and derivation:** `None`, `""`, `"  "`, `","`, `[]`, `["", "  "]`, and
+`42` all reduce to an empty label list — the first six because every piece is
+blank after stripping, and `42` because it is neither a string nor a
+list/tuple/set and so contributes no entries. An empty result raises
+`ConfigError` naming `outgroup` rather than silently producing an unrooted run.
+
+### `test_shipped_sample_configs_resolve`
+
+**Inputs:** the two orchestrator sample configs under `sample_configs/`.
+
+**Derivation:** these go through the same `load_orchestrator_config` a user
+invokes with `-c`, so anything the validator would reject surfaces here. The
+asserted values are what the samples state literally — a non-empty outgroup list
+(`["OutGroup"]` for the minimal sample, `["Out1", "Out2"]` for the full one,
+written there as a YAML list to exercise that form), `alpha_perm` `0.05`, and
+`ci_method` `wilson`. The placeholder tree paths need not exist:
+`_validate_required_path` only checks that the field is a non-empty string
+before resolving it.
+
+### `test_full_sample_config_covers_every_runtime_key`
+
+**Inputs:** `orchestrator_full.yaml` parsed twice — once as raw YAML for the set
+of documented keys, once through `load_orchestrator_config` for the set of
+runtime keys.
+
+**Derivation:** the normalizer renames three inputs (`species_tree_path` →
+`species_tree`, `gene_trees_path` → `gene_trees`, `output_folder` → `output`)
+and flattens the two nested blocks with a prefix
+(`permutation_options.ci_method` → `permutation_ci_method`). After undoing both
+transformations the runtime key set must be a subset of the documented one, so
+the difference is empty. This fails the moment a config key is added without the
+sample gaining it.
 
 ### Validation tests
 
@@ -907,8 +957,8 @@ from the file, and a warning naming the ignored flags must be printed.
   required-path validation → `ConfigError`.
 - `test_parser_exposes_config_file_and_new_flags` — parsing
   `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2 --p-value-correction
-  fdr_bh --summary-statistic mean --no-overwrite` must yield those exact values
-  with `config_file is None`.
+  fdr_bh --alpha-perm 0.02 --no-permutation-test --no-overwrite` must yield
+  those exact values with `config_file is None`.
 
 ## tests/test_config_trunk.py
 

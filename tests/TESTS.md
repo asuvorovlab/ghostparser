@@ -416,6 +416,29 @@ Orchestrator config resolution and config-file precedence.
   falls back to the orchestrator default (proving the CLI value was ignored), the
   file's paths are used, and a warning is printed. Purpose: config-file
   precedence.
+- `test_outgroup_accepts_single_comma_separated_and_list_forms` — Inputs
+  (parametrized, 6 rows): `outgroup` given as a single label, a comma-separated
+  string, a padded string with a trailing comma, a list, a tuple, and a list
+  whose entries are themselves comma-separated. Expected outputs: each resolves
+  to the same flat label list. Purpose: one key covers the single- and
+  multiple-outgroup cases in every accepted shape.
+- `test_outgroup_rejects_empty_and_non_label_values` — Inputs (parametrized, 7
+  rows): `None`, empty and whitespace strings, a lone comma, empty and
+  blank-only lists, and an integer. Expected outputs: `ConfigError` naming
+  `outgroup`. Purpose: a value that yields no labels is an error rather than an
+  empty outgroup list.
+- `test_shipped_sample_configs_resolve` — Inputs (parametrized):
+  `sample_configs/orchestrator_minimal.yaml` and `orchestrator_full.yaml`.
+  Expected outputs: each loads without error, yields a non-empty list of
+  string outgroup labels, and carries the current `alpha_perm` and
+  `permutation_ci_method` defaults. Purpose: the shipped samples cannot drift
+  out of step with the validator and leave users copying a rejected config.
+- `test_full_sample_config_covers_every_runtime_key` — Inputs:
+  `orchestrator_full.yaml` read both as raw YAML and through the loader.
+  Expected outputs: every key the normalizer produces is documented in the
+  sample, after allowing for the three renamed path keys and the two
+  prefix-flattened nested blocks. Purpose: a new config key cannot be added
+  without the sample gaining it too.
 - `test_missing_required_field_raises` — Inputs: a namespace missing the species
   tree. Expected outputs: `ConfigError`. Purpose: required-field validation.
 - `test_preflight_data_check_resolves_from_config_file` — Inputs
