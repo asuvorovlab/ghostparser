@@ -748,6 +748,18 @@ def _decide_direction(
     if not len(con_heights) or not len(dis1_heights):
         return "ambiguous", None
 
+    # PROVISIONAL median sign-test fallback, kept so the permutation test can be
+    # A/B'd against the previous behaviour on simulated data with known ground
+    # truth. It is expected to go once that comparison is settled, so everything
+    # it touches is confined to named seams. Removing it means deleting, in
+    # order: this branch; the `permutation_test` parameter threaded through
+    # _decide_direction, _run_triplet_pipeline_from_observations,
+    # _iteration_classification, _iteration_full, _run_bootstrap_iterations,
+    # _finalize_triplet_analysis, analyze_triplet[_from_observations] and
+    # write_pipeline_results; permutation.median_sign_decision; the
+    # DEFAULT_PERMUTATION_TEST default, the "permutation_test" payload key and
+    # its --no-permutation-test flag in config.py; and the permutation-on/off
+    # parametrization in the inference tests. Nothing else keys off the flag.
     if not permutation_test:
         return median_sign_decision(con_heights, dis1_heights), None
 

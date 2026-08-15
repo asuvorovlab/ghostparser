@@ -570,10 +570,15 @@ def run_studentized_permutation_test(
 
 
 def median_sign_decision(con_heights, dis1_heights):
-    """Decide direction by comparing sample medians.
+    """Decide direction by a sign test on the two sample medians.
 
-    This is the fallback used when the permutation test is disabled, kept so
-    the two inference paths can be compared on the same data.
+    PROVISIONAL. This is the pre-permutation-test behaviour, retained only so
+    the two inference paths can be run against each other on data with known
+    ground truth, and reached solely through ``permutation_test: false``. It
+    attaches no p-value and no notion of significance, so any numerical
+    difference between the medians -- however small -- yields a confident
+    direction. See the removal checklist at the fallback branch in
+    ``inference._decide_direction``.
 
     Args:
         con_heights: Concordant tree heights.

@@ -27,6 +27,10 @@ python -m ghostparser.orchestrator \
 # config-file mode (JSON or YAML); other CLI flags are ignored
 python -m ghostparser.orchestrator -c run_config.yaml
 
+# start from a shipped sample: orchestrator_minimal.yaml has just the required
+# inputs, orchestrator_full.yaml lists every key at its default
+python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
+
 # check the input data and exit, without running any analysis
 python -m ghostparser.orchestrator \
     -st species.tree -gt genes.tree -og OutGroup --preflight-data-check
@@ -416,9 +420,18 @@ runs for every triplet, including ones the earlier gates already settled, so the
 permutation columns are populated throughout the results TSV.
 
 **Disabling it.** `permutation_test: false` (or `--no-permutation-test`) swaps
-gate 3 for a plain comparison of the concordant and discordant1 medians:
-`greater`, `less`, or `ambiguous` on an exact tie. This exists so the two
-inference paths can be compared on the same data.
+gate 3 for a sign test on the concordant and discordant1 medians: `greater`,
+`less`, or `ambiguous` on an exact tie.
+
+This fallback is **provisional**. It is the pre-permutation-test behaviour, kept
+only so the two inference paths can be run against each other on simulated data
+where the ground truth is known, and it is expected to be removed together with
+the `permutation_test` key once that comparison is settled. It attaches no
+p-value and no notion of significance, so an arbitrarily small gap between the
+two medians still yields a confident `outflow` or `ghost` call — which is the
+weakness the permutation test exists to fix. The code is arranged so the removal
+is mechanical: `inference._decide_direction` carries a checklist naming every
+site the flag threads through.
 
 ## Outputs
 

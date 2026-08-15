@@ -128,7 +128,7 @@ def build_orchestrator_config(
     return {
         "species_tree_path": str(species_tree),
         "gene_trees_path": str(gene_trees),
-        "outgroups": outgroups,
+        "outgroup": outgroups,
         "output_folder": str(out_dir),
         "p_value_correction": p_value_correction,
         "generate_summary_stats": generate_summary_stats,

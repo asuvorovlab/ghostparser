@@ -84,7 +84,7 @@ AUTO_GENE_TREES_THRESHOLD = 3500
 _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "species_tree_path",
     "gene_trees_path",
-    "outgroups",
+    "outgroup",
     "output_folder",
     "triplet_filter",
     "no_overwrite",
@@ -355,13 +355,15 @@ def _validate_permutation_options(payload: dict) -> tuple[bool, dict]:
     }
 
 
-def _parse_outgroups(value) -> list[str]:
-    """Parse the outgroup(s) value into a list of taxon labels.
+def _parse_outgroup(value) -> list[str]:
+    """Parse the ``outgroup`` value into a list of taxon labels.
 
-    Accepts a comma-separated string or a list/tuple/set of labels.
+    One key covers both the single- and multiple-outgroup cases: the value may
+    be a single label, a comma-separated string, or a list/tuple/set of labels,
+    and always resolves to a list.
 
     Args:
-        value: The raw outgroup(s) value.
+        value: The raw ``outgroup`` value.
 
     Returns:
         A non-empty list of outgroup labels.
@@ -370,15 +372,25 @@ def _parse_outgroups(value) -> list[str]:
         ConfigError: If no outgroup labels can be parsed.
     """
     if isinstance(value, str):
-        outgroups = [part.strip() for part in value.split(",") if part.strip()]
+        entries = [value]
     elif isinstance(value, (list, tuple, set)):
-        outgroups = [str(part).strip() for part in value if str(part).strip()]
+        entries = [str(entry) for entry in value]
     else:
-        outgroups = []
+        entries = []
 
-    if not outgroups:
-        raise ConfigError("Missing required config field: outgroup(s)")
-    return outgroups
+    # Split every entry on commas, so a list of labels, a comma-separated
+    # string, and a list containing comma-separated strings all flatten the
+    # same way.
+    outgroup = [
+        label
+        for entry in entries
+        for label in (part.strip() for part in entry.split(","))
+        if label
+    ]
+
+    if not outgroup:
+        raise ConfigError("Missing required config field: outgroup")
+    return outgroup
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -414,9 +426,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-og",
-        "--outgroups",
+        "--outgroup",
         default=None,
-        help="Outgroup species identifier(s), comma-separated",
+        help="Outgroup species identifier(s), comma-separated for more than one",
     )
     parser.add_argument(
         "--output-folder",
@@ -535,10 +547,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
     species_tree = _validate_required_path(payload, "species_tree_path")
     gene_trees = _validate_required_path(payload, "gene_trees_path")
 
-    outgroups_source = payload.get("outgroups")
-    if outgroups_source is None:
-        outgroups_source = payload.get("outgroup")
-    outgroups = _parse_outgroups(outgroups_source)
+    outgroup = _parse_outgroup(payload.get("outgroup"))
 
     output = _validate_optional_path(payload, "output_folder")
     if output is None:
@@ -550,7 +559,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
     return {
         "species_tree": species_tree,
         "gene_trees": gene_trees,
-        "outgroup": outgroups,
+        "outgroup": outgroup,
         "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
         "output": output,
         "overwrite": _validate_overwrite_flag(payload),
