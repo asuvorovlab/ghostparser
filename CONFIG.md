@@ -84,6 +84,9 @@ For how the module works internally, see [ghostparser/orchestrator/ORCHESTRATOR.
 ```bash
 python -m ghostparser.orchestrator -c run_config.yaml
 python -m ghostparser.orchestrator -c run_config.json
+
+# or start from a shipped sample
+python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
 ```
 
 When a config file is given, **the file supplies every setting and the other CLI flags are ignored with a warning** (config wins). This is the only way to set the config-file-only keys listed below.
@@ -93,7 +96,7 @@ Minimal YAML:
 ```yaml
 species_tree_path: data/species.tree
 gene_trees_path: data/genes.tree
-outgroups: OutGroup
+outgroup: OutGroup
 output_folder: results
 ```
 
@@ -102,7 +105,7 @@ Fuller YAML showing the config-file-only keys and the nested blocks:
 ```yaml
 species_tree_path: data/species.tree
 gene_trees_path: data/genes.tree
-outgroups: Out1,Out2
+outgroup: Out1,Out2
 output_folder: results
 processes: 0
 parallelization_mode: auto
@@ -142,11 +145,10 @@ These must be supplied either on the CLI or in the config file.
 - CLI: `-gt, --gene-trees-path`
 - Gene trees in Newick format, one per line.
 
-##### `outgroups`
+##### `outgroup`
 
-- CLI: `-og, --outgroups`
-- Outgroup taxon identifier(s). Accepts a comma-separated string (`Out1,Out2`) or a YAML/JSON list. The species tree is rooted and pruned on the outgroup MRCA; gene trees are rooted on the outgroup.
-- The alias `outgroup` is also accepted in config files.
+- CLI: `-og, --outgroup`
+- Outgroup taxon identifier(s). One key covers both the single- and multiple-outgroup cases: give a single label (`OutGroup`), a comma-separated string (`Out1,Out2`), or a YAML/JSON list (`["Out1", "Out2"]`). List entries may themselves be comma-separated. The species tree is rooted and pruned on the outgroup MRCA; gene trees are rooted on the outgroup.
 
 ### Config + CLI Keys
 
@@ -212,7 +214,8 @@ Settable either on the CLI or in a config file.
 
 - CLI: `--no-permutation-test` (sets `permutation_test: false`)
 - Default: `true`
-- Decides the direction of the concordant-versus-discordant1 height difference with the adaptive studentized permutation test. When disabled, the direction comes from a plain comparison of the two medians instead, and only the `perm_decision` column is written. See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#gate-3--adaptive-studentized-permutation-test) for the method.
+- Decides the direction of the concordant-versus-discordant1 height difference with the adaptive studentized permutation test. When disabled, the direction comes from a sign test on the two medians instead, and only the `perm_decision` column is written. See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#gate-3--adaptive-studentized-permutation-test) for the method.
+- The median fallback is provisional: it is the pre-permutation-test behaviour, retained so the two paths can be compared on data with known ground truth, and is expected to be removed along with this key once that comparison is settled. It attaches no p-value, so any numerical gap between the medians produces a confident direction.
 
 ##### `consolidation`
 
@@ -515,6 +518,11 @@ python -m ghostparser.ml.multi_knn -i ./results/summary_statistics.tsv -o ./resu
 - `sample_configs/hyperparameter_tuning_random_forest.yaml`
 
 The ML sample configs illustrate the `input_path`, `output_dir`, `model`, `evaluation`, and `hyperparameter_tuning` sections that the ML loaders expect.
+
+Orchestrator samples live alongside them:
+
+- `sample_configs/orchestrator_minimal.yaml` — the three required inputs plus an output folder; everything else defaults.
+- `sample_configs/orchestrator_full.yaml` — every key at its default value, including the config-file-only ones, as a starting point to trim.
 
 ---
 

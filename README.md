@@ -150,7 +150,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 
 - `-st, --species-tree-path`
 - `-gt, --gene-trees-path`
-- `-og, --outgroups`
+- `-og, --outgroup`
 
 **Config-file mode (CLI-only):**
 
@@ -225,9 +225,9 @@ Consolidation details:
 
    - Path to the gene trees file in Newick format.
 
-- `--outgroups` (alias `-og`)
+- `--outgroup` (alias `-og`)
 
-   - Outgroup species identifier(s). Use comma-separated taxa for multiple outgroups.
+   - Outgroup species identifier(s). Use comma-separated taxa for multiple outgroups; a config file may also give a list.
 
 **Optional Arguments:**
 
