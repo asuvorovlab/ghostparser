@@ -12,8 +12,6 @@ runtime knobs is exposed both on the CLI and in the config file; the rest are
 config-file-only.
 """
 
-from __future__ import annotations
-
 import argparse
 
 from ..cli_config import resolve_cli_or_config_args
@@ -39,7 +37,6 @@ DEFAULT_P_VALUE_CORRECTION = "bfn"
 DEFAULT_ALPHA_DCT = 0.05
 DEFAULT_ALPHA_KS = 0.05
 DEFAULT_ALPHA_PERM = 0.05
-DEFAULT_PERMUTATION_TEST = True
 DEFAULT_PERMUTATION_MIN_RESAMPLES = 2500
 DEFAULT_PERMUTATION_MAX_RESAMPLES = 25000
 DEFAULT_PERMUTATION_CI_METHOD = "wilson"
@@ -96,7 +93,6 @@ _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "p_value_correction",
     "consolidation",
     "bootstrap",
-    "permutation_test",
     "preflight_data_check",
 ]
 
@@ -191,10 +187,43 @@ def _validate_optional_float(payload: dict, key: str, default: float) -> float:
         raise ConfigError(f"Config field {key} must be a numeric value") from exc
 
 
+# YAML 1.1 resolves these bare words to booleans, so a config writing a choice
+# such as ``p_value_correction: no`` reaches validation as ``False`` rather than
+# ``"no"``. Each bool is mapped back to whichever spelling the field actually
+# offers, so the unquoted form works as written.
+_YAML_BOOL_WORD_CHOICES = {
+    False: ("no", "off", "n", "false"),
+    True: ("yes", "on", "y", "true"),
+}
+
+
+def _coerce_yaml_bool_choice(value, choices: tuple[str, ...]):
+    """Map a YAML-coerced boolean back to the string choice it was written as.
+
+    Args:
+        value: The raw config value.
+        choices: The allowed values for the field.
+
+    Returns:
+        The matching choice string, or ``value`` unchanged when it is not a
+        boolean or the field offers no corresponding spelling.
+    """
+    if not isinstance(value, bool):
+        return value
+    for word in _YAML_BOOL_WORD_CHOICES[value]:
+        if word in choices:
+            return word
+    return value
+
+
 def _validate_choice(
     payload: dict, key: str, default: str, choices: tuple[str, ...]
 ) -> str:
     """Validate an enumerated string field.
+
+    A boolean value is mapped back to the equivalent string choice first, so
+    that YAML's bare-word booleans (``no``, ``yes``, ``on``, ``off``) select the
+    choice the user wrote rather than failing validation.
 
     Args:
         payload: The config/CLI payload.
@@ -211,8 +240,12 @@ def _validate_choice(
     value = payload.get(key, default)
     if value is None:
         value = default
+    value = _coerce_yaml_bool_choice(value, choices)
     if not isinstance(value, str) or value not in choices:
-        raise ConfigError(f"Config field {key} must be one of: {', '.join(choices)}")
+        raise ConfigError(
+            f"Config field {key} must be one of: {', '.join(choices)} "
+            f"(got {value!r})"
+        )
     return value
 
 
@@ -290,27 +323,22 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
     }
 
 
-def _validate_permutation_options(payload: dict) -> tuple[bool, dict]:
-    """Validate the permutation-test toggle and its nested options block.
+def _validate_permutation_options(payload: dict) -> dict:
+    """Validate the nested permutation-test options block.
 
-    The toggle is exposed on both the CLI and the config file; the tuning knobs
-    inside ``permutation_options`` are config-file-only. There is no
-    ``initial_batch`` knob: the first adaptive batch is always ``min_resamples``.
+    The tuning knobs inside ``permutation_options`` are config-file-only. There
+    is no ``initial_batch`` knob: the first adaptive batch is always
+    ``min_resamples``.
 
     Args:
         payload: The config/CLI payload.
 
     Returns:
-        A tuple ``(permutation_test, options)`` where ``options`` has
-        ``min_resamples``/``max_resamples``/``ci_method``.
+        A dict with ``min_resamples``/``max_resamples``/``ci_method``.
 
     Raises:
         ConfigError: If any value is malformed or out of range.
     """
-    permutation_test = _validate_optional_bool(
-        payload, "permutation_test", DEFAULT_PERMUTATION_TEST
-    )
-
     raw_options = payload.get("permutation_options")
     if raw_options is None:
         raw_options = {}
@@ -348,7 +376,7 @@ def _validate_permutation_options(payload: dict) -> tuple[bool, dict]:
             f"{', '.join(PERMUTATION_CI_METHOD_CHOICES)}"
         )
 
-    return permutation_test, {
+    return {
         "min_resamples": min_resamples,
         "max_resamples": max_resamples,
         "ci_method": ci_method,
@@ -488,17 +516,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
     )
     parser.add_argument(
-        "--no-permutation-test",
-        dest="permutation_test",
-        action="store_false",
-        default=None,
-        help=(
-            "Decide direction by comparing concordant and discordant1 medians "
-            "instead of running the studentized permutation test (default: "
-            "permutation test enabled)"
-        ),
-    )
-    parser.add_argument(
         "--no-consolidation",
         dest="consolidation",
         action="store_false",
@@ -554,7 +571,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         output = _resolve_path(DEFAULT_OUTPUT_FOLDER)
 
     bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
-    permutation_test, permutation_options = _validate_permutation_options(payload)
+    permutation_options = _validate_permutation_options(payload)
 
     return {
         "species_tree": species_tree,
@@ -604,7 +621,6 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "alpha_perm": _validate_optional_float(
             payload, "alpha_perm", DEFAULT_ALPHA_PERM
         ),
-        "permutation_test": permutation_test,
         "permutation_min_resamples": permutation_options["min_resamples"],
         "permutation_max_resamples": permutation_options["max_resamples"],
         "permutation_ci_method": permutation_options["ci_method"],
