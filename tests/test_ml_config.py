@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 
 from ghostparser.ml.config import load_ml_config

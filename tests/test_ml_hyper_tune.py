@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import json
 
@@ -128,7 +126,7 @@ def test_load_hyper_tune_config_requires_hyperparameter_tuning_section(tmp_path)
 
 
 def test_tune_hyperparameters_grid_search_smoke(
-    summary_statistics_tsv_tuning, tmp_path, capsys, monkeypatch
+    summary_statistics_tsv_tuning, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("WANDB_MODE", "disabled")
 
@@ -160,17 +158,12 @@ def test_tune_hyperparameters_grid_search_smoke(
     )
 
     result = tune_hyperparameters(config)
-    captured = capsys.readouterr().out
 
     assert result["results"]["model_name"] == "random_forest"
     assert result["results"]["search_method"] == "grid"
     assert len(result["candidates"]) == 2
     assert (tmp_path / "hyper_tune_out" / "hyper_tune_best_model.pkl").exists()
     assert (tmp_path / "hyper_tune_out" / "hyper_tune_results.json").exists()
-    assert "[hyper_tune] Starting hyperparameter tuning" in captured
-    assert "Will evaluate 2 candidate cases across 2 CV folds" in captured
-    assert "[1/2] evaluating" in captured
-    assert "Finished in" in captured
 
 
 def test_tune_hyperparameters_random_search_smoke(

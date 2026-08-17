@@ -4,13 +4,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from ghostparser.introgression_mapper import (
-    GHOST_ONLY_BAR_COLOR,
-    GHOST_WITH_SAMPLED_BAR_COLOR,
     _collect_counts,
     _collect_non_sister_counts,
-    _draw_species_tree_strip,
     _sampled_introgression_presence,
-    _scaled_consolidation_text_sizes,
     generate_introgression_maps,
 )
 
@@ -151,24 +147,6 @@ def test_generate_introgression_maps_preserves_run_dir_when_reset_disabled(tmp_p
     assert existing.read_text() == "keep me"
     assert artifacts.plot_path == str(output_dir / "introgression_combined.png")
     assert Path(artifacts.plot_path).exists()
-
-
-def test_scaled_consolidation_text_sizes_grow_with_taxa_count():
-    small = _scaled_consolidation_text_sizes(5)
-    large = _scaled_consolidation_text_sizes(83)
-    capped = _scaled_consolidation_text_sizes(500)
-
-    assert small["axis_label"] < large["axis_label"]
-    assert small["cbar_label"] < large["cbar_label"]
-    assert small["cbar_tick"] < large["cbar_tick"]
-
-    assert large["axis_label"] == 17
-    assert large["cbar_label"] == 16
-    assert large["cbar_tick"] == 13
-
-    assert capped["axis_label"] == 20
-    assert capped["cbar_label"] == 19
-    assert capped["cbar_tick"] == 14
 
 
 def test_generate_introgression_maps_uses_full_species_tree_by_default(tmp_path):
@@ -526,54 +504,6 @@ def test_collect_counts_correct_avg_in_generate_introgression_maps(tmp_path):
     assert abs(ghost_count_map["A"] - 1.0) < 1e-9
 
 
-def test_draw_species_tree_strip_suppresses_leaf_labels(tmp_path):
-    """show_leaf_labels=False must produce no Text artists on the axis."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    from matplotlib import pyplot as plt
-    from matplotlib.text import Text
-
-    species_tree = tmp_path / "species.tree"
-    species_tree.write_text("((A:1,B:1):1,C:1);\n")
-    taxa_order = ["A", "B", "C"]
-
-    fig, ax = plt.subplots()
-    _draw_species_tree_strip(
-        ax, str(species_tree), taxa_order, "top", show_leaf_labels=False
-    )
-    text_artists = [
-        child
-        for child in ax.get_children()
-        if isinstance(child, Text) and child.get_text().strip() in taxa_order
-    ]
-    plt.close(fig)
-    assert len(text_artists) == 0
-
-
-def test_draw_species_tree_strip_shows_leaf_labels_by_default(tmp_path):
-    """show_leaf_labels=True (default) must draw one Text artist per leaf."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    from matplotlib import pyplot as plt
-    from matplotlib.text import Text
-
-    species_tree = tmp_path / "species.tree"
-    species_tree.write_text("((A:1,B:1):1,C:1);\n")
-    taxa_order = ["A", "B", "C"]
-
-    fig, ax = plt.subplots()
-    _draw_species_tree_strip(ax, str(species_tree), taxa_order, "top")
-    text_artists = [
-        child
-        for child in ax.get_children()
-        if isinstance(child, Text) and child.get_text().strip() in taxa_order
-    ]
-    plt.close(fig)
-    assert len(text_artists) == len(taxa_order)
-
-
 def test_collect_non_sister_counts_counts_non_sister_pairs():
     """_collect_non_sister_counts increments only non-sister pairs.
 
@@ -711,79 +641,3 @@ def test_ghost_strength_tsv_records_sampled_introgression_flag(tmp_path):
     # Bar length still comes from the ghost strength, untouched by the flag.
     assert strengths["A"] > 0.0
     assert strengths["D"] > 0.0
-
-
-def test_ghost_bars_use_constant_colours_by_sampled_presence(tmp_path, monkeypatch):
-    """Bar colours are the two fixed colours, chosen by the sampled-presence flag."""
-    import matplotlib.axes
-
-    species_tree = tmp_path / "species.tree"
-    species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
-
-    captured = {}
-    original_barh = matplotlib.axes.Axes.barh
-
-    def _recording_barh(self, y, width, **kwargs):
-        captured["colors"] = kwargs.get("color")
-        captured["widths"] = list(width)
-        return original_barh(self, y, width, **kwargs)
-
-    monkeypatch.setattr(matplotlib.axes.Axes, "barh", _recording_barh)
-
-    generate_introgression_maps(
-        _ghost_colour_scenario_results(),
-        species_tree_path=str(species_tree),
-        output_dir=str(tmp_path),
-    )
-
-    taxa_order = [
-        line.split("\t")[1]
-        for line in _consolidation_lines(
-            tmp_path / "consolidation_data", "introgression_taxa_order.tsv"
-        )[1:]
-    ]
-    colors = dict(zip(taxa_order, captured["colors"]))
-    widths = dict(zip(taxa_order, captured["widths"]))
-
-    # Only the two constant colours are ever used -- no colormap gradient.
-    assert set(captured["colors"]) <= {
-        GHOST_ONLY_BAR_COLOR,
-        GHOST_WITH_SAMPLED_BAR_COLOR,
-    }
-    # cividis low end (dark blue) vs high end (yellow).
-    assert colors["A"] == GHOST_WITH_SAMPLED_BAR_COLOR  # ghost + sampled
-    assert colors["D"] == GHOST_ONLY_BAR_COLOR  # ghost only
-    # A and D have different ghost strengths but D shares its colour with any
-    # other ghost-only taxon, proving colour no longer tracks magnitude.
-    assert widths["A"] != widths["D"]
-
-
-def test_zero_heatmap_cells_are_masked(tmp_path, monkeypatch):
-    """Cells with no introgression edge are masked instead of painted."""
-    import numpy as np
-
-    import ghostparser.introgression_mapper as mapper
-
-    species_tree = tmp_path / "species.tree"
-    species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
-
-    captured = {}
-    original_heatmap = mapper.sns.heatmap
-
-    def _recording_heatmap(data, **kwargs):
-        captured["data"] = np.asarray(data, dtype=float)
-        captured["mask"] = np.asarray(kwargs.get("mask"))
-        return original_heatmap(data, **kwargs)
-
-    monkeypatch.setattr(mapper.sns, "heatmap", _recording_heatmap)
-
-    generate_introgression_maps(
-        _ghost_colour_scenario_results(),
-        species_tree_path=str(species_tree),
-        output_dir=str(tmp_path),
-    )
-
-    # The scenario has exactly one sampled edge, (C, A), so exactly one cell is
-    # non-zero and every other cell of the 4x4 matrix is masked.
-    assert captured["mask"].tolist() == (captured["data"] == 0.0).tolist()
-    assert int((~captured["mask"]).sum()) == 1

@@ -245,9 +245,9 @@ the observed statistic and `p_greater` sits at the add-one floor
 **Inputs:** the mirror image — 10 concordant from `_LOW[:10]`
 (`[0.05, ..., 0.14]`), 30 dis1 from `_HIGH * 3`, 2 dis2 at 0.9.
 
-**Derivation:** identical DCT and KS reasoning; gate 3 now finds
-`mean_con < mean_dis` with `p_less` at the floor → `perm_decision = "less"` →
-`ghost_introgression`.
+**Derivation:** identical DCT and KS reasoning; gate 3 now finds a negative
+studentized difference (`perm_statistic < 0`) with `p_less` at the floor →
+`perm_decision = "less"` → `ghost_introgression`.
 
 ### `test_classify_ambiguous_when_direction_is_undetectable`
 
@@ -284,14 +284,6 @@ by that noise gives a statistic around `1.5e17`. The guard therefore compares
 the standard error against `1e-12 x max(|pooled|, 1)` rather than against exact
 zero, catching this as `degenerate_observed_scale`.
 
-### `test_median_fallback_decides_direction_when_permutation_disabled`
-
-**Inputs:** the same degenerate heights with `permutation_test=False`.
-
-**Derivation:** with the permutation test off, gate 3 compares medians:
-`median_con = 0.9 > median_dis = 0.1` → `greater` → `outflow_introgression`.
-No permutation runs, so `perm_statistic is None`.
-
 ### `test_summary_statistics_discordant1_follows_frequency_not_topology_name`
 
 **Inputs:** built by `_subtrees`, which renders each height `h` as
@@ -315,9 +307,8 @@ A group's mean avg-tree-height is therefore its mean input height plus `0.4/3`.
 The AC heights average `0.50 + 0.01·(0+…+8)/9 = 0.54`, giving
 `0.54 + 0.13333… = 0.67333…`; the BC heights average `0.12`, giving
 `0.25333…`. The assertion is that `discordant1_avg_tree_height_mean` is the
-**former** — under the previous fixed `BC|A` mapping it was the latter, a
-different set of gene trees from the one `dis1_topology` names. `result.mean_dis`
-must agree with it, since the decision logic compares that same group.
+**former**: the AC group, which is the one `dis1_topology` names and the one
+every statistical test compares.
 
 ### `test_summary_statistics_discordant_roles_swap_with_the_counts`
 
@@ -332,19 +323,23 @@ follows the counts rather than the topology name in either direction.
 ### `test_classify_introgression_truth_table`
 
 **Inputs:** `_classify_introgression(dct_significant, ks_significant,
-direction)` called directly with 7 explicit rows.
+direction)` called directly with 8 explicit rows; it returns the
+`(classification, decision_gate)` pair asserted below.
 
-**Derivation:** straight from the decision definition —
+**Derivation:** straight from the decision definition. The gate is the name of
+the test whose branch returned, so it is fixed by `dct_sig` and `ks_sig` alone —
+`direction` only ever selects among the three `Permutation` classifications.
 
-| dct_sig | ks_sig | direction | Expected | Reason |
-| --- | --- | --- | --- | --- |
-| False | True | `greater` | `no_introgression` | gate 1 fails first |
-| False | False | `less` | `no_introgression` | gate 1 fails first |
-| True | False | `greater` | `inflow_introgression` | gate 2 not significant |
-| True | True | `greater` | `outflow_introgression` | con > dis |
-| True | True | `less` | `ghost_introgression` | con < dis |
-| True | True | `ambiguous` | `ambiguous` | no direction resolved |
-| True | True | `None` | `ambiguous` | no direction available |
+| dct_sig | ks_sig | direction | Expected | Gate | Reason |
+| --- | --- | --- | --- | --- | --- |
+| False | True | `greater` | `no_introgression` | `DCT` | DCT fails first |
+| False | False | `less` | `no_introgression` | `DCT` | DCT fails first |
+| True | False | `greater` | `inflow_introgression` | `THT` | tree-height test not significant |
+| True | `None` | `greater` | `inflow_introgression` | `THT` | no THT ran; `not None` takes the same branch |
+| True | True | `greater` | `outflow_introgression` | `Permutation` | con > dis |
+| True | True | `less` | `ghost_introgression` | `Permutation` | con < dis |
+| True | True | `ambiguous` | `ambiguous` | `Permutation` | no direction resolved |
+| True | True | `None` | `ambiguous` | `Permutation` | no direction available |
 
 ### `test_adjust_p_values_matches_statsmodels`
 
@@ -455,17 +450,6 @@ And a directional decision requires the corresponding tail to be small, which
 requires the observed statistic to sit on that side of the null, so `greater`
 implies a positive statistic and `less` a negative one.
 
-### `test_decision_rules_agree_on_random_inputs`
-
-**Inputs:** eight seeded pairs, `min_resamples=2000`, `max_resamples=6000`,
-`correction="bfn"`.
-
-**Derivation:** the primary rule fires when `2 * min(p_greater, p_less) <=
-alpha`; the cross-check gates on exactly `min(1, 2 * min(p_greater, p_less)) <=
-alpha` and then takes the sign of the mean difference, which agrees with the
-significant tail. The two rules are therefore the same condition expressed
-twice, and `consistent` must be `True`.
-
 ### `test_equal_samples_give_a_zero_statistic_and_no_direction`
 
 **Inputs:** the same 8 values `[0.10, 0.22, 0.31, 0.44, 0.55, 0.61, 0.78, 0.83]`
@@ -522,10 +506,8 @@ strongly right-skewed. No permutation is more negative than the observation, so
 `p_less` sits at the add-one floor and the directional call is `less`. Yet a
 large fraction of permutations exceed `|T_obs|` on the *right*, so the
 absolute-value `p_two_sided` stays above `alpha`. The directional decision is
-the correct one; `null_skewed` records the asymmetry, `note` stays `None`
-because this is expected rather than exceptional, and `consistent` remains
-`True` because the cross-check gates on the doubled smaller tail rather than on
-the absolute-value count.
+the correct one; `null_skewed` records the asymmetry, and `note` stays `None`
+because this is expected rather than exceptional.
 
 ### `test_max_resamples_reached_is_reported`
 
@@ -550,25 +532,24 @@ far below `alpha = 0.05`, so `alpha` is outside it after the very first batch.
 The run therefore stops with `batches == 1`, `n_resamples == 1000`, and decision
 `greater` — an easy case must not spend the ceiling.
 
-### `test_batches_grow_by_one_quarter_until_the_budget_is_spent`
+### `test_undecided_runs_grow_their_batches_until_the_budget_is_reached`
 
-**Inputs:** two 30-element samples from the same `N(1.0, 1.0^2)`,
-`min_resamples=100`, `max_resamples=1000`.
+**Inputs:** 30 draws from `N(1.4, 1.0^2)` against 30 from `N(1.0, 1.0^2)`
+(sample seed 3), `min_resamples=100`, `max_resamples=1000`, resampling seed 103.
 
-**Derivation:** the samples share a distribution, so the p-values sit far from
-`alpha`, but at 100 resamples the Wilson interval is wide enough to still
-contain it, and the run keeps going. Each batch is `int(previous x 1.25)`,
-giving batch sizes 100, 125, 156, 195, 243, and then 303 clipped to the 1000
-remaining. The cumulative totals are therefore 100, 225, 381, 576, 819, 1000,
-and whichever total the run stops at must appear in that list at the position
-matching `result.batches`. This pins both the growth factor and the
-final-batch clipping.
+**Derivation:** the 0.4 shift is marginal at these sample sizes, so the
+corrected p-value stays near `alpha` and the Wilson interval never excludes it
+— the run draws every batch it is allowed. It therefore ends `converged=False`
+with `note = "max_resamples_reached"`, and takes 6 batches rather than 1.
 
-### `test_median_sign_decision_matches_definition`
-
-**Inputs and derivation:** `median([3,4,5]) = 4 > median([1,2]) = 1.5` →
-`greater`; the reverse → `less`; `median([1,2,3]) = 2 == median([2]) = 2` →
-`ambiguous`; an empty sample → `ambiguous`.
+Two properties are asserted, neither pinning the growth factor. **Growth:** a
+schedule that repeated the opening batch would total exactly
+`batches x 100 = 600`, so a larger total shows the batches grew. **Budget:** the
+first five batches are 100, 125, 156, 195, 243, cumulating to 819 — short of the
+1000 budget, so a sixth batch of 303 is drawn *whole*, ending at 1122. The
+assertion is the bracket `1000 <= n_resamples < 2000`: the run does not stop
+before the budget is met, and overshoots it by at most one batch. The exact
+1122 is left unasserted because it encodes the growth factor.
 
 ### `test_bootstrap_resample_budget_scales_by_one_fifth`
 
@@ -857,8 +838,8 @@ optional argument `None`.
 
 **Derivation:** each key falls back to its constant in
 `ghostparser/orchestrator/config.py`: `alpha_dct`/`alpha_ks` `0.05`,
-`p_value_correction` `"bfn"`, `alpha_perm` `0.05`, `permutation_test` `True`
-with `permutation_min_resamples` `2500`, `permutation_max_resamples` `25000`,
+`p_value_correction` `"bfn"`, `alpha_perm` `0.05`,
+`permutation_min_resamples` `2500`, `permutation_max_resamples` `25000`,
 `permutation_ci_method` `"wilson"`,
 `overwrite` `True`,
 `discordant_test` `"chi-square"`, `tree_height_calculation_strategy` `"AVG"`,
@@ -866,8 +847,6 @@ with `permutation_min_resamples` `2500`, `permutation_max_resamples` `25000`,
 `None`, and the boolean feature flags `False` — including
 `preflight_data_check`, whose default `DEFAULT_PREFLIGHT_DATA_CHECK` is `False`
 so that an ordinary run is never turned into a check-only run by accident.
-`stats_backend` must be absent entirely, since the custom backend no longer
-exists.
 
 ### `test_cli_overrides_for_config_plus_cli_options`
 
@@ -957,8 +936,8 @@ sample gaining it.
   required-path validation → `ConfigError`.
 - `test_parser_exposes_config_file_and_new_flags` — parsing
   `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2 --p-value-correction
-  fdr_bh --alpha-perm 0.02 --no-permutation-test --no-overwrite` must yield
-  those exact values with `config_file is None`.
+  fdr_bh --alpha-perm 0.02 --no-overwrite` must yield those exact values with
+  `config_file is None`.
 
 ## tests/test_config_trunk.py
 
@@ -1175,50 +1154,6 @@ the plot order is listed (`{A, B, C, D}`), because the sheet is keyed by
 `taxa_order` rather than by which taxa have ghost signal. From the table above,
 `A → 1` and `D → 0`. Both `A` and `D` have non-zero ghost strength, confirming
 the flag is an added column rather than a replacement for the strength value.
-
-### `test_ghost_bars_use_constant_colours_by_sampled_presence`
-
-**Inputs:** the shared scenario, with `matplotlib.axes.Axes.barh` monkeypatched
-to record the `color` list and the bar widths before delegating to the original.
-
-**Derivation:** the bar chart is the only `barh` call in the figure, so the
-captured `color` list is exactly the ghost bar colours in `taxa_order`. Colour
-is a two-valued function of the flag, so the captured set must be a subset of
-`{GHOST_ONLY_BAR_COLOR, GHOST_WITH_SAMPLED_BAR_COLOR}`; a per-magnitude colormap
-would instead yield a distinct RGBA per bar. `A` maps to
-`GHOST_WITH_SAMPLED_BAR_COLOR` and `D` to `GHOST_ONLY_BAR_COLOR` per the table.
-The widths for `A` (0.8) and `D` (0.4) differ, which together with ghost-only
-taxa sharing one colour demonstrates that magnitude lives in length alone.
-
-### `test_zero_heatmap_cells_are_masked`
-
-**Inputs:** the shared ghost-colour scenario, with `sns.heatmap` monkeypatched
-to record the `data` and `mask` it receives.
-
-**Derivation:** the scenario produces exactly one sampled edge, `(C, A)` with
-weight 0.5, so in the 4x4 target-by-source matrix over `taxa_order` only the
-cell at row `A`, column `C` is non-zero; the diagonal and all 14 remaining
-off-diagonal cells are 0. The plotting code passes `mask = heat_values == 0.0`,
-so the recorded mask must equal that comparison elementwise, and the count of
-unmasked cells must be exactly 1.
-
-### `test_metrics_txt_leads_with_hyperparameters` (random forest)
-
-**Inputs:** `summary_statistics_tsv` with `n_estimators=25`, `random_state=7`,
-`test_size=0.25`, `max_depth=None`, `cv_folds=3`,
-`rare_class_policy="warn_reduce_cv"`.
-
-**Derivation:** `format_hyperparameter_section` emits the title
-`Hyperparameters:` followed by one `  {name:<width}  {value}` line per entry,
-where `width` is the longest key (`cv_folds_requested` /
-`cv_folds_effective`, 18 characters). The test splits each line on whitespace
-rather than asserting column positions, because that width shifts whenever a
-key is added. `max_depth` is `None`, which the formatter renders as the literal
-`none` so an unset knob is distinguishable from an empty string. The block is
-prepended to `text_lines` before the `Test metrics:` group, so its index in the
-file is strictly smaller. `cv_folds_requested` echoes the configured `3` while
-`cv_folds_effective` carries whatever `auto_cv_folds` resolved for the fixture's
-class distribution, which is why only the requested value is asserted.
 
 ## Remaining suites
 

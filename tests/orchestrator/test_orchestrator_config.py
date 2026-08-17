@@ -40,7 +40,6 @@ def _base_cli_args(**overrides):
         p_value_correction=None,
         consolidation=None,
         bootstrap=None,
-        permutation_test=None,
         preflight_data_check=None,
     )
     for key, value in overrides.items():
@@ -56,7 +55,6 @@ def test_cli_defaults_resolve():
     # Defaults specific to this package.
     assert config["p_value_correction"] == "bfn"
     assert config["alpha_perm"] == 0.05
-    assert config["permutation_test"] is True
     assert config["permutation_min_resamples"] == 2500
     assert config["permutation_max_resamples"] == 25000
     assert config["permutation_ci_method"] == "wilson"
@@ -71,8 +69,6 @@ def test_cli_defaults_resolve():
     assert config["bootstrap_debug_mode"] is False
     assert config["bootstrap_summary_only"] is False
     assert config["preflight_data_check"] is False
-    # The custom stats backend is gone: no stats_backend key at all.
-    assert "stats_backend" not in config
 
 
 def test_cli_overrides_for_config_plus_cli_options():
@@ -123,6 +119,50 @@ def test_config_only_keys_read_from_config_file(tmp_path):
     assert config["bootstrap_seed"] == 7
     assert config["bootstrap_debug_mode"] is True
     assert config["bootstrap_summary_only"] is True
+
+
+@pytest.mark.parametrize(
+    "written, expected",
+    [
+        ("no", "no"),
+        ('"no"', "no"),
+        ("No", "no"),
+        ("NO", "no"),
+        ("bfn", "bfn"),
+        ("fdr_bh", "fdr_bh"),
+    ],
+)
+def test_p_value_correction_accepts_yaml_bare_word_no(tmp_path, written, expected):
+    """`p_value_correction: no` resolves to the "no" choice, quoted or not.
+
+    YAML 1.1 resolves the bare word ``no`` to boolean ``False``, so an unquoted
+    value never reaches validation as a string. Every spelling of the choice
+    must still select it.
+    """
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "species_tree_path: species.tree\n"
+        "gene_trees_path: genes.tree\n"
+        "outgroup: OUT\n"
+        f"p_value_correction: {written}\n"
+    )
+
+    config = load_orchestrator_config(str(config_path))
+    assert config["p_value_correction"] == expected
+
+
+def test_p_value_correction_rejects_a_value_with_no_matching_choice(tmp_path):
+    """A boolean with no equivalent choice is still an error, and names the value."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "species_tree_path: species.tree\n"
+        "gene_trees_path: genes.tree\n"
+        "outgroup: OUT\n"
+        "p_value_correction: yes\n"
+    )
+
+    with pytest.raises(ConfigError, match="must be one of"):
+        load_orchestrator_config(str(config_path))
 
 
 @pytest.mark.parametrize(
@@ -257,7 +297,6 @@ def test_parser_exposes_config_file_and_new_flags():
             "--alpha-ks", "0.2",
             "--p-value-correction", "fdr_bh",
             "--alpha-perm", "0.02",
-            "--no-permutation-test",
             "--no-overwrite",
             "--preflight-data-check",
         ]
@@ -268,5 +307,4 @@ def test_parser_exposes_config_file_and_new_flags():
     assert opts.alpha_ks == 0.2
     assert opts.p_value_correction == "fdr_bh"
     assert opts.alpha_perm == 0.02
-    assert opts.permutation_test is False
     assert opts.no_overwrite is True

@@ -80,6 +80,10 @@ def test_classify_inflow_when_tree_height_test_not_significant():
     assert result.ks_statistic == pytest.approx(0.0)
     assert result.ks_significant is False
     assert result.classification == "inflow_introgression"
+    # The direction test still ran and is still reported, but gate 2 settled the
+    # call, so decision_gate is what marks perm_decision as not consulted.
+    assert result.decision_gate == "THT"
+    assert result.perm_decision is not None
 
 
 # Spread-out, fully separated samples. Every concordant height sits above every
@@ -97,7 +101,9 @@ def test_classify_outflow_when_concordant_heights_exceed_discordant():
     assert result.dct_significant is True
     assert result.ks_statistic == pytest.approx(1.0)
     assert result.ks_significant is True
-    assert result.mean_con > result.mean_dis
+    # The studentized difference is (mean_con - mean_dis1) / se, so a positive
+    # statistic is the concordant group sitting higher.
+    assert result.perm_statistic > 0
     assert result.perm_note is None
     assert result.perm_decision == "greater"
     assert result.classification == "outflow_introgression"
@@ -108,7 +114,7 @@ def test_classify_ghost_when_discordant_heights_exceed_concordant():
     result = _analyze(_observations(_LOW[:10], _HIGH * 3, [0.9] * 2))
     assert result.dct_significant is True
     assert result.ks_significant is True
-    assert result.mean_con < result.mean_dis
+    assert result.perm_statistic < 0
     assert result.perm_decision == "less"
     assert result.classification == "ghost_introgression"
 
@@ -143,16 +149,6 @@ def test_permutation_guard_reports_degenerate_scale():
     assert result.perm_note == "degenerate_observed_scale"
     assert result.perm_decision == "ambiguous"
     assert result.classification == "ambiguous"
-
-
-def test_median_fallback_decides_direction_when_permutation_disabled():
-    """With the permutation test off, the median sign comparison drives direction."""
-    result = _analyze(
-        _observations([0.9] * 10, [0.1] * 30, [0.1] * 2), permutation_test=False
-    )
-    assert result.perm_decision == "greater"
-    assert result.perm_statistic is None
-    assert result.classification == "outflow_introgression"
 
 
 def _subtrees(con_heights, bc_heights, ac_heights):
@@ -215,8 +211,6 @@ def test_summary_statistics_discordant1_follows_frequency_not_topology_name():
     assert statistics["discordant2_avg_tree_height_mean"] == pytest.approx(
         expected_dis2
     )
-    # And it agrees with the group the decision logic compared.
-    assert result.mean_dis == pytest.approx(expected_dis1)
 
 
 def test_summary_statistics_discordant_roles_swap_with_the_counts():
@@ -243,25 +237,30 @@ def test_summary_statistics_discordant_roles_swap_with_the_counts():
 
 
 @pytest.mark.parametrize(
-    "dct_significant,ks_significant,direction,expected",
+    "dct_significant,ks_significant,direction,expected,expected_gate",
     [
-        (False, True, "greater", "no_introgression"),
-        (False, False, "less", "no_introgression"),
-        (True, False, "greater", "inflow_introgression"),
-        (True, True, "greater", "outflow_introgression"),
-        (True, True, "less", "ghost_introgression"),
-        (True, True, "ambiguous", "ambiguous"),
-        (True, True, None, "ambiguous"),
+        (False, True, "greater", "no_introgression", "DCT"),
+        (False, False, "less", "no_introgression", "DCT"),
+        (True, False, "greater", "inflow_introgression", "THT"),
+        (True, None, "greater", "inflow_introgression", "THT"),
+        (True, True, "greater", "outflow_introgression", "Permutation"),
+        (True, True, "less", "ghost_introgression", "Permutation"),
+        (True, True, "ambiguous", "ambiguous", "Permutation"),
+        (True, True, None, "ambiguous", "Permutation"),
     ],
 )
 def test_classify_introgression_truth_table(
-    dct_significant, ks_significant, direction, expected
+    dct_significant, ks_significant, direction, expected, expected_gate
 ):
-    """Every branch of the decision logic maps to its documented classification."""
-    assert (
-        pinf._classify_introgression(dct_significant, ks_significant, direction)
-        == expected
-    )
+    """Every branch of the decision logic maps to its classification and its gate.
+
+    ``_classify_introgression`` returns both in one pass, so the pair is
+    asserted over the same truth table: the gate names the test that settled the
+    call, and only ``Permutation`` means the direction decision was consulted.
+    """
+    assert pinf._classify_introgression(
+        dct_significant, ks_significant, direction
+    ) == (expected, expected_gate)
 
 
 @pytest.mark.parametrize(

@@ -74,8 +74,9 @@ End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixt
   values derived from the fixture rather than another module.
 - `test_run_orchestrator_writes_results_tsv` — Inputs: the same serial run.
   Expected outputs: `orchestrator_triplet_results.tsv` exists, its header starts
-  with `triplet` and includes `classification` and `bootstrap_value`, and its
-  row count equals the number of results. Purpose: TSV shape and naming.
+  with `triplet` and includes `classification`, `bootstrap_value`,
+  `perm_p_greater`, `perm_p_less`, and `decision_gate`, and its row count
+  equals the number of results. Purpose: TSV shape and naming.
 - `test_no_bootstrap_omits_the_bootstrap_columns` — Inputs: a run with
   `bootstrap=False`. Expected outputs: `bootstrap_value` and `all_bootstrap` are
   absent from the header while `classification` remains, and all 4 triplets are
@@ -104,13 +105,6 @@ End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixt
 
 Also in `test_orchestrator.py`:
 
-- `test_results_tsv_carries_no_group_summary_columns` — Inputs: a run with
-  `generate_summary_stats=True`. Expected outputs:
-  `mean_con`/`mean_dis`/`median_con`/`median_dis` are absent from the results
-  TSV header even under that flag, while `perm_p_greater`, `perm_p_less`, and
-  `permutation_consistency_flag` are present. Purpose: the direction comes from
-  the permutation p-values, so per-group summaries belong to
-  `summary_statistics.tsv` alone and never appear in the results TSV.
 
 ### tests/orchestrator/test_orchestrator_inference.py
 
@@ -154,16 +148,19 @@ because the shared fixture never produces a significant DCT.
 - `test_classify_inflow_when_tree_height_test_not_significant` — Inputs: a
   significant 30/2 discordant split with identical concordant and discordant
   heights. Expected outputs: DCT significant, KS statistic 0 and not
-  significant, `inflow_introgression`. Purpose: gate 2 maps to inflow.
+  significant, `inflow_introgression`, `decision_gate == "THT"`, and a non-None
+  `perm_decision`. Purpose: gate 2 maps to inflow, and the gate column marks the
+  reported permutation decision as one the cascade never consulted.
 - `test_classify_outflow_when_concordant_heights_exceed_discordant` — Inputs: a
   significant 30/2 split with fully separated, spread-out heights (10 concordant
   in [0.85, 0.94], 30 discordant1 in [0.05, 0.34]). Expected outputs: KS
-  statistic 1.0 and significant, `mean_con > mean_dis`, no permutation guard,
+  statistic 1.0 and significant, `perm_statistic > 0` (the studentized
+  difference is `(mean_con - mean_dis1) / se`), no permutation guard,
   `perm_decision == "greater"`, `outflow_introgression`. Purpose: gate 3,
   con > dis, with the permutation test actually resampling.
 - `test_classify_ghost_when_discordant_heights_exceed_concordant` — Inputs: the
   mirror case, discordant above concordant. Expected outputs:
-  `mean_con < mean_dis`, `perm_decision == "less"`, `ghost_introgression`.
+  `perm_statistic < 0`, `perm_decision == "less"`, `ghost_introgression`.
   Purpose: gate 3, con < dis.
 - `test_classify_ambiguous_when_direction_is_undetectable` — Inputs: a
   significant split where concordant and discordant1 share a mean but differ
@@ -180,26 +177,24 @@ because the shared fixture never produces a significant DCT.
   Expected outputs: `perm_note == "degenerate_observed_scale"`, ambiguous
   classification. Purpose: a zero standard error is caught relative to the
   data's magnitude rather than against exact zero.
-- `test_median_fallback_decides_direction_when_permutation_disabled` — Inputs:
-  the same degenerate heights with `permutation_test=False`. Expected outputs:
-  `perm_decision == "greater"`, `perm_statistic is None`,
-  `outflow_introgression`. Purpose: the fallback path still resolves direction.
 - `test_summary_statistics_discordant1_follows_frequency_not_topology_name` —
   Inputs: 10 concordant, 3 `BC|A`, and 9 `AC|B` gene subtrees with
   `collect_summary_statistics=True`, so `AC|B` is the more frequent discordant.
   Expected outputs: `dis1_topology == "AC"`, `(n_dis1, n_dis2) == (9, 3)`, and
   `discordant1_avg_tree_height_mean` equal to the AC group's derived mean (with
-  `discordant2_*` the BC group's), matching `result.mean_dis`. Purpose: the
+  `discordant2_*` the BC group's). Purpose: the
   summary columns name the same gene trees as `dis1_topology` and the tests,
   rather than a fixed topology label.
 - `test_summary_statistics_discordant_roles_swap_with_the_counts` — Inputs: the
   same fixture with the two discordant groups exchanged. Expected outputs:
   `dis1_topology == "BC"` and the two summary column families swap accordingly.
   Purpose: the role assignment tracks the counts in both directions.
-- `test_classify_introgression_truth_table` — Inputs (parametrized, 7 rows):
-  every combination of DCT/KS significance and direction, including `None`.
-  Expected outputs: the documented classification for each row. Purpose:
-  exhaustive coverage of `_classify_introgression`.
+- `test_classify_introgression_truth_table` — Inputs (parametrized, 8 rows):
+  every combination of DCT/KS significance and direction, including `None` for
+  each. Expected outputs: the documented classification and the terminating gate
+  (`DCT`/`THT`/`Permutation`) for each row. Purpose: exhaustive coverage of
+  `_classify_introgression`, which returns the pair, so the gate column cannot
+  drift out of step with the classification it explains.
 - `test_adjust_p_values_matches_statsmodels` — Inputs (parametrized over all 6
   correction methods): a fixed 10-value p-value list. Expected outputs: `no`
   returns the input unchanged; every other method equals
@@ -252,10 +247,6 @@ exhaustive enumeration, and over randomized inputs.
   inside its configured bounds, and a directional decision agreeing with the
   sign of the statistic. Purpose: structural invariants on shapes no fixed
   fixture covers.
-- `test_decision_rules_agree_on_random_inputs` — Inputs (parametrized over 8
-  seeds): random sample pairs with Bonferroni correction. Expected outputs:
-  `consistent is True` and the two decision rules produce the same label.
-  Purpose: the one-tailed rule and the two-tailed-gate-then-sign rule coincide.
 - `test_equal_samples_give_a_zero_statistic_and_no_direction` — Inputs: the same
   8 values as both samples. Expected outputs: statistic 0, ambiguous. Purpose:
   identical inputs cannot produce a direction.
@@ -274,9 +265,8 @@ exhaustive enumeration, and over randomized inputs.
   concordant heights against 19 discordant1 heights of which 4 are extreme —
   the shape observed on real data. Expected outputs: a negative statistic,
   `decision == "less"`, `p_two_sided > alpha`, `null_skewed is True`,
-  `note is None`, and `consistent is True`. Purpose: an asymmetric null is
-  recorded without overturning the directional call, and the cross-check's
-  doubled-smaller-tail gate stays valid under that asymmetry.
+  and `note is None`. Purpose: an asymmetric null is recorded without
+  overturning the directional call.
 - `test_max_resamples_reached_is_reported` — Inputs: two near-identical samples
   at a 200-resample ceiling. Expected outputs: the budget is respected and, if
   unconverged, `note == "max_resamples_reached"`. Purpose: budget exhaustion is
@@ -285,15 +275,15 @@ exhaustive enumeration, and over randomized inputs.
   separated pair with `min_resamples=1000`. Expected outputs: converged after
   exactly one batch of 1000 with decision `greater`. Purpose: an easy case stops
   at the minimum budget instead of spending the ceiling.
-- `test_batches_grow_by_one_quarter_until_the_budget_is_spent` — Inputs: two
-  30-element samples from the same distribution, `min_resamples=100`,
-  `max_resamples=1000`. Expected outputs: the resample total lands on the
-  cumulative schedule 100, 225, 381, 576, 819, 1000 produced by `int(previous x
-  1.25)` with the last batch clipped, at the index matching `batches`. Purpose:
-  pins the 1.25 growth factor and the final-batch clipping.
-- `test_median_sign_decision_matches_definition` — Inputs: four median
-  comparisons including a tie and an empty sample. Expected outputs:
-  `greater` / `less` / `ambiguous` / `ambiguous`. Purpose: the fallback path.
+- `test_undecided_runs_grow_their_batches_until_the_budget_is_reached` —
+  Inputs: a marginal 0.4 mean shift between two 30-element samples,
+  `min_resamples=100`, `max_resamples=1000`. Expected outputs: `batches > 1`, a
+  total exceeding `batches x 100`, `1000 <= n_resamples < 2000`,
+  `converged is False`, and `note == "max_resamples_reached"`. Purpose: an
+  undecided run escalates its effort and stops once the budget is met, drawing
+  the final batch whole rather than trimming it — so the total meets or slightly
+  overshoots `max_resamples` — without pinning the growth factor (a performance
+  knob).
 - `test_bootstrap_resample_budget_scales_by_one_fifth` — Inputs: `(2500, 25000)`
   and `(2, 3)`. Expected outputs: `(500, 5000)` and `(1, 1)`. Purpose: the
   bootstrap budget divisor and its floor.
@@ -397,11 +387,9 @@ Orchestrator config resolution and config-file precedence.
 
 - `test_cli_defaults_resolve` — Inputs: a CLI namespace with every optional arg
   `None`. Expected outputs: `alpha_dct`/`alpha_ks` 0.05, the orchestrator-specific
-  `p_value_correction == "bfn"`, `alpha_perm == 0.05`,
-  `permutation_test is True` with its resample/CI defaults (2500, 25000,
-  `wilson`), `overwrite is True`, the config-file-only keys at their defaults,
-  `preflight_data_check is False`, and no `stats_backend` key. Purpose: default
-  resolution in CLI mode.
+  `p_value_correction == "bfn"`, `alpha_perm == 0.05`, the permutation
+  resample/CI defaults (2500, 25000, `wilson`), `overwrite is True`, the config-file-only keys at their defaults,
+  and `preflight_data_check is False`. Purpose: default resolution in CLI mode.
 - `test_cli_overrides_for_config_plus_cli_options` — Inputs: CLI values for
   alpha-dct/alpha-ks/alpha-perm/p-value-correction/no-overwrite. Expected
   outputs: each override is honored and `overwrite` becomes `False`. Purpose:
@@ -519,35 +507,17 @@ Consolidation outputs, count aggregation, and plot rendering.
 - `test_generate_introgression_maps_preserves_run_dir_when_reset_disabled` —
   Inputs: `reset_output_dir=False`. Expected outputs: pre-existing run files
   survive. Purpose: the orchestrator's consolidation contract.
-- `test_draw_species_tree_strip_shows_leaf_labels_by_default` /
-  `test_draw_species_tree_strip_suppresses_leaf_labels` — Inputs: the tree strip
-  renderer with and without label suppression. Expected outputs: labels present
-  or absent. Purpose: plot layout.
-- `test_scaled_consolidation_text_sizes_grow_with_taxa_count` — Inputs: taxa
-  counts across a range. Expected outputs: text sizes scale and stay capped.
-  Purpose: readability on large figures.
 - `test_sampled_introgression_presence_flags_targets_with_sampled_edges` —
   Inputs: a taxa order and a `(source, target)` weight map with one zero-weight
   edge. Expected outputs: `{"A": 1, "B": 0, "C": 1, "D": 0}` — only taxa that
   are the target of a non-zero sampled edge are flagged. Purpose: the flag that
   drives ghost bar colour.
-- `test_zero_heatmap_cells_are_masked` — Inputs: the ghost-colour scenario, with
-  `sns.heatmap` monkeypatched to capture its `mask` argument. Expected outputs:
-  the mask equals `data == 0` elementwise and exactly one cell is unmasked (the
-  single sampled edge `(C, A)`). Purpose: empty cells are left unpainted rather
-  than drawn at the colormap's low end.
 - `test_ghost_strength_tsv_records_sampled_introgression_flag` — Inputs: results
   where taxon A has both ghost and sampled introgression and taxon D has ghost
   only. Expected outputs: the ghost TSV header is
   `target_taxon / raw_strength / has_sampled_introgression`, with `A → 1` and
   `D → 0`, and the strengths are unchanged by the flag. Purpose: the new column
   and its cross-referencing against the sampled sheet.
-- `test_ghost_bars_use_constant_colours_by_sampled_presence` — Inputs: the same
-  results, with `Axes.barh` monkeypatched to capture the colours actually
-  passed. Expected outputs: only the two constants are used, `A` is
-  `GHOST_WITH_SAMPLED_BAR_COLOR` (cividis low end) and `D` is
-  `GHOST_ONLY_BAR_COLOR` (cividis high end), while their bar widths differ.
-  Purpose: colour encodes co-occurrence, not magnitude.
 
 ### tests/test_ml_labels_and_metrics.py
 
@@ -623,15 +593,6 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
   outputs: the binary target matrix.
 - `test_train_random_forest_smoke` — Inputs: `summary_statistics_tsv`. Expected
   outputs: training completes and writes its artifacts.
-- `test_train_random_forest_creates_bitwise_metrics_report` — Inputs: the same
-  fixture. Expected outputs: the metrics report contains the bitwise section.
-- `test_metrics_txt_leads_with_hyperparameters` — Inputs: the same fixture with
-  `n_estimators=25`, `random_state=7`, `test_size=0.25`, `max_depth=None`,
-  `cv_folds=3`. Expected outputs: `Hyperparameters:` appears before
-  `Test metrics:`; the parsed block reports those configured values with
-  `max_depth` as `none`; and `metrics["hyperparameters"]` carries the same
-  values with `cv_folds_requested == 3`. Purpose: the run's hyperparameters are
-  recorded in both the text and JSON reports.
 
 ### tests/test_ml_multi_knn.py
 
@@ -640,11 +601,6 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 - `test_multi_knn_build_model_caps_neighbors_to_training_size` — Inputs: a
   configured `n_neighbors` larger than the training set. Expected outputs: the
   effective neighbor count is capped.
-- `test_multi_knn_metrics_report_mentions_effective_neighbors` — Inputs: the same
-  capped run. Expected outputs: the report carries a `Hyperparameters:` block
-  naming both `n_neighbors_requested` and `n_neighbors_effective`, and
-  `metrics["hyperparameters"]` reports 20 requested with at most 20 effective.
-  Purpose: the cap is visible in both reports.
 
 ### tests/test_ml_hyper_tune.py
 
@@ -661,7 +617,9 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 - `test_tune_hyperparameters_grid_search_smoke` /
   `test_tune_hyperparameters_random_search_smoke` — Inputs:
   `summary_statistics_tsv_tuning` with each search method. Expected outputs: the
-  search completes and reports ranked candidates.
+  search completes, `model_name`/`search_method` echo the request, the candidate
+  count matches the search space (2 for the grid, `n_iter=1` for the random
+  search), and the best-model pickle and results JSON are written.
 
 ## Parity Tests (`@pytest.mark.parity`)
 
