@@ -5,8 +5,6 @@ matches files by start/end name pattern + extension, appends a source-folder
 column per row, and writes one consolidated output file.
 """
 
-from __future__ import annotations
-
 import argparse
 from pathlib import Path
 

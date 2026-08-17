@@ -7,8 +7,6 @@ extracted subtree objects, so no serialize-then-reparse round trip happens. Also
 resolves the parallelization mode and applies the run-wide p-value correction.
 """
 
-from __future__ import annotations
-
 import time
 from multiprocessing import cpu_count
 

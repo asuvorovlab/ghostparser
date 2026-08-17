@@ -6,8 +6,6 @@ target-strength bar chart side by side, plus companion TSV artifacts for raw
 bootstrap sums, supporting counts, and undiluted averages.
 """
 
-from __future__ import annotations
-
 import argparse as _argparse
 import textwrap
 import warnings

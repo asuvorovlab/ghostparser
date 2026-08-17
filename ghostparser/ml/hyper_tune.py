@@ -6,8 +6,6 @@ trainers. Put the tuning settings under the top-level
 plus candidate rankings.
 """
 
-from __future__ import annotations
-
 import argparse
 import itertools
 import json

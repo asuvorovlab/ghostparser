@@ -4,8 +4,6 @@ Wires argument parsing and config resolution (from ``config``) to the orchestrat
 runner, keeping the CLI orchestration separate from config handling.
 """
 
-from __future__ import annotations
-
 from .config import ConfigError, build_argument_parser, resolve_config
 from .runner import run_orchestrator
 

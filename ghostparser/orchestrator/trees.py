@@ -5,8 +5,6 @@ normalization, without any of the intermediate-file machinery the streaming
 pass makes unnecessary.
 """
 
-from __future__ import annotations
-
 import multiprocessing as mp
 import os
 from itertools import combinations

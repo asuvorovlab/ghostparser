@@ -1,7 +1,5 @@
 """Shared CLI/config resolution helpers for GhostParser commands."""
 
-from __future__ import annotations
-
 import argparse
 
 

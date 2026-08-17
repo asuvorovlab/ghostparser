@@ -5,8 +5,6 @@ package; ``ghostparser.orchestrator`` uses them for both preprocessing and
 inference.
 """
 
-from __future__ import annotations
-
 
 TOPOLOGY_AB = "((A,B),C)"
 TOPOLOGY_BC = "((B,C),A)"

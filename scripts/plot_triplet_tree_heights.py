@@ -1,8 +1,6 @@
 """Compute and plot triplet tree heights by topology class.
 """
 
-from __future__ import annotations
-
 import argparse
 import io
 from itertools import combinations

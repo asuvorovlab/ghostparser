@@ -7,8 +7,6 @@ configuration; it imports only the shared ``triplet_utils`` topology helpers,
 ``introgression_mapper`` for consolidation, and the ``config`` trunk.
 """
 
-from __future__ import annotations
-
 from .runner import run_orchestrator
 
 __all__ = ["run_orchestrator"]

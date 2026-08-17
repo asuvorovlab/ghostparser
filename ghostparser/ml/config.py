@@ -6,8 +6,6 @@ verbatim with the orchestrator are imported from the :mod:`ghostparser.config`
 trunk.
 """
 
-from __future__ import annotations
-
 from ..config import (
     DEFAULT_OVERWRITE,
     ConfigError,

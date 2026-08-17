@@ -11,8 +11,6 @@ they diverge: the orchestrator and ML packages use different defaults and differ
 validation rules for otherwise similarly named keys.
 """
 
-from __future__ import annotations
-
 import json
 import shutil
 from pathlib import Path

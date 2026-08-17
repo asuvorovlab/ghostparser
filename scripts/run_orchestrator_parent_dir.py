@@ -8,8 +8,6 @@ Each run is driven by a generated JSON config file rather than CLI flags,
 because ``generate_summary_stats`` is a config-file-only orchestrator setting.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import shlex

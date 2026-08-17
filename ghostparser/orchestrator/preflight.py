@@ -12,8 +12,6 @@ The checks are structural only: they say whether the data can be processed, not
 whether the result will be biologically meaningful.
 """
 
-from __future__ import annotations
-
 from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations

@@ -8,8 +8,6 @@ p-values within a single permutation test. Keeping :func:`adjust_p_values` here
 lets both import it without a circular dependency.
 """
 
-from __future__ import annotations
-
 from statsmodels.stats.multitest import multipletests
 
 from .config import DEFAULT_P_VALUE_CORRECTION, P_VALUE_CORRECTION_CHOICES

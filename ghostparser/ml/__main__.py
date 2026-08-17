@@ -5,8 +5,6 @@ Run the individual trainer modules directly instead, for example
 ``python -m ghostparser.ml.multi_knn``.
 """
 
-from __future__ import annotations
-
 import argparse
 
 

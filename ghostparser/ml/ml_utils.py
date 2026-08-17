@@ -1,7 +1,5 @@
 """Shared helpers for Ghostparser machine-learning baselines."""
 
-from __future__ import annotations
-
 import csv
 import json
 import math
