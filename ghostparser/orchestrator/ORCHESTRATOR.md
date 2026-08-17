@@ -133,7 +133,18 @@ then applies a three-gate decision:
    `outflow_introgression`, `less` gives `ghost_introgression`, and no
    resolvable direction gives `ambiguous`.
 
-`inference._classify_introgression` implements this decision table directly.
+`inference._classify_introgression` implements this decision table directly,
+returning the classification and the name of the test that settled it as one
+pair. That pair populates the `classification` and `decision_gate` columns, so
+the two are derived in a single pass and cannot drift apart.
+
+The cascade *consults* the tests in order, but the point estimate *computes* all
+three for every triplet, so the `perm_*` columns are populated even where the
+cascade never reached them. Read `decision_gate` before reading `perm_decision`:
+only `Permutation` means the direction result produced the classification. A row
+carrying `decision_gate = THT`, `perm_decision = ambiguous`, and
+`classification = inflow_introgression` is consistent — the direction test ran
+and was recorded, but the tree-height test had already settled the call.
 
 Bootstrap resampling (on by default) repeats the analysis over resampled
 observations and aggregates the per-iteration classifications into
@@ -196,10 +207,9 @@ the heights moved. That is gate 3's job.
 **Question.** Is the *mean* concordant height greater than, less than, or
 indistinguishable from the mean discordant1 height?
 
-This replaces a bare comparison of summary statistics, which reported a
-direction from any numerical difference no matter how small or how noisy. The
-permutation test attaches a p-value and a confidence statement to that
-direction. It lives in `ghostparser/orchestrator/permutation.py`.
+The answer carries a p-value and a confidence statement, so a direction is
+reported only when the separation is larger than sampling noise accounts for.
+The test lives in `ghostparser/orchestrator/permutation.py`.
 
 **The statistic.** For concordant sample `x` (size `nx`) and discordant1 sample
 `y` (size `ny`), the Welch-studentized mean difference is
@@ -252,9 +262,19 @@ confidence interval at 95% is placed around each one-tailed p-value and
 rescaled onto the corrected scale. If `alpha_perm` lies outside both intervals,
 no further resampling can flip the comparison and the run stops with
 `perm_converged = True`. Otherwise the batch size grows by 25% and the run
-continues to `max_resamples`, after which it stops with
+continues until the total reaches `max_resamples`, after which it stops with
 `perm_converged = False` and a `max_resamples_reached` note, listed in
 `metrics.txt`.
+
+`max_resamples` is the point at which the run stops asking for more, not a hard
+cap on the total. The batch that crosses it is drawn at its full grown size
+rather than trimmed to the remaining budget: sampling is vectorized, so a batch
+costs the same per permutation however large it is, and the extra draws tighten
+the interval that decides convergence instead of being spent on a stub that can
+barely move it. `perm_n_resamples` can therefore exceed `max_resamples` by up to
+one batch — about a quarter of the total when the budget spans several batches,
+and more when `max_resamples` sits close to `min_resamples`, where a single
+grown batch is comparable to the whole budget.
 
 The confidence level is fixed at 95%. It governs how sure the stopping rule must
 be before it commits — an internal precision knob rather than a statistical
@@ -384,15 +404,10 @@ The scale guards compare against a small fraction of the data's own magnitude
 rather than against exact zero, because a sample of nominally identical values
 such as `[0.9] * 10` has a floating-point variance around `1e-33`, not `0`.
 
-**Cross-check and the skew flag.** Two decision rules are computed. The primary
-one is the pair of corrected one-tailed tests. The cross-check gates on a
-two-tailed p-value and then takes the sign; it uses the doubled smaller tail,
-`2 * min(p_greater, p_less)`, rather than the absolute-value count, because the
-latter is only valid when the permutation null is symmetric. Disagreement
-between the two rules sets `perm_consistent = False` and is listed in
-`metrics.txt`; it should not occur.
-
-The absolute-value two-tailed p-value is still reported as `perm_p_two_sided`.
+**The skew flag.** The direction comes from the pair of corrected one-tailed
+tests. The absolute-value two-tailed p-value is reported as `perm_p_two_sided`
+for diagnosis only and never drives a decision, because it is valid only when
+the permutation null is symmetric.
 When it fails to resolve a comparison that the directional tails do resolve,
 `perm_null_skewed` is set. That happens when a small discordant1 group carries a
 few extreme heights: reassigning them produces a strongly right-skewed null
@@ -419,19 +434,32 @@ noise the reduced budget introduces. The point estimate runs the full budget and
 runs for every triplet, including ones the earlier gates already settled, so the
 permutation columns are populated throughout the results TSV.
 
-**Disabling it.** `permutation_test: false` (or `--no-permutation-test`) swaps
-gate 3 for a sign test on the concordant and discordant1 medians: `greater`,
-`less`, or `ambiguous` on an exact tie.
+**Why this correction is within-triplet only.** The one-tailed pair is
+corrected against itself and never across triplets. That is a hard constraint,
+not a preference: a Monte Carlo p-value cannot fall below `1/(n_resamples + 1)`
+(the add-one estimator's floor), which is `4.0e-4` at `min_resamples = 2500`.
+Correcting across `n` triplets would require the raw p-value to clear
+`alpha / (2n)` — already `2.5e-4` at only 100 triplets, below what the test can
+express, so every triplet would come back `ambiguous` no matter how strong the
+signal. At `C(83, 3) = 91,881` triplets the threshold is `2.7e-7` and would need
+roughly 3.7 million resamples per triplet.
 
-This fallback is **provisional**. It is the pre-permutation-test behaviour, kept
-only so the two inference paths can be run against each other on simulated data
-where the ground truth is known, and it is expected to be removed together with
-the `permutation_test` key once that comparison is settled. It attaches no
-p-value and no notion of significance, so an arbitrarily small gap between the
-two medians still yields a confident `outflow` or `ghost` call — which is the
-weakness the permutation test exists to fix. The code is arranged so the removal
-is mechanical: `inference._decide_direction` carries a checklist naming every
-site the flag threads through.
+The DCT and KS p-values have no such floor because they are analytic rather than
+sampled: a chi-square on counts `1000/50` gives `p = 6.2e-189`, and multiplying
+by 91,881 still leaves `5.7e-184`. Correcting an exact p-value costs nothing;
+correcting a sampled one spends resolution that had to be bought with compute.
+That is why those two are corrected run-wide and this one is not.
+
+A consequence worth stating plainly: gate 3 therefore carries no across-triplet
+error control. Selecting triplets on gates 1 and 2 and then testing gate 3 at
+`alpha` is post-selection inference and does not inherit the earlier gates'
+control, so a direction call is conditional on that selection — descriptive
+rather than confirmatory.
+
+**What a direction means.** Every triplet reaching gate 3 is decided here, so
+an `outflow` or `ghost` call always rests on a corrected one-tailed p-value
+below `alpha_perm`. A separation the data cannot resolve at that threshold is
+reported `ambiguous`.
 
 ## Outputs
 
@@ -475,27 +503,23 @@ Written under the output folder:
 | `perm_p_greater` / `perm_p_less` | Direction test | Raw one-tailed p-values, add-one estimator. |
 | `perm_p_two_sided` | Direction test | Raw two-tailed p-value from the absolute statistic; diagnostic only, see `perm_null_skewed`. |
 | `perm_p_greater_<method>_corr` / `perm_p_less_<method>_corr` | Direction test | The one-tailed p-values corrected against each other, and the values compared to `alpha_perm`. |
-| `perm_n_resamples` | Direction test | Permutations drawn; `0` when a guard fired. |
+| `perm_n_resamples` | Direction test | Permutations drawn; `0` when a guard fired. Can exceed `max_resamples` by up to one batch, since the final batch is not trimmed. |
 | `perm_converged` | Direction test | True when the confidence interval excluded `alpha_perm` before the budget ran out. |
-| `permutation_consistency_flag` | Direction test | Whether the one-tailed rule and the two-tailed-gate-then-sign rule reached the same verdict. Bonferroni over the one-tailed pair makes the two conditions equivalent, so this should always be `True`; a `False` means the accumulated counts are internally inconsistent and the triplet is also named in `metrics.txt`. |
 | `perm_null_skewed` | Direction test | True when the absolute-value two-tailed p-value fails to resolve a comparison the directional tails resolve. Common and harmless; see above. |
 | `perm_note` | Direction test | Guard slug, or `max_resamples_reached`; empty on a clean run. |
-| `perm_decision` | Decision gate 3 | `greater`, `less`, or `ambiguous` for concordant relative to discordant1. |
+| `perm_decision` | Decision gate 3 | `greater`, `less`, or `ambiguous` for concordant relative to discordant1. Always populated; consulted only when `decision_gate` is `Permutation`. |
+| `decision_gate` | Decision logic | Which test settled the classification: `DCT`, `THT`, or `Permutation`. |
 | `classification` | Decision logic | `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`. |
 | `inference_description` | Reporting | Human-readable direction naming the actual species. |
 | `bootstrap_value` / `all_bootstrap` | Bootstrap | Fraction of iterations agreeing with the final classification, plus the full class-fraction map. Present unless `--no-bootstrap`. |
 | `bootstrap_*` debug columns | Bootstrap debug | Per-iteration DCT/KS statistics, con/dis means, and gene-tree heights. Present only with `bootstrap_debug_mode`. |
 
-The `perm_*` columns and `permutation_consistency_flag` are present unless
-`permutation_test` is disabled, in which case only `perm_decision` remains.
-
-No per-group mean or median columns appear in this file. The results TSV reports
-the *tests*: the direction is read off `perm_p_greater` and `perm_p_less` after
-correction, never off a raw comparison of group summaries. Descriptive
-per-group statistics live in `summary_statistics.tsv`, which
-`generate_summary_stats` enables. The values are still available
-programmatically as `mean_con`/`mean_dis`/`median_con`/`median_dis` on
-`TripletPipelineResult`.
+This file reports the *tests*: the direction is read off `perm_p_greater` and
+`perm_p_less` after correction, so it carries no per-group mean or median
+columns. Descriptive per-group statistics live in `summary_statistics.tsv`,
+which `generate_summary_stats` enables, under their own per-topology headers
+(`concordant_avg_tree_height_mean`, `discordant1_avg_tree_height_median`, and
+so on).
 
 Note that the two files measure different things and will not agree numerically:
 the `*_avg_tree_height_*` summary columns always average the three root-to-tip
