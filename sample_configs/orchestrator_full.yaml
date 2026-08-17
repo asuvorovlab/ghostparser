@@ -35,8 +35,7 @@ alpha_dct: 0.05
 alpha_ks: 0.05
 
 # Gate 3: studentized permutation test on the concordant vs. discordant1 mean
-# tree heights. Disable it to fall back to a median sign comparison.
-permutation_test: true
+# tree heights, deciding the direction of the difference.
 alpha_perm: 0.05
 permutation_options:
   min_resamples: 2500             # also the size of the first adaptive batch
