@@ -25,8 +25,6 @@ See :doc:`ORCHESTRATOR.md <ORCHESTRATOR>` for the full statistical write-up,
 including the sampling optimization used by :func:`_permutation_statistics`.
 """
 
-from __future__ import annotations
-
 import math
 from dataclasses import dataclass
 
@@ -45,7 +43,6 @@ from .correction import adjust_p_values
 __all__ = [
     "PermutationTestResult",
     "run_studentized_permutation_test",
-    "median_sign_decision",
     "bootstrap_resample_budget",
 ]
 
@@ -120,9 +117,7 @@ class PermutationTestResult:
             run, ``False`` when the resample budget was exhausted or a guard
             fired.
         decision: The directional decision driving classification.
-        decision_two_sided: The decision from the two-tailed-gate-then-sign
             rule, kept as a cross-check.
-        consistent: Whether the two decision rules agree.
         null_skewed: Whether the absolute-value two-tailed p-value contradicts
             the directional decision, which happens when the permutation null is
             asymmetric. Informational: tree heights are bounded below by zero
@@ -144,8 +139,6 @@ class PermutationTestResult:
     batches: int
     converged: bool
     decision: str
-    decision_two_sided: str
-    consistent: bool
     null_skewed: bool = False
     note: str | None = None
 
@@ -173,8 +166,6 @@ def _guard_result(note):
         batches=0,
         converged=False,
         decision=DECISION_AMBIGUOUS,
-        decision_two_sided=DECISION_AMBIGUOUS,
-        consistent=True,
         null_skewed=False,
         note=note,
     )
@@ -371,7 +362,9 @@ def run_studentized_permutation_test(
     confidence intervals around both one-tailed p-values are checked against
     ``alpha``: once ``alpha`` lies outside both, the decision cannot change with
     more resampling and the run stops. Otherwise the batch size grows by 25% and
-    the run continues until ``max_resamples`` is reached.
+    the run continues until the total reaches ``max_resamples``. The batch that
+    crosses that line is drawn whole rather than trimmed, so the reported
+    ``n_resamples`` can exceed ``max_resamples`` by up to one batch.
 
     The two one-tailed p-values form a testing family and are corrected against
     each other with ``correction`` before being compared to ``alpha``. The
@@ -384,7 +377,9 @@ def run_studentized_permutation_test(
         alpha: Significance threshold, applied to each one-tailed test and to
             the two-tailed cross-check.
         min_resamples: Size of the first batch and the minimum total.
-        max_resamples: Hard ceiling on total permutations.
+        max_resamples: Resample budget. The run stops once the total reaches it;
+            the final batch is drawn whole, so the total may overshoot it by up
+            to one batch.
         ci_method: Binomial interval method passed to statsmodels.
         correction: Multiple-testing correction applied across the one-tailed
             family.
@@ -461,7 +456,20 @@ def run_studentized_permutation_test(
     ci_greater = ci_less = (0.0, 1.0)
 
     while n_done < max_resamples:
-        batch = max(1, min(batch, max_resamples - n_done))
+        # The final batch is drawn at its full grown size rather than trimmed to
+        # the remaining budget. Sampling is vectorized, so a batch costs the same
+        # per permutation however large it is, and the extra draws sharpen the
+        # interval that decides convergence instead of being spent on a stub that
+        # can only narrow it a little. ``max_resamples`` is therefore the point
+        # at which the run stops asking for more, not a hard cap on the total.
+        # The overshoot is at most one batch. Across a budget wide enough to span
+        # several batches that is about a quarter of the total (each batch is
+        # 1.25x the previous, so the last one is roughly a quarter of the sum);
+        # when ``max_resamples`` sits just above ``min_resamples`` a single grown
+        # batch is comparable to the whole budget, and the total can approach
+        # 2.25x it. ``_permutation_statistics`` chunks internally against
+        # ``_MAX_PERMUTATION_CELLS``, so an oversized batch stays memory-safe.
+        batch = max(1, batch)
         statistics = _permutation_statistics(pooled, nx, ny, batch, rng)
 
         count_greater += int(np.count_nonzero(statistics >= observed))
@@ -518,20 +526,6 @@ def run_studentized_permutation_test(
     else:
         decision = DECISION_AMBIGUOUS
 
-    # Cross-check rule: gate on a two-tailed p-value, then take the sign. The
-    # gate uses the doubled smaller tail rather than the absolute-value count,
-    # because the latter is only valid when the permutation null is symmetric.
-    # A tiny discordant1 group carrying a few extreme tree heights produces a
-    # strongly right-skewed null, where the absolute-value count borrows the fat
-    # right tail to judge a left-tail observation and hides a real difference.
-    p_two_sided_gate = min(1.0, 2.0 * min(p_greater, p_less))
-    if p_two_sided_gate <= alpha and mean_x > mean_y:
-        decision_two_sided = DECISION_GREATER
-    elif p_two_sided_gate <= alpha and mean_x < mean_y:
-        decision_two_sided = DECISION_LESS
-    else:
-        decision_two_sided = DECISION_AMBIGUOUS
-
     # The directional tails resolving a comparison that the absolute-value count
     # leaves open is the signature of an asymmetric null. It is recorded on its
     # own field rather than in ``note`` because it is the common case for tree
@@ -562,41 +556,9 @@ def run_studentized_permutation_test(
         batches=int(batches),
         converged=converged,
         decision=decision,
-        decision_two_sided=decision_two_sided,
-        consistent=decision == decision_two_sided,
         null_skewed=null_skewed,
         note=note,
     )
-
-
-def median_sign_decision(con_heights, dis1_heights):
-    """Decide direction by a sign test on the two sample medians.
-
-    PROVISIONAL. This is the pre-permutation-test behaviour, retained only so
-    the two inference paths can be run against each other on data with known
-    ground truth, and reached solely through ``permutation_test: false``. It
-    attaches no p-value and no notion of significance, so any numerical
-    difference between the medians -- however small -- yields a confident
-    direction. See the removal checklist at the fallback branch in
-    ``inference._decide_direction``.
-
-    Args:
-        con_heights: Concordant tree heights.
-        dis1_heights: Discordant1 tree heights.
-
-    Returns:
-        ``greater``, ``less``, or ``ambiguous``.
-    """
-    if not len(con_heights) or not len(dis1_heights):
-        return DECISION_AMBIGUOUS
-
-    median_con = float(np.median(np.asarray(con_heights, dtype=float)))
-    median_dis = float(np.median(np.asarray(dis1_heights, dtype=float)))
-    if median_con > median_dis:
-        return DECISION_GREATER
-    if median_con < median_dis:
-        return DECISION_LESS
-    return DECISION_AMBIGUOUS
 
 
 def bootstrap_resample_budget(min_resamples, max_resamples):

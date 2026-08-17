@@ -1,7 +1,5 @@
 """Orchestrator coordinator: run_orchestrator drives cleaning, triplet setup, the fused streaming engine, correction, TSV writing, and consolidation end-to-end with per-stage timing."""
 
-from __future__ import annotations
-
 import time
 from pathlib import Path
 
@@ -105,7 +103,6 @@ def _log_permutation_diagnostics(metrics, results):
         if result.perm_n_resamples is None and result.perm_note is None
     ]
     unconverged = [result for result in ran if result.perm_converged is False]
-    inconsistent = [result for result in ran if result.perm_consistent is False]
     skewed = [result for result in ran if result.perm_null_skewed]
 
     metrics.log(f"  Permutation tests run: {len(ran)}")
@@ -148,16 +145,6 @@ def _log_permutation_diagnostics(metrics, results):
             f"triplet(s); directional decisions are unaffected "
             f"(see the perm_null_skewed column)."
         )
-    if inconsistent:
-        metrics.log(
-            f"  ⚠ Permutation decision rules disagree for {len(inconsistent)} triplet(s):"
-        )
-        for result in inconsistent:
-            metrics.log(
-                f"      {','.join(result.triplet)}: "
-                f"one-tailed={result.perm_decision}, "
-                f"p_two_sided={_format_metric_float(result.perm_p_two_sided)}"
-            )
 
 
 def _run_preflight_only(config, output_dir):
@@ -239,14 +226,12 @@ def run_orchestrator(config):
         outgroup_taxa = _parse_outgroup_arg(config["outgroup"])
         metrics.log(f"Outgroup: {', '.join(outgroup_taxa)}")
         metrics.log(f"Discordant count test: {config['discordant_test']}")
-        metrics.log(f"Permutation test enabled: {config['permutation_test']}")
-        if config["permutation_test"]:
-            metrics.log(
-                "Permutation resamples: "
-                f"{config['permutation_min_resamples']}-"
-                f"{config['permutation_max_resamples']}"
-            )
-            metrics.log(f"Permutation CI method: {config['permutation_ci_method']}")
+        metrics.log(
+            "Permutation resamples: "
+            f"{config['permutation_min_resamples']}-"
+            f"{config['permutation_max_resamples']}"
+        )
+        metrics.log(f"Permutation CI method: {config['permutation_ci_method']}")
         metrics.log(
             f"Tree height strategy: {config['tree_height_calculation_strategy']}"
         )
@@ -412,7 +397,6 @@ def run_orchestrator(config):
                 "alpha_dct": config["alpha_dct"],
                 "alpha_ks": config["alpha_ks"],
                 "discordant_test": config["discordant_test"],
-                "permutation_test": config["permutation_test"],
                 "permutation_kwargs": {
                     "alpha": config["alpha_perm"],
                     "min_resamples": config["permutation_min_resamples"],
@@ -459,13 +443,11 @@ def run_orchestrator(config):
                 p_value_correction=config["p_value_correction"],
                 bootstrap=config["bootstrap"],
                 bootstrap_debug_mode=config["bootstrap_debug_mode"],
-                permutation_test=config["permutation_test"],
             )
             metrics.log("✓ Fused extraction + inference complete")
             metrics.log(f"  Output: {final_tsv}")
             metrics.log(f"  Triplets analyzed: {len(results)}")
-            if config["permutation_test"]:
-                _log_permutation_diagnostics(metrics, results)
+            _log_permutation_diagnostics(metrics, results)
 
             if config["generate_summary_stats"]:
                 summary_tsv = str(output_dir / "summary_statistics.tsv")
