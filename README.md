@@ -160,7 +160,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 
 - `--output-folder`, `--no-overwrite`, `--triplet-filter`
 - `--processes`, `--parallelization-mode {auto,taxon,gene}`
-- `--alpha-dct`, `--alpha-ks`, `--alpha-perm`, `--p-value-correction`, `--no-permutation-test`
+- `--alpha-dct`, `--alpha-ks`, `--alpha-perm`, `--p-value-correction`
 - `--no-consolidation`, `--no-bootstrap`
 
 **Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, and the `bootstrap_options` block (`iterations`, `seed`, `debug_mode`, `summary_only`).
@@ -197,9 +197,9 @@ Consolidation details:
 
 #### Direction Test Behavior
 
-- The third decision gate is an adaptive studentized permutation test on the concordant versus discordant1 mean tree heights. It resamples until a confidence interval around the p-value excludes `alpha_perm`, or until `max_resamples` is reached — triplets that hit the ceiling are named in `metrics.txt`.
-- Disable it with `--no-permutation-test` to fall back to a plain median comparison; the tuning knobs (`min_resamples`, `max_resamples`, `ci_method`) live in the config file's `permutation_options` block.
-- The direction is read off the corrected one-tailed p-values, not off a raw comparison of group means, so the results TSV carries no per-group mean or median columns. Descriptive per-group statistics live in `summary_statistics.tsv` (`generate_summary_stats`).
+- The third decision gate is an adaptive studentized permutation test on the concordant versus discordant1 mean tree heights. It resamples until a confidence interval around the p-value excludes `alpha_perm`, or until the total reaches `max_resamples` — triplets that spend the budget are named in `metrics.txt`. The final batch is drawn whole rather than trimmed, so the reported resample count can sit just above `max_resamples`.
+- Its tuning knobs (`min_resamples`, `max_resamples`, `ci_method`) live in the config file's `permutation_options` block.
+- The direction is read off the corrected one-tailed p-values, so the results TSV carries no per-group mean or median columns. Descriptive per-group statistics live in `summary_statistics.tsv` (`generate_summary_stats`).
 - Triplets whose samples are too small or too degenerate to support the test are reported as `ambiguous` with the reason in the `perm_note` column, rather than being given a direction the data cannot justify.
 - See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#the-statistical-tests) for the method, its citations, and its known small-sample limitation.
 
@@ -269,6 +269,7 @@ An orchestrator run generates these output files:
 6. **`consolidation/`** - Introgression map figure and TSV matrices
 
 Base TSV output includes `dis1_topology` and a topology-only `species_tree` value for each triplet.
+Base TSV output also includes a `decision_gate` column naming which test settled the classification (`DCT`, `THT`, or `Permutation`). The permutation columns are filled in for every triplet, so `decision_gate` is what tells you whether `perm_decision` was actually consulted — only `Permutation` means it was.
 Base TSV output also includes an `inference` column with human-readable direction text using actual species names.
 
 When bootstrap is enabled, the TSV adds:
@@ -383,7 +384,7 @@ Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
 - `alpha_dct`: `0.05`
 - `alpha_ks`: `0.05`
 - `alpha_perm`: `0.05`
-- `permutation_test`: `true` (resamples: `2500`–`25000`, `wilson` intervals)
+- permutation resamples: `2500`–`25000`, `wilson` intervals
 
 **Execution Defaults:**
 

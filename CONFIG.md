@@ -124,7 +124,6 @@ bootstrap_options:
   seed: 42
   debug_mode: false
   summary_only: false
-permutation_test: true
 permutation_options:
   min_resamples: 2500
   max_resamples: 25000
@@ -209,13 +208,7 @@ Settable either on the CLI or in a config file.
 - Default: `bfn`
 - Allowed: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`
 - Multiple-testing correction, applied in two places. Run-wide, it adjusts every triplet's DCT and KS p-value in a single pass. Inside each permutation test, it adjusts that test's pair of one-tailed p-values against each other. Corrected p-values drive the significance decisions; the uncorrected values are retained in the output for reporting.
-
-##### `permutation_test`
-
-- CLI: `--no-permutation-test` (sets `permutation_test: false`)
-- Default: `true`
-- Decides the direction of the concordant-versus-discordant1 height difference with the adaptive studentized permutation test. When disabled, the direction comes from a sign test on the two medians instead, and only the `perm_decision` column is written. See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#gate-3--adaptive-studentized-permutation-test) for the method.
-- The median fallback is provisional: it is the pre-permutation-test behaviour, retained so the two paths can be compared on data with known ground truth, and is expected to be removed along with this key once that comparison is settled. It attaches no p-value, so any numerical gap between the medians produces a confident direction.
+- In YAML, `p_value_correction: no` may be written with or without quotes. YAML resolves the bare word `no` to a boolean, and enumerated fields map booleans back to the choice they spell (`no`/`off`/`n`/`false`, `yes`/`on`/`y`/`true`), so both forms select the same value.
 
 ##### `consolidation`
 
@@ -262,7 +255,7 @@ These have no CLI flag. They take their default unless set in a config file.
 
 - Default: `false`
 - Also writes `summary_statistics.tsv` with 63 metric columns (mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/sister-distance for concordant/discordant1/discordant2). The `discordant1_*` columns describe whichever discordant topology is more frequent — the same group the `dis1_topology` column names and the statistical tests use — and `discordant2_*` the other one.
-- The results TSV never carries per-group mean or median columns regardless of this setting; the introgression direction comes from the permutation p-values, not from comparing group summaries.
+- The results TSV carries no per-group mean or median columns regardless of this setting; the introgression direction comes from the permutation p-values.
 
 ##### `bootstrap_options`
 
@@ -275,10 +268,10 @@ A nested block; each key may also be given flat as `bootstrap_<key>`.
 
 ##### `permutation_options`
 
-A nested block tuning the permutation test. Ignored when `permutation_test` is `false`. There is no `initial_batch` key — the first adaptive batch is always `min_resamples`, and each subsequent batch is 1.25x the previous one — and no `ci_level` key, since the interval is fixed at 95%.
+A nested block tuning the permutation test, the third decision gate. There is no `initial_batch` key — the first adaptive batch is always `min_resamples`, and each subsequent batch is 1.25x the previous one — and no `ci_level` key, since the interval is fixed at 95%.
 
 - `min_resamples` — default `2500`. Size of the first batch and the minimum total permutations. Must be an integer >= 1. A triplet whose pooled sample admits fewer than this many distinct group assignments is skipped with an `insufficient_permutation_support` note, because its permutation distribution cannot resolve `alpha_perm`.
-- `max_resamples` — default `25000`. Hard ceiling on total permutations. Must be an integer >= `min_resamples`. Reaching it without the confidence interval excluding `alpha_perm` sets `perm_converged` to false and records the triplet in `metrics.txt`.
+- `max_resamples` — default `25000`. Resample budget. Must be an integer >= `min_resamples`. Reaching it without the confidence interval excluding `alpha_perm` sets `perm_converged` to false and records the triplet in `metrics.txt`. It is the point at which the run stops asking for more rather than a hard cap: the batch that crosses it is drawn whole rather than trimmed, so `perm_n_resamples` can exceed it by up to one batch. Keep the two values a few multiples apart — with `max_resamples` close to `min_resamples` a single grown batch is comparable to the whole budget, so the overshoot is proportionally much larger.
 - `ci_method` — default `wilson`. Binomial interval method passed to `statsmodels.stats.proportion.proportion_confint`. Allowed: `wilson`, `beta`, `agresti_coull`, `jeffreys`, `binom_test`, `normal`. `wilson` inverts the score test, stays inside [0, 1], and holds close-to-nominal coverage for the very small proportions this test produces; `normal` degrades badly there and `beta` (Clopper–Pearson) is guaranteed-coverage but conservative, so it resamples longer than necessary. An unrecognized value is rejected when the config is parsed. See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#how-the-interval-is-computed-and-why-it-matches-the-p-value) for how the interval is derived and why it is consistent with the reported p-value.
 
 Bootstrap iterations re-run the direction test at one fifth of `min_resamples` and `max_resamples`, since the bootstrap aggregate absorbs the extra per-iteration Monte Carlo noise.
