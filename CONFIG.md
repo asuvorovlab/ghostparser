@@ -1,6 +1,6 @@
 # Configuration Guide
 
-This guide is the complete reference for every GhostParser configuration key. It is organized around the main entry point, `ghostparser.orchestrator`, followed by the machine-learning subpackage (`ghostparser.ml`) and the standalone consolidation CLI (`ghostparser.introgression_mapper`).
+This guide is the complete reference for every GhostParser configuration key. It is organized around the main entry point, `ghostparser.orchestrator`, followed by the machine-learning subpackage (`ghostparser.ml`).
 
 Both `ghostparser.orchestrator` and the `ghostparser.ml` trainers support config files. For how each module works internally, see [ghostparser/orchestrator/ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) and [ghostparser/ml/ML.md](ghostparser/ml/ML.md).
 
@@ -48,6 +48,7 @@ triplet_filter: ~/filters/triplets.txt
 - **All path types work in both CLI and config file modes**
 - **Relative paths are NOT relative to the config file location** - they are relative to the directory where you execute the command
 - For portability, consider using relative paths in configs and running commands from a consistent location
+- **Keep `output_folder` separate from the directories holding your input trees.** With `overwrite: true` the output directory is reset before the run, which deletes whatever is already in it — including a species tree or gene-tree file sitting there. Point `output_folder` at a directory of its own.
 
 ### Examples
 
@@ -117,6 +118,7 @@ discordant_test: chi-square
 tree_height_calculation_strategy: AVG
 min_support_value: 0.5
 generate_summary_stats: true
+shape_diagnostics: false
 consolidation: true
 bootstrap: true
 bootstrap_options:
@@ -158,6 +160,7 @@ Settable either on the CLI or in a config file.
 - CLI: `--output-folder`
 - Default: `results`
 - Directory for all run outputs.
+- Must not be a directory containing your input trees: with `overwrite: true` it is reset before the run and its existing contents are removed. Consolidation writes into a `consolidation/` subfolder of it, which is likewise reset.
 
 ##### `overwrite`
 
@@ -207,7 +210,8 @@ Settable either on the CLI or in a config file.
 - CLI: `--p-value-correction`
 - Default: `bfn`
 - Allowed: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`
-- Multiple-testing correction, applied in two places. Run-wide, it adjusts every triplet's DCT and KS p-value in a single pass. Inside each permutation test, it adjusts that test's pair of one-tailed p-values against each other. Corrected p-values drive the significance decisions; the uncorrected values are retained in the output for reporting.
+- Multiple-testing correction, applied in three places. Run-wide, it adjusts every triplet's DCT and KS p-value in a single pass. Inside each permutation test, it adjusts that test's pair of one-tailed p-values against each other — never across triplets, because a Monte Carlo p-value has a resolution floor that across-triplet correction would fall through. Inside the bootstrap, each iteration's DCT and KS p-values are corrected across triplets for that iteration index, so iterations answer to the same thresholds the reported classification does. Corrected p-values drive the significance decisions; the uncorrected values are retained in the output for reporting. Under `no` the results TSV carries the raw p-values and the significance flags only.
+- The choice affects run time. `no` and `bfn` are applied inline while triplets stream; the others must hold every triplet's per-iteration p-values until the stream finishes. `fdr_tsbh` is the most expensive: it is the one method whose adjusted p-value can fall *below* the raw one, so it cannot skip the direction test on iterations an earlier gate already settled.
 - In YAML, `p_value_correction: no` may be written with or without quotes. YAML resolves the bare word `no` to a boolean, and enumerated fields map booleans back to the choice they spell (`no`/`off`/`n`/`false`, `yes`/`on`/`y`/`true`), so both forms select the same value.
 
 ##### `consolidation`
@@ -257,6 +261,15 @@ These have no CLI flag. They take their default unless set in a config file.
 - Also writes `summary_statistics.tsv` with 63 metric columns (mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/sister-distance for concordant/discordant1/discordant2). The `discordant1_*` columns describe whichever discordant topology is more frequent — the same group the `dis1_topology` column names and the statistical tests use — and `discordant2_*` the other one.
 - The results TSV carries no per-group mean or median columns regardless of this setting; the introgression direction comes from the permutation p-values.
 
+##### `shape_diagnostics`
+
+- Default: `false`
+- Appends fifteen columns describing the shape of each height group: a KDE mode count, a Silverman modality p-value, skewness, excess kurtosis, and a generalized-Pareto tail index. They are descriptive only and never affect a classification.
+- They land in the results TSV as `con_*`/`dis1_*`/`dis2_*` and, when `generate_summary_stats` is also set, in `summary_statistics.tsv` as `concordant_*`/`discordant1_*`/`discordant2_*` — each file under its own group naming, carrying the same values.
+- Off by default because the modality p-value is a smoothed bootstrap: it costs about 0.2s per group, so roughly 0.6s of extra CPU per triplet. On a large taxon set that dominates the run.
+- Measured once per triplet from the observed heights. Bootstrap iterations do not recompute them.
+- Groups with fewer than 20 observations are left empty, as are the tail indices of groups whose upper decile holds fewer than 10 points. See "Shape diagnostics" in the [orchestrator guide](ghostparser/orchestrator/ORCHESTRATOR.md) for how to read each column.
+
 ##### `bootstrap_options`
 
 A nested block; each key may also be given flat as `bootstrap_<key>`.
@@ -300,7 +313,7 @@ The loaders treat the 6-bit label column as a multi-label target: each bit becom
 
 Install the optional ML dependency set with `pip install .[ml]` when you want these trainers available; the core package can be installed without scikit-learn.
 
-The loader now uses a strict layout:
+The loader uses a strict layout:
 
 - top-level keys for core run inputs and split/runtime controls
 - `model` for trainer hyperparameters
@@ -519,49 +532,18 @@ Orchestrator samples live alongside them:
 
 ---
 
-## Introgression Mapper (CLI Submodule)
+## Consolidation Outputs
 
-`ghostparser.introgression_mapper` can be run independently to regenerate consolidation artifacts from an existing `orchestrator_triplet_results.tsv` without re-running the full orchestrator.
-
-### CLI Options
-
-#### Required
-
-##### `-r`, `--results-tsv`
-
-- Description: path to `orchestrator_triplet_results.tsv` produced by the orchestrator.
-
-##### `-st`, `--species-tree-path`
-
-- Description: path to the processed species tree file (Newick) used for taxon ordering.
-
-##### `-o`, `--output-dir`
-
-- Description: directory to write output plots and TSVs.
-
-#### Optional
-
-##### `-og`, `--outgroups`
-
-- Description: comma-separated outgroup taxon names to exclude from all plots and TSVs.
-- Example: `--outgroups OutGroup1,OutGroup2`
-
-### Introgression Mapper CLI Example
-
-```bash
-python -m ghostparser.introgression_mapper \
-  --results-tsv results/orchestrator_triplet_results.tsv \
-  --species-tree-path results/processed_species.tree \
-  --output-dir results/ \
-  --outgroups Ephemera_danica,Isonychia_kiangsinensis
-```
-
-### Outputs
+Consolidation is a stage of the orchestrator, not a separate entry point, and is
+controlled by the [`consolidation`](#consolidation) key. It writes into a
+`consolidation/` subfolder of the run's output folder:
 
 - `introgression_combined.png` — combined inflow/outflow heatmap and ghost target-strength bar chart.
 - `introgression_matrix_inflow_outflow.tsv` — target × source matrix of average bootstrap support values.
 - `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support, plus a `has_sampled_introgression` flag (`1` when that taxon is also the target of a sampled introgression edge) that sets the bar colour.
 - `introgression_taxa_order.tsv` — ordered taxa list matching the plot axes.
+
+Taxa named in [`outgroup`](#outgroup) are excluded from every plot and TSV here.
 
 ---
 
