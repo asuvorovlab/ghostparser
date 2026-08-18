@@ -1,14 +1,7 @@
 """Shared configuration trunk for GhostParser.
 
-This module holds only the configuration helpers whose behaviour is identical
-for every consumer: the ``ConfigError`` type, path resolution, raw JSON/YAML
-config loading, required-path validation, overwrite-flag resolution, and
-output-directory preparation.
-
-Module-specific defaults, choices, and validators deliberately live with their
-module (``ghostparser.orchestrator.config`` and ``ghostparser.ml.config``), because
-they diverge: the orchestrator and ML packages use different defaults and different
-validation rules for otherwise similarly named keys.
+Holds only the helpers whose behaviour is identical for every consumer.
+Module-specific defaults, choices, and validators live with their module.
 """
 
 import json
