@@ -11,7 +11,6 @@ guides, and every configuration key lives in [CONFIG.md](../CONFIG.md).
 ghostparser/
   orchestrator/         the introgression engine (primary entry point)
   ml/                   optional multi-label classifiers over summary_statistics.tsv
-  introgression_mapper.py  consolidation: introgression maps and matrices
   config.py             shared configuration trunk
   cli_config.py         shared CLI/config-file precedence resolver
   triplet_utils.py      shared triplet topology helpers
@@ -22,11 +21,12 @@ ghostparser/
 | --- | --- | --- |
 | `ghostparser.orchestrator` | Streaming triplet extraction + introgression inference. The main entry point. | [orchestrator/ORCHESTRATOR.md](orchestrator/ORCHESTRATOR.md) |
 | `ghostparser.ml` | Trains multi-label classifiers on an orchestrator run's `summary_statistics.tsv`. Requires `pip install .[ml]`. | [ml/ML.md](ml/ML.md) |
-| `ghostparser.introgression_mapper` | Turns per-triplet results into the combined heatmap/bar-chart figure and TSV matrices. Runs automatically as the orchestrator's consolidation stage, and standalone via its own CLI. | this document |
 
 `python -m ghostparser` prints a usage banner; the runnable entry points are
-`python -m ghostparser.orchestrator`, `python -m ghostparser.ml`, and
-`python -m ghostparser.introgression_mapper`.
+`python -m ghostparser.orchestrator` and `python -m ghostparser.ml`. The
+introgression maps are produced by the orchestrator's own consolidation stage
+(`orchestrator/consolidation.py`), described in
+[orchestrator/ORCHESTRATOR.md](orchestrator/ORCHESTRATOR.md).
 
 ## What the modules share
 
@@ -70,12 +70,12 @@ Pure functions for triplet topology handling (`find_sister_pair`,
 `rank_topologies_by_frequency`), used by the orchestrator for both preprocessing and
 inference.
 
-## Introgression Mapper Module (`ghostparser.introgression_mapper`)
+## Consolidation Stage (`ghostparser.orchestrator.consolidation`)
 
 
 ### Role
 
-`ghostparser.introgression_mapper` consumes per-triplet orchestrator results and produces a single combined visualization and companion TSV artifacts representing introgression signal across the ingroup taxa. It is called automatically by the orchestrator's consolidation stage; see [orchestrator/ORCHESTRATOR.md](orchestrator/ORCHESTRATOR.md) for how it is wired in.
+`orchestrator/consolidation.py` turns the per-triplet results into a single combined visualization plus companion TSV artifacts representing introgression signal across the ingroup taxa. It is the orchestrator's final stage rather than an entry point of its own: the runner calls it with the in-memory results list, so no results TSV is re-read between inference and plotting. See [orchestrator/ORCHESTRATOR.md](orchestrator/ORCHESTRATOR.md) for how it is wired in.
 
 ### `generate_introgression_maps(results, species_tree_path, output_dir, plot_taxa=None, outgroups=None, overwrite=True)`
 
@@ -83,7 +83,7 @@ Generates the combined consolidation figure and tabular outputs.
 
 **Arguments:**
 
-- `results`: Iterable of `TripletPipelineResult`-like objects (or dict rows from a TSV).
+- `results`: Iterable of `TripletPipelineResult` objects, as produced by the streaming engine.
 - `species_tree_path`: Path to the processed species tree used for taxon ordering.
 - `output_dir`: Directory to write all output files.
 - `plot_taxa`: Optional list of taxa to retain in the plot; defaults to full ingroup.
@@ -122,7 +122,7 @@ This normalizes signal strength by the total number of opportunities at which th
 The combined figure uses a three-row layout above the data panels:
 
 1. **Species tree strip** (top row) — topology-only tree with leaf labels suppressed.
-2. **Source taxon label strip** (middle row) — a dedicated thin row containing the source-taxon names, rotated 90°, aligned to heatmap column centres. Row height is computed from the rendered pixel-width of the longest label so labels are never clipped. Shown for datasets up to 120 taxa; suppressed beyond that.
+2. **Source taxon label strip** (middle row) — a dedicated thin row containing the source-taxon names, rotated 90°, aligned to heatmap column centres. Row height is computed from the rendered pixel-width of the longest label so labels are never clipped. The labels are always drawn; the canvas is sized from the taxon count, so a larger tree produces a larger figure.
 3. **Data panels** (bottom row, left to right):
     - **Inflow/outflow heatmap** — rows are target taxa, columns are source taxa, coloured by average bootstrap support on the `CONSOLIDATION_COLORMAP` (`cividis`) scale.
     - **Target label panel** — centred target taxon names aligned pixel-exactly to heatmap rows.
@@ -132,23 +132,10 @@ The combined figure uses a three-row layout above the data panels:
 All three rows share `hspace=0` so they appear flush. Figure and panel widths scale dynamically with taxon count and rendered label widths.
 The shared x/y labels and colorbar text scale with taxon count and are capped to stay readable on large figures, while the species-name labels keep their separate sizing.
 
-### CLI usage
+### How it is invoked
 
-```bash
-python -m ghostparser.introgression_mapper \
-    -r orchestrator_triplet_results.tsv \
-    -st processed_species.tree \
-    -o output_dir/ \
-    -og OutGroup1,OutGroup2
-```
-
-**Required arguments:**
-
-- `-r`, `--results-tsv`: Path to `orchestrator_triplet_results.tsv`.
-- `-st`, `--species-tree-path`: Path to the processed species tree (Newick).
-- `-o`, `--output-dir`: Directory to write output plots and TSVs.
-- `--no-overwrite`: Append a numeric suffix when the output directory already exists.
-
-**Optional arguments:**
-
-- `-og`, `--outgroups`: Comma-separated outgroup taxon names to exclude from plots.
+Consolidation runs automatically as the orchestrator's last stage, writing into
+a `consolidation/` subfolder of the run's output directory. Disable it with
+`--no-consolidation` / `consolidation: false`. It has no CLI of its own: its
+input is the in-memory results list, not a file, so there is nothing to point a
+command line at.

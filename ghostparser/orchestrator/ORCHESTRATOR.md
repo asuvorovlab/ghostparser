@@ -110,7 +110,7 @@ tree, and a species tree containing none of the outgroups.
 6. **Writing** — `inference.write_pipeline_results` emits
    `orchestrator_triplet_results.tsv`; `inference.write_summary_statistics_tsv`
    emits `summary_statistics.tsv` when `generate_summary_stats` is set.
-7. **Consolidation** — `introgression_mapper.generate_introgression_maps`
+7. **Consolidation** — `consolidation.generate_introgression_maps`
    writes the map artifacts into a `consolidation/` subfolder.
 
 ## Per-triplet inference
@@ -141,7 +141,7 @@ the two are derived in a single pass and cannot drift apart.
 The cascade *consults* the tests in order, but the point estimate *computes* all
 three for every triplet, so the `perm_*` columns are populated even where the
 cascade never reached them. Read `decision_gate` before reading `perm_decision`:
-only `Permutation` means the direction result produced the classification. A row
+only `PERM` means the direction result produced the classification. A row
 carrying `decision_gate = THT`, `perm_decision = ambiguous`, and
 `classification = inflow_introgression` is consistent — the direction test ran
 and was recorded, but the tree-height test had already settled the call.
@@ -263,8 +263,9 @@ rescaled onto the corrected scale. If `alpha_perm` lies outside both intervals,
 no further resampling can flip the comparison and the run stops with
 `perm_converged = True`. Otherwise the batch size grows by 25% and the run
 continues until the total reaches `max_resamples`, after which it stops with
-`perm_converged = False` and a `max_resamples_reached` note, listed in
-`metrics.txt`.
+`perm_converged = False` and a `max_resamples_reached` note. `metrics.txt`
+reports how many triplets landed there; which ones is in the results TSV's
+`perm_converged` and `perm_note` columns.
 
 `max_resamples` is the point at which the run stops asking for more, not a hard
 cap on the total. The batch that crosses it is drawn at its full grown size
@@ -390,7 +391,7 @@ centering roughly halves even that.
 Batches are chunked so the matrix of random keys stays near 16 MB, which matters
 because every pool worker runs its own tests concurrently.
 
-**Guards.** Four conditions short-circuit the test to `ambiguous` before any
+**Guards.** Four conditions short-circuit the test to `inconclusive` before any
 resampling, each recorded in the `perm_note` column:
 
 | Note | Condition | Why |
@@ -404,17 +405,114 @@ The scale guards compare against a small fraction of the data's own magnitude
 rather than against exact zero, because a sample of nominally identical values
 such as `[0.9] * 10` has a floating-point variance around `1e-33`, not `0`.
 
-**The skew flag.** The direction comes from the pair of corrected one-tailed
-tests. The absolute-value two-tailed p-value is reported as `perm_p_two_sided`
-for diagnosis only and never drives a decision, because it is valid only when
-the permutation null is symmetric.
-When it fails to resolve a comparison that the directional tails do resolve,
-`perm_null_skewed` is set. That happens when a small discordant1 group carries a
-few extreme heights: reassigning them produces a strongly right-skewed null
-whose fat right tail swamps a left-tail observation. Tree heights are bounded
-below by zero and routinely right-skewed, so this flag is common rather than
-exceptional, and it never overturns the directional call — `metrics.txt` reports
-only a count.
+**Null skewness.** The direction comes from the pair of corrected one-tailed
+tests, each of which is valid whatever shape the permutation null takes. The
+shape is still worth knowing, so the sample skewness of the null is accumulated
+across the batches and reported as `perm_null_skew`. It never drives a decision.
+
+The value is a plain skewness of the drawn statistics: `0` for a symmetric null,
+positive for a long right tail, negative for a long left tail. It is computed
+from running power sums rather than by retaining the draws, so it costs nothing
+in memory, and it is reported for **every** test that resampled — including the
+`equivalent` and `inconclusive` ones, where the null can be just as asymmetric as
+anywhere else.
+
+What makes a null asymmetric here is a handful of extreme heights in the smaller
+group. A permutation reassigns them, and the statistic depends sharply on *how
+many* land in the small group, so the null separates into clusters rather than
+forming one smooth curve. On a 700-vs-19 case carrying four extreme heights,
+90% of permutations put all four in the large group and land near `T = +1.9`,
+10% put one in the small group and land near `T = -0.9`, and 0.5% put two and
+land near `T = -1.4`. Skewness of `-2.2` is that cluster structure showing up in
+the third moment.
+
+Reading it: values near zero mean the null behaved like a symmetric reference
+distribution and the p-values can be read at face value. Large magnitudes mean a
+few gene trees dominate the smaller group's height distribution, so the group is
+heterogeneous — a subset of gene trees far taller or shorter than the rest. That
+is worth following up on the underlying alignments, but it does not invalidate
+the directional call: the one-tailed permutation p-values are computed against
+the true null whatever its shape. Tree heights are bounded below by zero and
+routinely right-skewed, so mild asymmetry is the norm; `metrics.txt` reports the
+median and maximum magnitude and how many triplets reach `|skew| >= 0.5`.
+
+**Equivalence: separating "no difference found" from "shown to be the same".**
+A non-significant directional pair means only that the data did not establish a
+direction. It does not mean the two means are alike — that conclusion needs its
+own test, because absence of evidence is not evidence of absence. When neither
+tail is significant, the run therefore performs two one-sided tests (TOST) at an
+equivalence margin `EQUIVALENCE_DELTA = 0.5` and splits the outcome:
+
+| `perm_decision` | Meaning |
+| --- | --- |
+| `equivalent` | Both shifted nulls rejected: the mean heights were *shown* to differ by less than the margin. |
+| `inconclusive` | At least one was not: nothing was established in either direction. |
+
+Both classify the triplet as `ambiguous`; the distinction is what the column
+reports, not a fourth classification.
+
+The two nulls are `mean(x) - mean(y) <= -delta` and `>= +delta`. Each is tested
+by shifting the concordant sample by the margin — which makes the two samples
+exchangeable under that null — and then running the ordinary permutation
+machinery on the shifted data. The TOST p-value is `max(p_lower, p_upper)`, and
+this pair needs *no* multiplicity correction: rejecting a union of nulls only
+when every component test rejects is an intersection-union test, which holds its
+nominal level whenever its components do (Berger 1982, *Technometrics* 24(4),
+295–300, https://doi.org/10.2307/1267823). See Schuirmann 1987 (*Journal of
+Pharmacokinetics and Biopharmaceutics* 15(6), 657–680,
+https://doi.org/10.1007/BF01068419) for the procedure and Lakens 2017 (*Social
+Psychological and Personality Science* 8(4), 355–362,
+https://doi.org/10.1177/1948550617697177) for its use as a routine companion to
+a significance test.
+
+**Why the margin is an effect size and not a number of standard errors.** The
+margin is `0.5` *pooled standard deviations* — a Cohen's *d* of 0.5, the
+conventional "medium" effect. Being dimensionless, it applies unchanged to every
+triplet however large its tree heights are, which is what a per-triplet margin
+has to do.
+
+Expressing it in standard-error units would be dimensionless too, and it is the
+obvious thing to reach for given that the test statistic is already studentized
+— but it does not work. `T` is a pivot: its null distribution has a spread near
+1 at *every* sample size. A margin of half a standard error would therefore sit
+permanently inside the null's own scatter, and no quantity of data would move
+it. Measured directly on samples drawn from one distribution, with 4000
+resamples:
+
+| observations per group | `p_tost`, margin in SE units | `p_tost`, margin in pooled SD |
+| --- | --- | --- |
+| 8 | 0.997 | 0.993 |
+| 30 | 0.464 | 0.071 |
+| 100 | 0.623 | 0.004 |
+| 400 | 0.709 | 0.0002 |
+| 2000 | 0.918 | 0.0002 |
+
+The SE-unit column never approaches `alpha_perm` and does not trend with sample
+size; equivalence would be unreachable by construction. The effect-size margin
+shrinks relative to the standard error as gene trees accumulate, so more data
+makes equivalence easier to establish, which is the behaviour the test needs.
+`test_equivalence_needs_enough_data_to_conclude` pins both ends of that.
+
+The equivalence step runs only in the point estimate, and only when no direction
+was found. Bootstrap iterations skip it: `equivalent` and `inconclusive` classify
+identically, so an iteration's vote can never depend on which of the two it is.
+
+**The interval on the studentized difference.** `perm_stat_ci_low` and
+`perm_stat_ci_high` bracket `perm_statistic` — the observed `T` — at the
+`1 - 2 * alpha_perm` percentile level of its bootstrap distribution. Each
+bootstrap iteration recomputes `T` on its own resample of the gene trees, and
+the interval is the empirical percentile range of those values.
+
+This is a different object from the `perm_p_*` intervals used by the stopping
+rule, which are binomial intervals around a p-value. This one is an interval on
+the *effect*, and it answers the question a p-value cannot: how large the
+separation might plausibly be, in standard errors. The `1 - 2 * alpha_perm`
+level is the one at which an interval and a one-sided test agree, so an interval
+excluding zero corresponds to a directional rejection at `alpha_perm`. Reading
+it alongside `perm_decision` distinguishes a direction that is well separated
+from one that only just cleared the threshold. It is reported only when the
+bootstrap is enabled and at least one iteration produced two observations in
+both groups; otherwise both columns are empty.
 
 **Known limitation.** The studentized permutation test is *asymptotically*
 valid, not exact. Its type-I error rate sits close to `alpha_perm` across most
@@ -432,7 +530,9 @@ iterations that reach gate 3 at all. The bootstrap aggregates many iterations
 into a single support value, which absorbs the extra per-iteration Monte Carlo
 noise the reduced budget introduces. The point estimate runs the full budget and
 runs for every triplet, including ones the earlier gates already settled, so the
-permutation columns are populated throughout the results TSV.
+permutation columns are populated throughout the results TSV. How the iterations'
+own DCT and KS p-values are corrected is described under
+[Correction inside the bootstrap](#correction-inside-the-bootstrap).
 
 **Why this correction is within-triplet only.** The one-tailed pair is
 corrected against itself and never across triplets. That is a hard constraint,
@@ -459,9 +559,180 @@ rather than confirmatory.
 **What a direction means.** Every triplet reaching gate 3 is decided here, so
 an `outflow` or `ghost` call always rests on a corrected one-tailed p-value
 below `alpha_perm`. A separation the data cannot resolve at that threshold is
-reported `ambiguous`.
+reported `equivalent` or `inconclusive` and classified `ambiguous`.
+
+### Correction inside the bootstrap
+
+`bootstrap_value` is only meaningful if the iterations answer to the same
+decision rule the reported classification does. The point estimate compares
+*corrected* p-values to `alpha_dct` and `alpha_ks`, so every bootstrap iteration
+must too — judging iterations on raw p-values while reporting a classification
+made on corrected ones measures two different rules and produces rows whose
+support contradicts their own classification.
+
+The obstacle is that a correction is a property of a *family*, not of a single
+p-value, and the family here spans triplets: iteration `i` of triplet A belongs
+with iteration `i` of every other triplet. A streaming engine that finishes one
+triplet before starting the next does not have the rest of the family in hand.
+The orchestrator therefore splits methods by what they need:
+
+| `p_value_correction` | When the iteration is corrected | Direction test skipped once a gate fails |
+| --- | --- | --- |
+| `no` | Inline — nothing to apply | Yes |
+| `bfn` | Inline — the multiplier is the triplet count, known before streaming | Yes |
+| `holm`, `fdr_bh`, `fdr_by` | Deferred — raw p-values parked per iteration, corrected across triplets after the stream | Yes |
+| `fdr_tsbh` | Deferred | **No** |
+
+Deferred iterations store their raw DCT and KS p-values and their direction code
+in a `DeferredBootstrapRecord`; `_resolve_deferred_bootstrap` then corrects
+iteration `i` across every triplet at once, classifies the whole grid, and tallies
+each triplet's votes. The DCT and KS tests always run in a deferred iteration,
+even below a failed gate, so each per-iteration family holds exactly one p-value
+per triplet — the same family the point estimate is corrected over.
+
+**Why skipping the direction test is sound.** Once a raw gate has failed, the
+cascade's answer is already fixed for any correction that cannot *lower* a
+p-value: `p_raw > alpha` implies `p_adjusted > alpha`, so the corrected gate
+fails too and nothing below it can change the classification. Skipping the
+direction test there costs nothing, and it is the run's largest cost centre.
+
+That property holds for four of the five methods by construction:
+
+- **Bonferroni** multiplies by the family size `n >= 1`, so `p_adj = min(1, np) >= p`.
+- **Holm** (Holm 1979, *Scandinavian Journal of Statistics* 6(2), 65–70,
+  https://www.jstor.org/stable/4615733) adjusts the `j`-th smallest by
+  `(n - j + 1) · p_(j)` under a running maximum; the multiplier is at least 1 for
+  every `j <= n`.
+- **Benjamini–Hochberg** (Benjamini & Hochberg 1995, *JRSS B* 57(1), 289–300,
+  https://doi.org/10.1111/j.2517-6161.1995.tb02031.x) uses `n/j · p_(j)` under a
+  running minimum, and `n/j >= 1` for every `j <= n`.
+- **Benjamini–Yekutieli** (Benjamini & Yekutieli 2001, *Annals of Statistics*
+  29(4), 1165–1188, https://doi.org/10.1214/aos/1013699998) multiplies BH by the
+  harmonic factor `sum(1/i) >= 1`, so it is uniformly larger still.
+
+`fdr_tsbh` is the exception and is excluded. Two-stage BH (Benjamini, Krieger &
+Yekutieli 2006, *Biometrika* 93(3), 491–507,
+https://doi.org/10.1093/biomet/93.3.491) first *estimates* the number of true
+null hypotheses `n₀ <= n` and substitutes it for `n`, so the multiplier `n₀/j`
+can fall below 1 and an adjusted p-value can land beneath its raw value. Measured
+over 20,000 random p-value families, `bonferroni`, `holm`, `fdr_bh` and `fdr_by`
+produced zero such cases while `fdr_tsbh` did so in 19,747 of them, with a worst
+gap of `-0.987`. An iteration that failed a raw gate under `fdr_tsbh` could
+genuinely pass the corrected one, so under that method every test runs
+unconditionally. `test_short_circuiting_methods_never_lower_a_p_value` and
+`test_two_stage_bh_can_lower_a_p_value_and_so_never_short_circuits` assert both
+halves of this.
+
+The family size is the triplet count regardless of any skipping, so the
+correction never depends on the optimization. Whichever tier applies, the
+resample stream is untouched: the bootstrap draws its resamples from a generator
+independent of the permutation tests', so a fixed `bootstrap_seed` reproduces the
+same resamples — and the same `perm_stat_ci_*` interval — under every correction
+method.
+
+## Shape diagnostics
+
+Off by default, enabled with `shape_diagnostics: true`. Fifteen columns
+describing the shape of each height group — `con_*`, `dis1_*`, `dis2_*`, the
+same three groups the tests are built on. Nothing here feeds a classification;
+they exist to say what the height distributions actually look like.
+
+| Column | Meaning |
+| --- | --- |
+| `<group>_n_modes` | Peaks in a Gaussian KDE at Scott's bandwidth. |
+| `<group>_modes_p` | Silverman p-value for "the density is unimodal". |
+| `<group>_skew` | Sample skewness. |
+| `<group>_excess_kurtosis` | Sample excess kurtosis (`0` for a normal). |
+| `<group>_tail_xi` | Generalized-Pareto shape of the upper decile. |
+
+**Counting peaks.** `n_modes` is a raw count at one bandwidth, and a KDE mode
+count is a property of the bandwidth as much as of the data. On a sample of 400
+draws the count reads 3 for an exponential and 4 for a Pareto, both of which are
+unimodal by construction. Read it as a description of the smoothed density, not
+as a number of components.
+
+Two unrelated resampling procedures are both called a bootstrap in this
+codebase. The **run bootstrap** (`bootstrap_options.iterations`) resamples gene
+trees to produce `bootstrap_value`, and never touches these diagnostics. The
+**smoothed bootstrap** below is internal to the modality test: it resamples from
+a smoothed density to calibrate one p-value, and is what
+`MODALITY_BOOTSTRAP_RESAMPLES` counts.
+
+`modes_p` is the inferential column. It is Silverman's critical-bandwidth
+bootstrap test (Silverman 1981, *Journal of the Royal Statistical Society B*
+43(1), 97–99, https://doi.org/10.1111/j.2517-6161.1981.tb01155.x): find the
+smallest bandwidth `h` whose KDE has one mode, then resample from the density
+smoothed at exactly that `h` and count how often a resample still needs more
+smoothing. A `p` at or below `alpha` says the observed `h` was implausibly large
+for a unimodal density — evidence of a second mode. Each replicate costs one
+mode count rather than a second bisection, because mode count is monotone in
+bandwidth: a resample needs a larger critical bandwidth exactly when it still
+has too many modes at `h`.
+
+Its calibration, on samples of 400:
+
+| Sample | `modes_p` | Correct? |
+| --- | --- | --- |
+| normal | 0.53–0.60 | unimodal, not rejected |
+| lognormal | 0.38–0.45 | unimodal, not rejected |
+| exponential | 0.16–0.25 | unimodal, not rejected |
+| gamma(2) | 0.35–0.40 | unimodal, not rejected |
+| Pareto(3) | 0.10–0.11 | unimodal, not rejected |
+| two normals, 2 SD apart | 0.28–0.29 | missed |
+| two normals, 3 SD apart | 0.005 | detected |
+| two normals, 4 SD apart | 0.005 | detected |
+
+So it holds its level on strongly skewed unimodal shapes — the case a mode count
+or a BIC-selected Gaussian mixture gets wrong — at the price of needing roughly
+three standard deviations of separation before it sees two components. A
+non-significant `modes_p` is therefore weak evidence of unimodality and a
+significant one is strong evidence against it.
+
+One known failure: a uniform density has no interior mode at all, and its hard
+edges cannot be reproduced by a Gaussian smoothed bootstrap, so the test rejects
+it. Tree heights are not uniform, but a group whose heights are near-constant
+across an interval will read as multimodal.
+
+**Tail weight.** `tail_xi` fits `scipy.stats.genpareto` to the exceedances over
+the group's 90th percentile, with the location pinned at the threshold. The
+shape parameter is the tail index: positive is a power-law tail whose moments
+above order `1 / xi` do not exist, `0` is exponential decay, negative is a tail
+with a finite upper endpoint at `threshold - sigma / xi`. Peaks-over-threshold is
+the estimator to use here rather than Hill's, which is non-negative by
+construction — it cannot represent a bounded tail at all, and it reads about
+`0.34` for an exponential and `0.25` for a lognormal, both of which have
+`xi = 0`.
+
+**Guards.** Groups with fewer than `SHAPE_MIN_OBSERVATIONS` (20) observations,
+or with no spread, leave all five columns empty. `tail_xi` additionally needs
+`SHAPE_MIN_TAIL_EXCEEDANCES` (10) points above the threshold, so it stays empty
+below 100 observations even when the moments are reported. Below a few hundred
+observations the tail index is noisy enough that its sign is the only part worth
+reading.
+
+**Where they appear.** The results TSV carries them as `con_*`/`dis1_*`/`dis2_*`,
+matching its other per-group naming. `summary_statistics.tsv` repeats the same
+values as `concordant_*`/`discordant1_*`/`discordant2_*`, matching *its* naming,
+so a model trained on that file gets the shape of each height group alongside
+the 63 metric columns. Both column sets are derived from what the run measured
+rather than from the setting, so neither file can advertise a measurement that
+did not happen.
+
+**Cost.** The modality bootstrap is the expensive part: about 0.2 s per group,
+so roughly 0.6 s of extra CPU per triplet. That is why the default is off —
+across a large taxon set it dominates everything else the run does. The
+diagnostics are measured once per triplet, in the point estimate, from the
+observed heights. Bootstrap iterations never recompute them: an iteration
+resamples the gene trees, so its groups are a different sample, and measuring
+each one would multiply the cost by the iteration count.
 
 ## Outputs
+
+The output folder is reset before the run under the default `overwrite: true`,
+so it must be a directory of its own. Pointing it at a directory that holds
+input trees deletes them. Consolidation resets its own `consolidation/`
+subfolder the same way, which is why it gets a subfolder rather than writing
+beside the results TSV.
 
 Written under the output folder:
 
@@ -474,11 +745,13 @@ Written under the output folder:
   group named by the `dis1_topology` column and used by all three tests — and
   `discordant2_*` the other one. The roles are resolved per triplet from the
   observed counts, not fixed to a topology label, so a triplet where `AC|B`
-  outnumbers `BC|A` has its `AC|B` gene trees under `discordant1_*`.
+  outnumbers `BC|A` has its `AC|B` gene trees under `discordant1_*`. With
+  `shape_diagnostics` also set, the fifteen shape columns follow the same
+  naming and are appended after the metric columns.
 - `processed_<species tree>` / `processed_<gene trees>` — cleaned, rooted trees.
 - `metrics.txt` — per-stage wall/CPU timing and run parameters.
 - `consolidation/` — the combined heatmap/bar-chart plot and TSV matrices from
-  `introgression_mapper`, unless `--no-consolidation` is given. Consolidation
+  `consolidation.py`, unless `--no-consolidation` is given. Consolidation
   writes into this dedicated subfolder so its own output-directory reset never
   removes the run folder's results TSV, processed trees, or the open
   `metrics.txt`.
@@ -494,24 +767,26 @@ Written under the output folder:
 | `n_con` / `n_dis1` / `n_dis2` | Topology counts | Gene trees observed with each topology. |
 | `analyzed_trees` | Extraction | Gene trees from which a subtree for this triplet was extracted. |
 | `dct_statistic` / `dct_p_value` | DCT | SciPy chi-square or statsmodels z-test over `[n_dis1, n_dis2]`. An all-zero discordant split short-circuits to `(0.0, 1.0)`. |
-| `dct_p_value_<method>_corr` | Correction | Run-wide correction over every triplet's DCT p-value. |
+| `dct_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's DCT p-value. Omitted under `no`. |
 | `dct_significant` | Decision gate 1 | Corrected DCT p-value below `alpha_dct`. |
 | `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. |
-| `ks_p_value_<method>_corr` | Correction | Run-wide correction over every triplet's KS p-value. |
+| `ks_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's KS p-value. Omitted under `no`. |
 | `ks_significant` | Decision gate 2 | Corrected KS p-value below `alpha_ks`. |
 | `perm_statistic` | Direction test | Observed Welch-studentized mean difference. Empty when a guard fired. |
 | `perm_p_greater` / `perm_p_less` | Direction test | Raw one-tailed p-values, add-one estimator. |
-| `perm_p_two_sided` | Direction test | Raw two-tailed p-value from the absolute statistic; diagnostic only, see `perm_null_skewed`. |
-| `perm_p_greater_<method>_corr` / `perm_p_less_<method>_corr` | Direction test | The one-tailed p-values corrected against each other, and the values compared to `alpha_perm`. |
+| `perm_p_greater_<method>_corr` / `perm_p_less_<method>_corr` | Direction test | The one-tailed p-values corrected against each other, and the values compared to `alpha_perm`. Omitted under `no`. |
+| `perm_p_tost` | Equivalence test | TOST (two one-sided tests) p-value: `max(p_lower, p_upper)` over the two shifted-null permutation tests, one per side of the equivalence margin. Below `alpha_perm` the two mean heights were shown to differ by less than half a pooled standard deviation, which is what makes `perm_decision` read `equivalent` rather than `inconclusive`. Populated only when neither direction was significant. |
+| `perm_stat_ci_low` / `perm_stat_ci_high` | Bootstrap | Percentile interval on the studentized difference at the `1 - 2 * alpha_perm` level. Empty without bootstrap, or when no iteration had two observations in both groups. |
 | `perm_n_resamples` | Direction test | Permutations drawn; `0` when a guard fired. Can exceed `max_resamples` by up to one batch, since the final batch is not trimmed. |
 | `perm_converged` | Direction test | True when the confidence interval excluded `alpha_perm` before the budget ran out. |
-| `perm_null_skewed` | Direction test | True when the absolute-value two-tailed p-value fails to resolve a comparison the directional tails resolve. Common and harmless; see above. |
+| `perm_null_skew` | Direction test | Sample skewness of the permutation null: the third standardized moment of the `perm_n_resamples_skew` studentized statistics drawn while testing this triplet. It describes the *reference distribution the test built*, not the tree heights themselves. `0` is a symmetric null and the p-values behave like a textbook two-sample test; a large magnitude means a few extreme heights in the smaller group dominate the resampling, so the null breaks into clusters by how many of them land where, and the sign names the long tail. Reported for every test that resampled, including `equivalent` and `inconclusive` ones. Never consulted by any decision — see "Null skewness" above for the worked 700-vs-19 case. |
 | `perm_note` | Direction test | Guard slug, or `max_resamples_reached`; empty on a clean run. |
-| `perm_decision` | Decision gate 3 | `greater`, `less`, or `ambiguous` for concordant relative to discordant1. Always populated; consulted only when `decision_gate` is `Permutation`. |
-| `decision_gate` | Decision logic | Which test settled the classification: `DCT`, `THT`, or `Permutation`. |
+| `perm_decision` | Decision gate 3 | `greater`, `less`, `equivalent`, or `inconclusive` for concordant relative to discordant1. Always populated; consulted only when `decision_gate` is `PERM`. |
+| `decision_gate` | Decision logic | Which test settled the classification: `DCT`, `THT`, or `PERM`. |
 | `classification` | Decision logic | `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`. |
 | `inference_description` | Reporting | Human-readable direction naming the actual species. |
-| `bootstrap_value` / `all_bootstrap` | Bootstrap | Fraction of iterations agreeing with the final classification, plus the full class-fraction map. Present unless `--no-bootstrap`. |
+| `bootstrap_value` / `all_bootstrap` | Bootstrap | Fraction of iterations agreeing with the final classification, plus the full class-fraction map. Iterations are judged against the same corrected thresholds as the point estimate. Present unless `--no-bootstrap`. |
+| `con_*` / `dis1_*` / `dis2_*` shape columns | Shape diagnostics | Mode count, Silverman modality p-value, skewness, excess kurtosis and generalized-Pareto tail index per height group. Present only with `shape_diagnostics`; see above for how to read each. |
 | `bootstrap_*` debug columns | Bootstrap debug | Per-iteration DCT/KS statistics, con/dis means, and gene-tree heights. Present only with `bootstrap_debug_mode`. |
 
 This file reports the *tests*: the direction is read off `perm_p_greater` and
@@ -526,9 +801,9 @@ the `*_avg_tree_height_*` summary columns always average the three root-to-tip
 distances, whereas the result fields average H(T) as selected by
 `tree_height_calculation_strategy`. They coincide only under the default `AVG`.
 
-The results TSV is named `orchestrator_triplet_results.tsv`, distinct from the
-inputs a standalone `introgression_mapper` run consumes, so both can share an
-output folder without colliding.
+The results TSV is named `orchestrator_triplet_results.tsv`. Consolidation
+writes its own artifacts into a `consolidation/` subfolder, so the two never
+collide in the run's output folder.
 
 ## Parallelization modes
 
@@ -555,18 +830,20 @@ ghostparser/orchestrator/
   config.py      orchestrator defaults/choices, validation, CLI parser, and CLI/config resolution
   correction.py  multiple-testing correction shared by inference.py and permutation.py
   permutation.py adaptive studentized permutation test (decision gate 3)
+  shape.py       optional per-group modality/skew/tail diagnostics
   trees.py       tree/triplet preprocessing
   inference.py   per-triplet inference + summary stats + result type + TSV writers
   stream.py      fused extract+infer streaming engine
   preflight.py   structural data check reached via --preflight-data-check
+  consolidation.py  introgression maps and TSV matrices (the final stage)
   runner.py      run_orchestrator coordinator (cleaning -> streaming -> correction -> writing -> consolidation)
   ORCHESTRATOR.md    this document
 ```
 
 ### Shared dependencies
 
-The orchestrator owns its tree preprocessing, inference, and configuration. It
-imports only four things from the rest of the package:
+The orchestrator owns its tree preprocessing, inference, consolidation, and
+configuration. It imports only three things from the rest of the package:
 
 - `ghostparser.config` — the shared configuration trunk (`ConfigError`, path
   resolution, raw config-file loading, required-path validation, overwrite
@@ -576,8 +853,6 @@ imports only four things from the rest of the package:
 - `ghostparser.cli_config` — the generic `resolve_cli_or_config_args` resolver
   implementing config-file-wins precedence.
 - `ghostparser.triplet_utils` — pure topology helpers.
-- `ghostparser.introgression_mapper` — `generate_introgression_maps` for the
-  consolidation stage.
 
 ### Fused streaming engine
 
