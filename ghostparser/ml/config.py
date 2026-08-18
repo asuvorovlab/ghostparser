@@ -1,9 +1,7 @@
-"""Configuration helpers for Ghostparser ML workflows.
+"""Configuration for Ghostparser ML.
 
-Owns the ML defaults/choices and the ML-specific validation rules (for example
-``test_size`` must be a fraction strictly between 0 and 1). The helpers shared
-verbatim with the orchestrator are imported from the :mod:`ghostparser.config`
-trunk.
+Owns the ML defaults, choices, and validation rules; shared helpers come from
+the :mod:`ghostparser.config` trunk.
 """
 
 from ..config import (

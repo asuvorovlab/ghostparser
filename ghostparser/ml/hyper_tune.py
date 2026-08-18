@@ -1,9 +1,7 @@
-"""Hyperparameter tuning for Ghostparser ML baselines.
+"""Config-driven grid or random hyperparameter search over the ML trainers.
 
-This module runs a config-driven grid or random search over the supported ML
-trainers. Put the tuning settings under the top-level
-`hyperparameter_tuning` section and the module writes the best fitted model
-plus candidate rankings.
+Settings live under the ``hyperparameter_tuning`` config section, documented
+under "Configuration" in the ML guide.
 """
 
 import argparse
