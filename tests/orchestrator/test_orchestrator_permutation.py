@@ -202,9 +202,12 @@ def test_decision_matches_scipy_directional_verdict(seed):
     elif scipy_less <= _ALPHA / 2:
         expected = "less"
     else:
-        expected = "ambiguous"
+        expected = None
 
-    assert result.decision == expected
+    if expected is None:
+        assert result.decision in {"equivalent", "inconclusive"}
+    else:
+        assert result.decision == expected
 
 
 def test_permutation_statistics_match_exhaustive_enumeration():
@@ -226,7 +229,7 @@ def test_permutation_statistics_match_exhaustive_enumeration():
     for picked in combinations(range(pooled.size), nx):
         mask = np.zeros(pooled.size, dtype=bool)
         mask[list(picked)] = True
-        exact.add(round(pperm._studentized_mean_diff(pooled[mask], pooled[~mask]), 9))
+        exact.add(round(pperm.studentized_mean_diff(pooled[mask], pooled[~mask]), 9))
 
     assert len(exact) == math.comb(nx + ny, nx)
 
@@ -257,10 +260,9 @@ def test_random_inputs_preserve_test_invariants(seed):
     )
 
     assert result.note != "both_tails_significant"
-    assert result.decision in {"greater", "less", "ambiguous"}
+    assert result.decision in {"greater", "less", "equivalent", "inconclusive"}
     assert 0.0 < result.p_greater <= 1.0
     assert 0.0 < result.p_less <= 1.0
-    assert 0.0 < result.p_two_sided <= 1.0
     # The two one-tailed counts both include ties, so together they cover every
     # resample at least once and their p-values must sum past 1.
     assert result.p_greater + result.p_less > 1.0
@@ -280,7 +282,33 @@ def test_equal_samples_give_a_zero_statistic_and_no_direction():
         rng=np.random.default_rng(6),
     )
     assert result.statistic == pytest.approx(0.0)
-    assert result.decision == "ambiguous"
+    assert result.decision in {"equivalent", "inconclusive"}
+
+
+@pytest.mark.parametrize(
+    "n, expected",
+    [(8, "inconclusive"), (400, "equivalent")],
+)
+def test_equivalence_needs_enough_data_to_conclude(n, expected):
+    """TOST separates "shown to be close" from "nothing shown" as data accrues.
+
+    Both cases feed the test two samples drawn from the same distribution, so
+    neither direction can be significant and the equivalence step decides. The
+    margin is an effect size (0.5 pooled standard deviations), so it shrinks
+    relative to the standard error as n grows: 8 observations per group cannot
+    rule out a medium effect, while 400 can. A margin expressed in standard-error
+    units would report ``inconclusive`` at every n, since the studentized
+    statistic is a pivot whose null spread does not shrink with sample size.
+    """
+    rng = np.random.default_rng(11)
+    x = rng.normal(1.0, 0.2, n)
+    y = rng.normal(1.0, 0.2, n)
+    result = pperm.run_studentized_permutation_test(
+        x, y, min_resamples=1000, max_resamples=1000,
+        rng=np.random.default_rng(12),
+    )
+    assert result.decision == expected
+    assert (result.p_tost <= 0.05) is (expected == "equivalent")
 
 
 def test_type_one_error_rate_tracks_alpha_under_unequal_variance():
@@ -313,7 +341,7 @@ def test_type_one_error_rate_tracks_alpha_under_unequal_variance():
             correction="bfn",
             rng=np.random.default_rng(replicate),
         )
-        if result.decision != "ambiguous":
+        if result.decision in {"greater", "less"}:
             rejections += 1
 
     assert 3 <= rejections <= 30, rejections
@@ -344,63 +372,67 @@ def test_seeded_runs_are_reproducible():
     ],
 )
 def test_guards_short_circuit_without_resampling(x, y, expected_note):
-    """Each guard returns an ambiguous result and draws no permutations."""
+    """Each guard returns an inconclusive result and draws no permutations."""
     result = pperm.run_studentized_permutation_test(
         x, y, rng=np.random.default_rng(0)
     )
     assert result.note == expected_note
-    assert result.decision == "ambiguous"
+    assert result.decision == "inconclusive"
     assert result.n_resamples == 0
     assert result.statistic is None
     assert result.converged is False
 
 
-def test_skewed_null_keeps_the_directional_call_and_flags_it():
-    """An asymmetric permutation null is flagged without overturning the direction.
+def test_null_skewness_is_measured_and_matches_scipy():
+    """The reported null skewness equals the skewness of the drawn statistics.
 
-    This reproduces a shape seen on real data: a large concordant sample against
-    a tiny discordant1 sample carrying extreme heights. Randomly reassigning
-    those few large values produces a strongly right-skewed null, so the
-    absolute-value two-tailed count borrows the fat right tail and fails to
-    resolve a left-tail observation that the directional tail resolves outright.
-    The directional decision is the correct one; the mismatch is recorded as a
-    note rather than being treated as a rule disagreement.
+    ``perm_null_skew`` is accumulated from running power sums so batches can be
+    discarded, so it is checked against `scipy.stats.skew` over the same draws.
+    The fixture is a shape seen on real data — a large concordant sample against
+    a tiny discordant1 sample carrying a few extreme heights — which splits the
+    null into clusters by how many extremes land in the small group and leaves
+    it strongly asymmetric.
     """
     rng = np.random.default_rng(21)
     con = rng.normal(0.42, 0.10, 700)
     dis1 = np.concatenate([rng.normal(0.5, 0.1, 15), rng.normal(25.0, 5.0, 4)])
+    resamples = 2500
 
     result = pperm.run_studentized_permutation_test(
         con,
         dis1,
         alpha=_ALPHA,
-        min_resamples=2500,
-        max_resamples=2500,
+        min_resamples=resamples,
+        max_resamples=resamples,
         correction="bfn",
         rng=np.random.default_rng(22),
     )
 
+    pooled = np.concatenate([con, dis1])
+    pooled = pooled - pooled.mean()
+    drawn = pperm._permutation_statistics(
+        pooled, con.size, dis1.size, resamples, np.random.default_rng(22)
+    )
+
     assert result.statistic < 0
     assert result.decision == "less"
-    assert result.p_two_sided > _ALPHA
-    assert result.null_skewed is True
-    # Skew is informational, not an exception, so it does not occupy ``note``.
+    assert result.n_resamples_skew == resamples
+    assert result.null_skew == pytest.approx(float(stats.skew(drawn)), rel=1e-9)
+    # This fixture's null is strongly asymmetric; a symmetric one sits near 0.
+    assert abs(result.null_skew) > 1.0
     assert result.note is None
 
 
-def test_max_resamples_reached_is_reported():
-    """Exhausting the budget without excluding alpha is flagged, not hidden."""
-    rng = np.random.default_rng(3)
-    # Nearly identical samples keep p far from alpha on the low side but the
-    # interval around p_less stays wide enough that alpha remains inside it.
-    x = rng.normal(1.0, 1.0, 40)
-    y = rng.normal(1.0, 1.0, 40)
+def test_null_skewness_is_near_zero_for_a_symmetric_null():
+    """Balanced samples from one symmetric family leave the null unskewed."""
+    rng = np.random.default_rng(4)
+    x = rng.normal(1.0, 1.0, 150)
+    y = rng.normal(1.0, 1.0, 150)
     result = pperm.run_studentized_permutation_test(
-        x, y, min_resamples=200, max_resamples=200, rng=np.random.default_rng(4)
+        x, y, alpha=_ALPHA, min_resamples=4000,
+        max_resamples=4000, rng=np.random.default_rng(5),
     )
-    assert result.n_resamples == 200
-    if not result.converged:
-        assert result.note == "max_resamples_reached"
+    assert abs(result.null_skew) < 0.15
 
 
 def test_adaptive_run_grows_batches_until_it_converges():

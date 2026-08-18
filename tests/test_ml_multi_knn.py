@@ -78,5 +78,11 @@ def test_multi_knn_build_model_caps_neighbors_to_training_size():
 
     model, effective_n_neighbors = _build_model(config, train_size=2)
 
+    # The clamp must reach the estimator, not only the reported value: asking
+    # KNN for more neighbors than training samples raises at fit time.
     assert effective_n_neighbors == 2
-    assert model is not None
+    assert model.estimator.n_neighbors == 2
+
+    # Below the clamp the request passes through untouched.
+    _, unclamped = _build_model(config, train_size=50)
+    assert unclamped == 20

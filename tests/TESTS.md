@@ -142,59 +142,88 @@ from the tabulated tree geometry.
 The decision logic and p-value correction, driven with crafted observation sets
 because the shared fixture never produces a significant DCT.
 
-- `test_classify_no_introgression_when_dct_not_significant` — Inputs: an even
-  10/10 discordant split. Expected outputs: DCT statistic 0, p-value 1.0, not
-  significant, `no_introgression`. Purpose: gate 1 short-circuits.
-- `test_classify_inflow_when_tree_height_test_not_significant` — Inputs: a
-  significant 30/2 discordant split with identical concordant and discordant
-  heights. Expected outputs: DCT significant, KS statistic 0 and not
-  significant, `inflow_introgression`, `decision_gate == "THT"`, and a non-None
-  `perm_decision`. Purpose: gate 2 maps to inflow, and the gate column marks the
-  reported permutation decision as one the cascade never consulted.
-- `test_classify_outflow_when_concordant_heights_exceed_discordant` — Inputs: a
-  significant 30/2 split with fully separated, spread-out heights (10 concordant
-  in [0.85, 0.94], 30 discordant1 in [0.05, 0.34]). Expected outputs: KS
-  statistic 1.0 and significant, `perm_statistic > 0` (the studentized
-  difference is `(mean_con - mean_dis1) / se`), no permutation guard,
-  `perm_decision == "greater"`, `outflow_introgression`. Purpose: gate 3,
-  con > dis, with the permutation test actually resampling.
-- `test_classify_ghost_when_discordant_heights_exceed_concordant` — Inputs: the
-  mirror case, discordant above concordant. Expected outputs:
-  `perm_statistic < 0`, `perm_decision == "less"`, `ghost_introgression`.
-  Purpose: gate 3, con < dis.
-- `test_classify_ambiguous_when_direction_is_undetectable` — Inputs: a
-  significant split where concordant and discordant1 share a mean but differ
-  sharply in spread (+-0.30 versus +-0.02 around 0.5). Expected outputs: DCT and
-  KS both significant, `perm_decision == "ambiguous"`, classification
-  `ambiguous`. Purpose: the KS test separates distributions that the direction
-  test cannot order, which is the case that has no directional answer.
-- `test_permutation_guard_reports_insufficient_support` — Inputs: 4 concordant
-  and 2 discordant1 heights, giving C(6, 2) = 15 assignments. Expected outputs:
-  `perm_note == "insufficient_permutation_support"`, zero resamples, ambiguous.
-  Purpose: too-small samples are refused rather than decided.
-- `test_permutation_guard_reports_degenerate_scale` — Inputs: internally
-  constant groups with different means (`[0.9] * 10` versus `[0.1] * 30`).
-  Expected outputs: `perm_note == "degenerate_observed_scale"`, ambiguous
-  classification. Purpose: a zero standard error is caught relative to the
-  data's magnitude rather than against exact zero.
-- `test_summary_statistics_discordant1_follows_frequency_not_topology_name` —
-  Inputs: 10 concordant, 3 `BC|A`, and 9 `AC|B` gene subtrees with
-  `collect_summary_statistics=True`, so `AC|B` is the more frequent discordant.
-  Expected outputs: `dis1_topology == "AC"`, `(n_dis1, n_dis2) == (9, 3)`, and
-  `discordant1_avg_tree_height_mean` equal to the AC group's derived mean (with
-  `discordant2_*` the BC group's). Purpose: the
-  summary columns name the same gene trees as `dis1_topology` and the tests,
-  rather than a fixed topology label.
-- `test_summary_statistics_discordant_roles_swap_with_the_counts` — Inputs: the
-  same fixture with the two discordant groups exchanged. Expected outputs:
-  `dis1_topology == "BC"` and the two summary column families swap accordingly.
-  Purpose: the role assignment tracks the counts in both directions.
-- `test_classify_introgression_truth_table` — Inputs (parametrized, 8 rows):
-  every combination of DCT/KS significance and direction, including `None` for
-  each. Expected outputs: the documented classification and the terminating gate
-  (`DCT`/`THT`/`Permutation`) for each row. Purpose: exhaustive coverage of
+- `test_decision_cascade_lands_on_each_classification` — Inputs (parametrized, 5
+  rows): crafted observation sets, one per outcome — an even 10/10 discordant
+  split; a significant 30/2 split with identical con/dis1 heights; the same split
+  with fully separated spread-out heights in either direction; and a split whose
+  groups share a mean but differ sharply in spread. Expected outputs: the DCT and
+  KS significance flags, the classification, `decision_gate`, and (where a
+  direction is expected) `perm_decision`, with `perm_decision` non-None
+  throughout. Purpose: every branch of the cascade is reached by its intended
+  route, and the gate column shows which test settled each call rather than
+  letting a case pass by coincidence.
+- `test_permutation_guards_surface_on_the_triplet_result` — Inputs (parametrized,
+  2 rows): 4 concordant against 2 discordant1 heights (C(6, 2) = 15 assignments),
+  and internally constant groups with different means (`[0.9] * 10` versus
+  `[0.1] * 30`). Expected outputs: the matching `perm_note`, zero resamples, and
+  `perm_decision == "inconclusive"`. Purpose: a guarded direction test reports
+  its reason on the triplet result instead of a direction.
+- `test_summary_statistics_discordant_roles_follow_the_counts` — Inputs
+  (parametrized, 2 rows): 10 concordant plus 3 and 9 discordant gene subtrees
+  with `collect_summary_statistics=True`, run once with `AC|B` the more frequent
+  discordant and once with `BC|A`. Expected outputs: `dis1_topology` naming the
+  more frequent group, `(n_dis1, n_dis2) == (9, 3)`, and the
+  `discordant1_*`/`discordant2_*` means matching the corresponding groups.
+  Purpose: the summary columns name the same gene trees as `dis1_topology` and
+  the tests, in either direction of the count.
+- `test_classify_introgression_truth_table` — Inputs (parametrized, 9 rows):
+  every combination of DCT/KS significance and direction, including `equivalent`,
+  `inconclusive`, and `None`. Expected outputs: the documented classification and the terminating gate
+  (`DCT`/`THT`/`PERM`) for each row. Purpose: exhaustive coverage of
   `_classify_introgression`, which returns the pair, so the gate column cannot
   drift out of step with the classification it explains.
+- `test_inline_and_deferred_correction_agree_on_a_single_triplet` — Inputs
+  (parametrized over `no`/`bfn`/`holm`/`fdr_bh`/`fdr_by`): one triplet, family
+  size 1, 40 bootstrap iterations at a fixed seed. Expected outputs: identical
+  `all_bootstrap` and `bootstrap_value` for every method. Purpose: a family of
+  one leaves each correction as the identity, so the inline path (`no`, `bfn`)
+  and the deferred path (the other three) must implement one decision rule.
+- `test_bootstrap_votes_answer_to_the_corrected_threshold` — Inputs: a triplet
+  whose raw DCT p-value clears 0.05, analyzed once with `no` and once with `bfn`
+  at family size 5000. Expected outputs: the corrected run classifies
+  `no_introgression` with `all_bootstrap["no_introgression"] == 1.0`, while the
+  uncorrected run's same iterations put it below 1.0. Purpose: the regression
+  test for bootstrap votes being judged on raw p-values while the classification
+  used corrected ones.
+- `test_deferred_bootstrap_record_is_cleared_after_correction` — Inputs: one
+  triplet under `holm` with 20 iterations. Expected outputs: `all_bootstrap is
+  None` and a 20-element `bootstrap_deferred` before correction; after
+  `_apply_triplet_result_p_value_correction`, `bootstrap_deferred is None` and
+  the fractions sum to 1. Purpose: the deferral hand-off completes.
+- `test_vectorized_bootstrap_codes_match_classify_introgression` — Inputs
+  (parametrized, 16 rows): every DCT/KS/direction combination. Expected outputs:
+  `_classification_codes` maps to the same label `_classify_introgression`
+  returns. Purpose: the array-form cascade used to tally deferred votes cannot
+  drift from the scalar one.
+- `test_monotonicity_matches_which_methods_may_short_circuit` — Inputs
+  (parametrized over all 6 methods): a family of eight p-values at 0.001 plus 0.4
+  and 0.9. Expected outputs: no adjusted value falls below its raw one for
+  `no`/`bfn`/`holm`/`fdr_bh`/`fdr_by`, at least one does for `fdr_tsbh`, and
+  `is_monotone_correction` agrees with the measurement in every case. Purpose:
+  asserts the property that licenses skipping the direction test, and pins the
+  one method excluded from it, without trusting method names.
+- `test_inline_bonferroni_matches_the_family_correction` — Inputs (parametrized
+  over family sizes 1, 7, 250): p=0.004 padded out to that family. Expected
+  outputs: `_adjust_p_value_inline` equals the full `_adjust_p_values` pass on
+  the same family. Purpose: the inline shortcut is exact, not an approximation.
+- `test_inline_correction_rejects_a_rank_based_method` — Inputs: `holm` passed to
+  the inline corrector. Expected outputs: `ValueError`. Purpose: rank-based
+  methods cannot be applied without the whole family.
+- `test_studentized_interval_brackets_the_observed_statistic` — Inputs: 60
+  concordant against 40 discordant1 heights on evenly spaced ramps at 200
+  iterations, then a degenerate pair of two concordant heights against one
+  discordant1 height. Expected outputs: an ordered interval containing
+  `perm_statistic` for the first, both bounds `None` for the second. Purpose: the
+  percentile interval describes the statistic it accompanies, and is left
+  unreported when no resample yields two observations in both groups.
+- `test_results_tsv_carries_corrected_columns_only_when_correcting` — Inputs
+  (parametrized over `no`/`bfn`/`fdr_bh`): one analyzed triplet written through
+  `write_pipeline_results`. Expected outputs: the four `*_corr` columns are
+  present for `bfn`/`fdr_bh` and absent for `no`, no header ends in `_no_corr`,
+  the raw p-value and significance columns are present in every case, and the
+  data row has exactly as many fields as the header. Purpose: the column
+  contract, including that the two conditional lists stay in step so a row never
+  shifts against its header.
 - `test_adjust_p_values_matches_statsmodels` — Inputs (parametrized over all 6
   correction methods): a fixed 10-value p-value list. Expected outputs: `no`
   returns the input unchanged; every other method equals
@@ -248,29 +277,39 @@ exhaustive enumeration, and over randomized inputs.
   sign of the statistic. Purpose: structural invariants on shapes no fixed
   fixture covers.
 - `test_equal_samples_give_a_zero_statistic_and_no_direction` — Inputs: the same
-  8 values as both samples. Expected outputs: statistic 0, ambiguous. Purpose:
-  identical inputs cannot produce a direction.
+  8 values as both samples. Expected outputs: statistic 0 and a non-directional
+  decision (`equivalent` or `inconclusive`). Purpose: identical inputs cannot
+  produce a direction.
+- `test_equivalence_needs_enough_data_to_conclude` — Inputs (parametrized, 2
+  rows): two samples drawn from one normal distribution at n=8 and n=400 per
+  group. Expected outputs: `inconclusive` at n=8 and `equivalent` at n=400, with
+  `p_tost <= 0.05` exactly on the `equivalent` row. Purpose: the equivalence
+  margin is an effect size, so it shrinks relative to the standard error as data
+  accrues and TOST gains power; a margin in standard-error units would report
+  `inconclusive` at every n.
 - `test_type_one_error_rate_tracks_alpha_under_unequal_variance` — Inputs: 300
   null replicates, n=60 at sd 1.0 against n=180 at sd 0.3, alpha 0.05. Expected
-  outputs: between 3 and 30 rejections (1%-10%; nominal is 15). Purpose: the
+  outputs: between 3 and 30 *directional* decisions (1%-10%; nominal is 15);
+  non-directional outcomes are not rejections of the directional null. Purpose: the
   studentization holds the nominal level under unequal sizes and variances,
   which is the regime where an unstudentized permutation test fails.
 - `test_seeded_runs_are_reproducible` — Inputs: two identical calls with the
   same seed. Expected outputs: identical results. Purpose: reproducibility.
 - `test_guards_short_circuit_without_resampling` — Inputs (parametrized, 4
   rows): one input per guard condition. Expected outputs: the matching
-  `note`, an ambiguous decision, zero resamples, no statistic, and
+  `note`, an `inconclusive` decision, zero resamples, no statistic, and
   `converged is False`. Purpose: each guard is reachable and inert.
-- `test_skewed_null_keeps_the_directional_call_and_flags_it` — Inputs: 700
-  concordant heights against 19 discordant1 heights of which 4 are extreme —
-  the shape observed on real data. Expected outputs: a negative statistic,
-  `decision == "less"`, `p_two_sided > alpha`, `null_skewed is True`,
-  and `note is None`. Purpose: an asymmetric null is recorded without
-  overturning the directional call.
-- `test_max_resamples_reached_is_reported` — Inputs: two near-identical samples
-  at a 200-resample ceiling. Expected outputs: the budget is respected and, if
-  unconverged, `note == "max_resamples_reached"`. Purpose: budget exhaustion is
-  surfaced rather than silently treated as convergence.
+- `test_null_skewness_is_measured_and_matches_scipy` — Inputs: 700 concordant
+  heights against 19 discordant1 of which 4 are extreme, 2500 resamples.
+  Expected outputs: `null_skew` equal to `scipy.stats.skew` over the same draws,
+  `n_resamples_skew == 2500`, `|null_skew| > 1`, a negative statistic, decision
+  `less`, and `note is None`. Purpose: the running power-sum accumulation
+  reproduces the reference skewness, and an outlier-driven null is measurably
+  asymmetric without that disturbing the directional call.
+- `test_null_skewness_is_near_zero_for_a_symmetric_null` — Inputs: two balanced
+  150-observation samples from one normal family. Expected outputs:
+  `|null_skew| < 0.15`. Purpose: the measure reads near zero when the null is
+  symmetric, so a large value means something.
 - `test_adaptive_run_grows_batches_until_it_converges` — Inputs: a clearly
   separated pair with `min_resamples=1000`. Expected outputs: converged after
   exactly one batch of 1000 with decision `greater`. Purpose: an easy case stops
@@ -287,6 +326,57 @@ exhaustive enumeration, and over randomized inputs.
 - `test_bootstrap_resample_budget_scales_by_one_fifth` — Inputs: `(2500, 25000)`
   and `(2, 3)`. Expected outputs: `(500, 5000)` and `(1, 1)`. Purpose: the
   bootstrap budget divisor and its floor.
+
+### tests/orchestrator/test_orchestrator_shape.py
+
+The optional distribution-shape diagnostics: moment parity against SciPy, the
+modality test's calibration on samples of known modality, and the results-TSV
+column contract.
+
+- `test_shape_moments_match_scipy` — Inputs: 500 lognormal draws (seed 4).
+  Expected outputs: `skew` and `excess_kurtosis` equal `scipy.stats.skew` and
+  `scipy.stats.kurtosis(fisher=True)` called on the same sample, and both are
+  positive. Purpose: the moment columns are the SciPy estimators, not a
+  re-derivation.
+- `test_modality_test_rejects_only_a_well_separated_mixture` — Inputs
+  (parametrized over 5 shapes): 400 draws each from a normal, lognormal,
+  exponential and gamma(2), plus a 200+200 mixture of normals 4 SD apart.
+  Expected outputs: `modes_p > 0.05` for the four unimodal families and
+  `<= 0.05` for the mixture. Purpose: the test holds its level on skewed
+  unimodal shapes — where a raw mode count reports spurious peaks — while still
+  detecting a real mixture.
+- `test_tail_index_recovers_known_tail_shapes` — Inputs (parametrized over 3
+  shapes): 4000 draws from a Pareto(3), an exponential, and a uniform. Expected
+  outputs: `tail_xi` within 0.25 of `1/3`, `0`, and `-1` respectively. Purpose:
+  the peaks-over-threshold fit recovers positive, zero, and bounded tails, the
+  last of which a Hill estimator cannot represent at all.
+- `test_shape_is_not_described_for_small_or_flat_groups` — Inputs: five
+  identical values, fifty identical values, and 25 normal draws. Expected
+  outputs: every field `None` for the first two; for the third the moments are
+  populated but `tail_xi` is `None`. Purpose: the two guards
+  (`SHAPE_MIN_OBSERVATIONS`, `SHAPE_MIN_TAIL_EXCEEDANCES`) are independent.
+- `test_shape_is_measured_once_and_not_per_bootstrap_iteration` — Inputs: the
+  same triplet analyzed with 5 and with 60 bootstrap iterations. Expected
+  outputs: identical `con_skew` and `con_modes_p`. Purpose: the diagnostics come
+  from the point estimate only, so iteration count cannot move them and the
+  modality bootstrap is not paid per iteration.
+- `test_summary_statistics_tsv_carries_shape_columns_only_when_enabled` — Inputs
+  (parametrized over `shape_diagnostics` on/off): the same triplet written
+  through `write_summary_statistics_tsv`. Expected outputs: the fifteen
+  `concordant_*`/`discordant1_*`/`discordant2_*` columns present exactly when
+  enabled, no short-prefixed `con_*` names in the header, the row aligned, and
+  `concordant_skew` equal to the result's `con_skew`. Purpose: the summary file
+  repeats the same values under its own group naming, so the ML trainers can
+  consume them as features.
+- `test_results_tsv_carries_shape_columns_only_when_enabled` — Inputs
+  (parametrized over `shape_diagnostics` on/off): a 60/40/30 lognormal triplet
+  written through `write_pipeline_results`. Expected outputs: the fifteen
+  `<group>_<field>` columns present exactly when enabled, the row aligned with
+  the header either way, and with the diagnostics on a positive `con_skew`, a
+  `con_modes_p` in `(0, 1]`, and an empty `dis2_tail_xi` (30 observations leave
+  only 3 in the upper decile). Purpose: the column set is read off the results
+  rather than plumbed separately, so it cannot claim a measurement that did not
+  happen.
 
 ### tests/orchestrator/test_orchestrator_trees.py
 
@@ -390,15 +480,29 @@ Orchestrator config resolution and config-file precedence.
   `p_value_correction == "bfn"`, `alpha_perm == 0.05`, the permutation
   resample/CI defaults (2500, 25000, `wilson`), `overwrite is True`, the config-file-only keys at their defaults,
   and `preflight_data_check is False`. Purpose: default resolution in CLI mode.
-- `test_cli_overrides_for_config_plus_cli_options` — Inputs: CLI values for
-  alpha-dct/alpha-ks/alpha-perm/p-value-correction/no-overwrite. Expected
-  outputs: each override is honored and `overwrite` becomes `False`. Purpose:
-  the config+CLI options are wired.
+- `test_parser_flags_resolve_into_their_config_values` — Inputs: the CLI flag
+  strings parsed by `build_argument_parser`, then resolved. Expected outputs:
+  each flag's value reaches its config key, `--no-overwrite` gives
+  `overwrite is False`, and `--preflight-data-check` gives `True`. Purpose: every
+  other config test builds a namespace directly, so this is the only place the
+  flag names are pinned; resolving covers the override path in the same pass.
 - `test_config_only_keys_read_from_config_file` — Inputs: a JSON config setting
   `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`,
   `generate_summary_stats`, `alpha_dct`, and a nested `bootstrap_options` block.
   Expected outputs: every key, including the flattened bootstrap options, is
   read. Purpose: config-file-only keys and nested bootstrap parsing.
+- `test_p_value_correction_accepts_yaml_bare_word_no` — Inputs (parametrized):
+  a YAML config writing `p_value_correction` as the bare word `no`, as quoted
+  `"no"`, as `No`/`NO`, and as the unaffected `bfn`/`fdr_bh`. Expected outputs:
+  each resolves to its own choice. Purpose: YAML 1.1 resolves bare `no` to
+  boolean `False`, so
+  the value never reaches validation as a string; the mapping back to the
+  written choice is what makes the unquoted spelling work.
+- `test_p_value_correction_rejects_a_value_with_no_matching_choice` — Inputs: a
+  YAML config writing `p_value_correction: yes`. Expected outputs: `ConfigError`
+  matching `must be one of`. Purpose: the boolean mapping must not turn an
+  invalid value into a valid one — `yes` has no corresponding choice and still
+  fails, with the received value named.
 - `test_config_file_wins_over_cli` — Inputs: a config file plus conflicting CLI
   flags. Expected outputs: the file's `alpha_dct` wins, `alpha_perm`
   falls back to the orchestrator default (proving the CLI value was ignored), the
@@ -434,11 +538,6 @@ Orchestrator config resolution and config-file precedence.
   `false`, or omitting it. Expected outputs: `True`, `False`, and `False`
   respectively. Purpose: the flag is settable from a config file and defaults
   to off.
-- `test_parser_exposes_config_file_and_new_flags` — Inputs: an argv list using
-  the config+CLI flags including `--preflight-data-check`. Expected outputs:
-  each parses to its expected value, `preflight_data_check is True`, and
-  `config_file` defaults to `None`. Purpose: parser surface.
-
 ### tests/test_config_trunk.py
 
 The shared configuration trunk in `ghostparser.config`.
@@ -466,13 +565,10 @@ The shared configuration trunk in `ghostparser.config`.
   directory with a stale file, then the same directory with `results_1` and
   `results_3` already taken and `overwrite=False`. Expected outputs: the
   directory is reset in the first case; the second returns `results_2` (the
-  smallest missing suffix) and leaves the original intact. Purpose: output
-  directory preparation and suffix allocation.
-- `test_prepare_output_directory_creates_missing_parents` — Inputs: a nested
-  path. Expected outputs: the full directory chain is created. Purpose: parent
-  creation.
-
-### tests/test_introgression_mapper.py
+  smallest missing suffix) and leaves the original intact; a nested path with
+  missing parents is created on demand. Purpose: output directory preparation,
+  suffix allocation, and parent creation.
+### tests/orchestrator/test_orchestrator_consolidation.py
 
 Consolidation outputs, count aggregation, and plot rendering.
 
@@ -482,31 +578,28 @@ Consolidation outputs, count aggregation, and plot rendering.
 - `test_collect_counts_correct_avg_in_generate_introgression_maps` — Inputs:
   classified triplet results. Expected outputs: averages match the documented
   co-occurrence denominators. Purpose: bootstrap averaging.
-- `test_collect_counts_non_ghost_denominator_is_all_co_occurring_triplets` —
-  Inputs: directed-pair results. Expected outputs: the denominator counts every
-  triplet containing both taxa. Purpose: population-level normalization.
-- `test_collect_counts_ghost_denominator_is_all_triplets_containing_taxon` —
-  Inputs: ghost-classified results. Expected outputs: the denominator counts
-  every triplet containing the target taxon. Purpose: ghost normalization.
 - `test_collect_non_sister_counts_counts_non_sister_pairs` — Inputs: results with
   non-sister pairs. Expected outputs: only non-sister pairs are counted.
   Purpose: pair selection.
-- `test_generate_introgression_maps_excludes_outgroups` — Inputs: an outgroup
-  list. Expected outputs: outgroup taxa are absent from plots and TSVs. Purpose:
-  outgroup exclusion.
-- `test_generate_introgression_maps_prunes_requested_plot_taxa` /
-  `test_generate_introgression_maps_uses_full_species_tree_by_default` — Inputs:
-  with and without `plot_taxa`. Expected outputs: the plotted tree is pruned or
-  left full. Purpose: plot taxa selection.
+- `test_generate_introgression_maps_selects_the_requested_taxa` — Inputs
+  (parametrized, 3 rows): a balanced four-taxon tree with no taxon filter, the
+  same tree with `plot_taxa=["A", "B", "C"]`, and an outgroup tree with
+  `outgroups=["OG"]`. Expected outputs: `taxa_count` of 4, 3, and 3; the matrix
+  header and the ghost rows listing the same taxa; and the excluded taxon absent
+  from both. Purpose: `plot_taxa` and `outgroups` decide which taxa reach every
+  output, and no output disagrees with another about the set.
+- `test_collect_counts_counts_only_the_rows_that_produced_an_edge` — Inputs: five
+  result rows covering a classified edge, a `no_introgression` row over the same
+  taxa, an unrelated triplet, and two ghost rows on either discordant topology.
+  Expected outputs: the supporting count for `(C, B)` is 1 and for `(B, D)` is 0;
+  ghost counts are 1 for `A` and `C`, 0 for `B` and `D`. Purpose: supporting
+  counts follow the classification, not mere co-occurrence.
 - `test_generate_introgression_maps_uses_raw_values_with_separate_scales` —
   Inputs: results spanning a value range. Expected outputs: raw values with
   per-plot scales. Purpose: colour scaling.
 - `test_generate_introgression_maps_appends_suffix_when_overwrite_disabled` —
   Inputs: an existing output directory with `overwrite=False`. Expected outputs:
   a suffixed sibling directory. Purpose: overwrite behavior.
-- `test_generate_introgression_maps_preserves_run_dir_when_reset_disabled` —
-  Inputs: `reset_output_dir=False`. Expected outputs: pre-existing run files
-  survive. Purpose: the orchestrator's consolidation contract.
 - `test_sampled_introgression_presence_flags_targets_with_sampled_edges` —
   Inputs: a taxa order and a `(source, target)` weight map with one zero-weight
   edge. Expected outputs: `{"A": 1, "B": 0, "C": 1, "D": 0}` — only taxa that
@@ -523,9 +616,11 @@ Consolidation outputs, count aggregation, and plot rendering.
 
 The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 
-- `test_bit_labels_define_a_six_bit_contract` — Inputs: the module constants.
-  Expected outputs: `BIT_COUNT == 6` with six unique labels. Purpose: pins the
-  label contract.
+- `test_bit_labels_stay_in_step_with_the_bit_count` — Inputs: the module
+  constants. Expected outputs: `len(BIT_LABELS) == BIT_COUNT`, all distinct.
+  Purpose: a label can be read back positionally only while the two constants
+  agree; the bitstring width itself is pinned behaviorally by
+  `test_is_valid_bitstring`.
 - `test_is_valid_bitstring` — Inputs (parametrized, 8 cases): valid and invalid
   strings. Expected outputs: only six-character 0/1 strings validate. Purpose:
   label validation.
@@ -567,14 +662,17 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 
 ### tests/test_ml_config.py
 
-- `test_load_ml_config_defaults_target_column_to_class` — Inputs: a config
-  omitting `target_column`. Expected outputs: it defaults to `class`.
-- `test_load_ml_config_accepts_explicit_class_target_column` — Inputs: an
-  explicit `target_column`. Expected outputs: it is honored.
-- `test_load_ml_config_defaults_min_samples_parameters` — Inputs: a config
-  omitting the min-samples keys. Expected outputs: the documented defaults.
-- `test_load_ml_config_honors_overwrite_flag` — Inputs: `overwrite: false`.
-  Expected outputs: the flag is carried into the resolved config.
+- `test_ml_config_fills_defaults_for_omitted_keys` — Inputs (parametrized over
+  4 keys): a config carrying only `input_path` and `output_dir`. Expected
+  outputs: `target_column` `class`, `overwrite` `True`, `min_samples_split` `2`,
+  `min_samples_leaf` `1`. Purpose: the documented defaults are what an otherwise
+  empty config resolves to.
+- `test_ml_config_explicit_values_win_over_defaults` — Inputs (parametrized over
+  4 payloads): `overwrite: false`, an explicit `target_column`, and two
+  hyperparameters given under the nested `model` block. Expected outputs: each
+  value replaces its default. Purpose: precedence, plus the `model` block
+  flattening — a key given there must surface at the top level of the resolved
+  config, including one that also has a default.
 
 ### tests/test_ml_utils.py
 
@@ -589,8 +687,6 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 
 ### tests/test_ml_random_forest.py
 
-- `test_parse_classes_returns_binary_matrix` — Inputs: label strings. Expected
-  outputs: the binary target matrix.
 - `test_train_random_forest_smoke` — Inputs: `summary_statistics_tsv`. Expected
   outputs: training completes and writes its artifacts.
 
@@ -598,18 +694,22 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 
 - `test_multi_knn_train_smoke` — Inputs: `summary_statistics_tsv`. Expected
   outputs: training completes and writes its artifacts.
-- `test_multi_knn_build_model_caps_neighbors_to_training_size` — Inputs: a
-  configured `n_neighbors` larger than the training set. Expected outputs: the
-  effective neighbor count is capped.
+- `test_multi_knn_build_model_caps_neighbors_to_training_size` — Inputs:
+  `n_neighbors=20` against training sets of 2 and of 50. Expected outputs: the
+  effective count and the estimator's own `n_neighbors` are both `2` in the
+  first case, and `20` passes through untouched in the second. Purpose: asking
+  KNN for more neighbors than training samples raises at fit time, so the clamp
+  has to reach the estimator and must not fire when it isn't needed.
 
 ### tests/test_ml_hyper_tune.py
 
 - `test_load_hyper_tune_config_accepts_hyperparameter_tuning_section` — Inputs: a
   tuning config. Expected outputs: the section loads.
-- `test_load_hyper_tune_config_fills_model_defaults` — Inputs: a config omitting
-  model parameters. Expected outputs: trainer defaults are filled in.
-- `test_load_hyper_tune_config_accepts_wandb_detailed_payloads` — Inputs:
-  `wandb_detailed_payloads: true`. Expected outputs: the flag is honored.
+- `test_load_hyper_tune_config_fills_model_defaults` — Inputs (parametrized):
+  a tuning block omitting model parameters, with `wandb_detailed_payloads`
+  absent and set to `true`. Expected outputs: trainer defaults are filled in and
+  the flag follows what was written. Purpose: defaults and explicit values both
+  resolve out of the nested `hyperparameter_tuning` block.
 - `test_load_hyper_tune_config_rejects_evaluation_section` — Inputs: a tuning
   config containing `evaluation`. Expected outputs: `ConfigError`.
 - `test_load_hyper_tune_config_requires_hyperparameter_tuning_section` — Inputs:

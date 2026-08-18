@@ -148,9 +148,9 @@ def _expected_result(strategy, discordant_test, alpha=0.05):
 
     # This fixture has 5 concordant and 3 discordant1 trees, so the pooled
     # sample admits only C(8, 3) = 56 distinct group assignments -- far fewer
-    # than the 2500-resample minimum. The support guard fires and the direction
-    # is ambiguous without any resampling.
-    direction = "ambiguous"
+    # than the 2500-resample minimum. The support guard fires and reports no
+    # conclusion without any resampling.
+    direction = "inconclusive"
 
     # GhostParser decision logic: DCT gate, then the tree-height test, then the
     # concordant-vs-discordant1 direction test.

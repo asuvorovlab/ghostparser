@@ -116,10 +116,7 @@ def test_prepare_output_directory_overwrites_or_suffixes(tmp_path):
     assert (tmp_path / "results_2").exists()
     assert (results_dir / "fresh.txt").exists()
 
-
-def test_prepare_output_directory_creates_missing_parents(tmp_path):
-    """A nested output directory is created on demand."""
+    # A path whose parents do not exist yet is created on demand.
     nested = tmp_path / "a" / "b" / "results"
-    prepared = prepare_output_directory(nested)
-    assert prepared == str(nested.resolve())
+    assert prepare_output_directory(nested) == str(nested.resolve())
     assert nested.is_dir()

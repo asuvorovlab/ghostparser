@@ -2,15 +2,7 @@ import argparse
 import csv
 import json
 
-from ghostparser.ml.random_forest import _parse_classes, train_random_forest
-
-
-def test_parse_classes_returns_binary_matrix():
-    targets, labels = _parse_classes(["101001", "010010"])
-
-    assert labels == ["101001", "010010"]
-    assert targets.shape == (2, 6)
-    assert targets.tolist() == [[1, 0, 1, 0, 0, 1], [0, 1, 0, 0, 1, 0]]
+from ghostparser.ml.random_forest import train_random_forest
 
 
 def test_train_random_forest_smoke(summary_statistics_tsv, tmp_path):

@@ -195,6 +195,12 @@ def test_run_orchestrator_matches_derived_expectation(
 
         assert 0.0 <= result.bootstrap_value <= 1.0
         assert sum(result.all_bootstrap.values()) == pytest.approx(1.0)
+        # The interval is reported only when some resample yielded two
+        # observations in both groups; either way its two bounds agree on
+        # whether they exist, and an existing pair is ordered.
+        assert (result.perm_stat_ci_low is None) == (result.perm_stat_ci_high is None)
+        if result.perm_stat_ci_low is not None:
+            assert result.perm_stat_ci_low <= result.perm_stat_ci_high
 
 
 def test_run_orchestrator_writes_results_tsv(
@@ -223,6 +229,10 @@ def test_run_orchestrator_writes_results_tsv(
     assert "perm_p_less" in header
     # decision_gate is what tells a reader whether perm_decision was consulted.
     assert "decision_gate" in header
+    # The equivalence p-value and the interval on the studentized difference.
+    assert "perm_p_tost" in header
+    assert "perm_stat_ci_low" in header
+    assert "perm_stat_ci_high" in header
     assert len(lines) - 1 == len(results)
 
 

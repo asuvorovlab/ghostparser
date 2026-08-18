@@ -41,19 +41,20 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
     assert config["search_space"]["n_estimators"] == [5, 10]
 
 
-def test_load_hyper_tune_config_fills_model_defaults(tmp_path):
+@pytest.mark.parametrize("detailed_payloads", [None, True])
+def test_load_hyper_tune_config_fills_model_defaults(detailed_payloads, tmp_path):
+    """Keys absent from the tuning block take their defaults; present ones win."""
+    tuning = {"model": "random_forest", "search_space": {"n_estimators": [5, 10]}}
+    if detailed_payloads is not None:
+        tuning["wandb_detailed_payloads"] = detailed_payloads
+
     config_path = tmp_path / "hyper_tune_defaults.json"
     config_path.write_text(
         json.dumps(
             {
                 "input_path": "./results/summary_statistics.tsv",
                 "output_dir": "./results/hyper_tune_out",
-                "hyperparameter_tuning": {
-                    "model": "random_forest",
-                    "search_space": {
-                        "n_estimators": [5, 10],
-                    },
-                },
+                "hyperparameter_tuning": tuning,
             }
         )
     )
@@ -64,30 +65,7 @@ def test_load_hyper_tune_config_fills_model_defaults(tmp_path):
     assert config["max_features"] == "sqrt"
     assert config["min_samples_split"] == 2
     assert config["overwrite"] is True
-    assert config["wandb_detailed_payloads"] is False
-
-
-def test_load_hyper_tune_config_accepts_wandb_detailed_payloads(tmp_path):
-    config_path = tmp_path / "hyper_tune_wandb_detailed.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "input_path": "./results/summary_statistics.tsv",
-                "output_dir": "./results/hyper_tune_out",
-                "hyperparameter_tuning": {
-                    "model": "random_forest",
-                    "wandb_detailed_payloads": True,
-                    "search_space": {
-                        "n_estimators": [5, 10],
-                    },
-                },
-            }
-        )
-    )
-
-    config = load_hyper_tune_config(str(config_path))
-
-    assert config["wandb_detailed_payloads"] is True
+    assert config["wandb_detailed_payloads"] is bool(detailed_payloads)
 
 
 def test_load_hyper_tune_config_rejects_evaluation_section(tmp_path):

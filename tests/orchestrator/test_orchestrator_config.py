@@ -71,23 +71,6 @@ def test_cli_defaults_resolve():
     assert config["preflight_data_check"] is False
 
 
-def test_cli_overrides_for_config_plus_cli_options():
-    """The config+CLI flags override their defaults when supplied on the CLI."""
-    args = _base_cli_args(
-        alpha_dct=0.01,
-        alpha_ks=0.2,
-        alpha_perm=0.02,
-        p_value_correction="fdr_bh",
-        no_overwrite=True,
-    )
-    config = resolve_config(args)
-    assert config["alpha_dct"] == 0.01
-    assert config["alpha_ks"] == 0.2
-    assert config["alpha_perm"] == 0.02
-    assert config["p_value_correction"] == "fdr_bh"
-    assert config["overwrite"] is False
-
-
 def test_config_only_keys_read_from_config_file(tmp_path):
     """Config-file-only keys (and nested bootstrap_options) load from a file."""
     payload = {
@@ -287,8 +270,13 @@ def test_missing_required_field_raises():
         resolve_config(_base_cli_args(species_tree_path=None))
 
 
-def test_parser_exposes_config_file_and_new_flags():
-    """The parser exposes -c/--config-file and the new config+CLI flags."""
+def test_parser_flags_resolve_into_their_config_values():
+    """The CLI flag names are wired through the parser to the resolved config.
+
+    Every other config test builds an ``argparse.Namespace`` directly, so this is
+    the only place the actual flag strings are pinned; resolving the parsed args
+    covers the override path in the same pass.
+    """
     parser = build_argument_parser()
     opts = parser.parse_args(
         [
@@ -302,9 +290,11 @@ def test_parser_exposes_config_file_and_new_flags():
         ]
     )
     assert opts.config_file is None
-    assert opts.preflight_data_check is True
-    assert opts.alpha_dct == 0.01
-    assert opts.alpha_ks == 0.2
-    assert opts.p_value_correction == "fdr_bh"
-    assert opts.alpha_perm == 0.02
-    assert opts.no_overwrite is True
+
+    config = resolve_config(opts)
+    assert config["alpha_dct"] == 0.01
+    assert config["alpha_ks"] == 0.2
+    assert config["alpha_perm"] == 0.02
+    assert config["p_value_correction"] == "fdr_bh"
+    assert config["overwrite"] is False
+    assert config["preflight_data_check"] is True
