@@ -63,6 +63,7 @@ bootstrap_options:
 
 # --- Extra outputs ---------------------------------------------------------
 generate_summary_stats: false     # writes summary_statistics.tsv
+shape_diagnostics: false          # adds the per-group shape columns (costly)
 consolidation: true               # writes the consolidation/ subfolder
 
 # --- Data check ------------------------------------------------------------
