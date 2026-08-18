@@ -1,7 +1,7 @@
 # Changelog
 
 
-## v0.1.2 - Unreleased
+## v0.1.2 - August 18, 2026
 
 ### Architecture
 
