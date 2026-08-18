@@ -1,10 +1,4 @@
-"""Command-line entry point for ``python -m ghostparser.orchestrator``.
-
-Wires argument parsing and config resolution (from ``config``) to the orchestrator
-runner, keeping the CLI orchestration separate from config handling.
-"""
-
-from __future__ import annotations
+"""Command-line entry point wiring argument parsing and config resolution to the runner."""
 
 from .config import ConfigError, build_argument_parser, resolve_config
 from .runner import run_orchestrator

@@ -105,9 +105,10 @@ Worked example, index 5 — `((A:0.30,C:0.30):0.10,B:0.70);` (sisters A, C):
 
 - `mean` — arithmetic mean.
 - `median` — middle value (mean of the two middle values for an even count).
-- `mode` — values are **binned to 3 decimals**, the most frequent bin wins, and
-  ties resolve to the **largest** value. With all-distinct values every bin has
-  count 1, so the mode is the maximum. For the AVG concordant sample
+- `mode` — used only by the 63-column `summary_statistics.tsv` output, not by
+  the decision logic. Values are **binned to 3 decimals**, the most frequent bin
+  wins, and ties resolve to the **largest** value. With all-distinct values every
+  bin has count 1, so the mode is the maximum. For the AVG concordant sample
   `[0.233, 0.243, 0.317, 0.297, 0.250]` the mode is therefore `0.317`.
 
 ## tests/orchestrator/test_orchestrator_inference.py
@@ -115,8 +116,8 @@ Worked example, index 5 — `((A:0.30,C:0.30):0.10,B:0.70);` (sisters A, C):
 ### `test_analyze_triplet_matches_derived_expectation`
 
 **Inputs:** the 10 gene subtrees above, `alpha_dct = alpha_ks = 0.05`, and one of
-36 parameter combinations (6 strategies x 3 statistics x 2 discordant tests).
-Bootstrap runs with 40 iterations at seed `20240724`.
+24 parameter combinations (6 strategies x permutation on/off x 2 discordant
+tests). Bootstrap runs with 40 iterations at seed `20240724`.
 
 **Expected-output derivation**, performed in `_expected_result`:
 
@@ -130,7 +131,7 @@ Bootstrap runs with 40 iterations at seed `20240724`.
    `p ~ 0.6547`. z-test: `proportions_ztest(count=[3,2], nobs=[5,5])`, giving
    `z ~ 0.6325`, `p ~ 0.5271`. Both p-values exceed 0.05, so
    `dct_significant is False` and the classification is `no_introgression` for
-   **every** one of the 36 cases — the decision stops at gate 1.
+   **every** one of the 24 cases — the decision stops at gate 1.
 5. **KS** — `scipy.stats.ks_2samp(concordant_heights, dis1_heights)`. For `AVG`
    the samples are `[0.2333, 0.2433, 0.3167, 0.2967, 0.2500]` and
    `[0.3667, 0.4067, 0.5167]`; they are completely separated, so `D = 1.0` and
@@ -138,10 +139,20 @@ Bootstrap runs with 40 iterations at seed `20240724`.
    (`[0.30, 0.32, 0.40, 0.35, 0.31]` vs `[0.30, 0.32, 0.45]`), giving
    `D = 1/3` and `p ~ 0.9643`. For `INT` the values are near-constant, giving
    `D = 0.2`, `p = 1.0`.
-6. **Summaries** — apply the chosen statistic to each group. For `AVG` + `mean`:
-   concordant `(0.2333+0.2433+0.3167+0.2967+0.2500)/5 = 0.268`; discordant1
-   `(0.3667+0.4067+0.5167)/3 = 0.43`.
-7. **Classification** — gate 1 fails, so `no_introgression`.
+6. **Summaries** — the mean and median of each group are reported
+   unconditionally. For `AVG`: concordant mean
+   `(0.2333+0.2433+0.3167+0.2967+0.2500)/5 = 0.268`, discordant1 mean
+   `(0.3667+0.4067+0.5167)/3 = 0.43`; concordant median `0.2500`, discordant1
+   median `0.4067`.
+7. **Direction** — with the permutation test on, the pooled sample is
+   `n_con + n_dis1 = 5 + 3 = 8` observations, admitting only
+   `C(8, 3) = 56` distinct group assignments. That is far below the 2500
+   `min_resamples` floor, so the `insufficient_permutation_support` guard fires
+   and the direction is `ambiguous` with zero resamples. With the permutation
+   test off, the median comparison decides: for `AVG`,
+   `0.2500 < 0.4067` → `less`.
+8. **Classification** — gate 1 fails regardless, so `no_introgression` in all 24
+   cases.
 
 Also asserted: `triplet == ("A","B","C")`, `species_tree == "((A,B),C);"` (the
 species subtree serialized topology-only), and that the bootstrap class
@@ -159,9 +170,10 @@ table, independent of the implementation.
 ### `test_analyze_triplet_from_observations_matches_newick_path`
 
 **Inputs:** the same triplet, once from `_serialize_triplet_gene_trees` output
-and once from raw Newick strings, both with `AVG`/`mean`/`chi-square`.
+and once from raw Newick strings, both with `AVG`/`chi-square` and the
+permutation test enabled.
 
-**Derivation:** both must equal the `_expected_result("AVG","mean","chi-square")`
+**Derivation:** both must equal the `_expected_result("AVG", "chi-square", True)`
 expectation above. Because the observations and seed are identical, the NumPy
 bootstrap draws the same indices, so `bootstrap_value` and `all_bootstrap` must
 match exactly (not just approximately).
@@ -188,60 +200,234 @@ Observations are constructed directly as `(topology, height, None)` tuples, whic
 lets each test place the triplet on a chosen branch. Bootstrap is disabled
 (`iterations: 0`) so results are deterministic.
 
-### `test_classify_no_introgression_when_dct_not_significant`
+### `test_decision_cascade_lands_on_each_classification`
 
-**Inputs:** 20 concordant observations at height 0.1, 10 dis1 at 0.9, 10 dis2 at
-0.9.
+**Inputs:** one crafted observation set per row.
 
-**Derivation:** `chisquare([10, 10])` has expected `[10, 10]`, so the statistic
-is exactly `0.0` and `p = 1.0`. `1.0 > 0.05`, so gate 1 fails →
-`no_introgression`.
+| id | con | dis1 | dis2 |
+| --- | --- | --- | --- |
+| `no_introgression` | 20 at 0.1 | 10 at 0.9 | 10 at 0.9 |
+| `inflow` | 10 at 0.5 | 30 at 0.5 | 2 at 0.5 |
+| `outflow` | `_HIGH` = `[0.85, 0.86, ..., 0.94]` | `_LOW` = `[0.05, 0.06, ..., 0.34]` | 2 at 0.1 |
+| `ghost` | `_LOW[:10]` = `[0.05, ..., 0.14]` | `_HIGH * 3` | 2 at 0.9 |
+| `ambiguous` | 30 alternating `0.5 +- 0.30` | 30 alternating `0.5 +- 0.02` | 2 at 0.5 |
 
-### `test_classify_inflow_when_tree_height_test_not_significant`
+**Derivation:**
 
-**Inputs:** 10 concordant at 0.5, 30 dis1 at 0.5, 2 dis2 at 0.5.
+- **`no_introgression`.** `chisquare([10, 10])` has expected `[10, 10]`, so the
+  statistic is exactly `0.0` and `p = 1.0 > 0.05`: gate 1 fails. The heights are
+  fully separated, so KS *is* significant — which is why this row also shows the
+  DCT gate stopping the cascade before a later gate can be consulted.
+- **`inflow`.** `chisquare([30, 2])` has expected `[16, 16]`, so the statistic is
+  `(30-16)^2/16 + (2-16)^2/16 = 24.5`, and with df 1 `p ~ 7.4e-07 < 0.05`: gate 1
+  passes. Every concordant and dis1 height is 0.5, so the two empirical CDFs
+  coincide: `D = 0.0`, `p = 1.0`, not significant → gate 2 returns
+  `inflow_introgression`.
+- **`outflow`.** The DCT is the same significant 30-vs-2 split.
+  `max(_LOW) = 0.34 < min(_HIGH) = 0.85`, so the CDFs separate completely:
+  `D = 1.0` and gate 2 passes. The spread matters for gate 3 — constant samples
+  would trip the `degenerate_observed_scale` guard, but these carry real
+  within-group variance, and the pooled 40 observations give
+  `C(40, 10) = 847,660,528` assignments, far above the 2500 floor. No permutation
+  reproduces the observed statistic, so `p_greater` sits at the add-one floor
+  `1/(2500+1) = 4.0e-4`; Bonferroni over the tail pair doubles it to
+  `8.0e-4 < 0.05` → `greater` → `outflow_introgression`.
+- **`ghost`.** The mirror image: identical DCT and KS reasoning, with gate 3
+  finding a negative studentized difference and `p_less` at the floor → `less` →
+  `ghost_introgression`.
+- **`ambiguous`.** The DCT sees a 30-vs-2 split → significant. The two samples
+  share the mean 0.5 but their CDFs differ sharply in spread, so KS is large and
+  gate 2 passes. Gate 3 finds no difference in means: the observed statistic is
+  near 0 and both one-tailed p-values are far above `alpha_perm`, so the outcome
+  is non-directional and the classification is `ambiguous`. The distributions
+  differ in shape, not location.
 
-**Derivation:** `chisquare([30, 2])` has expected `[16, 16]`, so the statistic is
-`(30-16)^2/16 + (2-16)^2/16 = 12.25 + 12.25 = 24.5`, and with df 1
-`p ~ 7.4e-07 < 0.05` → gate 1 passes. Every concordant and dis1 height is
-identical (0.5), so the two empirical CDFs coincide: `D = 0.0`, `p = 1.0`, not
-significant → gate 2 returns `inflow_introgression`.
+The `decision_gate` assertion is what makes each row specific: a case that
+reached the same classification by a different route would fail.
 
-### `test_classify_outflow_when_concordant_heights_exceed_discordant`
+### `test_permutation_guards_surface_on_the_triplet_result`
 
-**Inputs:** 10 concordant at 0.9, 30 dis1 at 0.1, 2 dis2 at 0.1.
+**Inputs and derivation**, one row per guard:
 
-**Derivation:** the DCT is the same significant 30-vs-2 split. The two height
-samples are disjoint with no overlap, so the CDFs separate completely:
-`D = 1.0`, and with these sample sizes `p < 0.05` → gate 2 passes. Gate 3
-compares `summary_con = 0.9` against `summary_dis = 0.1`; con > dis →
-`outflow_introgression`.
+| con | dis1 | Guard | Why |
+| --- | --- | --- | --- |
+| `[0.9, 0.8, 0.7, 0.6]` | `[0.1, 0.2]` | `insufficient_permutation_support` | `C(6, 2) = 15 < 2500`, so the permutation distribution cannot resolve `alpha_perm`. |
+| `[0.9] * 10` | `[0.1] * 30` | `degenerate_observed_scale` | Both groups are internally constant, so the standard error is floating-point noise near `1e-17`. |
 
-### `test_classify_ghost_when_discordant_heights_exceed_concordant`
+Each returns `perm_n_resamples == 0` and `perm_decision == "inconclusive"` — a
+guard means nothing was established, which is distinct from having shown the
+means equivalent.
 
-**Inputs:** the mirror image — 10 concordant at 0.1, 30 dis1 at 0.9, 2 dis2 at
-0.9.
+### `test_summary_statistics_discordant_roles_follow_the_counts`
 
-**Derivation:** identical DCT and KS reasoning; gate 3 now sees
-`summary_con = 0.1 < summary_dis = 0.9` → `ghost_introgression`.
+**Inputs:** 10 concordant subtrees at height 0.30, plus 3 and 9 discordant
+subtrees. Row `AC_more_frequent` puts `[0.10, 0.12, 0.14]` on `BC|A` and
+`[0.50, 0.51, ..., 0.58]` on `AC|B`; row `BC_more_frequent` swaps them.
+
+**Derivation:** each subtree is `((X:h,Y:h):0.10, Z:h+0.2)`, so the two sisters
+sit at `h + 0.10` and the outlier at `h + 0.20`, giving an average tree height of
+`(3h + 0.4) / 3 = h + 0.4/3`. Every group mean is therefore its input mean
+shifted by exactly `0.4/3`.
+
+`dis1_topology` names whichever discordant topology is more frequent — `AC` on
+the first row, `BC` on the second — and `discordant1_*` must describe that same
+group of gene trees, with `discordant2_*` describing the other. Counts are
+`(n_dis1, n_dis2) == (9, 3)` either way, so the roles follow the counts rather
+than the topology label.
 
 ### `test_classify_introgression_truth_table`
 
 **Inputs:** `_classify_introgression(dct_significant, ks_significant,
-summary_con, summary_dis)` called directly with 8 explicit rows.
+direction)` called directly with 9 explicit rows; it returns the
+`(classification, decision_gate)` pair asserted below.
 
-**Derivation:** straight from the decision definition —
+**Derivation:** straight from the decision definition. The gate is the name of
+the test whose branch returned, so it is fixed by `dct_sig` and `ks_sig` alone —
+`direction` only ever selects among the three `PERM` classifications.
 
-| dct_sig | ks_sig | con | dis | Expected | Reason |
+| dct_sig | ks_sig | direction | Expected | Gate | Reason |
 | --- | --- | --- | --- | --- | --- |
-| False | True | 1.0 | 2.0 | `no_introgression` | gate 1 fails first |
-| False | False | 1.0 | 2.0 | `no_introgression` | gate 1 fails first |
-| True | False | 1.0 | 2.0 | `inflow_introgression` | gate 2 not significant |
-| True | True | 2.0 | 1.0 | `outflow_introgression` | con > dis |
-| True | True | 1.0 | 2.0 | `ghost_introgression` | con < dis |
-| True | True | 1.0 | 1.0 | `unresolved` | con == dis |
-| True | True | None | 1.0 | `unresolved` | missing summary |
-| True | True | 1.0 | None | `unresolved` | missing summary |
+| False | True | `greater` | `no_introgression` | `DCT` | DCT fails first |
+| False | False | `less` | `no_introgression` | `DCT` | DCT fails first |
+| True | False | `greater` | `inflow_introgression` | `THT` | tree-height test not significant |
+| True | `None` | `greater` | `inflow_introgression` | `THT` | no THT ran; `not None` takes the same branch |
+| True | True | `greater` | `outflow_introgression` | `PERM` | con > dis |
+| True | True | `less` | `ghost_introgression` | `PERM` | con < dis |
+| True | True | `equivalent` | `ambiguous` | `PERM` | means shown close, no direction |
+| True | True | `inconclusive` | `ambiguous` | `PERM` | no direction resolved |
+| True | True | `None` | `ambiguous` | `PERM` | no direction available |
+
+### `test_inline_and_deferred_correction_agree_on_a_single_triplet`
+
+**Inputs:** one triplet with 25 concordant heights at 0.9, 22 discordant1 at 0.35
+plus 3 at 0.2, and 4 discordant2 at 0.3; `family_size=1`, 40 bootstrap
+iterations, `triplet_seed=3`; each of `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`.
+
+**Derivation:** with one test in the family every correction is the identity —
+Bonferroni multiplies by 1, and the rank-based methods adjust the single value
+`p_(1)` by `(n - 1 + 1)/1 = 1` (Holm), `n/1 = 1` (BH), or `1 x sum(1/i) = 1` for
+`n = 1` (BY). So all five must reach the same per-iteration verdicts. `no` and
+`bfn` reach them inline during the stream while the other three park raw
+p-values and are corrected afterwards, so equality is a statement about the two
+code paths rather than about arithmetic. The resample stream is seeded
+identically and is independent of the permutation generator, so the iterations
+themselves are the same draws in every case.
+
+### `test_bootstrap_votes_answer_to_the_corrected_threshold`
+
+**Inputs:** 40 concordant heights at 0.9, 18 discordant1 and 6 discordant2 at
+0.55; run once with `no` at family size 1 and once with `bfn` at family size
+5000, 40 iterations, `triplet_seed=3`.
+
+**Derivation:** the discordant split 18 vs 6 gives a chi-square of
+`(18-12)^2/12 + (6-12)^2/12 = 6.0` on 1 df, `p = 0.0143 <= 0.05`, so the raw DCT
+gate passes. Bonferroni over 5000 tests gives `0.0143 x 5000 = 71.5 → 1.0`, far
+above `alpha_dct`, so the corrected gate fails and the point estimate is
+`no_introgression`. Every bootstrap iteration is corrected by the same factor;
+no resample of a p-value near 0.014 survives a 5000x multiplier, so all 40
+iterations vote `no_introgression` and the fraction is exactly 1.0. Under `no`
+the same resamples are judged raw, and enough of them clear 0.05 that the
+fraction falls below 1.0 — which is what makes the corrected agreement a real
+check rather than a tautology.
+
+### `test_deferred_bootstrap_record_is_cleared_after_correction`
+
+**Inputs:** the same observation set as the agreement test, `holm`, 20
+iterations.
+
+**Derivation:** `holm` is rank-based, so `analyze_triplet_from_observations`
+cannot classify the iterations and must park them: `all_bootstrap is None` and
+`bootstrap_deferred.dct_p_values` has one entry per iteration, 20.
+`_apply_triplet_result_p_value_correction` then corrects iteration `i` across
+the (here single-member) family, tallies the votes, and clears the record, so
+`bootstrap_deferred is None` and the 20 votes normalize to fractions summing to
+1.
+
+### `test_vectorized_bootstrap_codes_match_classify_introgression`
+
+**Inputs:** all 2 x 2 x 4 = 16 combinations of `dct_significant`,
+`ks_significant`, and direction in `{greater, less, equivalent, inconclusive}`.
+
+**Derivation:** `_classification_codes` writes integer codes over whole arrays
+while `_classify_introgression` returns a label for one row; the code indexes
+`_BOOTSTRAP_CLASSES`, so `_BOOTSTRAP_CLASSES[code]` must equal the label for
+every combination. The expected value is whatever the scalar function returns —
+the point is agreement between the two implementations, not a third derivation.
+
+### `test_monotonicity_matches_which_methods_may_short_circuit`
+
+**Inputs:** the family `[0.001] * 8 + [0.4, 0.9]` under each of the six methods.
+
+**Derivation:** each of `no`, `bfn`, `holm`, `fdr_bh`, and `fdr_by` applies a
+multiplier of at least 1 to the `j`-th smallest of `n` — `n` for Bonferroni,
+`n - j + 1` for Holm, `n/j` for BH, and `(n/j) x sum(1/i)` for BY — so no
+adjusted value can fall below its raw one, and `is_monotone_correction` is
+`True`.
+
+`fdr_tsbh` runs BH once to estimate the number of true nulls `n0`, then re-runs
+with `n0` in place of `n`. Eight strong signals against two nulls make the first
+stage reject 8, so `n0 = 2` and the multiplier becomes `2/j`, which is below 1
+for every `j > 2`; the later strong p-values therefore land beneath their raw
+ones and `is_monotone_correction` is `False`. Measured over 20,000 random
+families this happened in 19,747 of them, worst gap `-0.987`, while the other
+four methods produced zero cases.
+
+The `1e-12` slack absorbs floating-point rounding in the running max/min sweeps.
+
+### `test_inline_bonferroni_matches_the_family_correction`
+
+**Inputs:** `p = 0.004` with family sizes 1, 7, and 250, padded to that length
+with `0.5` entries.
+
+**Derivation:** Bonferroni is `min(1, n x p)` and depends on the family only
+through its size, so the inline form must equal the full pass exactly:
+`0.004`, `0.028`, and `1.0` respectively (`250 x 0.004 = 1.0`).
+
+### `test_inline_correction_rejects_a_rank_based_method`
+
+**Inputs:** `holm` passed to `_adjust_p_value_inline`.
+
+**Derivation:** Holm's multiplier depends on a p-value's rank within its family,
+which a single value does not determine, so the call must raise rather than
+silently pick a wrong multiplier.
+
+### `test_studentized_interval_brackets_the_observed_statistic`
+
+**Inputs:** concordant heights `0.50, 0.51, ..., 1.09` (60 values) against
+discordant1 `0.20, 0.21, ..., 0.59` (40 values), 5 discordant2 at 0.3, 200
+iterations, `no` correction.
+
+**Derivation:** the interval is the empirical `[100 x alpha, 100 x (1 - alpha)]`
+percentile pair over the per-iteration studentized differences, i.e. the 5th and
+95th percentiles at `alpha_perm = 0.05`. Each iteration resamples the observed
+gene trees with replacement, so the bootstrap distribution is centred on the
+statistic computed from the observed data; a 90% percentile range of a
+distribution centred on that value contains it. Ordering is immediate from the
+percentile definition.
+
+Two concordant heights at 0.9 against a single discordant1 height at 0.2 give the
+degenerate half of the same test: every observation within a group carries the
+same height, so both group variances are zero in any resample that manages two
+draws from each group, and resamples that do not have fewer than 2 observations
+somewhere. Either way the statistic is `nan`, the percentile is taken over an
+empty set, and both bounds are reported `None` rather than fabricated.
+
+### `test_results_tsv_carries_corrected_columns_only_when_correcting`
+
+**Inputs:** one triplet of 25 concordant heights at 0.9, 20 discordant1 at 0.35,
+and 4 discordant2 at 0.3, analyzed and corrected under `no`, `bfn`, and
+`fdr_bh`, then written with `write_pipeline_results`.
+
+**Derivation:** correction is applied to the p-value, so under `no` the
+corrected value is the raw value by definition and a `dct_p_val_no_corr` column
+would repeat `dct_p_value` exactly. The writer therefore emits
+`dct_p_val_<method>_corr`, `ks_p_val_<method>_corr`,
+`perm_p_greater_<method>_corr`, and `perm_p_less_<method>_corr` only when the
+method is not `no` — 36 columns with a correction against 32 without. The
+significance flags are unconditional because the cascade reads them whatever the
+method is. The field-count assertion catches the failure mode this change could
+introduce: the header and the row build their conditional sections separately,
+so a mismatch would silently shift every later column by one.
 
 ### `test_adjust_p_values_matches_statsmodels`
 
@@ -271,6 +457,221 @@ clamps at 1: `0.01x3 = 0.03`, `0.2x3 = 0.6`, `0.5x3 = 1.5 → 1.0`.
   `test_discordant_count_test_rejects_unknown_method` — an unsupported name is
   outside the choice tuple, so a `ValueError` naming the valid options is
   raised.
+
+## tests/orchestrator/test_orchestrator_permutation.py
+
+Samples here are drawn from seeded generators rather than written out, so the
+derivations below name the distribution and the property being checked instead
+of a literal array.
+
+### `_random_samples`
+
+The shared input generator. Sizes are drawn uniform on `[8, 120)`, the location
+shift uniform on `[-1, 1]`, and both scales uniform on `[0.2, 2.0]`. One of
+three families is picked with equal probability: two normals, two lognormals, or
+two exponentials with the second shifted. This deliberately spans symmetric,
+right-skewed, and heavy-tailed data at unequal sizes and variances, which is the
+regime the studentization is there to handle.
+
+### `test_observed_statistic_matches_scipy`
+
+**Inputs:** five seeded sample pairs, 500 resamples.
+
+**Derivation:** the observed statistic is a deterministic function of the inputs,
+not of the resampling, so it must equal SciPy's `result.statistic` and the
+in-test reference `(mean(x) - mean(y)) / sqrt(var(x)/nx + var(y)/ny)` exactly
+(to floating-point tolerance). Any disagreement would mean the two are not
+testing the same quantity.
+
+### `test_p_values_match_scipy_within_monte_carlo_error`
+
+**Inputs:** eight seeded sample pairs, `min_resamples = max_resamples = 4000`
+(pinning the adaptive stopping off), `correction="no"` so the comparison is
+against SciPy's uncorrected p-values.
+
+**Derivation:** both implementations estimate the same quantity from independent
+resampling streams, so exact equality is not expected. Each estimate has
+binomial standard error `sqrt(p(1-p)/n)`, and the difference of two independent
+estimates has `sqrt(2)` times that. The tolerance is 5 such standard errors,
+which at `p = 0.5` and `n = 4000` is about `0.056` and at `p = 0.01` about
+`0.011`. A systematic error in the sampler or the counting would exceed this;
+ordinary Monte Carlo scatter will not.
+
+### `test_decision_matches_scipy_directional_verdict`
+
+**Inputs:** three seeded pairs, `x ~ N(1.0, 0.4^2)` at n=60 against
+`y ~ N(0.4, 0.6^2)` at n=45, 4000 resamples, `correction="bfn"`.
+
+**Derivation:** with Bonferroni over a family of two, the corrected p-value is
+`2p`, so `2p <= alpha` is the same condition as `p <= alpha/2`. The expected
+verdict is therefore computed from SciPy's raw one-tailed p-values at
+`alpha/2 = 0.025`, and must match `result.decision`.
+
+### `test_permutation_statistics_match_exhaustive_enumeration`
+
+**Inputs:** `x = [0.11, 0.24, 0.37, 0.52]` (nx=4),
+`y = [0.63, 0.71, 0.88, 0.95, 1.10]` (ny=5), 5000 sampler draws at seed 7.
+
+**Derivation:** with 9 pooled values split 4/5 there are exactly
+`C(9, 4) = 126` distinct group assignments. Enumerating all of them with
+`itertools.combinations` and evaluating each through the scalar reference
+`_studentized_mean_diff` gives the exact support of the permutation
+distribution, rounded to 9 decimals. The vectorized sampler — which never
+materializes the 5-element group, recovering its sum and sum-of-squares by
+subtracting from the pooled totals — must emit only values from that set
+(soundness). Over 5000 draws from 126 equally likely assignments the chance of
+missing any one is about `126 x (125/126)^5000 ~ 1e-15`, so all 126 must also
+appear (completeness). Together these pin the optimization to ground truth.
+
+### `test_random_inputs_preserve_test_invariants`
+
+**Inputs:** twelve seeded pairs, `min_resamples=600`, `max_resamples=3000`.
+
+**Derivation:** four properties follow from the construction regardless of data.
+p-values use the add-one estimator so they are strictly positive and at most 1.
+`count_greater` counts `T_perm >= T_obs` and `count_less` counts
+`T_perm <= T_obs`; every resample satisfies at least one and ties satisfy both,
+so the counts sum to at least `n_done` and
+`p_greater + p_less = (2 + count_greater + count_less)/(n_done+1) > 1`. The
+resample total lies within the configured bounds by the loop's construction.
+And a directional decision requires the corresponding tail to be small, which
+requires the observed statistic to sit on that side of the null, so `greater`
+implies a positive statistic and `less` a negative one.
+
+### `test_equal_samples_give_a_zero_statistic_and_no_direction`
+
+**Inputs:** the same 8 values `[0.10, 0.22, 0.31, 0.44, 0.55, 0.61, 0.78, 0.83]`
+as both samples.
+
+**Derivation:** identical samples have identical means, so the numerator is
+exactly 0 and the statistic is 0. Half the permutation distribution lies on
+either side of 0, so both one-tailed p-values are near 0.5 and neither clears
+`alpha`. The equivalence step then decides between `equivalent` and
+`inconclusive`; at 8 observations per group it has too little power to rule out
+a medium effect, so the assertion accepts either.
+
+### `test_equivalence_needs_enough_data_to_conclude`
+
+**Inputs:** `x` and `y` both drawn from `N(1.0, 0.2^2)` at n=8 and at n=400 per
+group, 1000 resamples, fixed seeds.
+
+**Derivation:** both samples come from one distribution, so neither directional
+tail can be significant and the TOST step decides. The margin is `0.5` pooled
+standard deviations, so the shift applied to each null is `0.5 x SD` in raw
+units, and the studentized size of that shift is `0.5 x SD / SE`, which grows
+like `sqrt(n)`. Measured on samples from one distribution at 4000 resamples:
+
+| n per group | `p_tost`, margin in SE units | `p_tost`, margin in pooled SD |
+| --- | --- | --- |
+| 8 | 0.997 | 0.993 |
+| 30 | 0.464 | 0.071 |
+| 100 | 0.623 | 0.004 |
+| 400 | 0.709 | 0.0002 |
+| 2000 | 0.918 | 0.0002 |
+
+The pooled-SD column crosses `alpha = 0.05` between n=30 and n=100, so n=8 gives
+`inconclusive` and n=400 gives `equivalent`. The SE column is flat in n because
+the studentized statistic is a pivot whose null spread stays near 1 at every
+sample size, which is why the margin is an effect size rather than a number of
+standard errors.
+
+### `test_type_one_error_rate_tracks_alpha_under_unequal_variance`
+
+**Inputs:** 300 replicates, `x ~ N(1.0, 1.0^2)` at n=60 against
+`y ~ N(1.0, 0.3^2)` at n=180, `alpha = 0.05`, 1000 resamples, `correction="bfn"`.
+
+**Derivation:** both samples share the mean 1.0, so every *directional* decision
+is a type-I error; `equivalent` and `inconclusive` are not rejections of the
+directional null and are not counted. A correctly sized test rejects with probability `alpha`, giving
+`300 x 0.05 = 15` expected rejections with standard deviation
+`sqrt(300 x 0.05 x 0.95) = 3.8`. The assertion band `[3, 30]` spans 1% to 10%,
+roughly `+-4` standard deviations, so fixed seeds make it stable while a test
+that had stopped controlling its error rate would fall outside. Unequal sizes
+paired with unequal variances is the configuration where a permutation test of
+the *raw* mean difference loses its level, so this measures what the
+studentization buys. Measured behaviour across shapes: about 4% here, about 3%
+when the smaller group has the smaller variance, and rising to about 10% at
+n=20 against n=200 when the smaller group carries a 3x larger spread — the
+small-sample limitation recorded in ORCHESTRATOR.md.
+
+### `test_guards_short_circuit_without_resampling`
+
+**Inputs and derivation**, one row per guard:
+
+| Input | Guard | Why |
+| --- | --- | --- |
+| `x=[0.4]`, `y=[0.1, 0.2, 0.3]` | `insufficient_group_size` | `nx = 1`, and `np.var(ddof=1)` needs at least 2 observations. |
+| `x=y=[0.3, 0.3, 0.3]` | `zero_pooled_variance` | All six pooled values equal, so both the spread and the mean difference are zero. |
+| `x=[0.9]*10`, `y=[0.1]*30` | `degenerate_observed_scale` | Both groups internally constant with different means; the standard error is floating-point noise near `1e-17`. |
+| `x=[0.9,0.8,0.7,0.6]`, `y=[0.1,0.2]` | `insufficient_permutation_support` | `C(6, 2) = 15 < 2500`. |
+
+Each returns `statistic is None`, `n_resamples == 0`, `converged is False`, and
+decision `inconclusive` — a guard means nothing was established, which is
+distinct from having shown the means to be equivalent.
+
+### `test_null_skewness_is_measured_and_matches_scipy`
+
+**Inputs:** 700 concordant heights from `N(0.42, 0.10)`, 19 discordant1 of which
+15 are from `N(0.5, 0.1)` and 4 from `N(25, 5)`; 2500 resamples, `bfn`.
+
+**Derivation:** the permutation statistic depends sharply on how many of the four
+extreme heights land in the 19-slot group, so the null separates into clusters
+rather than one smooth curve: about 90% of permutations put all four in the large
+group (`T` near `+1.9`), 10% put one in the small group (`T` near `-0.9`), and
+0.5% put two (`T` near `-1.4`). A third moment over that mixture is strongly
+negative, so `|null_skew| > 1`.
+
+The expected value is not derived independently — it is `scipy.stats.skew` over
+the statistics drawn from the same seed. That is the point: `null_skew` is
+accumulated from running power sums so batches can be discarded, and the test
+pins that accumulation against the reference computed from the retained draws.
+
+### `test_null_skewness_is_near_zero_for_a_symmetric_null`
+
+**Inputs:** two 150-observation samples from `N(1.0, 1.0)`, 4000 resamples.
+
+**Derivation:** equal group sizes drawn from one symmetric family give a
+permutation null that is symmetric about zero, so its population skewness is 0.
+The `0.15` band is Monte Carlo slack: the standard error of a sample skewness is
+about `sqrt(6/n) = 0.039` at n = 4000, so the bound is roughly 4 standard errors.
+
+### `test_adaptive_run_grows_batches_until_it_converges`
+
+**Inputs:** `x ~ N(2.0, 0.2^2)` and `y ~ N(0.5, 0.2^2)`, both n=80,
+`min_resamples=1000`, `max_resamples=20000`.
+
+**Derivation:** the samples are separated by more than seven pooled standard
+deviations, so no permutation approaches the observed statistic and
+`p_greater` lands at the floor `1/1001 ~ 1.0e-3`. The Wilson interval around a
+count of 1 in 1001 is roughly `[0.0003, 0.0056]`; doubled by Bonferroni it stays
+far below `alpha = 0.05`, so `alpha` is outside it after the very first batch.
+The run therefore stops with `batches == 1`, `n_resamples == 1000`, and decision
+`greater` — an easy case must not spend the ceiling.
+
+### `test_undecided_runs_grow_their_batches_until_the_budget_is_reached`
+
+**Inputs:** 30 draws from `N(1.4, 1.0^2)` against 30 from `N(1.0, 1.0^2)`
+(sample seed 3), `min_resamples=100`, `max_resamples=1000`, resampling seed 103.
+
+**Derivation:** the 0.4 shift is marginal at these sample sizes, so the
+corrected p-value stays near `alpha` and the Wilson interval never excludes it
+— the run draws every batch it is allowed. It therefore ends `converged=False`
+with `note = "max_resamples_reached"`, and takes 6 batches rather than 1.
+
+Two properties are asserted, neither pinning the growth factor. **Growth:** a
+schedule that repeated the opening batch would total exactly
+`batches x 100 = 600`, so a larger total shows the batches grew. **Budget:** the
+first five batches are 100, 125, 156, 195, 243, cumulating to 819 — short of the
+1000 budget, so a sixth batch of 303 is drawn *whole*, ending at 1122. The
+assertion is the bracket `1000 <= n_resamples < 2000`: the run does not stop
+before the budget is met, and overshoots it by at most one batch. The exact
+1122 is left unasserted because it encodes the growth factor.
+
+### `test_bootstrap_resample_budget_scales_by_one_fifth`
+
+**Inputs and derivation:** `2500 // 5 = 500` and `25000 // 5 = 5000`. For
+`(2, 3)`, `2 // 5 = 0` and `3 // 5 = 0`, both raised to the floor of 1, and the
+maximum is held at least equal to the minimum → `(1, 1)`.
 
 ## tests/orchestrator/test_orchestrator_trees.py
 
@@ -368,7 +769,7 @@ depth 2.0, so `d = 1.0 + 1.0 = 2.0`. Pair `(A,C)`: `d = (1.0 + 2.0) + 3.0 = 6.0`
 
 All runs use the shared species tree and 12 gene trees, seed `20240724`, 40
 bootstrap iterations, and the orchestrator defaults (`p_value_correction = bfn`,
-`summary_statistic = mean`).
+the permutation test enabled).
 
 ### `test_run_orchestrator_matches_derived_expectation`
 
@@ -553,22 +954,15 @@ optional argument `None`.
 
 **Derivation:** each key falls back to its constant in
 `ghostparser/orchestrator/config.py`: `alpha_dct`/`alpha_ks` `0.05`,
-`p_value_correction` `"bfn"`, `summary_statistic` `"mean"`, `overwrite` `True`,
+`p_value_correction` `"bfn"`, `alpha_perm` `0.05`,
+`permutation_min_resamples` `2500`, `permutation_max_resamples` `25000`,
+`permutation_ci_method` `"wilson"`,
+`overwrite` `True`,
 `discordant_test` `"chi-square"`, `tree_height_calculation_strategy` `"AVG"`,
 `min_support_value` `0.5`, `bootstrap_iterations` `100`, `bootstrap_seed`
 `None`, and the boolean feature flags `False` — including
 `preflight_data_check`, whose default `DEFAULT_PREFLIGHT_DATA_CHECK` is `False`
 so that an ordinary run is never turned into a check-only run by accident.
-`stats_backend` must be absent entirely, since the custom backend no longer
-exists.
-
-### `test_cli_overrides_for_config_plus_cli_options`
-
-**Input:** `alpha_dct=0.01`, `alpha_ks=0.2`, `summary_statistic="mean"`,
-`p_value_correction="fdr_bh"`, `no_overwrite=True`.
-
-**Derivation:** each supplied value replaces its default. `no_overwrite=True`
-negates to `overwrite is False`.
 
 ### `test_config_only_keys_read_from_config_file`
 
@@ -586,22 +980,72 @@ them. The nested block is flattened onto `bootstrap_iterations = 25`,
 ### `test_config_file_wins_over_cli`
 
 **Input:** a config file setting `alpha_dct: 0.03` and file-specific tree paths,
-plus conflicting CLI flags `alpha_dct=0.5` and `summary_statistic="mode"`.
+plus conflicting CLI flags `alpha_dct=0.5` and `alpha_perm=0.5`.
 
 **Derivation:** in config-file mode the file supplies everything, so
-`alpha_dct` is `0.03` (not `0.5`). The decisive check is `summary_statistic`:
-the file omits it, so it must fall back to the orchestrator default `"mean"` — if
-the CLI were consulted it would be `"mode"`. The resolved species path must come
-from the file, and a warning naming the ignored flags must be printed.
+`alpha_dct` is `0.03` (not `0.5`). The decisive check is `alpha_perm`: the file
+omits it, so it must fall back to the orchestrator default `0.05` — if the CLI
+were consulted it would be `0.5`. The resolved species path must come from the
+file, and a warning naming the ignored flags must be printed.
+
+### `test_outgroup_accepts_single_comma_separated_and_list_forms`
+
+**Inputs and derivation:** every accepted shape flattens the same way — each
+entry is coerced to a string, split on commas, stripped, and empty pieces
+dropped.
+
+| Input | Result | Why |
+| --- | --- | --- |
+| `"OUT"` | `["OUT"]` | Single label, no comma to split on. |
+| `"Out1,Out2"` | `["Out1", "Out2"]` | Comma-separated string. |
+| `" Out1 , Out2 ,"` | `["Out1", "Out2"]` | Padding stripped, trailing empty piece dropped. |
+| `["Out1", "Out2"]` | `["Out1", "Out2"]` | List of labels. |
+| `("Out1", "Out2")` | `["Out1", "Out2"]` | Tuples accepted alongside lists. |
+| `["Out1,Out2", "Out3"]` | `["Out1", "Out2", "Out3"]` | List entries are themselves split, so the two forms compose. |
+
+### `test_outgroup_rejects_empty_and_non_label_values`
+
+**Inputs and derivation:** `None`, `""`, `"  "`, `","`, `[]`, `["", "  "]`, and
+`42` all reduce to an empty label list — the first six because every piece is
+blank after stripping, and `42` because it is neither a string nor a
+list/tuple/set and so contributes no entries. An empty result raises
+`ConfigError` naming `outgroup` rather than silently producing an unrooted run.
+
+### `test_shipped_sample_configs_resolve`
+
+**Inputs:** the two orchestrator sample configs under `sample_configs/`.
+
+**Derivation:** these go through the same `load_orchestrator_config` a user
+invokes with `-c`, so anything the validator would reject surfaces here. The
+asserted values are what the samples state literally — a non-empty outgroup list
+(`["OutGroup"]` for the minimal sample, `["Out1", "Out2"]` for the full one,
+written there as a YAML list to exercise that form), `alpha_perm` `0.05`, and
+`ci_method` `wilson`. The placeholder tree paths need not exist:
+`_validate_required_path` only checks that the field is a non-empty string
+before resolving it.
+
+### `test_full_sample_config_covers_every_runtime_key`
+
+**Inputs:** `orchestrator_full.yaml` parsed twice — once as raw YAML for the set
+of documented keys, once through `load_orchestrator_config` for the set of
+runtime keys.
+
+**Derivation:** the normalizer renames three inputs (`species_tree_path` →
+`species_tree`, `gene_trees_path` → `gene_trees`, `output_folder` → `output`)
+and flattens the two nested blocks with a prefix
+(`permutation_options.ci_method` → `permutation_ci_method`). After undoing both
+transformations the runtime key set must be a subset of the documented one, so
+the difference is empty. This fails the moment a config key is added without the
+sample gaining it.
 
 ### Validation tests
 
 - `test_missing_required_field_raises` — `species_tree_path=None` fails
   required-path validation → `ConfigError`.
-- `test_parser_exposes_config_file_and_new_flags` — parsing
+- `test_parser_flags_resolve_into_their_config_values` — parsing
   `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2 --p-value-correction
-  fdr_bh --summary-statistic mean --no-overwrite` must yield those exact values
-  with `config_file is None`.
+  fdr_bh --alpha-perm 0.02 --no-overwrite` must yield those exact values with
+  `config_file is None`.
 
 ## tests/test_config_trunk.py
 
@@ -668,13 +1112,6 @@ recreated, so `stale.txt` must be gone. With `overwrite=False` the allocator
 scans the parent, finds suffixes `{1, 3}` in use, and returns the smallest
 missing positive suffix — `2` — creating `results_2` and leaving `fresh.txt`
 untouched in the original directory.
-
-### `test_prepare_output_directory_creates_missing_parents`
-
-**Input:** `tmp_path/a/b/results`, which does not exist.
-
-**Derivation:** the helper creates parents on demand, so the whole chain must
-exist afterwards.
 
 ## tests/test_ml_labels_and_metrics.py
 
@@ -778,7 +1215,7 @@ row keyed by the header fields.
 **Derivation:** the target is removed and the remaining header order is
 preserved → `("feature_1", "feature_2", "dis1_topology")`.
 
-## tests/test_introgression_mapper.py — ghost bar colouring
+## tests/orchestrator/test_orchestrator_consolidation.py — ghost bar colouring
 
 ### Shared scenario
 
@@ -819,53 +1256,103 @@ the plot order is listed (`{A, B, C, D}`), because the sheet is keyed by
 `A → 1` and `D → 0`. Both `A` and `D` have non-zero ghost strength, confirming
 the flag is an added column rather than a replacement for the strength value.
 
-### `test_ghost_bars_use_constant_colours_by_sampled_presence`
+## tests/orchestrator/test_orchestrator_shape.py
 
-**Inputs:** the shared scenario, with `matplotlib.axes.Axes.barh` monkeypatched
-to record the `color` list and the bar widths before delegating to the original.
+### `test_shape_moments_match_scipy`
 
-**Derivation:** the bar chart is the only `barh` call in the figure, so the
-captured `color` list is exactly the ghost bar colours in `taxa_order`. Colour
-is a two-valued function of the flag, so the captured set must be a subset of
-`{GHOST_ONLY_BAR_COLOR, GHOST_WITH_SAMPLED_BAR_COLOR}`; a per-magnitude colormap
-would instead yield a distinct RGBA per bar. `A` maps to
-`GHOST_WITH_SAMPLED_BAR_COLOR` and `D` to `GHOST_ONLY_BAR_COLOR` per the table.
-The widths for `A` (0.8) and `D` (0.4) differ, which together with ghost-only
-taxa sharing one colour demonstrates that magnitude lives in length alone.
+- **Input** — 500 draws from `numpy.random.default_rng(4).lognormal(0, 0.7)`.
+- **Expected `skew`** — `scipy.stats.skew(values)`, the biased sample third
+  standardized moment `m3 / m2^1.5`. Exact equality, since the module calls the
+  same function.
+- **Expected `excess_kurtosis`** — `scipy.stats.kurtosis(values, fisher=True)`,
+  i.e. `m4 / m2^2 - 3`, so a normal reads `0`.
+- **Signs** — a lognormal with `sigma = 0.7` has population skewness
+  `(e^{sigma^2} + 2) sqrt(e^{sigma^2} - 1) ~ 2.5` and positive excess kurtosis,
+  so both must come out above zero.
 
-### `test_zero_heatmap_cells_are_masked`
+### `test_modality_test_rejects_only_a_well_separated_mixture`
 
-**Inputs:** the shared ghost-colour scenario, with `sns.heatmap` monkeypatched
-to record the `data` and `mask` it receives.
+- **Inputs** — 400 draws each of `normal(0, 1)`, `lognormal(0, 0.6)`,
+  `exponential(1)`, `gamma(2, 1)`, and a concatenation of 200 `normal(0, 1)`
+  plus 200 `normal(4, 1)` draws, all from one `default_rng(17)` stream. The
+  modality bootstrap is driven by a separate `default_rng(2)`.
+- **Derivation of the expectation** — the first four are unimodal by
+  construction (a gamma with shape `> 1` has its mode at `(k-1) * theta`; a
+  lognormal at `e^{mu - sigma^2}`), so a test holding its nominal level must not
+  reject them. The mixture's components are 4 pooled SD apart, which puts a
+  genuine valley between them; measured `modes_p` values are 0.53/0.38/0.16/0.35
+  for the unimodal families and 0.005 — the `1 / (n_resamples + 1)` floor at 200
+  replicates — for the mixture. The assertion is the side of `alpha = 0.05` each
+  falls on, not the value.
+- **Why not a mode count** — the same four unimodal samples give KDE peak counts
+  of 1, 4, 3 and 2 at Scott's bandwidth, so the count alone would call three of
+  them multimodal.
 
-**Derivation:** the scenario produces exactly one sampled edge, `(C, A)` with
-weight 0.5, so in the 4x4 target-by-source matrix over `taxa_order` only the
-cell at row `A`, column `C` is non-zero; the diagonal and all 14 remaining
-off-diagonal cells are 0. The plotting code passes `mask = heat_values == 0.0`,
-so the recorded mask must equal that comparison elementwise, and the count of
-unmasked cells must be exactly 1.
+### `test_tail_index_recovers_known_tail_shapes`
 
-### `test_metrics_txt_leads_with_hyperparameters` (random forest)
+- **Inputs** — 4000 draws each: `pareto(3) + 1`, `exponential(1)`,
+  `uniform(0, 1)`, from `default_rng(23)`.
+- **Expected `xi`** — a Pareto with index `a` has survival `x^{-a}`, whose
+  generalized-Pareto tail index is `1 / a = 1/3`. An exponential tail is the
+  `xi -> 0` limit of the GPD. A uniform on `[0, 1]` has a finite upper endpoint
+  reached linearly, which is the GPD with `xi = -1`.
+- **Tolerance** — `abs=0.25`. The fit sees only the upper decile, so 400 points
+  back each estimate; the GPD shape estimator's asymptotic standard error is
+  roughly `(1 + xi) / sqrt(k)`, which is about `0.07` here, and the tolerance
+  leaves room for the threshold-choice bias on top of that.
 
-**Inputs:** `summary_statistics_tsv` with `n_estimators=25`, `random_state=7`,
-`test_size=0.25`, `max_depth=None`, `cv_folds=3`,
-`rare_class_policy="warn_reduce_cv"`.
+### `test_shape_is_not_described_for_small_or_flat_groups`
 
-**Derivation:** `format_hyperparameter_section` emits the title
-`Hyperparameters:` followed by one `  {name:<width}  {value}` line per entry,
-where `width` is the longest key (`cv_folds_requested` /
-`cv_folds_effective`, 18 characters). The test splits each line on whitespace
-rather than asserting column positions, because that width shifts whenever a
-key is added. `max_depth` is `None`, which the formatter renders as the literal
-`none` so an unset knob is distinguishable from an empty string. The block is
-prepended to `text_lines` before the `Test metrics:` group, so its index in the
-file is strictly smaller. `cv_folds_requested` echoes the configured `3` while
-`cv_folds_effective` carries whatever `auto_cv_folds` resolved for the fixture's
-class distribution, which is why only the requested value is asserted.
+- **`[1.0] * 5`** — 5 observations, below `SHAPE_MIN_OBSERVATIONS = 20`, so
+  every field is `None`.
+- **`[2.0] * 50`** — above the size floor but with zero variance, so the KDE has
+  no scale and the moments are undefined; every field is `None`.
+- **25 normal draws** — clears the size floor, so the moments are reported. The
+  upper decile holds `25 - ceil(0.9 * 25) = 3` points, below
+  `SHAPE_MIN_TAIL_EXCEEDANCES = 10`, so `tail_xi` alone is `None`.
+
+### `test_shape_is_measured_once_and_not_per_bootstrap_iteration`
+
+- **Input** — one 60/40/30 lognormal triplet analyzed twice, at 5 and 60
+  bootstrap iterations, with the same `triplet_seed`.
+- **Derivation** — the diagnostics are computed in
+  `_run_triplet_pipeline_from_observations`, which runs once for the point
+  estimate; `_run_bootstrap_iterations` reaches the data through
+  `_iteration_outcome`, which never calls it. The seed for the modality
+  bootstrap is the fourth child of the per-triplet `SeedSequence`, and spawning
+  a fourth child does not disturb the first three, so both runs draw the same
+  stream. The two results must therefore agree exactly, not approximately.
+
+### `test_summary_statistics_tsv_carries_shape_columns_only_when_enabled`
+
+- **Input** — the same triplet, written through `write_summary_statistics_tsv`.
+- **Expected column names** — `SHAPE_SUMMARY_GROUP_LABELS` (3) crossed with
+  `SHAPE_FIELD_NAMES` (5), so 15 columns, using the full-word group prefixes
+  that the file's other 63 per-topology columns already use.
+- **`concordant_skew == con_skew`** — the summary writer re-keys the same dict
+  rather than recomputing, so the values are identical rather than close.
+- **No `con_*` in the header** — guards against the short results-TSV prefixes
+  leaking into a file whose convention is the full words.
+- **`discordant2_tail_xi` empty** — 30 observations leave 3 above the 90th
+  percentile, under the 10-exceedance floor.
+
+### `test_results_tsv_carries_shape_columns_only_when_enabled`
+
+- **Input** — one triplet with 60 concordant, 40 discordant1 and 30 discordant2
+  lognormal heights, analyzed with `shape_diagnostics` off and on.
+- **Expected column set** — the product of `SHAPE_GROUP_LABELS` (3) and
+  `SHAPE_FIELD_NAMES` (5), so 15 columns, present exactly when enabled.
+- **`con_skew > 0`** — the heights are lognormal, which is right-skewed.
+- **`con_modes_p` in `(0, 1]`** — the add-one estimator is bounded below by
+  `1 / (n_resamples + 1)` and above by `1`.
+- **`dis2_tail_xi` empty** — 30 observations leave `30 - 27 = 3` above the 90th
+  percentile, under the 10-exceedance floor.
+- **Row alignment** — asserted in both arms, since the columns are appended
+  conditionally in two places (header and row) that must stay in step.
 
 ## Remaining suites
 
-`tests/test_introgression_mapper.py`, `tests/test_ml_config.py`,
+`tests/orchestrator/test_orchestrator_consolidation.py`, `tests/test_ml_config.py`,
 `tests/test_ml_utils.py`, `tests/test_ml_random_forest.py`,
 `tests/test_ml_multi_knn.py`, and `tests/test_ml_hyper_tune.py` assert either
 structural outcomes (files written, columns present, errors raised) or documented

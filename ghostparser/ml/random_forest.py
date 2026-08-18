@@ -1,7 +1,5 @@
 """Multi-label random forest baseline for Ghostparser summary statistics."""
 
-from __future__ import annotations
-
 import argparse
 import pickle
 import time

@@ -8,8 +8,6 @@ Each run is driven by a generated JSON config file rather than CLI flags,
 because ``generate_summary_stats`` is a config-file-only orchestrator setting.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import shlex
@@ -128,7 +126,7 @@ def build_orchestrator_config(
     return {
         "species_tree_path": str(species_tree),
         "gene_trees_path": str(gene_trees),
-        "outgroups": outgroups,
+        "outgroup": outgroups,
         "output_folder": str(out_dir),
         "p_value_correction": p_value_correction,
         "generate_summary_stats": generate_summary_stats,

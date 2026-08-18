@@ -1,11 +1,4 @@
-"""Shared triplet topology utilities.
-
-Utilities in this module keep triplet topology handling consistent across the
-package; ``ghostparser.orchestrator`` uses them for both preprocessing and
-inference.
-"""
-
-from __future__ import annotations
+"""Shared triplet topology utilities, used for preprocessing and inference."""
 
 
 TOPOLOGY_AB = "((A,B),C)"

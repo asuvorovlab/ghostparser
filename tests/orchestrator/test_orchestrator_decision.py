@@ -7,6 +7,8 @@ the definitions (see ``tests/TEST_IO.md``); the correction tests compare against
 ``statsmodels.multipletests`` called directly.
 """
 
+from dataclasses import replace
+
 import pytest
 from statsmodels.stats.multitest import multipletests
 
@@ -60,72 +62,217 @@ def _analyze(observations, **kwargs):
     )
 
 
-def test_classify_no_introgression_when_dct_not_significant():
-    """An even discordant split leaves the DCT non-significant -> no introgression."""
-    # 10 vs 10 -> chi-square statistic 0, p = 1.0 > alpha, so the first gate stops.
-    result = _analyze(_observations([0.1] * 20, [0.9] * 10, [0.9] * 10))
-    assert result.dct_statistic == pytest.approx(0.0)
-    assert result.dct_p_value == pytest.approx(1.0)
-    assert result.dct_significant is False
-    assert result.classification == "no_introgression"
+def _corrected(observations, method, family_size=1, iterations=40, seed=3):
+    """Analyze one triplet and run the run-wide correction pass over it.
+
+    Both correction tiers finish in this pass: the inline methods have already
+    tallied their bootstrap votes, the rank-based ones are resolved here. When
+    ``family_size`` exceeds 1 the triplet is padded out to that many results,
+    each padding entry carrying a p-value of 1.0, so the point estimate is
+    corrected against the same family the bootstrap used.
+
+    Args:
+        observations: The observation list.
+        method: The p-value correction method.
+        family_size: Triplet count the correction should work against.
+        iterations: Bootstrap iterations to run.
+        seed: Base seed for deterministic resampling.
+
+    Returns:
+        The corrected ``TripletPipelineResult`` for the real triplet.
+    """
+    result = pinf.analyze_triplet_from_observations(
+        _TRIPLET,
+        observations,
+        species_subtree=_SPECIES_SUBTREE,
+        bootstrap_options={"iterations": iterations},
+        p_value_correction=method,
+        family_size=family_size,
+        triplet_seed=seed,
+    )
+    padding = [
+        replace(
+            result,
+            dct_p_value=1.0,
+            ks_p_value=1.0,
+            all_bootstrap=None,
+            bootstrap_deferred=None,
+        )
+        for _ in range(family_size - 1)
+    ]
+    return pinf._apply_triplet_result_p_value_correction(
+        [result] + padding, alpha_dct=0.05, alpha_ks=0.05, method=method
+    )[0]
 
 
-def test_classify_inflow_when_tree_height_test_not_significant():
-    """A significant DCT with an inseparable height distribution -> inflow."""
-    # 30 vs 2 -> chi-square (30-16)^2/16 * 2 = 24.5, p ~ 7.4e-07 < 0.05.
-    # Identical con/dis1 heights make the KS statistic 0 (p = 1.0), so the
-    # tree-height test is not significant.
-    result = _analyze(_observations([0.5] * 10, [0.5] * 30, [0.5] * 2))
-    assert result.dct_significant is True
-    assert result.ks_statistic == pytest.approx(0.0)
-    assert result.ks_significant is False
-    assert result.classification == "inflow_introgression"
+# Spread-out, fully separated samples. Every concordant height sits above every
+# discordant1 height, so the KS statistic is 1.0; the within-group spread gives
+# the studentized statistic a finite standard error to divide by, and the
+# combined sample admits C(40, 10) = 8.5e8 assignments, well past the support
+# floor. Both permutation guards therefore stay clear and the test resamples.
+_HIGH = [0.85 + 0.01 * i for i in range(10)]
+_LOW = [0.05 + 0.01 * i for i in range(30)]
 
-
-def test_classify_outflow_when_concordant_heights_exceed_discordant():
-    """Significant DCT + significant KS with con > dis1 -> outflow."""
-    # Fully separated samples: every concordant height exceeds every dis1 height,
-    # so the KS statistic is 1.0 and the summary comparison is con > dis1.
-    result = _analyze(_observations([0.9] * 10, [0.1] * 30, [0.1] * 2))
-    assert result.dct_significant is True
-    assert result.ks_statistic == pytest.approx(1.0)
-    assert result.ks_significant is True
-    assert result.summary_con > result.summary_dis
-    assert result.classification == "outflow_introgression"
-
-
-def test_classify_ghost_when_discordant_heights_exceed_concordant():
-    """Significant DCT + significant KS with con < dis1 -> ghost."""
-    result = _analyze(_observations([0.1] * 10, [0.9] * 30, [0.9] * 2))
-    assert result.dct_significant is True
-    assert result.ks_significant is True
-    assert result.summary_con < result.summary_dis
-    assert result.classification == "ghost_introgression"
+# Samples sharing a mean but differing in spread: the KS test separates the
+# distributions while the permutation test finds no direction.
+_WIDE = [0.5 + 0.30 * (1 if i % 2 else -1) for i in range(30)]
+_NARROW = [0.5 + 0.02 * (1 if i % 2 else -1) for i in range(30)]
 
 
 @pytest.mark.parametrize(
-    "dct_significant,ks_significant,summary_con,summary_dis,expected",
+    "con, dis1, dis2, dct_significant, ks_significant, decisions, gate, expected",
     [
-        (False, True, 1.0, 2.0, "no_introgression"),
-        (False, False, 1.0, 2.0, "no_introgression"),
-        (True, False, 1.0, 2.0, "inflow_introgression"),
-        (True, True, 2.0, 1.0, "outflow_introgression"),
-        (True, True, 1.0, 2.0, "ghost_introgression"),
-        (True, True, 1.0, 1.0, "unresolved"),
-        (True, True, None, 1.0, "unresolved"),
-        (True, True, 1.0, None, "unresolved"),
+        # 10 vs 10 -> chi-square statistic 0, p = 1.0, so the first gate stops.
+        # KS is significant here too, so this row also shows the DCT gate
+        # stopping the cascade before a later gate can be consulted.
+        ([0.1] * 20, [0.9] * 10, [0.9] * 10, False, True, None, "DCT",
+         "no_introgression"),
+        # 30 vs 2 -> chi-square 24.5, p ~ 7.4e-07. Identical con/dis1 heights
+        # make the KS statistic 0 (p = 1.0), so gate 2 stops.
+        ([0.5] * 10, [0.5] * 30, [0.5] * 2, True, False, None, "THT",
+         "inflow_introgression"),
+        (_HIGH, _LOW, [0.1] * 2, True, True, {"greater"}, "PERM",
+         "outflow_introgression"),
+        (_LOW[:10], _HIGH * 3, [0.9] * 2, True, True, {"less"}, "PERM",
+         "ghost_introgression"),
+        (_WIDE, _NARROW, [0.5] * 2, True, True, {"equivalent", "inconclusive"},
+         "PERM", "ambiguous"),
+    ],
+    ids=["no_introgression", "inflow", "outflow", "ghost", "ambiguous"],
+)
+def test_decision_cascade_lands_on_each_classification(
+    con, dis1, dis2, dct_significant, ks_significant, decisions, gate, expected
+):
+    """Crafted observation sets drive the cascade onto each of its five outcomes.
+
+    The gate asserts which test settled the call, so a case that reaches its
+    classification by the wrong route fails rather than passing by coincidence.
+    The direction test runs for every triplet, so ``perm_decision`` is populated
+    even where the cascade stopped earlier.
+    """
+    result = _analyze(_observations(con, dis1, dis2))
+    assert result.dct_significant is dct_significant
+    assert result.ks_significant is ks_significant
+    assert result.classification == expected
+    assert result.decision_gate == gate
+    assert result.perm_decision is not None
+    if decisions is not None:
+        assert result.perm_decision in decisions
+
+
+@pytest.mark.parametrize(
+    "con, dis1, note",
+    [
+        # C(6, 2) = 15 distinct assignments, far below the 2500-resample minimum.
+        ([0.9, 0.8, 0.7, 0.6], [0.1, 0.2], "insufficient_permutation_support"),
+        # Internally constant groups leave no scale to studentize by.
+        ([0.9] * 10, [0.1] * 30, "degenerate_observed_scale"),
+    ],
+)
+def test_permutation_guards_surface_on_the_triplet_result(con, dis1, note):
+    """A guarded direction test reports its reason instead of a direction."""
+    result = _analyze(_observations(con, dis1, [0.1] * 2))
+    assert result.perm_note == note
+    assert result.perm_n_resamples == 0
+    assert result.perm_decision == "inconclusive"
+
+
+def _subtrees(con_heights, bc_heights, ac_heights):
+    """Build gene subtrees placing given heights on each topology.
+
+    Args:
+        con_heights: Heights for the concordant ``((A,B),C)`` topology.
+        bc_heights: Heights for the ``((B,C),A)`` topology.
+        ac_heights: Heights for the ``((A,C),B)`` topology.
+
+    Returns:
+        A list of Newick strings.
+    """
+    shapes = {
+        _CON: "((A:{h:.4f},B:{h:.4f}):0.10,C:{o:.4f});",
+        _DIS1: "((B:{h:.4f},C:{h:.4f}):0.10,A:{o:.4f});",
+        _DIS2: "((A:{h:.4f},C:{h:.4f}):0.10,B:{o:.4f});",
+    }
+    subtrees = []
+    for topology, heights in (
+        (_CON, con_heights),
+        (_DIS1, bc_heights),
+        (_DIS2, ac_heights),
+    ):
+        subtrees.extend(shapes[topology].format(h=h, o=h + 0.2) for h in heights)
+    return subtrees
+
+
+@pytest.mark.parametrize(
+    "bc_heights, ac_heights, expected_dis1_topology",
+    [
+        ([0.10, 0.12, 0.14], [0.50 + 0.01 * i for i in range(9)], "AC"),
+        ([0.50 + 0.01 * i for i in range(9)], [0.10, 0.12, 0.14], "BC"),
+    ],
+    ids=["AC_more_frequent", "BC_more_frequent"],
+)
+def test_summary_statistics_discordant_roles_follow_the_counts(
+    bc_heights, ac_heights, expected_dis1_topology
+):
+    """`discordant1_*` describes the more frequent discordant, not always BC|A.
+
+    The summary columns must name the same gene trees ``dis1_topology`` names and
+    the three tests operate on, in either direction of the count.
+    """
+    result = pinf.analyze_triplet(
+        _TRIPLET,
+        _subtrees([0.30] * 10, bc_heights, ac_heights),
+        species_subtree=_SPECIES_SUBTREE,
+        collect_summary_statistics=True,
+        bootstrap_options={"iterations": 0},
+        triplet_seed=1,
+    )
+
+    assert result.dis1_topology == expected_dis1_topology
+    assert (result.n_dis1, result.n_dis2) == (9, 3)
+
+    dis1, dis2 = (
+        (ac_heights, bc_heights)
+        if expected_dis1_topology == "AC"
+        else (bc_heights, ac_heights)
+    )
+    statistics = result.topology_metric_statistics
+    # Each subtree is ((X:h,Y:h):0.10, Z:h+0.2), so the sisters sit at h + 0.10
+    # and the outlier at h + 0.20: avg tree height = (3h + 0.4) / 3 = h + 0.4/3.
+    assert statistics["discordant1_avg_tree_height_mean"] == pytest.approx(
+        sum(dis1) / len(dis1) + 0.4 / 3.0
+    )
+    assert statistics["discordant2_avg_tree_height_mean"] == pytest.approx(
+        sum(dis2) / len(dis2) + 0.4 / 3.0
+    )
+
+
+@pytest.mark.parametrize(
+    "dct_significant,ks_significant,direction,expected,expected_gate",
+    [
+        (False, True, "greater", "no_introgression", "DCT"),
+        (False, False, "less", "no_introgression", "DCT"),
+        (True, False, "greater", "inflow_introgression", "THT"),
+        (True, None, "greater", "inflow_introgression", "THT"),
+        (True, True, "greater", "outflow_introgression", "PERM"),
+        (True, True, "less", "ghost_introgression", "PERM"),
+        (True, True, "equivalent", "ambiguous", "PERM"),
+        (True, True, "inconclusive", "ambiguous", "PERM"),
+        (True, True, None, "ambiguous", "PERM"),
     ],
 )
 def test_classify_introgression_truth_table(
-    dct_significant, ks_significant, summary_con, summary_dis, expected
+    dct_significant, ks_significant, direction, expected, expected_gate
 ):
-    """Every branch of the decision logic maps to its documented classification."""
-    assert (
-        pinf._classify_introgression(
-            dct_significant, ks_significant, summary_con, summary_dis
-        )
-        == expected
-    )
+    """Every branch of the decision logic maps to its classification and its gate.
+
+    ``_classify_introgression`` returns both in one pass, so the pair is
+    asserted over the same truth table: the gate names the test that settled the
+    call, and only ``Permutation`` means the direction decision was consulted.
+    """
+    assert pinf._classify_introgression(
+        dct_significant, ks_significant, direction
+    ) == (expected, expected_gate)
 
 
 @pytest.mark.parametrize(
@@ -183,3 +330,199 @@ def test_discordant_count_test_rejects_unknown_method():
 def test_ks_test_with_an_empty_sample(sample_a, sample_b):
     """An empty sample makes the KS test a non-significant no-op."""
     assert pinf.run_two_sample_ks_test(sample_a, sample_b) == (0.0, 1.0)
+
+
+@pytest.mark.parametrize("method", ["no", "bfn", "holm", "fdr_bh", "fdr_by"])
+def test_inline_and_deferred_correction_agree_on_a_single_triplet(method):
+    """Every short-circuiting method votes the same way on a family of one.
+
+    A family of one leaves each correction as the identity, so all five methods
+    must produce the same bootstrap tally. ``no`` and ``bfn`` reach it inline
+    during the stream while the rank-based three park their raw p-values and are
+    corrected afterwards, so agreeing here is what shows the two code paths
+    implement one decision rule rather than two.
+    """
+    observations = _observations([0.9] * 25, [0.2] * 3 + [0.35] * 22, [0.3] * 4)
+    result = _corrected(observations, method)
+    baseline = _corrected(observations, "no")
+    assert result.all_bootstrap == baseline.all_bootstrap
+    assert result.bootstrap_value == baseline.bootstrap_value
+
+
+def test_bootstrap_votes_answer_to_the_corrected_threshold():
+    """Bootstrap iterations are judged against the same corrected alpha as the point estimate.
+
+    The raw DCT p-value here clears alpha, but Bonferroni over a family of 5000
+    pushes it well past. The point estimate therefore reports
+    ``no_introgression``, and the bootstrap must agree: judged on raw p-values
+    the same iterations would vote for an introgression class instead, which is
+    the mismatch that made ``bootstrap_value`` unreadable.
+    """
+    observations = _observations([0.9] * 40, [0.55] * 18, [0.55] * 6)
+    raw = _corrected(observations, "no")
+    corrected = _corrected(observations, "bfn", family_size=5000)
+
+    assert raw.dct_p_value <= 0.05
+    assert corrected.dct_p_value_corrected > 0.05
+    assert corrected.classification == "no_introgression"
+    assert corrected.all_bootstrap["no_introgression"] == 1.0
+    assert corrected.bootstrap_value == 1.0
+    # The same iterations vote differently when nothing corrects them, which is
+    # what makes the corrected agreement above meaningful rather than vacuous.
+    assert raw.all_bootstrap["no_introgression"] < 1.0
+
+
+def test_deferred_bootstrap_record_is_cleared_after_correction():
+    """A rank-based method defers its votes and the correction pass resolves them."""
+    observations = _observations([0.9] * 25, [0.2] * 3 + [0.35] * 22, [0.3] * 4)
+    deferred = pinf.analyze_triplet_from_observations(
+        _TRIPLET,
+        observations,
+        species_subtree=_SPECIES_SUBTREE,
+        bootstrap_options={"iterations": 20},
+        p_value_correction="holm",
+        triplet_seed=5,
+    )
+    assert deferred.all_bootstrap is None
+    assert deferred.bootstrap_deferred is not None
+    assert len(deferred.bootstrap_deferred.dct_p_values) == 20
+
+    resolved = pinf._apply_triplet_result_p_value_correction(
+        [deferred], alpha_dct=0.05, alpha_ks=0.05, method="holm"
+    )[0]
+    assert resolved.bootstrap_deferred is None
+    assert sum(resolved.all_bootstrap.values()) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    "dct_significant,ks_significant,direction",
+    [
+        (dct, ks, direction)
+        for dct in (True, False)
+        for ks in (True, False)
+        for direction in ("greater", "less", "equivalent", "inconclusive")
+    ],
+)
+def test_vectorized_bootstrap_codes_match_classify_introgression(
+    dct_significant, ks_significant, direction
+):
+    """The array-form cascade agrees with the scalar one on every branch.
+
+    ``_resolve_deferred_bootstrap`` classifies whole arrays at once rather than
+    calling ``_classify_introgression`` per iteration, so the two must be pinned
+    against each other or they can silently drift apart.
+    """
+    import numpy as np
+
+    code = pinf._classification_codes(
+        np.array([dct_significant]),
+        np.array([ks_significant]),
+        np.array([pinf._DIRECTION_CODES.get(direction, pinf._DIRECTION_SKIPPED)]),
+    )[0]
+    expected, _ = pinf._classify_introgression(
+        dct_significant, ks_significant, direction
+    )
+    assert pinf._BOOTSTRAP_CLASSES[code] == expected
+
+
+@pytest.mark.parametrize(
+    "method, monotone",
+    [
+        ("no", True),
+        ("bfn", True),
+        ("holm", True),
+        ("fdr_bh", True),
+        ("fdr_by", True),
+        ("fdr_tsbh", False),
+    ],
+)
+def test_monotonicity_matches_which_methods_may_short_circuit(method, monotone):
+    """Only methods that cannot lower a p-value are allowed to skip a gate.
+
+    Skipping the direction test once a raw gate has failed is sound exactly when
+    correction cannot pull that p-value back under alpha. The family is built so
+    two-stage BH estimates few true nulls and its multiplier drops below 1,
+    which is the case that makes it the one method excluded.
+    """
+    p_values = [0.001] * 8 + [0.4, 0.9]
+    adjusted = pinf._adjust_p_values(p_values, method=method, alpha=0.05)
+    never_lowers = all(a >= p - 1e-12 for a, p in zip(adjusted, p_values))
+
+    assert never_lowers is monotone
+    assert pinf.is_monotone_correction(method) is monotone
+
+
+@pytest.mark.parametrize("family_size", [1, 7, 250])
+def test_inline_bonferroni_matches_the_family_correction(family_size):
+    """Correcting one p-value from the family size alone reproduces the full pass."""
+    p_value = 0.004
+    family = [p_value] + [0.5] * (family_size - 1)
+    expected = pinf._adjust_p_values(family, method="bfn", alpha=0.05)[0]
+    assert pinf._adjust_p_value_inline(p_value, "bfn", family_size) == pytest.approx(
+        expected
+    )
+
+
+def test_inline_correction_rejects_a_rank_based_method():
+    """A rank-based method cannot be applied without the rest of its family."""
+    with pytest.raises(ValueError, match="needs the whole family"):
+        pinf._adjust_p_value_inline(0.01, "holm", 10)
+
+
+def test_studentized_interval_brackets_the_observed_statistic():
+    """The percentile interval is ordered and covers the statistic it describes.
+
+    Each iteration recomputes the studentized difference on its own resample, so
+    the interval is centred on the observed value. With too few observations for
+    a variance in both groups it is left unreported rather than invented.
+    """
+    con_heights = [0.50 + 0.01 * i for i in range(60)]
+    dis1_heights = [0.20 + 0.01 * i for i in range(40)]
+    result = _corrected(
+        _observations(con_heights, dis1_heights, [0.3] * 5), "no", iterations=200
+    )
+    assert result.perm_stat_ci_low < result.perm_stat_ci_high
+    assert result.perm_stat_ci_low <= result.perm_statistic <= result.perm_stat_ci_high
+
+    degenerate = _corrected(_observations([0.9] * 2, [0.2], [0.3]), "no", iterations=10)
+    assert degenerate.perm_stat_ci_low is None
+    assert degenerate.perm_stat_ci_high is None
+
+
+@pytest.mark.parametrize(
+    "method, expected",
+    [
+        ("no", False),
+        ("bfn", True),
+        ("fdr_bh", True),
+    ],
+)
+def test_results_tsv_carries_corrected_columns_only_when_correcting(
+    method, expected, tmp_path
+):
+    """The corrected p-value columns appear only when a correction is in effect.
+
+    Under ``no`` the corrected value equals the raw one by definition, so the
+    four columns would repeat their neighbours and suggest an adjustment that
+    never happened. The raw columns and the significance flags are written
+    either way, since those are what the classification rests on.
+    """
+    result = _corrected(_observations([0.9] * 25, [0.35] * 20, [0.3] * 4), method)
+    path = tmp_path / "results.tsv"
+    pinf.write_pipeline_results([result], str(path), p_value_correction=method)
+
+    lines = path.read_text().strip().splitlines()
+    header = lines[0].split("\t")
+    corrected_columns = [
+        f"dct_p_val_{method}_corr",
+        f"ks_p_val_{method}_corr",
+        f"perm_p_greater_{method}_corr",
+        f"perm_p_less_{method}_corr",
+    ]
+    assert all((column in header) is expected for column in corrected_columns)
+    assert not any(column.endswith("_no_corr") for column in header)
+
+    # Whatever the method, the header and the row stay aligned.
+    assert len(lines[1].split("\t")) == len(header)
+    for column in ("dct_p_value", "ks_p_value", "dct_significant", "ks_significant"):
+        assert column in header

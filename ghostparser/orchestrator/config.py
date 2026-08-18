@@ -1,18 +1,9 @@
 """Configuration for the orchestrator.
 
-Owns the orchestrator's own defaults/choices, its validation rules, the CLI parser,
-and the CLI/config resolution. The helpers whose behaviour is shared verbatim
-with the ML subpackage — ``ConfigError``, path resolution, raw config-file
-loading, required-path validation, overwrite resolution, and output-directory
-preparation — are imported from the :mod:`ghostparser.config` trunk.
-
-Config-file mode: ``-c/--config-file`` is CLI-only, and when a config file is
-given the other CLI flags are ignored with a warning (config wins). A subset of
-runtime knobs is exposed both on the CLI and in the config file; the rest are
-config-file-only.
+Owns the orchestrator's defaults, choices, validation rules, CLI parser, and
+CLI/config resolution; shared helpers come from the :mod:`ghostparser.config`
+trunk. Every key is documented in the configuration guide.
 """
-
-from __future__ import annotations
 
 import argparse
 
@@ -34,23 +25,39 @@ DEFAULT_OUTPUT_FOLDER = "results"
 DEFAULT_PROCESSES = 0
 DEFAULT_MIN_SUPPORT_VALUE = 0.5
 DEFAULT_DISCORDANT_TEST = "chi-square"
-DEFAULT_SUMMARY_STATISTIC = "mean"
 DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY = "AVG"
 DEFAULT_P_VALUE_CORRECTION = "bfn"
 DEFAULT_ALPHA_DCT = 0.05
 DEFAULT_ALPHA_KS = 0.05
+DEFAULT_ALPHA_PERM = 0.05
+DEFAULT_PERMUTATION_MIN_RESAMPLES = 2500
+DEFAULT_PERMUTATION_MAX_RESAMPLES = 25000
+DEFAULT_PERMUTATION_CI_METHOD = "wilson"
 DEFAULT_BOOTSTRAP = True
 DEFAULT_BOOTSTRAP_ITERATIONS = 100
 DEFAULT_BOOTSTRAP_DEBUG_MODE = False
 DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
 DEFAULT_GENERATE_SUMMARY_STATS = False
+DEFAULT_SHAPE_DIAGNOSTICS = False
 DEFAULT_CONSOLIDATION = True
 DEFAULT_PREFLIGHT_DATA_CHECK = False
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
-SUMMARY_STATISTIC_CHOICES = ("mean", "median", "mode")
 TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C", "SIS", "INT")
 P_VALUE_CORRECTION_CHOICES = ("no", "bfn", "holm", "fdr_bh", "fdr_by", "fdr_tsbh")
+
+# Binomial proportion interval methods accepted by statsmodels'
+# ``proportion_confint``. ``wilson`` is the default: it stays inside [0, 1] and
+# keeps close-to-nominal coverage for the very small proportions this test
+# produces, where the normal approximation degrades badly.
+PERMUTATION_CI_METHOD_CHOICES = (
+    "wilson",
+    "beta",
+    "agresti_coull",
+    "jeffreys",
+    "binom_test",
+    "normal",
+)
 
 # Parallelization knobs specific to this package.
 PARALLELIZATION_MODE_CHOICES = ("auto", "taxon", "gene")
@@ -62,13 +69,13 @@ AUTO_GENE_TREES_THRESHOLD = 3500
 # CLI argument dest names that also map to config-file payload keys. These are
 # the config+CLI options; config-file-only keys (discordant_test,
 # tree_height_calculation_strategy, min_support_value, bootstrap_iterations,
-# bootstrap_seed, generate_summary_stats, bootstrap_debug_mode,
-# bootstrap_summary_only) are intentionally absent so they are read only from a
-# config file and otherwise take their defaults.
+# bootstrap_seed, generate_summary_stats, shape_diagnostics, bootstrap_debug_mode,
+# bootstrap_summary_only, permutation_options) are intentionally absent so they
+# are read only from a config file and otherwise take their defaults.
 _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "species_tree_path",
     "gene_trees_path",
-    "outgroups",
+    "outgroup",
     "output_folder",
     "triplet_filter",
     "no_overwrite",
@@ -76,8 +83,8 @@ _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "parallelization_mode",
     "alpha_dct",
     "alpha_ks",
+    "alpha_perm",
     "p_value_correction",
-    "summary_statistic",
     "consolidation",
     "bootstrap",
     "preflight_data_check",
@@ -174,10 +181,43 @@ def _validate_optional_float(payload: dict, key: str, default: float) -> float:
         raise ConfigError(f"Config field {key} must be a numeric value") from exc
 
 
+# YAML 1.1 resolves these bare words to booleans, so a config writing a choice
+# such as ``p_value_correction: no`` reaches validation as ``False`` rather than
+# ``"no"``. Each bool is mapped back to whichever spelling the field actually
+# offers, so the unquoted form works as written.
+_YAML_BOOL_WORD_CHOICES = {
+    False: ("no", "off", "n", "false"),
+    True: ("yes", "on", "y", "true"),
+}
+
+
+def _coerce_yaml_bool_choice(value, choices: tuple[str, ...]):
+    """Map a YAML-coerced boolean back to the string choice it was written as.
+
+    Args:
+        value: The raw config value.
+        choices: The allowed values for the field.
+
+    Returns:
+        The matching choice string, or ``value`` unchanged when it is not a
+        boolean or the field offers no corresponding spelling.
+    """
+    if not isinstance(value, bool):
+        return value
+    for word in _YAML_BOOL_WORD_CHOICES[value]:
+        if word in choices:
+            return word
+    return value
+
+
 def _validate_choice(
     payload: dict, key: str, default: str, choices: tuple[str, ...]
 ) -> str:
     """Validate an enumerated string field.
+
+    A boolean value is mapped back to the equivalent string choice first, so
+    that YAML's bare-word booleans (``no``, ``yes``, ``on``, ``off``) select the
+    choice the user wrote rather than failing validation.
 
     Args:
         payload: The config/CLI payload.
@@ -194,8 +234,12 @@ def _validate_choice(
     value = payload.get(key, default)
     if value is None:
         value = default
+    value = _coerce_yaml_bool_choice(value, choices)
     if not isinstance(value, str) or value not in choices:
-        raise ConfigError(f"Config field {key} must be one of: {', '.join(choices)}")
+        raise ConfigError(
+            f"Config field {key} must be one of: {', '.join(choices)} "
+            f"(got {value!r})"
+        )
     return value
 
 
@@ -273,13 +317,75 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
     }
 
 
-def _parse_outgroups(value) -> list[str]:
-    """Parse the outgroup(s) value into a list of taxon labels.
+def _validate_permutation_options(payload: dict) -> dict:
+    """Validate the nested permutation-test options block.
 
-    Accepts a comma-separated string or a list/tuple/set of labels.
+    The tuning knobs inside ``permutation_options`` are config-file-only. There
+    is no ``initial_batch`` knob: the first adaptive batch is always
+    ``min_resamples``.
 
     Args:
-        value: The raw outgroup(s) value.
+        payload: The config/CLI payload.
+
+    Returns:
+        A dict with ``min_resamples``/``max_resamples``/``ci_method``.
+
+    Raises:
+        ConfigError: If any value is malformed or out of range.
+    """
+    raw_options = payload.get("permutation_options")
+    if raw_options is None:
+        raw_options = {}
+    if not isinstance(raw_options, dict):
+        raise ConfigError(
+            "Config field permutation_options must be a key/value object when provided"
+        )
+
+    min_resamples = raw_options.get("min_resamples", DEFAULT_PERMUTATION_MIN_RESAMPLES)
+    if min_resamples is None:
+        min_resamples = DEFAULT_PERMUTATION_MIN_RESAMPLES
+    if not isinstance(min_resamples, int) or min_resamples < 1:
+        raise ConfigError(
+            "Config field permutation_options.min_resamples must be an integer >= 1"
+        )
+
+    max_resamples = raw_options.get("max_resamples", DEFAULT_PERMUTATION_MAX_RESAMPLES)
+    if max_resamples is None:
+        max_resamples = DEFAULT_PERMUTATION_MAX_RESAMPLES
+    if not isinstance(max_resamples, int) or max_resamples < 1:
+        raise ConfigError(
+            "Config field permutation_options.max_resamples must be an integer >= 1"
+        )
+    if max_resamples < min_resamples:
+        raise ConfigError(
+            "Config field permutation_options.max_resamples must be >= min_resamples"
+        )
+
+    ci_method = raw_options.get("ci_method", DEFAULT_PERMUTATION_CI_METHOD)
+    if ci_method is None:
+        ci_method = DEFAULT_PERMUTATION_CI_METHOD
+    if not isinstance(ci_method, str) or ci_method not in PERMUTATION_CI_METHOD_CHOICES:
+        raise ConfigError(
+            "Config field permutation_options.ci_method must be one of: "
+            f"{', '.join(PERMUTATION_CI_METHOD_CHOICES)}"
+        )
+
+    return {
+        "min_resamples": min_resamples,
+        "max_resamples": max_resamples,
+        "ci_method": ci_method,
+    }
+
+
+def _parse_outgroup(value) -> list[str]:
+    """Parse the ``outgroup`` value into a list of taxon labels.
+
+    One key covers both the single- and multiple-outgroup cases: the value may
+    be a single label, a comma-separated string, or a list/tuple/set of labels,
+    and always resolves to a list.
+
+    Args:
+        value: The raw ``outgroup`` value.
 
     Returns:
         A non-empty list of outgroup labels.
@@ -288,15 +394,25 @@ def _parse_outgroups(value) -> list[str]:
         ConfigError: If no outgroup labels can be parsed.
     """
     if isinstance(value, str):
-        outgroups = [part.strip() for part in value.split(",") if part.strip()]
+        entries = [value]
     elif isinstance(value, (list, tuple, set)):
-        outgroups = [str(part).strip() for part in value if str(part).strip()]
+        entries = [str(entry) for entry in value]
     else:
-        outgroups = []
+        entries = []
 
-    if not outgroups:
-        raise ConfigError("Missing required config field: outgroup(s)")
-    return outgroups
+    # Split every entry on commas, so a list of labels, a comma-separated
+    # string, and a list containing comma-separated strings all flatten the
+    # same way.
+    outgroup = [
+        label
+        for entry in entries
+        for label in (part.strip() for part in entry.split(","))
+        if label
+    ]
+
+    if not outgroup:
+        raise ConfigError("Missing required config field: outgroup")
+    return outgroup
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -332,9 +448,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-og",
-        "--outgroups",
+        "--outgroup",
         default=None,
-        help="Outgroup species identifier(s), comma-separated",
+        help="Outgroup species identifier(s), comma-separated for more than one",
     )
     parser.add_argument(
         "--output-folder",
@@ -382,16 +498,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=f"KS significance threshold (default: {DEFAULT_ALPHA_KS})",
     )
     parser.add_argument(
+        "--alpha-perm",
+        type=float,
+        default=None,
+        help=f"Permutation test significance threshold (default: {DEFAULT_ALPHA_PERM})",
+    )
+    parser.add_argument(
         "--p-value-correction",
         choices=P_VALUE_CORRECTION_CHOICES,
         default=None,
         help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
-    )
-    parser.add_argument(
-        "--summary-statistic",
-        choices=SUMMARY_STATISTIC_CHOICES,
-        default=None,
-        help=f"Summary statistic after the KS test (default: {DEFAULT_SUMMARY_STATISTIC})",
     )
     parser.add_argument(
         "--no-consolidation",
@@ -442,21 +558,19 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
     species_tree = _validate_required_path(payload, "species_tree_path")
     gene_trees = _validate_required_path(payload, "gene_trees_path")
 
-    outgroups_source = payload.get("outgroups")
-    if outgroups_source is None:
-        outgroups_source = payload.get("outgroup")
-    outgroups = _parse_outgroups(outgroups_source)
+    outgroup = _parse_outgroup(payload.get("outgroup"))
 
     output = _validate_optional_path(payload, "output_folder")
     if output is None:
         output = _resolve_path(DEFAULT_OUTPUT_FOLDER)
 
     bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
+    permutation_options = _validate_permutation_options(payload)
 
     return {
         "species_tree": species_tree,
         "gene_trees": gene_trees,
-        "outgroup": outgroups,
+        "outgroup": outgroup,
         "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
         "output": output,
         "overwrite": _validate_overwrite_flag(payload),
@@ -475,6 +589,9 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "preflight_data_check": _validate_optional_bool(
             payload, "preflight_data_check", DEFAULT_PREFLIGHT_DATA_CHECK
         ),
+        "shape_diagnostics": _validate_optional_bool(
+            payload, "shape_diagnostics", DEFAULT_SHAPE_DIAGNOSTICS
+        ),
         "generate_summary_stats": _validate_optional_bool(
             payload, "generate_summary_stats", DEFAULT_GENERATE_SUMMARY_STATS
         ),
@@ -483,12 +600,6 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         ),
         "discordant_test": _validate_choice(
             payload, "discordant_test", DEFAULT_DISCORDANT_TEST, DISCORDANT_TEST_CHOICES
-        ),
-        "summary_statistic": _validate_choice(
-            payload,
-            "summary_statistic",
-            DEFAULT_SUMMARY_STATISTIC,
-            SUMMARY_STATISTIC_CHOICES,
         ),
         "tree_height_calculation_strategy": _validate_choice(
             payload,
@@ -504,6 +615,12 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         ),
         "alpha_dct": _validate_optional_float(payload, "alpha_dct", DEFAULT_ALPHA_DCT),
         "alpha_ks": _validate_optional_float(payload, "alpha_ks", DEFAULT_ALPHA_KS),
+        "alpha_perm": _validate_optional_float(
+            payload, "alpha_perm", DEFAULT_ALPHA_PERM
+        ),
+        "permutation_min_resamples": permutation_options["min_resamples"],
+        "permutation_max_resamples": permutation_options["max_resamples"],
+        "permutation_ci_method": permutation_options["ci_method"],
         "bootstrap": bootstrap,
         "bootstrap_iterations": bootstrap_options["iterations"],
         "bootstrap_seed": bootstrap_options["seed"],

@@ -1,11 +1,4 @@
-"""Package entry point for Ghostparser ML.
-
-Run the individual trainer modules directly instead, for example
-``python -m ghostparser.ml.random_forest`` or
-``python -m ghostparser.ml.multi_knn``.
-"""
-
-from __future__ import annotations
+"""Entry point for Ghostparser ML; dispatches to a trainer via ``--model``."""
 
 import argparse
 

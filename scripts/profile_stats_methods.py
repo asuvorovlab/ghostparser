@@ -7,8 +7,6 @@ This script measures aggregate performance for:
 It avoids per-call logging and instead reports summary metrics over many runs.
 """
 
-from __future__ import annotations
-
 import argparse
 import sys
 import random

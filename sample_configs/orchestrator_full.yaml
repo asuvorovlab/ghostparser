@@ -1,0 +1,71 @@
+# Every orchestrator config key at its default value, including the ones that
+# have no CLI flag. Trim this to the keys you actually want to change.
+#
+#   python -m ghostparser.orchestrator -c sample_configs/orchestrator_full.yaml
+#
+# Full reference: CONFIG.md#orchestrator-primary-module
+
+# --- Required inputs -------------------------------------------------------
+species_tree_path: ./data/species.tree
+gene_trees_path: ./data/genes.tree
+
+# One key covers both cases: a single label, a comma-separated string
+# ("Out1,Out2"), or a list as below. List entries may themselves be
+# comma-separated.
+outgroup:
+  - Out1
+  - Out2
+
+# --- Output ----------------------------------------------------------------
+output_folder: ./results
+overwrite: true
+# Restrict the run to specific triplets; one comma-separated triplet per line.
+triplet_filter: null
+
+# --- Execution -------------------------------------------------------------
+processes: 0                      # 0 = all available cores
+parallelization_mode: auto        # auto | taxon | gene
+
+# --- Statistical tests -----------------------------------------------------
+# Gate 1: discordant count test.
+discordant_test: chi-square       # chi-square | z-test
+alpha_dct: 0.05
+
+# Gate 2: KS tree-height test.
+alpha_ks: 0.05
+
+# Gate 3: studentized permutation test on the concordant vs. discordant1 mean
+# tree heights, deciding the direction of the difference.
+alpha_perm: 0.05
+permutation_options:
+  min_resamples: 2500             # also the size of the first adaptive batch
+  max_resamples: 25000
+  ci_method: wilson               # wilson | beta | agresti_coull | jeffreys |
+                                  # binom_test | normal
+
+# Applied run-wide across triplets (DCT and KS), and inside each permutation
+# test across its pair of one-tailed p-values.
+p_value_correction: bfn           # no | bfn | holm | fdr_bh | fdr_by | fdr_tsbh
+
+# How H(T) is computed per gene tree.
+tree_height_calculation_strategy: AVG   # AVG | A | B | C | SIS | INT
+
+# --- Input filtering -------------------------------------------------------
+min_support_value: 0.5
+
+# --- Bootstrap -------------------------------------------------------------
+bootstrap: true
+bootstrap_options:
+  iterations: 100
+  seed: null                      # set an integer for a reproducible run
+  debug_mode: false
+  summary_only: false
+
+# --- Extra outputs ---------------------------------------------------------
+generate_summary_stats: false     # writes summary_statistics.tsv
+shape_diagnostics: false          # adds the per-group shape columns (costly)
+consolidation: true               # writes the consolidation/ subfolder
+
+# --- Data check ------------------------------------------------------------
+# When true, only the structural check runs and every key above is ignored.
+preflight_data_check: false

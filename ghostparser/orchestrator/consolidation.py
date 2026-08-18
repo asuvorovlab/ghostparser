@@ -1,14 +1,9 @@
-"""Introgression map generation for GhostParser results.
+"""Consolidation stage: introgression maps from the orchestrator's results.
 
-This module builds a single combined figure from per-triplet introgression calls
-containing a directed inflow/outflow heatmap (source x target) and a ghost
-target-strength bar chart side by side, plus companion TSV artifacts for raw
-bootstrap sums, supporting counts, and undiluted averages.
+Builds the combined inflow/outflow heatmap and ghost bar chart plus companion
+TSV matrices, consuming the in-memory results list.
 """
 
-from __future__ import annotations
-
-import argparse as _argparse
 import textwrap
 import warnings
 from dataclasses import dataclass
@@ -23,7 +18,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 from matplotlib.patches import Patch
 
-from .config import prepare_output_directory
+from ghostparser.config import prepare_output_directory
 
 # Colormap shared by the heatmap fill and the colorbar.
 CONSOLIDATION_COLORMAP = "cividis"
@@ -57,6 +52,21 @@ PANEL_TITLE_PAD = 0.25
 # after these, so reserving the space explicitly is what makes a row's ratio
 # equal its intended height in inches -- matplotlib's default subplot margins
 # would otherwise silently absorb roughly a fifth of every row.
+# Rendering resolution, and the ceiling the figure is allowed to grow to. The
+# figure is sized from the taxon count, so a large tree produces a large canvas
+# rather than a squeezed one; the cap only stops a pathological input from
+# exhausting memory. Agg refuses a dimension above 65536 px, which at
+# FIGURE_DPI is about 436 inches, so this leaves ample headroom.
+FIGURE_DPI = 150
+MAX_FIGURE_IN = 200.0
+
+# Floor on the heatmap panel itself, so a handful of taxa still get a readable
+# panel rather than a sliver.
+MIN_HEATMAP_IN = 4.0
+
+# Height of the species-tree strip as a fraction of the heatmap panel.
+TREE_STRIP_FRACTION = 0.18
+
 MARGIN_LEFT_IN = 0.55
 MARGIN_RIGHT_IN = 0.80
 MARGIN_TOP_IN = 0.25
@@ -82,19 +92,14 @@ class IntrogressionMapArtifacts:
 
 
 def _extract_result_fields(result):
-    """Extract core fields from either dataclass results or dict-like rows."""
-    if isinstance(result, dict):
-        triplet = result.get("triplet")
-        if isinstance(triplet, str):
-            parts = [part.strip() for part in triplet.split(",")]
-            triplet = tuple(parts) if len(parts) == 3 else None
-        return (
-            triplet,
-            result.get("classification"),
-            result.get("dis1_topology"),
-            result.get("bootstrap_value"),
-        )
+    """Extract the fields the maps are built from off one triplet result.
 
+    Args:
+        result: A ``TripletPipelineResult``.
+
+    Returns:
+        A ``(triplet, classification, dis1_topology, bootstrap_value)`` tuple.
+    """
     return (
         getattr(result, "triplet", None),
         getattr(result, "classification", None),
@@ -392,16 +397,18 @@ def _draw_species_tree_strip(
 
 
 def _collect_counts(results):
-    """Count triplets contributing to each average denominator.
+    """Count the triplets that produced each edge, for the average denominators.
 
-    New behavior (undiluted consolidation):
-    - For a directed non-ghost edge (source, target): count only triplets
-      where the inference actually produced that directed edge (i.e. supporting
-      classifications).
-    - For a ghost target taxon: count only triplets classified as
-      `ghost_introgression` for that taxon.
-    Returns two dicts: `non_ghost_counts` and `ghost_counts` with supporting
-    counts for each edge/taxon.
+    A directed non-ghost edge counts only the triplets whose inference produced
+    that edge; a ghost target counts only the triplets classified
+    ``ghost_introgression`` for it.
+
+    Args:
+        results: Iterable of ``TripletPipelineResult`` objects.
+
+    Returns:
+        A tuple ``(non_ghost_counts, ghost_counts)`` keyed by directed
+        ``(source, target)`` pair and by taxon respectively.
     """
     non_ghost_counts = {}
     ghost_counts = {}
@@ -427,16 +434,16 @@ def _collect_counts(results):
 
 
 def _collect_non_sister_counts(results):
-    """Count, for each unordered pair of taxa, how many triplets containing
-    both have them as non-sister species.
+    """Count the triplets in which each unordered taxon pair is non-sister.
 
-    In every triplet ``(A, B, C)`` the convention is that A and B are sisters
-    in the species tree, so:
-    - The pair ``{A, B}`` is a *sister* pair in this triplet.
-    - The pairs ``{A, C}`` and ``{B, C}`` are *non-sister* pairs.
+    Triplets are normalized so A and B are the species-tree sisters, leaving
+    ``{A, C}`` and ``{B, C}`` as the non-sister pairs.
 
-    Returns a dict mapping canonical (sorted) 2-tuples of taxon names to
-    integer counts.
+    Args:
+        results: Iterable of ``TripletPipelineResult`` objects.
+
+    Returns:
+        A dict mapping sorted 2-tuples of taxon names to counts.
     """
     non_sister_counts = {}
     for result in results:
@@ -534,9 +541,7 @@ def _plot_combined(
     cell_size = 0.35 - (0.35 - 0.18) * frac
 
     heatmap_width = max(n * cell_size, 1.0)
-    fig_height_heat = max(4.0, n * cell_size)
-    tree_height = max(1.2, fig_height_heat * 0.22)
-    fig_height = min(40.0, fig_height_heat + tree_height + 0.4)
+    fig_height_heat = max(MIN_HEATMAP_IN, n * cell_size)
 
     # --- measure longest target label and longest x-tick label in one pass ---
     tick_fontsize = max(5, label_fontsize - 1)
@@ -582,7 +587,7 @@ def _plot_combined(
     cbar_w = 0.45
     grid_width = heatmap_width + label_panel_w + bar_panel_w + cbar_w
     fig_width = min(
-        40.0, max(8.0, grid_width + MARGIN_LEFT_IN + MARGIN_RIGHT_IN)
+        MAX_FIGURE_IN, max(8.0, grid_width + MARGIN_LEFT_IN + MARGIN_RIGHT_IN)
     )
 
     # --- measured label height drives the dedicated label-strip row ---
@@ -592,18 +597,26 @@ def _plot_combined(
         5.0 / 72.0
     )  # inches of whitespace above the text (gap from tree bottom)
     src_bot_pad = 9.0 / 72.0  # inches of whitespace below the text (gap to heatmap top)
-    show_src_labels = n <= 120
-    if show_src_labels:
-        label_strip_h = max(0.4, max_tick_lw_px / dpi + src_top_pad + src_bot_pad)
-    else:
-        label_strip_h = 0.01  # effectively invisible strip for very large datasets
+    label_strip_h = max(0.4, max_tick_lw_px / dpi + src_top_pad + src_bot_pad)
 
     # Compact tree strip (no leaf labels needed; label strip handles them)
-    tree_h = max(1.0, fig_height_heat * 0.18)
-    grid_height = tree_h + label_strip_h + fig_height_heat
-    fig_height = min(40.0, grid_height + MARGIN_TOP_IN + MARGIN_BOTTOM_IN)
+    tree_h = max(1.0, fig_height_heat * TREE_STRIP_FRACTION)
 
-    fig = plt.figure(figsize=(fig_width, fig_height), dpi=150)
+    # If the canvas would exceed the cap, the heatmap absorbs the shortfall and
+    # the label strip keeps the inches it was measured to need. Scaling every row
+    # down together would shrink the strip too and clip the labels it exists to
+    # hold, which is the one thing the layout must not do.
+    fixed_h = tree_h + label_strip_h + MARGIN_TOP_IN + MARGIN_BOTTOM_IN
+    if fig_height_heat + fixed_h > MAX_FIGURE_IN:
+        fig_height_heat = max(MIN_HEATMAP_IN, MAX_FIGURE_IN - fixed_h)
+        tree_h = max(1.0, fig_height_heat * TREE_STRIP_FRACTION)
+
+    grid_height = tree_h + label_strip_h + fig_height_heat
+    fig_height = min(
+        MAX_FIGURE_IN, grid_height + MARGIN_TOP_IN + MARGIN_BOTTOM_IN
+    )
+
+    fig = plt.figure(figsize=(fig_width, fig_height), dpi=FIGURE_DPI)
     gs = GridSpec(
         nrows=3,
         ncols=4,
@@ -647,21 +660,20 @@ def _plot_combined(
     ax_src_labels.set_xlim(0, n)
     ax_src_labels.set_ylim(0, 1)
     ax_src_labels.axis("off")
-    if show_src_labels:
-        src_fontsize = max(5, min(tick_fontsize, int(60 / max(n, 1) * 5 + 4)))
-        y_text = 1.0 - src_top_pad / label_strip_h  # shift down by top-pad fraction
-        for i, taxon in enumerate(taxa_order):
-            ax_src_labels.text(
-                i + 0.5,
-                y_text,
-                taxon,
-                rotation=90,
-                ha="center",
-                va="top",
-                fontsize=src_fontsize,
-                fontstyle="italic",
-                clip_on=False,
-            )
+    src_fontsize = max(5, min(tick_fontsize, int(60 / max(n, 1) * 5 + 4)))
+    y_text = 1.0 - src_top_pad / label_strip_h  # shift down by top-pad fraction
+    for i, taxon in enumerate(taxa_order):
+        ax_src_labels.text(
+            i + 0.5,
+            y_text,
+            taxon,
+            rotation=90,
+            ha="center",
+            va="top",
+            fontsize=src_fontsize,
+            fontstyle="italic",
+            clip_on=False,
+        )
 
     # --- heatmap ---
     # Zero cells mean "no introgression edge observed". Masking them keeps the
@@ -835,7 +847,7 @@ def _plot_combined(
         fontsize=text_sizes["cbar_label"],
     )
 
-    fig.savefig(path, bbox_inches="tight", dpi=150)
+    fig.savefig(path, bbox_inches="tight", dpi=FIGURE_DPI)
     plt.close(fig)
 
 
@@ -846,7 +858,6 @@ def generate_introgression_maps(
     plot_taxa=None,
     outgroups=None,
     overwrite=True,
-    reset_output_dir=True,
 ):
     """Generate non-ghost heatmap and ghost target-strength bar plot.
 
@@ -858,43 +869,12 @@ def generate_introgression_maps(
         outgroups: Optional iterable of taxon names to exclude from the plots
             (e.g. outgroup taxa used for rooting).  When ``None`` or empty no
             taxa are excluded.
-        overwrite: When ``reset_output_dir`` is ``True``, whether to overwrite an
-            existing output directory or write to an auto-suffixed sibling.
-        reset_output_dir: When ``True`` (standalone use), (re)create a clean
-            output directory for the plots. When ``False``, write into an
-            existing, already-prepared run directory without resetting it, so a
-            caller's other outputs (results TSV, processed trees, open metrics
-            file) in that directory are never deleted.
+        overwrite: Whether to overwrite an existing output directory or write
+            to an auto-suffixed sibling.
     """
-    if reset_output_dir:
-        # Tests often place the species tree inside the requested output
-        # directory. When overwrite=True, the reset would otherwise delete it.
-        species_tree_source = Path(species_tree_path).expanduser().resolve()
-        output_source = Path(output_dir).expanduser().resolve()
-        preserved_species_tree_text: str | None = None
-        if (
-            overwrite
-            and output_source.exists()
-            and species_tree_source.exists()
-            and species_tree_source.is_file()
-            and output_source in species_tree_source.parents
-        ):
-            preserved_species_tree_text = species_tree_source.read_text(
-                encoding="utf-8"
-            )
-
-        output_path = Path(prepare_output_directory(output_dir, overwrite=overwrite))
-
-        if preserved_species_tree_text is not None:
-            species_tree_source.parent.mkdir(parents=True, exist_ok=True)
-            species_tree_source.write_text(
-                preserved_species_tree_text, encoding="utf-8"
-            )
-    else:
-        # Write into the caller's already-prepared run directory without
-        # resetting it, so its existing outputs are preserved.
-        output_path = Path(output_dir).expanduser().resolve()
-        output_path.mkdir(parents=True, exist_ok=True)
+    # The orchestrator hands this a dedicated ``consolidation/`` subfolder of a
+    # freshly prepared run directory, so the reset only ever creates it.
+    output_path = Path(prepare_output_directory(output_dir, overwrite=overwrite))
 
     outgroup_set = set(outgroups) if outgroups else set()
 
@@ -1006,89 +986,3 @@ def generate_introgression_maps(
 # ---------------------------------------------------------------------------
 # Standalone CLI entry point
 # ---------------------------------------------------------------------------
-
-
-def _build_standalone_parser():
-    parser = _argparse.ArgumentParser(
-        description="Generate introgression maps from a GhostParser orchestrator results TSV."
-    )
-    parser.add_argument(
-        "-r",
-        "--results-tsv",
-        required=True,
-        help="Path to orchestrator_triplet_results.tsv",
-    )
-    parser.add_argument(
-        "-st",
-        "--species-tree-path",
-        required=True,
-        help="Path to the processed species tree (Newick)",
-    )
-    parser.add_argument(
-        "-o",
-        "--output-dir",
-        required=True,
-        help="Directory to write output plots and TSVs",
-    )
-    parser.add_argument(
-        "--no-overwrite",
-        dest="no_overwrite",
-        action="store_true",
-        default=False,
-        help="Append a numeric suffix when the output directory already exists",
-    )
-    parser.add_argument(
-        "-og",
-        "--outgroups",
-        default=None,
-        help="Comma-separated outgroup taxon names to exclude from plots (e.g. 'Taxon1,Taxon2')",
-    )
-    return parser
-
-
-def _parse_outgroups_arg(value):
-    if not value:
-        return None
-    return [part.strip() for part in value.split(",") if part.strip()]
-
-
-def _read_results_tsv(path):
-    """Read an orchestrator results TSV into a list of dicts."""
-    rows = []
-    with open(path, newline="") as fh:
-        import csv
-
-        reader = csv.DictReader(fh, delimiter="\t")
-        for row in reader:
-            rows.append(dict(row))
-    return rows
-
-
-if __name__ == "__main__":
-    _parser = _build_standalone_parser()
-    _args = _parser.parse_args()
-    _outgroups = _parse_outgroups_arg(_args.outgroups)
-    _results = _read_results_tsv(_args.results_tsv)
-    _artifacts = generate_introgression_maps(
-        _results,
-        species_tree_path=_args.species_tree_path,
-        output_dir=_args.output_dir,
-        outgroups=_outgroups,
-        overwrite=not _args.no_overwrite,
-    )
-    print(f"Taxa represented:          {_artifacts.taxa_count}")
-    print(f"Non-ghost directed edges:  {_artifacts.non_ghost_edge_count}")
-    print(f"Ghost targets with signal: {_artifacts.ghost_target_count}")
-    print(f"Combined plot:             {_artifacts.plot_path}")
-    print(f"Non-ghost matrix TSV:      {_artifacts.non_ghost_matrix_tsv}")
-    print(f"Non-ghost raw sum TSV:     {_artifacts.non_ghost_matrix_raw_sum_tsv}")
-    print(
-        f"Non-ghost count TSV:       {_artifacts.non_ghost_matrix_supporting_count_tsv}"
-    )
-    print(f"Ghost strength TSV:        {_artifacts.ghost_strength_tsv}")
-    print(f"Ghost raw sum TSV:         {_artifacts.ghost_strength_raw_sum_tsv}")
-    print(
-        f"Ghost count TSV:           {_artifacts.ghost_strength_supporting_count_tsv}"
-    )
-    print(f"Taxa order TSV:            {_artifacts.taxa_order_tsv}")
-    print(f"Non-sister count TSV:      {_artifacts.non_sister_count_tsv}")

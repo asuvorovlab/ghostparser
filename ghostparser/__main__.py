@@ -1,8 +1,4 @@
-"""Entry point for the ghostparser package.
-
-This module allows the package to be executed with `python -m ghostparser`.
-It prints a usage banner; the runnable work lives in the subpackages below.
-"""
+"""Usage banner for ``python -m ghostparser``; the work lives in the subpackages."""
 
 
 def main():
@@ -11,13 +7,11 @@ def main():
     print()
     print("Available modules:")
     print(
-        "  orchestrator         - Run the introgression inference pipeline (primary entry point)"
+        "  orchestrator - Run the introgression inference pipeline (primary entry point).\n"
+        "                 Consolidation maps are produced as its final stage."
     )
     print(
-        "  ml                   - Show ML trainer usage; run trainer modules directly on summary_statistics.tsv"
-    )
-    print(
-        "  introgression_mapper - Build introgression maps from orchestrator results"
+        "  ml           - Show ML trainer usage; run trainer modules directly on summary_statistics.tsv"
     )
     print()
     print("Usage:")
@@ -27,7 +21,6 @@ def main():
     print("  python -m ghostparser.orchestrator -c <config.yaml|config.json>")
     print("  python -m ghostparser.ml.random_forest -i <input.tsv> -o <out>")
     print("  python -m ghostparser.ml.multi_knn -i <input.tsv> -o <out>")
-    print("  python -m ghostparser.introgression_mapper --help")
     print()
     print("Example:")
     print(

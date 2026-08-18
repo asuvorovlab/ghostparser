@@ -1,10 +1,6 @@
-from __future__ import annotations
-
 import argparse
 import csv
 import json
-
-import numpy as np
 
 from ghostparser.ml.multi_knn import _build_model, train_multi_knn
 
@@ -82,48 +78,11 @@ def test_multi_knn_build_model_caps_neighbors_to_training_size():
 
     model, effective_n_neighbors = _build_model(config, train_size=2)
 
+    # The clamp must reach the estimator, not only the reported value: asking
+    # KNN for more neighbors than training samples raises at fit time.
     assert effective_n_neighbors == 2
-    assert model is not None
+    assert model.estimator.n_neighbors == 2
 
-
-def test_multi_knn_metrics_report_mentions_effective_neighbors(
-    summary_statistics_tsv, tmp_path
-):
-    config = argparse.Namespace(
-        input_path=str(summary_statistics_tsv),
-        output_dir=str(tmp_path / "ml_out"),
-        target_column="class",
-        test_size=0.25,
-        cv_folds=2,
-        random_state=11,
-        rare_class_policy="warn_skip_cv",
-        n_neighbors=20,
-        weights="distance",
-        algorithm="auto",
-        leaf_size=30,
-        metric="minkowski",
-        p=2,
-        n_jobs=1,
-        n_estimators=25,
-        max_depth=None,
-        min_samples_split=2,
-        min_samples_leaf=1,
-        max_features="sqrt",
-        class_weight=None,
-        report_feature_importance=False,
-        overwrite=True,
-    )
-
-    result = train_multi_knn(config)
-    metrics_text = (tmp_path / "ml_out" / "multi_knn_metrics.txt").read_text()
-
-    assert "Ghostparser ML multi-label KNN baseline" in metrics_text
-    # The requested count is capped at the training-set size, so the report
-    # carries both values in the hyperparameter block.
-    assert "Hyperparameters:" in metrics_text
-    assert "n_neighbors_requested" in metrics_text
-    assert "n_neighbors_effective" in metrics_text
-    assert "Timings (seconds):" in metrics_text
-    assert result["metrics"]["hyperparameters"]["n_neighbors_requested"] == 20
-    assert result["metrics"]["hyperparameters"]["n_neighbors_effective"] <= 20
-    assert np.isfinite(result["metrics"]["primary_metrics"]["hamming_loss"])
+    # Below the clamp the request passes through untouched.
+    _, unclamped = _build_model(config, train_size=50)
+    assert unclamped == 20

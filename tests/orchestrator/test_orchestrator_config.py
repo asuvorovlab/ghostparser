@@ -2,8 +2,10 @@
 
 import argparse
 import json
+from pathlib import Path
 
 import pytest
+import yaml
 
 from ghostparser.orchestrator.config import (
     ConfigError,
@@ -26,7 +28,7 @@ def _base_cli_args(**overrides):
         config_file=None,
         species_tree_path="species.tree",
         gene_trees_path="genes.tree",
-        outgroups="OUT",
+        outgroup="OUT",
         output_folder=None,
         triplet_filter=None,
         no_overwrite=None,
@@ -34,8 +36,8 @@ def _base_cli_args(**overrides):
         parallelization_mode=None,
         alpha_dct=None,
         alpha_ks=None,
+        alpha_perm=None,
         p_value_correction=None,
-        summary_statistic=None,
         consolidation=None,
         bootstrap=None,
         preflight_data_check=None,
@@ -52,7 +54,10 @@ def test_cli_defaults_resolve():
     assert config["alpha_ks"] == 0.05
     # Defaults specific to this package.
     assert config["p_value_correction"] == "bfn"
-    assert config["summary_statistic"] == "mean"
+    assert config["alpha_perm"] == 0.05
+    assert config["permutation_min_resamples"] == 2500
+    assert config["permutation_max_resamples"] == 25000
+    assert config["permutation_ci_method"] == "wilson"
     assert config["overwrite"] is True
     # Config-file-only keys take their defaults in CLI mode.
     assert config["discordant_test"] == "chi-square"
@@ -64,25 +69,6 @@ def test_cli_defaults_resolve():
     assert config["bootstrap_debug_mode"] is False
     assert config["bootstrap_summary_only"] is False
     assert config["preflight_data_check"] is False
-    # The custom stats backend is gone: no stats_backend key at all.
-    assert "stats_backend" not in config
-
-
-def test_cli_overrides_for_config_plus_cli_options():
-    """The config+CLI flags override their defaults when supplied on the CLI."""
-    args = _base_cli_args(
-        alpha_dct=0.01,
-        alpha_ks=0.2,
-        summary_statistic="mean",
-        p_value_correction="fdr_bh",
-        no_overwrite=True,
-    )
-    config = resolve_config(args)
-    assert config["alpha_dct"] == 0.01
-    assert config["alpha_ks"] == 0.2
-    assert config["summary_statistic"] == "mean"
-    assert config["p_value_correction"] == "fdr_bh"
-    assert config["overwrite"] is False
 
 
 def test_config_only_keys_read_from_config_file(tmp_path):
@@ -90,7 +76,7 @@ def test_config_only_keys_read_from_config_file(tmp_path):
     payload = {
         "species_tree_path": "species.tree",
         "gene_trees_path": "genes.tree",
-        "outgroups": "OUT",
+        "outgroup": "OUT",
         "discordant_test": "z-test",
         "tree_height_calculation_strategy": "SIS",
         "min_support_value": 0.9,
@@ -119,6 +105,50 @@ def test_config_only_keys_read_from_config_file(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "written, expected",
+    [
+        ("no", "no"),
+        ('"no"', "no"),
+        ("No", "no"),
+        ("NO", "no"),
+        ("bfn", "bfn"),
+        ("fdr_bh", "fdr_bh"),
+    ],
+)
+def test_p_value_correction_accepts_yaml_bare_word_no(tmp_path, written, expected):
+    """`p_value_correction: no` resolves to the "no" choice, quoted or not.
+
+    YAML 1.1 resolves the bare word ``no`` to boolean ``False``, so an unquoted
+    value never reaches validation as a string. Every spelling of the choice
+    must still select it.
+    """
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "species_tree_path: species.tree\n"
+        "gene_trees_path: genes.tree\n"
+        "outgroup: OUT\n"
+        f"p_value_correction: {written}\n"
+    )
+
+    config = load_orchestrator_config(str(config_path))
+    assert config["p_value_correction"] == expected
+
+
+def test_p_value_correction_rejects_a_value_with_no_matching_choice(tmp_path):
+    """A boolean with no equivalent choice is still an error, and names the value."""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "species_tree_path: species.tree\n"
+        "gene_trees_path: genes.tree\n"
+        "outgroup: OUT\n"
+        "p_value_correction: yes\n"
+    )
+
+    with pytest.raises(ConfigError, match="must be one of"):
+        load_orchestrator_config(str(config_path))
+
+
+@pytest.mark.parametrize(
     "payload_value, expected",
     [(True, True), (False, False), (None, False)],
 )
@@ -129,7 +159,7 @@ def test_preflight_data_check_resolves_from_config_file(
     payload = {
         "species_tree_path": "species.tree",
         "gene_trees_path": "genes.tree",
-        "outgroups": "OUT",
+        "outgroup": "OUT",
     }
     if payload_value is not None:
         payload["preflight_data_check"] = payload_value
@@ -145,23 +175,93 @@ def test_config_file_wins_over_cli(tmp_path, capsys):
     payload = {
         "species_tree_path": "file_species.tree",
         "gene_trees_path": "file_genes.tree",
-        "outgroups": "OUT",
+        "outgroup": "OUT",
         "alpha_dct": 0.03,
     }
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(payload))
 
     args = _base_cli_args(
-        config_file=str(config_path), alpha_dct=0.5, summary_statistic="mode"
+        config_file=str(config_path), alpha_dct=0.5, alpha_perm=0.5
     )
     config = resolve_config(args)
 
     assert config["alpha_dct"] == 0.03
-    # The file omits summary_statistic, so it takes the orchestrator default (not the
-    # CLI value "mode"), proving the CLI flag was ignored.
-    assert config["summary_statistic"] == "mean"
+    # The file omits alpha_perm, so it takes the orchestrator default (not the
+    # CLI value 0.5), proving the CLI flag was ignored.
+    assert config["alpha_perm"] == 0.05
     assert config["species_tree"].endswith("file_species.tree")
     assert "--config-file provided" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("OUT", ["OUT"]),
+        ("Out1,Out2", ["Out1", "Out2"]),
+        (" Out1 , Out2 ,", ["Out1", "Out2"]),
+        (["Out1", "Out2"], ["Out1", "Out2"]),
+        (("Out1", "Out2"), ["Out1", "Out2"]),
+        (["Out1,Out2", "Out3"], ["Out1", "Out2", "Out3"]),
+    ],
+)
+def test_outgroup_accepts_single_comma_separated_and_list_forms(value, expected):
+    """One `outgroup` key covers a single label, a comma-separated string, or a list."""
+    config = resolve_config(_base_cli_args(outgroup=value))
+    assert config["outgroup"] == expected
+
+
+@pytest.mark.parametrize("value", [None, "", "  ", ",", [], ["", "  "], 42])
+def test_outgroup_rejects_empty_and_non_label_values(value):
+    """A missing or label-free `outgroup` is a config error, not an empty list."""
+    with pytest.raises(ConfigError, match="outgroup"):
+        resolve_config(_base_cli_args(outgroup=value))
+
+
+@pytest.mark.parametrize(
+    "sample_name", ["orchestrator_minimal.yaml", "orchestrator_full.yaml"]
+)
+def test_shipped_sample_configs_resolve(sample_name):
+    """The sample configs load cleanly and use the current key names.
+
+    Guards against the samples drifting out of step with the validator, which
+    would leave users copying a config the loader rejects.
+    """
+    sample_dir = Path(__file__).resolve().parents[2] / "sample_configs"
+    config = load_orchestrator_config(str(sample_dir / sample_name))
+
+    assert config["outgroup"]
+    assert all(isinstance(label, str) and label for label in config["outgroup"])
+    assert config["alpha_perm"] == 0.05
+    assert config["permutation_ci_method"] == "wilson"
+
+
+def test_full_sample_config_covers_every_runtime_key():
+    """`orchestrator_full.yaml` documents every key the normalizer produces.
+
+    Resolved-only keys (`species_tree`/`gene_trees`/`output`) are the renamed
+    forms of the `*_path`/`output_folder` inputs, and the nested blocks are
+    flattened with a prefix, so both are normalized before comparing.
+    """
+    sample_dir = Path(__file__).resolve().parents[2] / "sample_configs"
+    sample_path = sample_dir / "orchestrator_full.yaml"
+    raw = yaml.safe_load(sample_path.read_text())
+
+    documented = set(raw)
+    for block in ("permutation_options", "bootstrap_options"):
+        documented.update(raw.get(block) or {})
+
+    resolved = load_orchestrator_config(str(sample_path))
+    renamed = {"species_tree", "gene_trees", "output"}
+    undocumented = [
+        key
+        for key in resolved
+        if key not in renamed
+        and key not in documented
+        and key.removeprefix("permutation_") not in documented
+        and key.removeprefix("bootstrap_") not in documented
+    ]
+    assert undocumented == []
 
 
 def test_missing_required_field_raises():
@@ -170,8 +270,13 @@ def test_missing_required_field_raises():
         resolve_config(_base_cli_args(species_tree_path=None))
 
 
-def test_parser_exposes_config_file_and_new_flags():
-    """The parser exposes -c/--config-file and the new config+CLI flags."""
+def test_parser_flags_resolve_into_their_config_values():
+    """The CLI flag names are wired through the parser to the resolved config.
+
+    Every other config test builds an ``argparse.Namespace`` directly, so this is
+    the only place the actual flag strings are pinned; resolving the parsed args
+    covers the override path in the same pass.
+    """
     parser = build_argument_parser()
     opts = parser.parse_args(
         [
@@ -179,15 +284,17 @@ def test_parser_exposes_config_file_and_new_flags():
             "--alpha-dct", "0.01",
             "--alpha-ks", "0.2",
             "--p-value-correction", "fdr_bh",
-            "--summary-statistic", "mean",
+            "--alpha-perm", "0.02",
             "--no-overwrite",
             "--preflight-data-check",
         ]
     )
     assert opts.config_file is None
-    assert opts.preflight_data_check is True
-    assert opts.alpha_dct == 0.01
-    assert opts.alpha_ks == 0.2
-    assert opts.p_value_correction == "fdr_bh"
-    assert opts.summary_statistic == "mean"
-    assert opts.no_overwrite is True
+
+    config = resolve_config(opts)
+    assert config["alpha_dct"] == 0.01
+    assert config["alpha_ks"] == 0.2
+    assert config["alpha_perm"] == 0.02
+    assert config["p_value_correction"] == "fdr_bh"
+    assert config["overwrite"] is False
+    assert config["preflight_data_check"] is True

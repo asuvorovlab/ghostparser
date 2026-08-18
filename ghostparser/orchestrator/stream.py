@@ -1,13 +1,9 @@
 """Fused extract-and-infer streaming engine for the orchestrator.
 
-Extracts a chunk of triplets' observations in one gene-tree parse pass, runs
-inference immediately, and never materializes the global intermediate
-structure. Observations (topology + tree height) are computed directly from the
-extracted subtree objects, so no serialize-then-reparse round trip happens. Also
-resolves the parallelization mode and applies the run-wide p-value correction.
+Extracts a chunk of triplets' observations in one gene-tree parse pass and runs
+inference immediately, with no serialize-then-reparse round trip. Also resolves
+the parallelization mode and applies the run-wide p-value correction.
 """
-
-from __future__ import annotations
 
 import time
 from multiprocessing import cpu_count
@@ -388,6 +384,11 @@ def stream_triplet_results(
     inference_kwargs = dict(inference_kwargs or {})
     if not triplets:
         return ([], 0.0) if return_worker_cpu else []
+
+    # Bootstrap iterations need the same correction the point estimate gets, so
+    # the method and the family size travel with the per-triplet analysis.
+    inference_kwargs["p_value_correction"] = p_value_correction
+    inference_kwargs["family_size"] = len(triplets)
 
     n_taxa = len({taxon for triplet in triplets for taxon in triplet})
     resolved_mode = resolve_parallelization_mode(mode, n_taxa, len(gene_trees))

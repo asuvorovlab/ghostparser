@@ -1,11 +1,6 @@
-"""Tree and triplet preprocessing for the orchestrator.
-
-Provides cleaning, rooting, pruning, triplet generation, and species-triplet
-normalization, without any of the intermediate-file machinery the streaming
-pass makes unnecessary.
+"""Tree and triplet preprocessing: cleaning, rooting, pruning, triplet generation,
+and species-triplet normalization.
 """
-
-from __future__ import annotations
 
 import multiprocessing as mp
 import os

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import pytest
 
 from ghostparser.ml.ml_utils import rows_to_matrix

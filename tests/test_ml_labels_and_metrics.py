@@ -24,9 +24,12 @@ from ghostparser.ml.ml_utils import (
 )
 
 
-def test_bit_labels_define_a_six_bit_contract():
-    """The label contract is exactly six named introgression bits."""
-    assert BIT_COUNT == 6
+def test_bit_labels_stay_in_step_with_the_bit_count():
+    """Every bit has exactly one name, so a label can be read back positionally.
+
+    The width itself is pinned behaviorally by ``test_is_valid_bitstring``;
+    what this guards is the two constants drifting apart.
+    """
     assert len(BIT_LABELS) == BIT_COUNT
     assert len(set(BIT_LABELS)) == BIT_COUNT
 

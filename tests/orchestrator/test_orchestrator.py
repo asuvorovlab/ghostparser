@@ -35,8 +35,7 @@ _ALL_FIELDS = (
     "ks_p_value",
     "ks_p_value_corrected",
     "ks_significant",
-    "summary_con",
-    "summary_dis",
+    "perm_decision",
     "classification",
     "analyzed_trees",
     "bootstrap_value",
@@ -72,7 +71,7 @@ def _make_config(
         config_file=None,
         species_tree_path=str(species_path),
         gene_trees_path=str(genes_path),
-        outgroups="OUT",
+        outgroup="OUT",
         output_folder=str(output_folder),
         triplet_filter=None,
         no_overwrite=None,
@@ -80,8 +79,8 @@ def _make_config(
         parallelization_mode=mode,
         alpha_dct=None,
         alpha_ks=None,
+        alpha_perm=None,
         p_value_correction=None,
-        summary_statistic=None,
         consolidation=consolidation,
         bootstrap=bootstrap,
     )
@@ -186,6 +185,9 @@ def test_run_orchestrator_matches_derived_expectation(
         # Every triplet's corrected DCT p-value stays well above alpha (0.05),
         # so the decision logic stops at the first gate for all of them.
         assert result.dct_significant is False
+        # Set by the run-wide correction pass, which recomputes the gate from the
+        # corrected significance alongside the classification.
+        assert result.decision_gate == "DCT"
         assert result.ks_p_value_corrected == pytest.approx(
             _bonferroni(result.ks_p_value)
         )
@@ -193,6 +195,12 @@ def test_run_orchestrator_matches_derived_expectation(
 
         assert 0.0 <= result.bootstrap_value <= 1.0
         assert sum(result.all_bootstrap.values()) == pytest.approx(1.0)
+        # The interval is reported only when some resample yielded two
+        # observations in both groups; either way its two bounds agree on
+        # whether they exist, and an existing pair is ordered.
+        assert (result.perm_stat_ci_low is None) == (result.perm_stat_ci_high is None)
+        if result.perm_stat_ci_low is not None:
+            assert result.perm_stat_ci_low <= result.perm_stat_ci_high
 
 
 def test_run_orchestrator_writes_results_tsv(
@@ -216,6 +224,15 @@ def test_run_orchestrator_writes_results_tsv(
     assert header[0] == "triplet"
     assert "classification" in header
     assert "bootstrap_value" in header
+    # The permutation columns that carry the direction call.
+    assert "perm_p_greater" in header
+    assert "perm_p_less" in header
+    # decision_gate is what tells a reader whether perm_decision was consulted.
+    assert "decision_gate" in header
+    # The equivalence p-value and the interval on the studentized difference.
+    assert "perm_p_tost" in header
+    assert "perm_stat_ci_low" in header
+    assert "perm_stat_ci_high" in header
     assert len(lines) - 1 == len(results)
 
 
