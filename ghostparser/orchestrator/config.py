@@ -1,15 +1,8 @@
 """Configuration for the orchestrator.
 
-Owns the orchestrator's own defaults/choices, its validation rules, the CLI parser,
-and the CLI/config resolution. The helpers whose behaviour is shared verbatim
-with the ML subpackage — ``ConfigError``, path resolution, raw config-file
-loading, required-path validation, overwrite resolution, and output-directory
-preparation — are imported from the :mod:`ghostparser.config` trunk.
-
-Config-file mode: ``-c/--config-file`` is CLI-only, and when a config file is
-given the other CLI flags are ignored with a warning (config wins). A subset of
-runtime knobs is exposed both on the CLI and in the config file; the rest are
-config-file-only.
+Owns the orchestrator's defaults, choices, validation rules, CLI parser, and
+CLI/config resolution; shared helpers come from the :mod:`ghostparser.config`
+trunk. Every key is documented in the configuration guide.
 """
 
 import argparse
@@ -45,6 +38,7 @@ DEFAULT_BOOTSTRAP_ITERATIONS = 100
 DEFAULT_BOOTSTRAP_DEBUG_MODE = False
 DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
 DEFAULT_GENERATE_SUMMARY_STATS = False
+DEFAULT_SHAPE_DIAGNOSTICS = False
 DEFAULT_CONSOLIDATION = True
 DEFAULT_PREFLIGHT_DATA_CHECK = False
 
@@ -75,7 +69,7 @@ AUTO_GENE_TREES_THRESHOLD = 3500
 # CLI argument dest names that also map to config-file payload keys. These are
 # the config+CLI options; config-file-only keys (discordant_test,
 # tree_height_calculation_strategy, min_support_value, bootstrap_iterations,
-# bootstrap_seed, generate_summary_stats, bootstrap_debug_mode,
+# bootstrap_seed, generate_summary_stats, shape_diagnostics, bootstrap_debug_mode,
 # bootstrap_summary_only, permutation_options) are intentionally absent so they
 # are read only from a config file and otherwise take their defaults.
 _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
@@ -594,6 +588,9 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         ),
         "preflight_data_check": _validate_optional_bool(
             payload, "preflight_data_check", DEFAULT_PREFLIGHT_DATA_CHECK
+        ),
+        "shape_diagnostics": _validate_optional_bool(
+            payload, "shape_diagnostics", DEFAULT_SHAPE_DIAGNOSTICS
         ),
         "generate_summary_stats": _validate_optional_bool(
             payload, "generate_summary_stats", DEFAULT_GENERATE_SUMMARY_STATS

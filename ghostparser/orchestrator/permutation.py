@@ -1,28 +1,11 @@
 """Adaptive studentized permutation test for concordant vs. discordant1 heights.
 
-GhostParser's final inference step asks a directional question: is the mean
-tree height of the concordant topology greater than, less than, or
-indistinguishable from that of the more frequent discordant topology? This
-module answers it with a two-sample permutation test on the Welch-studentized
-mean difference, resampling adaptively until the decision is resolved to within
-Monte Carlo error.
+Decides whether the mean concordant tree height is greater than, less than, or
+equivalent to the mean discordant1 height, resampling until the decision is
+resolved to within Monte Carlo error.
 
-The studentized statistic is what makes the test valid here. The concordant
-sample is usually far larger than the discordant1 sample and the two have
-different variances; under that combination a permutation test of the raw mean
-difference does not hold its nominal level, while the studentized version
-remains asymptotically valid (Janssen 1997, *Statistics & Probability Letters*
-36(1), 9-21, https://doi.org/10.1016/S0167-7152(97)00043-6).
-
-p-values use the add-one estimator ``(1 + count) / (1 + resamples)``, which is
-the unbiased and correctly-sized estimator for a Monte Carlo permutation
-p-value; the naive ``count / resamples`` ratio can report zero and understates
-the true type-I error rate (Phipson & Smyth 2010, *Statistical Applications in
-Genetics and Molecular Biology* 9(1), Article 39,
-https://doi.org/10.2202/1544-6115.1585).
-
-See :doc:`ORCHESTRATOR.md <ORCHESTRATOR>` for the full statistical write-up,
-including the sampling optimization used by :func:`_permutation_statistics`.
+The method, its citations, and the sampling optimization are written up under
+"Gate 3 - Adaptive studentized permutation test" in the orchestrator guide.
 """
 
 import math
@@ -41,28 +24,37 @@ from .config import (
 from .correction import adjust_p_values
 
 __all__ = [
+    "EQUIVALENCE_DELTA",
     "PermutationTestResult",
-    "run_studentized_permutation_test",
     "bootstrap_resample_budget",
+    "run_studentized_permutation_test",
+    "studentized_mean_diff",
 ]
 
 # Decision labels. ``greater``/``less`` refer to the first sample (concordant)
-# relative to the second (discordant1); ``ambiguous`` means the data do not
-# support a directional call.
+# relative to the second (discordant1). When neither direction is supported the
+# equivalence test splits the outcome: ``equivalent`` means the means were shown
+# to differ by less than the equivalence margin, ``inconclusive`` means nothing
+# was shown either way.
 DECISION_GREATER = "greater"
 DECISION_LESS = "less"
-DECISION_AMBIGUOUS = "ambiguous"
+DECISION_EQUIVALENT = "equivalent"
+DECISION_INCONCLUSIVE = "inconclusive"
+
+# TOST equivalence margin, in pooled-standard-deviation units (a Cohen's d of
+# 0.5). An effect size, not a multiple of the standard error: the studentized
+# statistic is a pivot whose null spread stays near 1 at every sample size, so an
+# SE-based margin could never be rejected; see "Gate 3" in the orchestrator
+# guide for the measurements behind that.
+EQUIVALENCE_DELTA = 0.5
 
 # Each adaptive batch after the first is this multiple of the previous one, so
 # a run that is still undecided spends geometrically more effort per check
 # instead of paying the confidence-interval overhead on every few resamples.
 _BATCH_GROWTH_FACTOR = 1.25
 
-# Confidence level of the interval placed around each p-value by the stopping
-# rule. Fixed rather than configurable: it governs how sure the stopping rule
-# must be before it commits, which is an internal precision knob rather than a
-# statistical choice the analysis depends on. 0.95 matches the statsmodels
-# default (``proportion_confint(alpha=0.05)``).
+# Confidence level of the stopping rule's interval. An internal precision knob,
+# not a statistical choice, so it is fixed rather than configurable.
 _CI_LEVEL = 0.95
 
 # Upper bound on the number of random keys held in memory at once. The sampler
@@ -77,12 +69,8 @@ _MAX_PERMUTATION_CELLS = 2_000_000
 _EXACT_SUPPORT_CHECK_MAX_N = 40
 
 # A standard error below this fraction of the data's own magnitude counts as
-# zero. Testing against exact zero is not enough: a sample of nominally
-# identical values such as [0.9] * 10 has a floating-point variance around
-# 1e-33 rather than 0, which would divide a real mean difference by almost
-# nothing and report a studentized statistic of ~1e17 as though it were
-# overwhelming evidence. The threshold sits far above double-precision noise
-# (~1e-16 relative) and far below any real difference in tree heights.
+# zero. Exact-zero tests are not enough: [0.9] * 10 has a float variance near
+# 1e-33, which would inflate the statistic to ~1e17.
 _DEGENERATE_SCALE_TOLERANCE = 1e-12
 
 # Bootstrap iterations re-run the whole decision, so they use this fraction of
@@ -101,10 +89,9 @@ class PermutationTestResult:
             when a guard short-circuited the test.
         p_greater: Raw one-tailed p-value for "sample x has the larger mean".
         p_less: Raw one-tailed p-value for "sample x has the smaller mean".
-        p_two_sided: Raw two-tailed p-value counting permutations at least as
-            extreme in absolute value. Reported as a diagnostic only: it assumes
-            a symmetric permutation null, so it disagrees with the directional
-            p-values when the null is skewed (see ``null_skewed``).
+        null_skew: Sample skewness of the permutation null of the statistic.
+            0 for a symmetric null; the sign gives the direction of the long
+            tail. Measured for every test that resampled, whatever it decided.
         p_greater_corrected: ``p_greater`` after correction across the
             one-tailed family.
         p_less_corrected: ``p_less`` after correction across the one-tailed
@@ -113,16 +100,10 @@ class PermutationTestResult:
         ci_less: Confidence interval for ``p_less_corrected``.
         n_resamples: Total permutations drawn.
         batches: Number of adaptive batches run.
-        converged: ``True`` when the confidence-interval criterion stopped the
-            run, ``False`` when the resample budget was exhausted or a guard
-            fired.
-        decision: The directional decision driving classification.
-            rule, kept as a cross-check.
-        null_skewed: Whether the absolute-value two-tailed p-value contradicts
-            the directional decision, which happens when the permutation null is
-            asymmetric. Informational: tree heights are bounded below by zero
-            and routinely right-skewed, so this is common rather than
-            exceptional, and it never overturns the directional call.
+        converged: ``True`` when the interval criterion stopped the run.
+        decision: ``greater``, ``less``, ``equivalent``, or ``inconclusive``.
+        p_tost: TOST p-value; ``None`` unless the equivalence step ran.
+        n_resamples_skew: Permutations behind ``null_skew``.
         note: A short slug naming the guard that short-circuited the test, or
             ``None`` when the test ran.
     """
@@ -130,7 +111,7 @@ class PermutationTestResult:
     statistic: float | None
     p_greater: float | None
     p_less: float | None
-    p_two_sided: float | None
+    null_skew: float | None
     p_greater_corrected: float | None
     p_less_corrected: float | None
     ci_greater: tuple[float, float] | None
@@ -139,25 +120,26 @@ class PermutationTestResult:
     batches: int
     converged: bool
     decision: str
-    null_skewed: bool = False
+    p_tost: float | None = None
+    n_resamples_skew: int = 0
     note: str | None = None
 
 
 def _guard_result(note):
-    """Build an ambiguous result for a test that could not be run.
+    """Build an inconclusive result for a test that could not be run.
 
     Args:
         note: Short slug naming the guard that fired.
 
     Returns:
-        A :class:`PermutationTestResult` with no statistics and an ambiguous
-        decision.
+        A :class:`PermutationTestResult` with no statistics and an
+        ``inconclusive`` decision.
     """
     return PermutationTestResult(
         statistic=None,
         p_greater=None,
         p_less=None,
-        p_two_sided=None,
+        null_skew=None,
         p_greater_corrected=None,
         p_less_corrected=None,
         ci_greater=None,
@@ -165,33 +147,23 @@ def _guard_result(note):
         n_resamples=0,
         batches=0,
         converged=False,
-        decision=DECISION_AMBIGUOUS,
-        null_skewed=False,
+        decision=DECISION_INCONCLUSIVE,
+        p_tost=None,
+        n_resamples_skew=0,
         note=note,
     )
 
 
-def _studentized_mean_diff(x, y):
-    """Compute the Welch-studentized mean difference between two samples.
-
-    The statistic is::
-
-        T = (mean(x) - mean(y)) / sqrt(var(x)/nx + var(y)/ny)
-
-    where ``var`` is the unbiased sample variance (``ddof=1``). Dividing by the
-    Welch standard error rather than a pooled one is what keeps the permutation
-    test valid when the two samples differ in both size and variance, which is
-    the normal case for concordant vs. discordant1 tree heights.
+def studentized_mean_diff(x, y):
+    """Compute the Welch-studentized mean difference ``(mx - my) / SE``.
 
     Args:
         x: First sample of numeric values.
         y: Second sample of numeric values.
 
     Returns:
-        The studentized statistic as a float, or ``nan`` when either sample has
-        fewer than two observations or the standard error is not positive. The
-        callers guard these cases before resampling; the ``nan`` is a
-        belt-and-braces return, never a value the decision logic consumes.
+        The studentized statistic, or ``nan`` when either sample has fewer than
+        two observations or the standard error is not positive.
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -212,50 +184,13 @@ def _studentized_mean_diff(x, y):
 def _permutation_statistics(pooled, nx, ny, count, rng):
     """Draw ``count`` random group assignments and studentize each one.
 
-    Two optimizations keep this cheap enough to run inside every bootstrap
-    iteration:
+    Samples only the smaller group and recovers the larger by subtracting from
+    the pooled totals, using a partial partition instead of a full shuffle.
+    ``pooled`` must be mean-centered, which is what keeps that subtraction safe
+    in floating point.
 
-    1. **Sample only the smaller group; derive the larger one exactly.** A
-       permutation partitions the pooled values into two groups, so the larger
-       group is precisely the complement of the smaller one -- nothing about it
-       is unknown or estimated. Both of its sufficient statistics follow by
-       subtraction. Writing ``S`` and ``Q`` for the pooled totals (computed once,
-       outside the loop) and ``s`` and ``q`` for the drawn group's::
-
-           S = sum(pooled)            Q = sum(pooled^2)
-           s = sum(drawn)             q = sum(drawn^2)
-
-       the complement of size ``m = n - k`` has::
-
-           sum      = S - s
-           sum_sq   = Q - q
-           mean     = (S - s) / m
-           var      = ((Q - q) - m * mean^2) / (m - 1)
-
-       That last line is the standard ``E[X^2] - E[X]^2`` identity in unbiased
-       (``ddof=1``) form, so the recovered variance is algebraically identical to
-       calling ``np.var(complement, ddof=1)`` on the values themselves -- it is
-       an exact rearrangement, not an approximation. The drawn group's mean and
-       variance come from the same two formulas applied to ``s`` and ``q``
-       directly. Both groups therefore have a mean and a variance, which is all
-       the Welch statistic needs, and the larger group's values are never
-       gathered. Since the discordant1 sample is normally much smaller than the
-       concordant one, this cuts the gathered data by the size ratio.
-       :func:`test_permutation_statistics_match_exhaustive_enumeration` pins this
-       against every one of the 126 group assignments of a 4-vs-5 case computed
-       the direct way.
-    2. **Partial partition instead of a full shuffle.** Taking the ``k``
-       smallest of ``n`` uniform random keys yields a uniformly random size-``k``
-       subset, and ``np.argpartition`` finds them in one linear pass rather than
-       sorting or Fisher-Yates shuffling the whole row.
-
-    ``pooled`` must already be mean-centered. Centering leaves both the mean
-    difference and both variances unchanged, but it is what makes the
-    subtraction above safe in floating point. ``Q - q`` is a difference of two
-    positive sums of squares, and ``m * mean^2`` is near zero once the pooled
-    mean is zero, so neither step cancels significant digits. Without centering,
-    tree heights of similar magnitude make ``sum_sq - m * mean^2`` a difference
-    of two nearly equal large numbers, which destroys most of the precision.
+    The algebra is derived under "Gate 3 - Adaptive studentized permutation
+    test" in the orchestrator guide.
 
     Args:
         pooled: Mean-centered concatenation of both samples.
@@ -323,12 +258,9 @@ def _permutation_statistics(pooled, nx, ny, count, rng):
 def _scaled_interval(raw_p, corrected_p, interval):
     """Rescale a confidence interval from the raw p-value onto the corrected one.
 
-    Every supported correction is monotone non-decreasing in each member of the
-    family, so applying the observed correction factor to the interval bounds
-    preserves their ordering relative to the threshold. This is exact for
-    Bonferroni (a constant factor) and holds for the step-up methods as long as
-    the family's rank order is stable across the interval, which it is whenever
-    the interval is narrow enough for the stopping rule to fire.
+    Applies the observed correction factor to both bounds, which preserves their
+    ordering relative to the threshold because every supported correction is
+    monotone non-decreasing.
 
     Args:
         raw_p: The uncorrected p-value.
@@ -345,6 +277,104 @@ def _scaled_interval(raw_p, corrected_p, interval):
     return (min(1.0, float(low) * factor), min(1.0, float(high) * factor))
 
 
+def _running_skewness(count, sum_t, sum_t2, sum_t3):
+    """Compute sample skewness from running power sums.
+
+    Batches are discarded as they are drawn, so the null's shape is accumulated
+    as the first three power sums rather than by keeping every statistic.
+
+    Args:
+        count: Number of values summed.
+        sum_t: Sum of the values.
+        sum_t2: Sum of their squares.
+        sum_t3: Sum of their cubes.
+
+    Returns:
+        The population skewness, or ``None`` when it is undefined (fewer than
+        two values, or no spread).
+    """
+    if count < 2:
+        return None
+    mean = sum_t / count
+    m2 = sum_t2 / count - mean * mean
+    if m2 <= 0.0:
+        return None
+    m3 = sum_t3 / count - 3.0 * mean * sum_t2 / count + 2.0 * mean**3
+    return float(m3 / m2**1.5)
+
+
+def _shifted_null_tail_p(x, y, shift, tail, count, rng):
+    """Run a one-sided permutation test against a shifted null.
+
+    Subtracting ``shift`` from ``x`` makes the samples exchangeable under
+    ``H0: mean(x) - mean(y) == shift``.
+
+    Args:
+        x: First sample.
+        y: Second sample.
+        shift: The mean difference asserted by the null hypothesis.
+        tail: ``greater`` or ``less``, the direction that rejects the null.
+        count: Number of permutations to draw.
+        rng: A ``numpy.random.Generator``.
+
+    Returns:
+        The add-one one-sided p-value.
+    """
+    shifted = x - shift
+    observed = studentized_mean_diff(shifted, y)
+    if not math.isfinite(observed):
+        return 1.0
+
+    pooled = np.concatenate([shifted, y])
+    pooled = pooled - pooled.mean()
+    statistics = _permutation_statistics(pooled, x.size, y.size, count, rng)
+
+    if tail == "greater":
+        extreme = int(np.count_nonzero(statistics >= observed))
+    else:
+        extreme = int(np.count_nonzero(statistics <= observed))
+    return (1 + extreme) / (count + 1)
+
+
+def _pooled_standard_deviation(x, y):
+    """Compute the pooled standard deviation of two samples.
+
+    Args:
+        x: First sample.
+        y: Second sample.
+
+    Returns:
+        The root-mean-square of the two unbiased sample standard deviations.
+    """
+    return math.sqrt(
+        (float(np.var(x, ddof=1)) + float(np.var(y, ddof=1))) / 2.0
+    )
+
+
+def _equivalence_p_value(x, y, pooled_sd, delta, count, rng):
+    """Run the two one-sided tests (TOST) for equivalence of the two means.
+
+    Equivalence needs both nulls rejected, which makes this an
+    intersection-union test and is why the pair needs no correction.
+
+    Args:
+        x: First sample.
+        y: Second sample.
+        pooled_sd: The pooled standard deviation, which sets the scale of the
+            margin.
+        delta: Equivalence margin as an effect size.
+        count: Number of permutations to draw per one-sided test.
+        rng: A ``numpy.random.Generator``.
+
+    Returns:
+        The TOST p-value ``max(p_lower, p_upper)``.
+    """
+    margin = delta * pooled_sd
+    p_lower = _shifted_null_tail_p(x, y, -margin, "greater", count, rng)
+    p_upper = _shifted_null_tail_p(x, y, margin, "less", count, rng)
+    return max(p_lower, p_upper)
+
+
 def run_studentized_permutation_test(
     x,
     y,
@@ -354,28 +384,23 @@ def run_studentized_permutation_test(
     max_resamples=DEFAULT_PERMUTATION_MAX_RESAMPLES,
     ci_method=DEFAULT_PERMUTATION_CI_METHOD,
     correction=DEFAULT_P_VALUE_CORRECTION,
+    equivalence_test=True,
     rng=None,
 ):
     """Run the adaptive studentized permutation test on two samples.
 
-    The first batch draws ``min_resamples`` permutations. After each batch the
-    confidence intervals around both one-tailed p-values are checked against
-    ``alpha``: once ``alpha`` lies outside both, the decision cannot change with
-    more resampling and the run stops. Otherwise the batch size grows by 25% and
-    the run continues until the total reaches ``max_resamples``. The batch that
-    crosses that line is drawn whole rather than trimmed, so the reported
-    ``n_resamples`` can exceed ``max_resamples`` by up to one batch.
-
-    The two one-tailed p-values form a testing family and are corrected against
-    each other with ``correction`` before being compared to ``alpha``. The
-    two-tailed p-value is reported raw as a cross-check and is not corrected,
-    since it is a single test rather than a family.
+    Resamples in growing batches until a confidence interval around each
+    one-tailed p-value excludes ``alpha``, or the budget is spent. The tail pair
+    is corrected against itself; when neither is significant the TOST step at
+    :data:`EQUIVALENCE_DELTA` splits ``equivalent`` from ``inconclusive``. The
+    skewness of the permutation null is reported alongside, whatever the
+    outcome.
 
     Args:
         x: First sample (concordant tree heights).
         y: Second sample (discordant1 tree heights).
         alpha: Significance threshold, applied to each one-tailed test and to
-            the two-tailed cross-check.
+            the TOST p-value.
         min_resamples: Size of the first batch and the minimum total.
         max_resamples: Resample budget. The run stops once the total reaches it;
             the final batch is drawn whole, so the total may overshoot it by up
@@ -383,6 +408,8 @@ def run_studentized_permutation_test(
         ci_method: Binomial interval method passed to statsmodels.
         correction: Multiple-testing correction applied across the one-tailed
             family.
+        equivalence_test: When ``False``, skip the TOST step and report
+            ``inconclusive`` for any non-directional outcome.
         rng: A ``numpy.random.Generator``. A fresh default generator is used
             when omitted.
 
@@ -445,13 +472,15 @@ def run_studentized_permutation_test(
 
     count_greater = 0
     count_less = 0
-    count_two_sided = 0
+    # Running power sums over every permuted statistic, so the null's skewness
+    # can be reported without holding the draws from earlier batches.
+    sum_t = sum_t2 = sum_t3 = 0.0
     n_done = 0
     batches = 0
     batch = int(min_resamples)
     converged = False
 
-    p_greater = p_less = p_two_sided = 1.0
+    p_greater = p_less = 1.0
     p_greater_corrected = p_less_corrected = 1.0
     ci_greater = ci_less = (0.0, 1.0)
 
@@ -474,7 +503,9 @@ def run_studentized_permutation_test(
 
         count_greater += int(np.count_nonzero(statistics >= observed))
         count_less += int(np.count_nonzero(statistics <= observed))
-        count_two_sided += int(np.count_nonzero(np.abs(statistics) >= abs(observed)))
+        sum_t += float(statistics.sum())
+        sum_t2 += float(np.dot(statistics, statistics))
+        sum_t3 += float(np.sum(statistics**3))
         n_done += batch
         batches += 1
 
@@ -483,7 +514,6 @@ def run_studentized_permutation_test(
         # preserves the test's nominal level.
         p_greater = (1 + count_greater) / (n_done + 1)
         p_less = (1 + count_less) / (n_done + 1)
-        p_two_sided = (1 + count_two_sided) / (n_done + 1)
 
         p_greater_corrected, p_less_corrected = adjust_p_values(
             [p_greater, p_less], method=correction, alpha=alpha
@@ -519,18 +549,31 @@ def run_studentized_permutation_test(
 
     greater_significant = p_greater_corrected <= alpha
     less_significant = p_less_corrected <= alpha
+
+    p_tost = None
     if greater_significant and not less_significant:
         decision = DECISION_GREATER
     elif less_significant and not greater_significant:
         decision = DECISION_LESS
+    elif not equivalence_test:
+        decision = DECISION_INCONCLUSIVE
     else:
-        decision = DECISION_AMBIGUOUS
+        # The equivalence step reuses the resample count the directional test
+        # settled on, so both questions are answered at the same Monte Carlo
+        # resolution.
+        p_tost = _equivalence_p_value(
+            x,
+            y,
+            _pooled_standard_deviation(x, y),
+            EQUIVALENCE_DELTA,
+            int(n_done),
+            rng,
+        )
+        decision = (
+            DECISION_EQUIVALENT if p_tost <= alpha else DECISION_INCONCLUSIVE
+        )
 
-    # The directional tails resolving a comparison that the absolute-value count
-    # leaves open is the signature of an asymmetric null. It is recorded on its
-    # own field rather than in ``note`` because it is the common case for tree
-    # heights, and ``note`` is reserved for conditions that need attention.
-    null_skewed = decision != DECISION_AMBIGUOUS and p_two_sided > alpha
+    null_skew = _running_skewness(n_done, sum_t, sum_t2, sum_t3)
 
     note = None
     if greater_significant and less_significant:
@@ -547,7 +590,7 @@ def run_studentized_permutation_test(
         statistic=float(observed),
         p_greater=float(p_greater),
         p_less=float(p_less),
-        p_two_sided=float(p_two_sided),
+        null_skew=null_skew,
         p_greater_corrected=float(p_greater_corrected),
         p_less_corrected=float(p_less_corrected),
         ci_greater=ci_greater,
@@ -556,13 +599,14 @@ def run_studentized_permutation_test(
         batches=int(batches),
         converged=converged,
         decision=decision,
-        null_skewed=null_skewed,
+        p_tost=None if p_tost is None else float(p_tost),
+        n_resamples_skew=int(n_done),
         note=note,
     )
 
 
 def bootstrap_resample_budget(min_resamples, max_resamples):
-    """Scale the resample budget down for use inside bootstrap iterations.
+    """Scale the resample budget down for bootstrap iterations.
 
     Args:
         min_resamples: The configured minimum resample count.

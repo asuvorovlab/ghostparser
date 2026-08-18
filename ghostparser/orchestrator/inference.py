@@ -1,10 +1,8 @@
 """Per-triplet GhostParser inference for the orchestrator.
 
-Covers topology classification, the discordant count test, the KS tree-height
-test, the studentized permutation test that decides introgression direction,
-bootstrap aggregation (with optional debug metrics), summary-statistics
-gathering, run-wide p-value correction, and TSV writing. All statistics use the
-scipy/statsmodels backend.
+Topology classification, the three decision gates, bootstrap aggregation,
+summary statistics, run-wide p-value correction, and TSV writing. All statistics
+use the scipy/statsmodels backend.
 """
 
 import hashlib
@@ -29,6 +27,7 @@ from ghostparser.triplet_utils import (
 from .config import (
     DEFAULT_ALPHA_DCT,
     DEFAULT_ALPHA_KS,
+    DEFAULT_ALPHA_PERM,
     DEFAULT_BOOTSTRAP,
     DEFAULT_BOOTSTRAP_DEBUG_MODE,
     DEFAULT_BOOTSTRAP_ITERATIONS,
@@ -42,12 +41,20 @@ from .config import (
     P_VALUE_CORRECTION_CHOICES,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
 )
-from .correction import adjust_p_values as _adjust_p_values
+from .correction import (
+    adjust_p_value_inline as _adjust_p_value_inline,
+    adjust_p_values as _adjust_p_values,
+    is_inline_correction,
+    is_monotone_correction,
+)
+from .shape import SHAPE_FIELD_NAMES, describe_shape
 from .permutation import (
     DECISION_GREATER,
+    DECISION_INCONCLUSIVE,
     DECISION_LESS,
     bootstrap_resample_budget,
     run_studentized_permutation_test,
+    studentized_mean_diff,
 )
 
 Classification = str
@@ -55,18 +62,36 @@ SerializedTripletObservation = tuple[str, float, dict | None]
 
 DISCORDANT1_TOPOLOGY_CHOICES = ("BC", "AC")
 
+# Height groups the optional shape diagnostics describe, in column order. The
+# summary-statistics TSV names the same three groups in full, matching its other
+# per-topology columns.
+SHAPE_GROUP_LABELS = ("con", "dis1", "dis2")
+SHAPE_SUMMARY_GROUP_LABELS = ("concordant", "discordant1", "discordant2")
+
 # Which of the three tests produced a triplet's classification, named after the
 # test itself. ``DECISION_GATE_PERMUTATION`` is the only value for which the
 # permutation columns took part in the call; on the other two the direction test
 # still ran and is still reported, but nothing consulted it.
 DECISION_GATE_DCT = "DCT"
 DECISION_GATE_THT = "THT"
-DECISION_GATE_PERMUTATION = "Permutation"
+DECISION_GATE_PERMUTATION = "PERM"
 DECISION_GATE_CHOICES = (
     DECISION_GATE_DCT,
     DECISION_GATE_THT,
     DECISION_GATE_PERMUTATION,
 )
+
+# Integer codes for a bootstrap iteration's direction outcome, so the deferred
+# per-iteration record stays a compact numeric array.
+_DIRECTION_SKIPPED = 0
+_DIRECTION_GREATER = 1
+_DIRECTION_LESS = 2
+_DIRECTION_CODES = {DECISION_GREATER: _DIRECTION_GREATER, DECISION_LESS: _DIRECTION_LESS}
+_DIRECTION_LABELS = {
+    _DIRECTION_GREATER: DECISION_GREATER,
+    _DIRECTION_LESS: DECISION_LESS,
+    _DIRECTION_SKIPPED: DECISION_INCONCLUSIVE,
+}
 
 _BOOTSTRAP_CLASSES = [
     "ghost_introgression",
@@ -108,6 +133,44 @@ SUMMARY_METRIC_LABELS = ("avg_tree_height", "internal_branch", "sister_distance"
 
 
 @dataclass(frozen=True)
+class DeferredBootstrapRecord:
+    """One triplet's raw per-iteration bootstrap p-values, awaiting correction.
+
+    Rank-based corrections need every triplet's p-value for the same iteration
+    index before any of them can be adjusted, so iterations that cannot be
+    settled during the stream park their raw values here instead.
+
+    Attributes:
+        dct_p_values: Raw DCT p-value per iteration.
+        ks_p_values: Raw KS p-value per iteration.
+        directions: Per-iteration direction code, ``_DIRECTION_SKIPPED`` where
+            the permutation test was short-circuited or found no direction.
+    """
+
+    dct_p_values: np.ndarray
+    ks_p_values: np.ndarray
+    directions: np.ndarray
+
+
+@dataclass(frozen=True)
+class _BootstrapPolicy:
+    """How bootstrap iterations apply the run's correction method.
+
+    Attributes:
+        correction: The configured p-value correction method.
+        family_size: Triplet count, the size of each per-iteration family.
+        inline: Whether the method can be applied to one p-value from the family
+            size alone, letting an iteration classify itself during the stream.
+        short_circuit: Whether a failed raw gate may skip the direction test.
+    """
+
+    correction: str
+    family_size: int
+    inline: bool
+    short_circuit: bool
+
+
+@dataclass(frozen=True)
 class TripletPipelineResult:
     """Result of the GhostParser orchestrator for one rooted species triplet.
 
@@ -136,17 +199,22 @@ class TripletPipelineResult:
     perm_statistic: float | None = None
     perm_p_greater: float | None = None
     perm_p_less: float | None = None
-    perm_p_two_sided: float | None = None
+    perm_null_skew: float | None = None
     perm_p_greater_corrected: float | None = None
     perm_p_less_corrected: float | None = None
+    perm_p_tost: float | None = None
+    perm_stat_ci_low: float | None = None
+    perm_stat_ci_high: float | None = None
     perm_n_resamples: int | None = None
     perm_converged: bool | None = None
-    perm_null_skewed: bool | None = None
+    perm_n_resamples_skew: int | None = None
     perm_note: str | None = None
+    shape_statistics: dict[str, float | None] | None = None
     analyzed_trees: int = 0
     topology_metric_statistics: dict[str, float | None] | None = None
     bootstrap_value: float | None = None
     all_bootstrap: dict | None = None
+    bootstrap_deferred: "DeferredBootstrapRecord | None" = None
     bootstrap_dct_stats: dict | list | None = None
     bootstrap_dct_p_value: dict | list | None = None
     bootstrap_ks_stats: dict | list | None = None
@@ -183,13 +251,17 @@ class TripletPipelineResult:
             "perm_statistic": self.perm_statistic,
             "perm_p_greater": self.perm_p_greater,
             "perm_p_less": self.perm_p_less,
-            "perm_p_two_sided": self.perm_p_two_sided,
+            "perm_null_skew": self.perm_null_skew,
             "perm_p_greater_corrected": self.perm_p_greater_corrected,
             "perm_p_less_corrected": self.perm_p_less_corrected,
+            "perm_p_tost": self.perm_p_tost,
+            "perm_stat_ci_low": self.perm_stat_ci_low,
+            "perm_stat_ci_high": self.perm_stat_ci_high,
             "perm_n_resamples": self.perm_n_resamples,
             "perm_converged": self.perm_converged,
-            "perm_null_skewed": self.perm_null_skewed,
+            "perm_n_resamples_skew": self.perm_n_resamples_skew,
             "perm_note": self.perm_note,
+            "shape_statistics": self.shape_statistics,
             "analyzed_trees": self.analyzed_trees,
             "bootstrap_value": self.bootstrap_value,
             "all_bootstrap": self.all_bootstrap,
@@ -579,6 +651,21 @@ def _summary_statistics_column_names():
     return columns
 
 
+def shape_column_names(group_labels=SHAPE_GROUP_LABELS):
+    """Return the shape-diagnostic column names in output order.
+
+    Args:
+        group_labels: Per-group prefixes; the results TSV uses the short forms
+            and the summary TSV the full ones.
+
+    Returns:
+        A list of ``<group>_<field>`` column names.
+    """
+    return [
+        f"{label}_{field}" for label in group_labels for field in SHAPE_FIELD_NAMES
+    ]
+
+
 def _build_empty_metric_buckets():
     """Build empty per-topology metric buckets for summary-statistics gathering.
 
@@ -650,32 +737,21 @@ def _build_topology_metric_statistics(
 
 
 def _classify_introgression(dct_significant, ks_significant, direction):
-    """Apply the GhostParser decision logic to produce a classification.
+    """Apply the GhostParser decision cascade to produce a classification.
 
-    The three tests are applied as a cascade. A non-significant discordant count
-    test means the two discordant topologies are balanced, which is what
-    incomplete lineage sorting alone produces. A significant count test with a
-    non-significant tree-height test means the discordant1 and concordant height
-    distributions match, which is the signature of introgression between the
-    sampled taxa. When both are significant the height distributions differ and
-    the direction of that difference separates the remaining classes.
-
-    The classification and the test that produced it are derived in the same
-    pass, so the two cannot drift apart: each branch returns both.
+    Each branch returns the classification and the gate that produced it in one
+    pass, so the two cannot drift apart. What each gate means biologically is
+    described under "The statistical tests" in the orchestrator guide.
 
     Args:
         dct_significant: Whether the discordant count test is significant.
         ks_significant: Whether the tree-height (KS) test is significant.
             ``None`` (no test ran) takes the same branch as non-significant.
-        direction: ``greater``, ``less``, or ``ambiguous`` for the concordant
-            heights relative to the discordant1 heights.
+        direction: The permutation decision; only ``greater`` and ``less`` name
+            a direction.
 
     Returns:
-        A tuple ``(classification, decision_gate)``. The classification is one
-        of ``no_introgression``, ``inflow_introgression``,
-        ``outflow_introgression``, ``ghost_introgression``, or ``ambiguous``;
-        the gate names the test that settled it (``DCT``, ``THT``, or
-        ``Permutation``).
+        A ``(classification, decision_gate)`` tuple.
     """
     if not dct_significant:
         return "no_introgression", DECISION_GATE_DCT
@@ -705,12 +781,13 @@ def _permutation_result_fields(permutation_result):
             "perm_statistic": None,
             "perm_p_greater": None,
             "perm_p_less": None,
-            "perm_p_two_sided": None,
+            "perm_null_skew": None,
             "perm_p_greater_corrected": None,
             "perm_p_less_corrected": None,
+            "perm_p_tost": None,
             "perm_n_resamples": None,
             "perm_converged": None,
-            "perm_null_skewed": None,
+            "perm_n_resamples_skew": None,
             "perm_note": None,
         }
 
@@ -718,12 +795,13 @@ def _permutation_result_fields(permutation_result):
         "perm_statistic": permutation_result.statistic,
         "perm_p_greater": permutation_result.p_greater,
         "perm_p_less": permutation_result.p_less,
-        "perm_p_two_sided": permutation_result.p_two_sided,
+        "perm_null_skew": permutation_result.null_skew,
         "perm_p_greater_corrected": permutation_result.p_greater_corrected,
         "perm_p_less_corrected": permutation_result.p_less_corrected,
+        "perm_p_tost": permutation_result.p_tost,
         "perm_n_resamples": permutation_result.n_resamples,
         "perm_converged": permutation_result.converged,
-        "perm_null_skewed": permutation_result.null_skewed,
+        "perm_n_resamples_skew": permutation_result.n_resamples_skew,
         "perm_note": permutation_result.note,
     }
 
@@ -749,7 +827,7 @@ def _decide_direction(
         is ``None`` when either group is empty and the test cannot run.
     """
     if not len(con_heights) or not len(dis1_heights):
-        return "ambiguous", None
+        return DECISION_INCONCLUSIVE, None
 
     result = run_studentized_permutation_test(
         con_heights,
@@ -1066,6 +1144,26 @@ def _serialize_triplet_gene_trees(
     return observations
 
 
+def _build_shape_statistics(canonical_heights, role_topologies, rng):
+    """Describe the shape of each height group under its decision role.
+
+    Args:
+        canonical_heights: Heights keyed by canonical topology.
+        role_topologies: The ``(con, dis1, dis2)`` topologies, in that order.
+        rng: A ``numpy.random.Generator`` for the modality bootstrap.
+
+    Returns:
+        A flat dict keyed ``<group>_<field>`` over :data:`SHAPE_GROUP_LABELS`
+        and :data:`~ghostparser.orchestrator.shape.SHAPE_FIELD_NAMES`.
+    """
+    statistics = {}
+    for label, topology in zip(SHAPE_GROUP_LABELS, role_topologies):
+        described = describe_shape(canonical_heights[topology], rng=rng)
+        for field in SHAPE_FIELD_NAMES:
+            statistics[f"{label}_{field}"] = described[field]
+    return statistics
+
+
 def _run_triplet_pipeline_from_observations(
     species_triplet,
     observations,
@@ -1076,6 +1174,8 @@ def _run_triplet_pipeline_from_observations(
     rng=None,
     species_topology=TOPOLOGY_AB,
     species_tree_newick=None,
+    shape_diagnostics=False,
+    shape_rng=None,
 ):
     """Run the GhostParser Figure 6 pipeline from serialized observations.
 
@@ -1089,6 +1189,8 @@ def _run_triplet_pipeline_from_observations(
         rng: A ``numpy.random.Generator`` for the permutation resampling.
         species_topology: The concordant (species-tree) topology.
         species_tree_newick: Species subtree Newick stored on the result.
+        shape_diagnostics: Whether to describe each height group's shape.
+        shape_rng: A ``numpy.random.Generator`` for the modality bootstrap.
 
     Returns:
         A ``TripletPipelineResult`` with uncorrected p-values.
@@ -1149,6 +1251,14 @@ def _run_triplet_pipeline_from_observations(
     con_heights = canonical_heights[con_topology]
     dis1_heights = canonical_heights[dis1_topology]
 
+    shape_statistics = None
+    if shape_diagnostics:
+        shape_statistics = _build_shape_statistics(
+            canonical_heights,
+            (con_topology, dis1_topology, dis2_topology),
+            shape_rng,
+        )
+
     # The point estimate always runs the direction test, even when the earlier
     # tests are non-significant and the classification will not consult it. The
     # p-values and the observed statistic stay in the results TSV either way,
@@ -1195,74 +1305,33 @@ def _run_triplet_pipeline_from_observations(
         classification=classification,
         decision_gate=decision_gate,
         perm_decision=direction,
+        shape_statistics=shape_statistics,
         analyzed_trees=analyzed_trees,
         topology_metric_statistics=topology_metric_statistics,
         **_permutation_result_fields(permutation_result),
     )
 
 
-def _iteration_classification(
-    n_dis1,
-    n_dis2,
-    con_heights,
-    dis1_heights,
-    alpha_dct,
-    alpha_ks,
-    discordant_test,
-    permutation_kwargs,
-    rng,
-):
-    """Classify one bootstrap iteration from its resampled per-topology heights.
-
-    Mirrors ``_run_triplet_pipeline_from_observations`` plus the ambiguous
-    fallback: an iteration with an empty concordant or discordant1 sample is
-    ``ambiguous`` (there is nothing to compare).
-
-    Unlike the point estimate, the direction test runs only when both earlier
-    tests are significant. Every other iteration is already classified by the
-    cascade, so resampling there would burn the run's largest cost centre on a
-    result that cannot change the answer.
+def _bootstrap_policy(correction, family_size):
+    """Decide how bootstrap iterations handle correction for one run.
 
     Args:
-        n_dis1: Discordant1 count in the resample.
-        n_dis2: Discordant2 count in the resample.
-        con_heights: Concordant tree heights (Python list).
-        dis1_heights: Discordant1 tree heights (Python list).
-        alpha_dct: Significance threshold for the discordant count test.
-        alpha_ks: Significance threshold for the KS test.
-        discordant_test: ``chi-square`` or ``z-test``.
-        permutation_kwargs: Keyword arguments forwarded to the permutation test.
-        rng: A ``numpy.random.Generator`` for the permutation resampling.
+        correction: The configured p-value correction method.
+        family_size: Number of triplets in the run, which is the size of each
+            per-iteration testing family.
 
     Returns:
-        The iteration classification string.
+        A :class:`_BootstrapPolicy`.
     """
-    if not con_heights or not dis1_heights:
-        return "ambiguous"
-
-    _, dct_p_value = run_discordant_count_test(
-        n_dis1, n_dis2, method=discordant_test
+    return _BootstrapPolicy(
+        correction=correction,
+        family_size=max(1, int(family_size)),
+        inline=is_inline_correction(correction),
+        short_circuit=is_monotone_correction(correction),
     )
-    dct_significant = dct_p_value <= alpha_dct
-    if not dct_significant:
-        return "no_introgression"
-
-    _, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
-    ks_significant = ks_p_value <= alpha_ks
-    if not ks_significant:
-        return "inflow_introgression"
-
-    direction, _ = _decide_direction(
-        con_heights,
-        dis1_heights,
-        permutation_kwargs=permutation_kwargs,
-        rng=rng,
-    )
-    classification, _ = _classify_introgression(True, True, direction)
-    return classification
 
 
-def _iteration_full(
+def _iteration_outcome(
     n_dis1,
     n_dis2,
     con_heights,
@@ -1272,14 +1341,14 @@ def _iteration_full(
     discordant_test,
     permutation_kwargs,
     rng,
+    policy,
+    collect_metrics=False,
 ):
-    """Classify one bootstrap iteration and return its per-iteration metrics.
+    """Run one bootstrap iteration's cascade over its resampled heights.
 
-    Unlike :func:`_iteration_classification` (the fast path), this always
-    computes the DCT/KS statistics and the con/dis means so they can be
-    collected for bootstrap-debug output. The direction test still runs only
-    when both earlier tests are significant, since it is the expensive step and
-    its result is not part of the debug payload.
+    Uses the same thresholds as the point estimate; only the direction test is
+    skipped, and only when an upstream gate has already failed under a
+    correction that cannot lower a p-value.
 
     Args:
         n_dis1: Discordant1 count in the resample.
@@ -1291,46 +1360,95 @@ def _iteration_full(
         discordant_test: ``chi-square`` or ``z-test``.
         permutation_kwargs: Keyword arguments forwarded to the permutation test.
         rng: A ``numpy.random.Generator`` for the permutation resampling.
+        policy: The run's :class:`_BootstrapPolicy`.
+        collect_metrics: When ``True``, compute every statistic even where the
+            cascade no longer needs it, for bootstrap-debug output.
 
     Returns:
-        A tuple ``(classification, dct_statistic, dct_p_value, ks_statistic,
-        ks_p_value, mean_con, mean_dis)``.
+        A ``(dct_p_value, ks_p_value, direction, metrics)`` tuple; each of the
+        last three is ``None`` when that step did not run.
     """
     dct_statistic, dct_p_value = run_discordant_count_test(
         n_dis1, n_dis2, method=discordant_test
     )
-    dct_significant = dct_p_value <= alpha_dct
+    dct_failed = policy.short_circuit and (
+        _iteration_corrected(dct_p_value, policy) > alpha_dct
+    )
 
-    ks_statistic, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
-    ks_significant = ks_p_value <= alpha_ks
+    ks_statistic = None
+    ks_p_value = None
+    # The deferred path always measures KS, even below a failed DCT gate, so its
+    # per-iteration family holds one p-value per triplet exactly as the point
+    # estimate's does.
+    if collect_metrics or not (policy.inline and dct_failed):
+        ks_statistic, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
 
-    mean_con = _mean(con_heights)
-    mean_dis = _mean(dis1_heights)
+    ks_failed = ks_p_value is not None and policy.short_circuit and (
+        _iteration_corrected(ks_p_value, policy) > alpha_ks
+    )
 
-    if not con_heights or not dis1_heights:
-        classification = "ambiguous"
-    elif not dct_significant:
-        classification = "no_introgression"
-    elif not ks_significant:
-        classification = "inflow_introgression"
-    else:
+    direction = None
+    if not dct_failed and not ks_failed:
         direction, _ = _decide_direction(
             con_heights,
             dis1_heights,
             permutation_kwargs=permutation_kwargs,
             rng=rng,
         )
-        classification, _ = _classify_introgression(True, True, direction)
 
-    return (
-        classification,
-        dct_statistic,
-        dct_p_value,
-        ks_statistic,
-        ks_p_value,
-        mean_con,
-        mean_dis,
+    metrics = None
+    if collect_metrics:
+        metrics = (
+            dct_statistic,
+            dct_p_value,
+            ks_statistic,
+            ks_p_value,
+            _mean(con_heights),
+            _mean(dis1_heights),
+        )
+    return dct_p_value, ks_p_value, direction, metrics
+
+
+def _iteration_corrected(p_value, policy):
+    """Correct one iteration p-value as far as the policy allows.
+
+    Args:
+        p_value: The raw p-value.
+        policy: The run's :class:`_BootstrapPolicy`.
+
+    Returns:
+        The corrected p-value on the inline path, else the raw one.
+    """
+    if policy.inline:
+        return _adjust_p_value_inline(p_value, policy.correction, policy.family_size)
+    return p_value
+
+
+def _inline_iteration_classification(dct_p_value, ks_p_value, direction, policy,
+                                     alpha_dct, alpha_ks):
+    """Classify one iteration whose p-values are already fully corrected.
+
+    Args:
+        dct_p_value: Raw DCT p-value.
+        ks_p_value: Raw KS p-value, or ``None`` when the DCT gate settled it.
+        direction: The permutation decision, or ``None`` when it was skipped.
+        policy: The run's :class:`_BootstrapPolicy`.
+        alpha_dct: Significance threshold for the discordant count test.
+        alpha_ks: Significance threshold for the KS test.
+
+    Returns:
+        The iteration classification string.
+    """
+    dct_significant = _iteration_corrected(dct_p_value, policy) <= alpha_dct
+    ks_significant = ks_p_value is not None and (
+        _iteration_corrected(ks_p_value, policy) <= alpha_ks
     )
+    classification, _ = _classify_introgression(
+        dct_significant,
+        ks_significant,
+        direction or DECISION_INCONCLUSIVE,
+    )
+    return classification
 
 
 def _numeric_summary(values):
@@ -1415,20 +1533,38 @@ def _append_iteration_debug(debug, metrics):
         debug[key].append(value)
 
 
-def _bootstrap_payload(bootstrap_value, fractions, debug, summary_only):
+def _bootstrap_payload(
+    bootstrap_value,
+    fractions,
+    debug,
+    summary_only,
+    deferred=None,
+    studentized_ci=(None, None),
+):
     """Assemble the bootstrap payload with optional finalized debug metrics.
 
     Args:
-        bootstrap_value: The top class fraction.
-        fractions: Per-class fractions.
+        bootstrap_value: The top class fraction, or ``None`` when the votes are
+            still deferred.
+        fractions: Per-class fractions, or ``None`` when still deferred.
         debug: The per-iteration debug accumulator, or ``None`` when disabled.
         summary_only: When ``True``, finalize debug metrics as compact summaries.
+        deferred: A :class:`DeferredBootstrapRecord` when the votes cannot be
+            tallied until every triplet's p-values are in hand.
+        studentized_ci: The ``(low, high)`` percentile interval on the
+            studentized mean difference.
 
     Returns:
-        A dict with ``bootstrap_value``, ``all_bootstrap``, and the six
-        ``bootstrap_*`` debug entries (each ``None`` when ``debug`` is ``None``).
+        A dict with ``bootstrap_value``, ``all_bootstrap``, ``deferred``,
+        ``studentized_ci``, and the six ``bootstrap_*`` debug entries (each
+        ``None`` when ``debug`` is ``None``).
     """
-    payload = {"bootstrap_value": bootstrap_value, "all_bootstrap": fractions}
+    payload = {
+        "bootstrap_value": bootstrap_value,
+        "all_bootstrap": fractions,
+        "deferred": deferred,
+        "studentized_ci": studentized_ci,
+    }
     debug_columns = (
         "bootstrap_dct_stats",
         "bootstrap_dct_p_value",
@@ -1446,6 +1582,45 @@ def _bootstrap_payload(bootstrap_value, fractions, debug, summary_only):
     return payload
 
 
+def _bootstrap_fractions(class_counts, iterations):
+    """Turn per-class iteration counts into fractions.
+
+    Args:
+        class_counts: Mapping of classification to iteration count.
+        iterations: Total iterations run.
+
+    Returns:
+        A dict of classification to fraction, ordered by classification.
+    """
+    counts = {label: 0 for label in _BOOTSTRAP_CLASSES}
+    counts.update(class_counts)
+    return {
+        label: counts[label] / float(iterations) for label in sorted(counts)
+    }
+
+
+def _studentized_percentile_interval(values, alpha):
+    """Compute the bootstrap-percentile interval on the studentized difference.
+
+    Taken at the ``1 - 2 * alpha`` level, where an interval and a one-sided test
+    at ``alpha`` agree.
+
+    Args:
+        values: Per-iteration studentized mean differences, possibly with
+            ``nan`` entries for iterations that had too few observations.
+        alpha: The permutation test's significance threshold.
+
+    Returns:
+        A ``(low, high)`` tuple, or ``(None, None)`` when no iteration produced
+        a finite statistic.
+    """
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return (None, None)
+    low, high = np.percentile(finite, [100.0 * alpha, 100.0 * (1.0 - alpha)])
+    return (float(low), float(high))
+
+
 def _run_bootstrap_iterations(
     observations,
     iterations,
@@ -1455,17 +1630,17 @@ def _run_bootstrap_iterations(
     permutation_kwargs,
     rng,
     permutation_rng,
+    policy,
+    alpha_perm,
     debug_mode=False,
     summary_only=False,
 ):
     """Resample observations and aggregate per-iteration classifications.
 
-    The resample indices are drawn with NumPy's vectorized RNG and the topology
-    counts and per-topology height groups are computed with array operations,
-    replacing the per-element Python resampling loop. Assumes the concordant
-    topology is ``((A,B),C)`` (always true on the orchestrator path). When
-    ``debug_mode`` is set, per-iteration DCT/KS statistics and con/dis summaries
-    are collected too.
+    Resampling is vectorized and assumes the concordant topology is ``((A,B),C)``
+    (always true on the orchestrator path). Iterations classify themselves when
+    ``policy.inline`` is set; otherwise their raw p-values are parked in a
+    :class:`DeferredBootstrapRecord` for the run-wide pass to correct.
 
     Args:
         observations: List of ``(topology, tree_height, metrics)`` tuples.
@@ -1476,113 +1651,115 @@ def _run_bootstrap_iterations(
         permutation_kwargs: Keyword arguments forwarded to the permutation test,
             already scaled to the reduced bootstrap resample budget.
         rng: A ``numpy.random.Generator`` used for resampling.
-        permutation_rng: A separate ``numpy.random.Generator`` for the
-            permutation tests, so the bootstrap resample sequence stays
-            independent of how many permutations each iteration happens to draw.
+        permutation_rng: A separate generator for the permutation tests, so the
+            resample sequence stays independent of how many permutations run.
+        policy: The run's :class:`_BootstrapPolicy`.
+        alpha_perm: Sets the level of the studentized-difference interval.
         debug_mode: When ``True``, collect per-iteration debug metrics.
         summary_only: When ``True`` (and debug), emit compact summaries instead
             of full per-iteration lists.
 
     Returns:
-        A dict with ``bootstrap_value`` (top class fraction), ``all_bootstrap``
-        (per-class fractions), and the six ``bootstrap_*`` debug entries (each
-        ``None`` unless ``debug_mode``).
+        The payload dict built by :func:`_bootstrap_payload`.
     """
-    class_counts = {label: 0 for label in _BOOTSTRAP_CLASSES}
     debug = {key: [] for key in _BOOTSTRAP_DEBUG_KEYS} if debug_mode else None
 
-    def _record(classification):
-        if classification not in class_counts:
-            class_counts[classification] = 0
-        class_counts[classification] += 1
-
     if iterations <= 0:
-        fractions = {label: 0.0 for label in sorted(class_counts)}
-        return _bootstrap_payload(0.0, fractions, debug, summary_only)
+        return _bootstrap_payload(0.0, _bootstrap_fractions({}, 1), debug, summary_only)
+
+    class_counts = {}
+    dct_p_values = np.ones(iterations, dtype=np.float64)
+    ks_p_values = np.full(iterations, np.nan, dtype=np.float64)
+    directions = np.zeros(iterations, dtype=np.int8)
+    studentized = np.full(iterations, np.nan, dtype=np.float64)
 
     valid_count = len(observations)
-    if valid_count == 0:
-        for _ in range(iterations):
-            if debug_mode:
-                metrics = _iteration_full(
-                    0, 0, [], [], alpha_dct, alpha_ks, discordant_test,
-                    permutation_kwargs, permutation_rng,
-                )
-                _record(metrics[0])
-                _append_iteration_debug(debug, metrics[1:])
-            else:
-                _record("ambiguous")
-        fractions = {
-            label: class_counts.get(label, 0) / float(iterations)
-            for label in sorted(class_counts)
-        }
-        return _bootstrap_payload(
-            max(fractions.values()), fractions, debug, summary_only
+    if valid_count:
+        topo_codes = np.fromiter(
+            (_TOPOLOGY_CODE[topology] for topology, _, _ in observations),
+            dtype=np.int64,
+            count=valid_count,
+        )
+        heights = np.fromiter(
+            (height for _, height, _ in observations),
+            dtype=np.float64,
+            count=valid_count,
         )
 
-    topo_codes = np.fromiter(
-        (_TOPOLOGY_CODE[topology] for topology, _, _ in observations),
-        dtype=np.int64,
-        count=valid_count,
-    )
-    heights = np.fromiter(
-        (height for _, height, _ in observations),
-        dtype=np.float64,
-        count=valid_count,
-    )
+    for index in range(iterations):
+        if valid_count:
+            row = rng.integers(0, valid_count, size=valid_count)
+            sampled_topo = topo_codes[row]
+            sampled_heights = heights[row]
 
-    for _ in range(iterations):
-        row = rng.integers(0, valid_count, size=valid_count)
-        sampled_topo = topo_codes[row]
-        sampled_heights = heights[row]
+            counts = np.bincount(sampled_topo, minlength=3)
+            n_bc = int(counts[1])
+            n_ac = int(counts[2])
+            if n_bc >= n_ac:
+                dis1_code, n_dis1, n_dis2 = 1, n_bc, n_ac
+            else:
+                dis1_code, n_dis1, n_dis2 = 2, n_ac, n_bc
 
-        counts = np.bincount(sampled_topo, minlength=3)
-        n_bc = int(counts[1])
-        n_ac = int(counts[2])
-        if n_bc >= n_ac:
-            dis1_code, n_dis1, n_dis2 = 1, n_bc, n_ac
+            con_heights = sampled_heights[sampled_topo == 0].tolist()
+            dis1_heights = sampled_heights[sampled_topo == dis1_code].tolist()
         else:
-            dis1_code, n_dis1, n_dis2 = 2, n_ac, n_bc
+            n_dis1 = n_dis2 = 0
+            con_heights = dis1_heights = []
 
-        con_heights = sampled_heights[sampled_topo == 0].tolist()
-        dis1_heights = sampled_heights[sampled_topo == dis1_code].tolist()
+        dct_p_value, ks_p_value, direction, metrics = _iteration_outcome(
+            n_dis1,
+            n_dis2,
+            con_heights,
+            dis1_heights,
+            alpha_dct,
+            alpha_ks,
+            discordant_test,
+            permutation_kwargs,
+            permutation_rng,
+            policy,
+            collect_metrics=debug_mode,
+        )
 
-        if debug_mode:
-            metrics = _iteration_full(
-                n_dis1,
-                n_dis2,
-                con_heights,
-                dis1_heights,
-                alpha_dct,
-                alpha_ks,
-                discordant_test,
-                permutation_kwargs,
-                permutation_rng,
+        studentized[index] = studentized_mean_diff(con_heights, dis1_heights)
+
+        if policy.inline:
+            classification = _inline_iteration_classification(
+                dct_p_value, ks_p_value, direction, policy, alpha_dct, alpha_ks
             )
-            _record(metrics[0])
-            _append_iteration_debug(debug, metrics[1:])
+            class_counts[classification] = class_counts.get(classification, 0) + 1
         else:
-            _record(
-                _iteration_classification(
-                    n_dis1,
-                    n_dis2,
-                    con_heights,
-                    dis1_heights,
-                    alpha_dct,
-                    alpha_ks,
-                    discordant_test,
-                    permutation_kwargs,
-                    permutation_rng,
-                )
-            )
+            dct_p_values[index] = dct_p_value
+            if ks_p_value is not None:
+                ks_p_values[index] = ks_p_value
+            directions[index] = _DIRECTION_CODES.get(direction, _DIRECTION_SKIPPED)
 
-    fractions = {
-        label: class_counts.get(label, 0) / float(iterations)
-        for label in sorted(class_counts)
-    }
-    top_fraction = max(fractions.values()) if fractions else 0.0
+        if debug is not None:
+            _append_iteration_debug(debug, metrics)
 
-    return _bootstrap_payload(top_fraction, fractions, debug, summary_only)
+    studentized_ci = _studentized_percentile_interval(studentized, alpha_perm)
+
+    if policy.inline:
+        fractions = _bootstrap_fractions(class_counts, iterations)
+        return _bootstrap_payload(
+            max(fractions.values()),
+            fractions,
+            debug,
+            summary_only,
+            studentized_ci=studentized_ci,
+        )
+
+    return _bootstrap_payload(
+        None,
+        None,
+        debug,
+        summary_only,
+        deferred=DeferredBootstrapRecord(
+            dct_p_values=dct_p_values,
+            ks_p_values=ks_p_values,
+            directions=directions,
+        ),
+        studentized_ci=studentized_ci,
+    )
 
 
 def _finalize_triplet_analysis(
@@ -1596,11 +1773,13 @@ def _finalize_triplet_analysis(
     permutation_kwargs,
     bootstrap_options,
     triplet_seed,
+    p_value_correction,
+    family_size,
+    shape_diagnostics=False,
 ):
     """Run the base pipeline and bootstrap for one triplet's observations.
 
-    Shared core of :func:`analyze_triplet` and
-    :func:`analyze_triplet_from_observations`.
+    Shared core of the two public entry points.
 
     Args:
         triplet: The ``(A, B, C)`` triplet.
@@ -1613,6 +1792,9 @@ def _finalize_triplet_analysis(
         bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
             ``summary_only`` are read.
         triplet_seed: Optional base seed for deterministic resampling.
+        p_value_correction: The run's correction method.
+        family_size: Number of triplets in the run.
+        shape_diagnostics: Whether to describe each height group's shape.
 
     Returns:
         A ``TripletPipelineResult`` with uncorrected p-values and bootstrap
@@ -1622,9 +1804,9 @@ def _finalize_triplet_analysis(
     # child stream. That keeps the bootstrap resample sequence identical whether
     # or not the permutation test runs, and independent of how many resamples
     # any single adaptive test happens to draw.
-    point_seed, bootstrap_seed, bootstrap_perm_seed = _build_triplet_seed_sequence(
-        triplet_seed, triplet
-    ).spawn(3)
+    point_seed, bootstrap_seed, bootstrap_perm_seed, shape_seed = (
+        _build_triplet_seed_sequence(triplet_seed, triplet).spawn(4)
+    )
 
     permutation_kwargs = dict(permutation_kwargs or {})
     base_result = _run_triplet_pipeline_from_observations(
@@ -1637,6 +1819,8 @@ def _finalize_triplet_analysis(
         rng=np.random.default_rng(point_seed),
         species_topology=TOPOLOGY_AB,
         species_tree_newick=species_tree_topology,
+        shape_diagnostics=shape_diagnostics,
+        shape_rng=np.random.default_rng(shape_seed),
     )
 
     options = dict(bootstrap_options or {})
@@ -1657,6 +1841,9 @@ def _finalize_triplet_analysis(
     )
     bootstrap_permutation_kwargs["min_resamples"] = scaled_min
     bootstrap_permutation_kwargs["max_resamples"] = scaled_max
+    # Equivalence and inconclusiveness classify a triplet the same way, so an
+    # iteration's vote never depends on which of the two it is.
+    bootstrap_permutation_kwargs["equivalence_test"] = False
 
     bootstrap_payload = _run_bootstrap_iterations(
         observations,
@@ -1667,6 +1854,8 @@ def _finalize_triplet_analysis(
         permutation_kwargs=bootstrap_permutation_kwargs,
         rng=np.random.default_rng(bootstrap_seed),
         permutation_rng=np.random.default_rng(bootstrap_perm_seed),
+        policy=_bootstrap_policy(p_value_correction, family_size),
+        alpha_perm=permutation_kwargs.get("alpha", DEFAULT_ALPHA_PERM),
         debug_mode=debug_mode,
         summary_only=summary_only,
     )
@@ -1678,10 +1867,14 @@ def _finalize_triplet_analysis(
             raw_heights, summary_only
         )
 
+    ci_low, ci_high = bootstrap_payload["studentized_ci"]
     return replace(
         base_result,
+        perm_stat_ci_low=ci_low,
+        perm_stat_ci_high=ci_high,
         bootstrap_value=bootstrap_payload["bootstrap_value"],
         all_bootstrap=bootstrap_payload["all_bootstrap"],
+        bootstrap_deferred=bootstrap_payload["deferred"],
         bootstrap_dct_stats=bootstrap_payload["bootstrap_dct_stats"],
         bootstrap_dct_p_value=bootstrap_payload["bootstrap_dct_p_value"],
         bootstrap_ks_stats=bootstrap_payload["bootstrap_ks_stats"],
@@ -1703,6 +1896,9 @@ def analyze_triplet_from_observations(
     permutation_kwargs=None,
     bootstrap_options=None,
     triplet_seed=None,
+    p_value_correction=DEFAULT_P_VALUE_CORRECTION,
+    family_size=1,
+    shape_diagnostics=False,
 ):
     """Analyze one triplet from precomputed observations.
 
@@ -1723,9 +1919,16 @@ def analyze_triplet_from_observations(
         bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
             ``summary_only`` are read.
         triplet_seed: Optional base seed for deterministic resampling.
+        p_value_correction: The run's correction method.
+        family_size: Number of triplets in the run, which sizes the bootstrap's
+            per-iteration testing families. Left at ``1`` this analyzes the
+            triplet as a family of one.
+        shape_diagnostics: Whether to describe each height group's shape.
 
     Returns:
-        A ``TripletPipelineResult`` with uncorrected p-values.
+        A ``TripletPipelineResult`` with uncorrected p-values. Under a
+        rank-based correction its bootstrap votes are still deferred, and
+        :func:`_apply_triplet_result_p_value_correction` fills them in.
     """
     species_tree_topology = _species_tree_topology_only_newick(species_subtree)
     return _finalize_triplet_analysis(
@@ -1738,6 +1941,9 @@ def analyze_triplet_from_observations(
         permutation_kwargs=permutation_kwargs,
         bootstrap_options=bootstrap_options,
         triplet_seed=triplet_seed,
+        p_value_correction=p_value_correction,
+        family_size=family_size,
+        shape_diagnostics=shape_diagnostics,
     )
 
 
@@ -1754,6 +1960,9 @@ def analyze_triplet(
     collect_summary_statistics=False,
     bootstrap_options=None,
     triplet_seed=None,
+    p_value_correction=DEFAULT_P_VALUE_CORRECTION,
+    family_size=1,
+    shape_diagnostics=False,
 ):
     """Analyze one triplet end-to-end from gene-subtree Newick strings.
 
@@ -1776,9 +1985,16 @@ def analyze_triplet(
         bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
             ``summary_only`` are read.
         triplet_seed: Optional base seed for deterministic resampling.
+        p_value_correction: The run's correction method.
+        family_size: Number of triplets in the run, which sizes the bootstrap's
+            per-iteration testing families. Left at ``1`` this analyzes the
+            triplet as a family of one.
+        shape_diagnostics: Whether to describe each height group's shape.
 
     Returns:
-        A ``TripletPipelineResult`` with uncorrected p-values.
+        A ``TripletPipelineResult`` with uncorrected p-values. Under a
+        rank-based correction its bootstrap votes are still deferred, and
+        :func:`_apply_triplet_result_p_value_correction` fills them in.
     """
     species_tree_topology = _species_tree_topology_only_newick(species_subtree)
     observations = _serialize_triplet_gene_trees(
@@ -1797,7 +2013,96 @@ def analyze_triplet(
         permutation_kwargs=permutation_kwargs,
         bootstrap_options=bootstrap_options,
         triplet_seed=triplet_seed,
+        p_value_correction=p_value_correction,
+        family_size=family_size,
+        shape_diagnostics=shape_diagnostics,
     )
+
+
+# Classification codes for the vectorized bootstrap tally, in the same order as
+# ``_BOOTSTRAP_CLASSES``.
+_CLASS_CODES = {label: code for code, label in enumerate(_BOOTSTRAP_CLASSES)}
+
+
+def _classification_codes(dct_significant, ks_significant, directions):
+    """Apply the classification cascade to whole arrays of gate outcomes.
+
+    The array form of :func:`_classify_introgression`; the two are pinned
+    against each other by the truth-table test.
+
+    Args:
+        dct_significant: Boolean array of DCT outcomes.
+        ks_significant: Boolean array of KS outcomes, aligned with it.
+        directions: Integer array of direction codes, aligned with both.
+
+    Returns:
+        An integer array of ``_CLASS_CODES`` values.
+    """
+    codes = np.full(dct_significant.shape, _CLASS_CODES["ambiguous"], dtype=np.int8)
+    both = dct_significant & ks_significant
+    codes[~dct_significant] = _CLASS_CODES["no_introgression"]
+    codes[dct_significant & ~ks_significant] = _CLASS_CODES["inflow_introgression"]
+    codes[both & (directions == _DIRECTION_GREATER)] = _CLASS_CODES[
+        "outflow_introgression"
+    ]
+    codes[both & (directions == _DIRECTION_LESS)] = _CLASS_CODES["ghost_introgression"]
+    return codes
+
+
+def _resolve_deferred_bootstrap(results, alpha_dct, alpha_ks, method):
+    """Correct the parked per-iteration bootstrap p-values and tally the votes.
+
+    Iteration ``i`` forms one testing family across triplets and is corrected as
+    a whole before any of its members is classified.
+
+    Args:
+        results: List of ``TripletPipelineResult`` objects.
+        alpha_dct: Significance threshold for the discordant count test.
+        alpha_ks: Significance threshold for the KS test.
+        method: Correction method.
+
+    Returns:
+        A dict mapping each deferred result's index to its ``all_bootstrap``
+        fractions, empty when nothing was deferred.
+    """
+    indices = [
+        idx for idx, result in enumerate(results) if result.bootstrap_deferred is not None
+    ]
+    if not indices:
+        return {}
+
+    records = [results[idx].bootstrap_deferred for idx in indices]
+    dct = np.stack([record.dct_p_values for record in records])
+    ks = np.stack([record.ks_p_values for record in records])
+    directions = np.stack([record.directions for record in records])
+    n_triplets, iterations = dct.shape
+
+    dct_significant = np.empty(dct.shape, dtype=bool)
+    ks_significant = np.zeros(ks.shape, dtype=bool)
+    for column in range(iterations):
+        dct_significant[:, column] = (
+            np.asarray(
+                _adjust_p_values(dct[:, column], method=method, alpha=alpha_dct)
+            )
+            <= alpha_dct
+        )
+        present = np.isfinite(ks[:, column])
+        if present.any():
+            adjusted = _adjust_p_values(
+                ks[present, column], method=method, alpha=alpha_ks
+            )
+            ks_significant[present, column] = np.asarray(adjusted) <= alpha_ks
+
+    codes = _classification_codes(dct_significant, ks_significant, directions)
+
+    resolved = {}
+    for position, idx in enumerate(indices):
+        counts = np.bincount(codes[position], minlength=len(_BOOTSTRAP_CLASSES))
+        resolved[idx] = _bootstrap_fractions(
+            {label: int(counts[code]) for label, code in _CLASS_CODES.items()},
+            iterations,
+        )
+    return resolved
 
 
 def _apply_triplet_result_p_value_correction(
@@ -1808,9 +2113,9 @@ def _apply_triplet_result_p_value_correction(
 ):
     """Apply run-wide p-value correction to DCT and KS p-values.
 
-    Correction is applied once across all triplets; each result's
-    classification and bootstrap value are recomputed from the corrected
-    significance.
+    Runs once across all triplets, recomputing each classification and bootstrap
+    value from the corrected significance, and resolves any deferred bootstrap
+    votes in the same pass.
 
     Args:
         results: List of ``TripletPipelineResult`` objects.
@@ -1823,6 +2128,10 @@ def _apply_triplet_result_p_value_correction(
     """
     if not results:
         return results
+
+    resolved_bootstrap = _resolve_deferred_bootstrap(
+        results, alpha_dct, alpha_ks, method
+    )
 
     dct_p_values = [result.dct_p_value for result in results]
     adjusted_dct = _adjust_p_values(
@@ -1858,18 +2167,18 @@ def _apply_triplet_result_p_value_correction(
 
         # The permutation p-values are corrected inside the test, across the
         # one-tailed family, so they take no part in this run-wide pass. Its
-        # stored decision is replayed here instead of being recomputed, which
-        # is safe because correction only ever raises p-values: a triplet that
-        # is DCT+KS significant after correction was already significant
-        # before it, so its direction test has necessarily run.
+        # stored decision is replayed rather than recomputed: the point estimate
+        # runs the direction test for every triplet, so a decision is always on
+        # hand no matter which way correction moves the two gates.
         classification, decision_gate = _classify_introgression(
             dct_significant,
             ks_significant,
             result.perm_decision,
         )
+        all_bootstrap = resolved_bootstrap.get(idx, result.all_bootstrap)
         bootstrap_value = result.bootstrap_value
-        if result.all_bootstrap is not None:
-            bootstrap_value = float(result.all_bootstrap.get(classification, 0.0))
+        if all_bootstrap is not None:
+            bootstrap_value = float(all_bootstrap.get(classification, 0.0))
 
         adjusted_results.append(
             replace(
@@ -1880,7 +2189,9 @@ def _apply_triplet_result_p_value_correction(
                 ks_significant=ks_significant,
                 classification=classification,
                 decision_gate=decision_gate,
+                all_bootstrap=all_bootstrap,
                 bootstrap_value=bootstrap_value,
+                bootstrap_deferred=None,
             )
         )
 
@@ -1919,6 +2230,49 @@ def _format_all_bootstrap(value):
     return ",".join(f"{k}={v:.12g}" for k, v in sorted(value.items()))
 
 
+def _format_shape_values(shape_statistics, columns):
+    """Render one triplet's shape diagnostics in column order.
+
+    Args:
+        shape_statistics: The result's shape dict, or ``None``.
+        columns: The ``<group>_<field>`` names, in output order.
+
+    Returns:
+        A list of strings; empty entries where a group was too small to
+        describe, and ``n_modes`` rendered as an integer.
+    """
+    statistics = shape_statistics or {}
+    values = []
+    for column in columns:
+        value = statistics.get(column)
+        if value is None:
+            values.append("")
+        elif column.endswith("_n_modes"):
+            values.append(str(int(value)))
+        else:
+            values.append(f"{float(value):.12g}")
+    return values
+
+
+def _rename_shape_groups(shape_statistics):
+    """Re-key one triplet's shape diagnostics onto the summary group names.
+
+    Args:
+        shape_statistics: The result's shape dict keyed by the short group
+            prefixes, or ``None``.
+
+    Returns:
+        The same values keyed by :data:`SHAPE_SUMMARY_GROUP_LABELS`.
+    """
+    if not shape_statistics:
+        return {}
+    renamed = {}
+    for short, full in zip(SHAPE_GROUP_LABELS, SHAPE_SUMMARY_GROUP_LABELS):
+        for field in SHAPE_FIELD_NAMES:
+            renamed[f"{full}_{field}"] = shape_statistics.get(f"{short}_{field}")
+    return renamed
+
+
 def write_pipeline_results(
     results,
     output_filepath,
@@ -1933,8 +2287,8 @@ def write_pipeline_results(
         results: List of ``TripletPipelineResult`` objects.
         output_filepath: Destination TSV path.
         dct_method: Discordant test method, used to name the statistic column.
-        p_value_correction: Correction method, used to name the corrected
-            columns.
+        p_value_correction: Correction method; names the corrected columns, and
+            omits them under ``no``.
         bootstrap: Whether to include the bootstrap columns.
         bootstrap_debug_mode: Whether to also include the bootstrap-debug
             columns (only meaningful when ``bootstrap`` is ``True``).
@@ -1959,6 +2313,12 @@ def write_pipeline_results(
     else:
         dct_column = "dct_chi_stats"
 
+    # Under ``no`` a corrected column would repeat its raw neighbour exactly.
+    corrected = p_value_correction != "no"
+    # Read off the results rather than re-plumbed, so the columns cannot
+    # disagree with what the run actually measured.
+    shape = any(result.shape_statistics is not None for result in results)
+    shape_columns = shape_column_names()
     dct_corrected_column = f"dct_p_val_{p_value_correction}_corr"
     ks_corrected_column = f"ks_p_val_{p_value_correction}_corr"
 
@@ -1973,21 +2333,29 @@ def write_pipeline_results(
         "most_frequent_matches_concordant",
         dct_column,
         "dct_p_value",
-        dct_corrected_column,
+        *([dct_corrected_column] if corrected else []),
         "dct_significant",
         "ks_statistic",
         "ks_p_value",
-        ks_corrected_column,
+        *([ks_corrected_column] if corrected else []),
         "ks_significant",
         "perm_statistic",
         "perm_p_greater",
         "perm_p_less",
-        "perm_p_two_sided",
-        f"perm_p_greater_{p_value_correction}_corr",
-        f"perm_p_less_{p_value_correction}_corr",
+        *(
+            [
+                f"perm_p_greater_{p_value_correction}_corr",
+                f"perm_p_less_{p_value_correction}_corr",
+            ]
+            if corrected
+            else []
+        ),
+        "perm_p_tost",
+        "perm_stat_ci_low",
+        "perm_stat_ci_high",
         "perm_n_resamples",
         "perm_converged",
-        "perm_null_skewed",
+        "perm_null_skew",
         "perm_note",
     ]
 
@@ -1998,6 +2366,7 @@ def write_pipeline_results(
             "classification",
             "inference",
             "analyzed_trees",
+            *(shape_columns if shape else []),
         ]
     )
 
@@ -2042,23 +2411,37 @@ def write_pipeline_results(
                 str(result.most_frequent_matches_concordant),
                 f"{result.dct_statistic:.12g}",
                 f"{result.dct_p_value:.12g}",
-                f"{result.dct_p_value_corrected:.12g}",
+                *(
+                    [f"{result.dct_p_value_corrected:.12g}"]
+                    if corrected
+                    else []
+                ),
                 str(result.dct_significant),
                 "" if result.ks_statistic is None else f"{result.ks_statistic:.12g}",
                 "" if result.ks_p_value is None else f"{result.ks_p_value:.12g}",
-                ""
-                if result.ks_p_value_corrected is None
-                else f"{result.ks_p_value_corrected:.12g}",
+                *(
+                    [_format_optional_float(result.ks_p_value_corrected)]
+                    if corrected
+                    else []
+                ),
                 "" if result.ks_significant is None else str(result.ks_significant),
                 _format_optional_float(result.perm_statistic),
                 _format_optional_float(result.perm_p_greater),
                 _format_optional_float(result.perm_p_less),
-                _format_optional_float(result.perm_p_two_sided),
-                _format_optional_float(result.perm_p_greater_corrected),
-                _format_optional_float(result.perm_p_less_corrected),
+                *(
+                    [
+                        _format_optional_float(result.perm_p_greater_corrected),
+                        _format_optional_float(result.perm_p_less_corrected),
+                    ]
+                    if corrected
+                    else []
+                ),
+                _format_optional_float(result.perm_p_tost),
+                _format_optional_float(result.perm_stat_ci_low),
+                _format_optional_float(result.perm_stat_ci_high),
                 "" if result.perm_n_resamples is None else str(result.perm_n_resamples),
                 "" if result.perm_converged is None else str(result.perm_converged),
-                "" if result.perm_null_skewed is None else str(result.perm_null_skewed),
+                _format_optional_float(result.perm_null_skew),
                 result.perm_note or "",
             ]
 
@@ -2069,6 +2452,11 @@ def write_pipeline_results(
                     result.classification,
                     inference,
                     str(result.analyzed_trees),
+                    *(
+                        _format_shape_values(result.shape_statistics, shape_columns)
+                        if shape
+                        else []
+                    ),
                 ]
             )
 
@@ -2103,7 +2491,8 @@ def write_summary_statistics_tsv(results, output_filepath, bootstrap=DEFAULT_BOO
     """Write per-triplet topology/metric summary statistics to a TSV file.
 
     Emits the identity fields, the 63 topology/metric/statistic columns, the
-    classification, and (when bootstrap is enabled) the bootstrap value.
+    shape diagnostics when the run measured them, the classification, and (when
+    bootstrap is enabled) the bootstrap value.
 
     Args:
         results: List of ``TripletPipelineResult`` objects.
@@ -2111,6 +2500,10 @@ def write_summary_statistics_tsv(results, output_filepath, bootstrap=DEFAULT_BOO
         bootstrap: Whether to include the ``bootstrap_value`` column.
     """
     include_bootstrap_value = bool(bootstrap)
+    # Same source of truth as the results TSV: the columns follow what the run
+    # measured, under this file's own full-word group names.
+    shape = any(result.shape_statistics is not None for result in results)
+    shape_columns = shape_column_names(SHAPE_SUMMARY_GROUP_LABELS)
 
     header = [
         "triplet",
@@ -2122,6 +2515,8 @@ def write_summary_statistics_tsv(results, output_filepath, bootstrap=DEFAULT_BOO
         "n_dis2",
     ]
     header.extend(_summary_statistics_column_names())
+    if shape:
+        header.extend(shape_columns)
     header.append("classification")
     if include_bootstrap_value:
         header.append("bootstrap_value")
@@ -2146,6 +2541,13 @@ def write_summary_statistics_tsv(results, output_filepath, bootstrap=DEFAULT_BOO
             for column_name in _summary_statistics_column_names():
                 value = topology_metric_statistics.get(column_name)
                 row.append("" if value is None else f"{value:.12g}")
+
+            if shape:
+                row.extend(
+                    _format_shape_values(
+                        _rename_shape_groups(result.shape_statistics), shape_columns
+                    )
+                )
 
             row.append(result.classification)
             if include_bootstrap_value:

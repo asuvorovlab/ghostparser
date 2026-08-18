@@ -1,15 +1,8 @@
 """Structural preflight checks for species and gene trees.
 
-The orchestrator raises ``ValueError`` from deep inside triplet extraction and
-inference when the input trees cannot support the requested analysis — a gene
-tree missing every outgroup label, a polytomous triplet with no resolvable
-rooted sister pair, a triplet-filter line naming taxa the species tree does not
-contain. Those failures are cheap to detect up front and expensive to hit
-mid-run, so this module reproduces the same structural logic the engine uses and
-reports every problem it finds at once.
-
-The checks are structural only: they say whether the data can be processed, not
-whether the result will be biologically meaningful.
+Reproduces the engine's structural logic and reports every problem at once,
+rather than raising on the first from deep inside a run. The checks say whether
+the data can be processed, not whether the result is biologically meaningful.
 """
 
 from collections import defaultdict

@@ -1,13 +1,13 @@
 """Orchestrator coordinator: run_orchestrator drives cleaning, triplet setup, the fused streaming engine, correction, TSV writing, and consolidation end-to-end with per-stage timing."""
 
 import time
+from collections import Counter
 from pathlib import Path
 
 import dendropy
 
-from ghostparser.introgression_mapper import generate_introgression_maps
-
 from .config import prepare_output_directory, resolve_config
+from .consolidation import generate_introgression_maps
 from .inference import write_pipeline_results, write_summary_statistics_tsv
 from .preflight import run_preflight_data_check
 from .stream import resolve_parallelization_mode, stream_triplet_results
@@ -63,27 +63,13 @@ def _log_stage_timing(metrics, wall_time, cpu_time):
     metrics.log(f"  Time taken (CPU): {cpu_time:.2f}s")
 
 
-def _format_metric_float(value):
-    """Format an optional float for the metrics log.
-
-    Args:
-        value: A float, or ``None``.
-
-    Returns:
-        The value at 6 significant digits, or ``n/a`` for ``None``.
-    """
-    return "n/a" if value is None else f"{value:.6g}"
-
-
 def _log_permutation_diagnostics(metrics, results):
-    """Report permutation-test convergence and decision-rule agreement.
+    """Report permutation-test coverage and convergence.
 
-    Triplets whose adaptive run exhausted the resample budget still produce a
-    decision, but that decision sits closer to the Monte Carlo error than the
-    confidence-interval criterion is willing to certify, so they are named
-    individually. The same is done for any triplet where the two one-tailed rule
-    and the two-tailed-gate-then-sign rule disagree, which should not happen and
-    signals that the inputs or the accumulators need looking at.
+    Every category is reported as a count rather than named triplet by triplet:
+    on a real run these lists reach the hundreds, and the per-triplet detail is
+    already in the results TSV under ``n_con``/``n_dis1``, ``perm_note``,
+    ``perm_converged``, and the ``perm_p_*`` columns.
 
     Args:
         metrics: The ``MetricsLogger`` to write to.
@@ -103,7 +89,11 @@ def _log_permutation_diagnostics(metrics, results):
         if result.perm_n_resamples is None and result.perm_note is None
     ]
     unconverged = [result for result in ran if result.perm_converged is False]
-    skewed = [result for result in ran if result.perm_null_skewed]
+    skews = [
+        abs(result.perm_null_skew)
+        for result in ran
+        if result.perm_null_skew is not None
+    ]
 
     metrics.log(f"  Permutation tests run: {len(ran)}")
     metrics.log(
@@ -113,37 +103,36 @@ def _log_permutation_diagnostics(metrics, results):
     if no_comparison:
         metrics.log(
             f"  ⚠ No concordant/discordant1 heights to compare for "
-            f"{len(no_comparison)} triplet(s):"
+            f"{len(no_comparison)} triplet(s); see the n_con and n_dis1 columns."
         )
-        for result in no_comparison:
-            metrics.log(f"      {','.join(result.triplet)}")
     if guarded:
-        metrics.log(
-            f"  ⚠ Permutation test guarded (not resampled) for {len(guarded)} triplet(s):"
+        # Which guard fired is worth keeping, since the four mean different
+        # things; which triplet fired it is in the perm_note column.
+        by_note = Counter(result.perm_note for result in guarded)
+        reasons = ", ".join(
+            f"{note}={count}" for note, count in sorted(by_note.items())
         )
-        for result in guarded:
-            metrics.log(f"      {','.join(result.triplet)}: {result.perm_note}")
+        metrics.log(
+            f"  ⚠ Permutation test guarded (not resampled) for {len(guarded)} "
+            f"triplet(s): {reasons}"
+        )
     if unconverged:
         metrics.log(
             f"  ⚠ Permutation test hit max_resamples without the confidence "
-            f"interval excluding alpha for {len(unconverged)} triplet(s):"
+            f"interval excluding alpha for {len(unconverged)} triplet(s); "
+            f"see the perm_converged and perm_p_* columns."
         )
-        for result in unconverged:
-            metrics.log(
-                f"      {','.join(result.triplet)}: "
-                f"p_greater={_format_metric_float(result.perm_p_greater)}, "
-                f"p_less={_format_metric_float(result.perm_p_less)}, "
-                f"resamples={result.perm_n_resamples}"
-            )
-    if skewed:
-        # Reported as a count rather than per triplet: tree heights are bounded
-        # below by zero and routinely right-skewed, so most triplets in a real
-        # dataset land here. It is context for reading the two-tailed column,
-        # not a warning to act on -- the per-triplet flag is in the results TSV.
+    if skews:
+        # A distribution summary rather than a count: tree heights are bounded
+        # below by zero and routinely right-skewed, so some asymmetry is normal
+        # and only its magnitude is informative. Per-triplet values are in the
+        # perm_null_skew column.
+        strong = sum(1 for value in skews if value >= 0.5)
         metrics.log(
-            f"  Asymmetric permutation null for {len(skewed)} of {len(ran)} "
-            f"triplet(s); directional decisions are unaffected "
-            f"(see the perm_null_skewed column)."
+            f"  Permutation null skewness: median |skew| "
+            f"{sorted(skews)[len(skews) // 2]:.2f}, max {max(skews):.2f}; "
+            f"{strong} of {len(skews)} triplet(s) at or above 0.5 "
+            f"(see the perm_null_skew column)."
         )
 
 
@@ -243,6 +232,7 @@ def run_orchestrator(config):
         metrics.log(f"Bootstrap iterations: {config['bootstrap_iterations']}")
         metrics.log(f"Bootstrap debug mode: {config['bootstrap_debug_mode']}")
         metrics.log(f"Generate summary statistics TSV: {config['generate_summary_stats']}")
+        metrics.log(f"Shape diagnostics: {config['shape_diagnostics']}")
         metrics.log(f"Parallelization mode: {config['parallelization_mode']}")
         metrics.log(f"Consolidation enabled: {config['consolidation']}")
         metrics.log(f"Support threshold: {support_threshold}")
@@ -414,6 +404,7 @@ def run_orchestrator(config):
                     "summary_only": config["bootstrap_summary_only"],
                 },
                 "triplet_seed": config["bootstrap_seed"],
+                "shape_diagnostics": config["shape_diagnostics"],
             }
 
             metrics.log("✓ Starting fused extraction + inference stage...")
