@@ -673,6 +673,22 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
   value replaces its default. Purpose: precedence, plus the `model` block
   flattening — a key given there must surface at the top level of the resolved
   config, including one that also has a default.
+- `test_ml_config_normalizes_estimator_passthrough_values` — Inputs
+  (parametrized over 12 cases): `model.max_features` as `null`, the strings
+  `None`/`none`/`null`, `log2`, `3` and `0.5`; `model.class_weight` as `null`,
+  `none`, `balanced`, a mapping, and a list of mappings. Expected outputs: every
+  null spelling resolves to `None` and every other form passes through
+  unchanged. Purpose: YAML reads the bare words `None`/`none` as strings, so
+  without this they reach scikit-learn as literal text and are rejected there
+  instead of in config.
+- `test_ml_config_rejects_invalid_estimator_values` — Inputs (parametrized over
+  7 cases): `max_features` as `auto`, `sqrt2`, `0`, `1.5` and `true`;
+  `class_weight` as `nope` and `5`. Expected outputs: `ConfigError` whose
+  message names the dotted config location, the received value, and the
+  accepted forms — `auto` gets its own message saying scikit-learn removed it.
+  Purpose: the failure has to name the config key the user wrote, not surface
+  as a bare estimator error at fit time. `true` also pins that a bool is
+  rejected rather than passing the `int` check.
 
 ### tests/test_ml_utils.py
 
@@ -684,6 +700,14 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 - `test_rows_to_matrix_rejects_string_features` — Inputs: a string column
   exceeding the cardinality limit. Expected outputs: an error rather than an
   invented ordering.
+- `test_row_normalize_confusion_matrix_turns_counts_into_per_class_fractions` —
+  Inputs: a 3x3 count matrix `[[3, 1, 0], [0, 0, 0], [1, 1, 2]]` whose middle
+  true class has no samples. Expected outputs: cells become
+  `[[0.75, 0.25, 0], [0, 0, 0], [0.25, 0.25, 0.5]]`, every value lies in
+  `[0, 1]`, and the row sums are `1, 0, 1`. Purpose: the 64-class
+  confusion-matrix plot is drawn on a fixed 0-1 scale, so the normalization has
+  to put populated rows on a common scale and leave an empty class at zero — the
+  value the plot masks — instead of dividing by zero.
 
 ### tests/test_ml_random_forest.py
 
@@ -704,22 +728,111 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 ### tests/test_ml_hyper_tune.py
 
 - `test_load_hyper_tune_config_accepts_hyperparameter_tuning_section` — Inputs: a
-  tuning config. Expected outputs: the section loads.
+  tuning config with `use_wandb: false`. Expected outputs: the section loads and
+  `use_wandb` resolves to `False`.
 - `test_load_hyper_tune_config_fills_model_defaults` — Inputs (parametrized):
-  a tuning block omitting model parameters, with `wandb_detailed_payloads`
-  absent and set to `true`. Expected outputs: trainer defaults are filled in and
-  the flag follows what was written. Purpose: defaults and explicit values both
-  resolve out of the nested `hyperparameter_tuning` block.
+  a tuning block omitting model parameters, over `use_wandb` false/true and
+  `wandb_detailed_payloads` absent or `true`. Expected outputs: trainer defaults
+  are filled in and both flags follow what was written. Purpose: defaults and
+  explicit values both resolve out of the nested `hyperparameter_tuning` block.
+- `test_load_hyper_tune_config_rejects_invalid_wandb_choice` — Inputs
+  (parametrized): a tuning block with `use_wandb` missing, with `use_wandb` set
+  to the string `"yes"`, and with `wandb_detailed_payloads: true` alongside
+  `use_wandb: false`. Expected outputs: `ConfigError` in each case. Purpose:
+  `use_wandb` carries no default, so it has to be spelled out as a boolean, and
+  it gates the detailed-payload flag rather than letting it be silently ignored.
+- `test_shipped_tuning_sample_configs_resolve` — Inputs (parametrized):
+  `sample_configs/hyperparameter_tuning_random_forest.yaml` and
+  `sample_configs/hyperparameter_tuning_multi_knn.json`. Expected outputs: both
+  load, resolve to their stated model, report `use_wandb` and
+  `wandb_detailed_payloads` as `False`, and use only search-space keys their
+  model supports. Purpose: `use_wandb` has no default, so a successful load
+  proves the shipped samples spell out the required key in both config formats
+  and have not drifted out of step with the validator.
 - `test_load_hyper_tune_config_rejects_evaluation_section` — Inputs: a tuning
   config containing `evaluation`. Expected outputs: `ConfigError`.
 - `test_load_hyper_tune_config_requires_hyperparameter_tuning_section` — Inputs:
   a config without the section. Expected outputs: `ConfigError`.
+- `test_tune_hyperparameters_requires_explicit_use_wandb` — Inputs: a tuning
+  namespace with the `use_wandb` attribute deleted. Expected outputs:
+  `ConfigError`. Purpose: the programmatic entry point enforces the same
+  deliberate choice as the config loader.
 - `test_tune_hyperparameters_grid_search_smoke` /
   `test_tune_hyperparameters_random_search_smoke` — Inputs:
-  `summary_statistics_tsv_tuning` with each search method. Expected outputs: the
-  search completes, `model_name`/`search_method` echo the request, the candidate
-  count matches the search space (2 for the grid, `n_iter=1` for the random
-  search), and the best-model pickle and results JSON are written.
+  `summary_statistics_tsv_tuning` with each search method and `use_wandb=False`.
+  Expected outputs: the search completes, `model_name`/`search_method` echo the
+  request, `use_wandb` echoes to the results payload, the candidate count matches
+  the search space (2 for the grid, `n_iter=1` for the random search), the
+  best-model pickle and results JSON are written, and no `wandb/` directory is
+  created.
+- `test_tune_hyperparameters_writes_local_navigation_artifacts` — Inputs:
+  `summary_statistics_tsv_tuning`, grid search, `use_wandb=False`, `top_k=3`.
+  Expected outputs: `hyper_tune_parameter_marginals.tsv` and
+  `hyper_tune_search_report.png` exist and the plot path is returned; the ranked
+  candidate TSV carries `rank`, `is_best`, `cv_score` and `elapsed_seconds`; the
+  marginals TSV header matches the documented column order; the text report
+  contains the search-space, top-candidate, per-parameter, guidance and artifact
+  sections and records W&B as disabled; and the results JSON carries
+  `parameter_marginals`, `artifact_paths`, and one `parameter_influence` entry
+  per search-space key. Purpose: with W&B off, the local artifacts are the only
+  way to navigate a search, so their file and column contract is pinned.
+- `test_tune_hyperparameters_routes_bulk_artifacts_to_wandb` — Inputs:
+  `summary_statistics_tsv_tuning`, grid search, `use_wandb=True`, with
+  `_import_wandb` patched to a stub module. Expected outputs: the output
+  directory holds `hyper_tune_best_model.pkl`, `hyper_tune_results.txt` and
+  `hyper_tune_search_report.png` but none of `hyper_tune_results.json`,
+  `hyper_tune_results.tsv`, `hyper_tune_parameter_marginals.tsv` or
+  `predictions.tsv`; the returned paths for those four are `None`;
+  `artifact_paths` names only the three written files; the stub received the
+  `tables/ranked_candidates`, `tables/parameter_marginals` and
+  `tables/predictions` log payloads; the run summary carries
+  `bulk_artifacts_written_locally` false and a `results_json` blob that parses
+  back to the full payload; and the text report records W&B as enabled and
+  points at the run for the rest. Purpose: turning W&B on has to move the bulk
+  outputs rather than duplicate them, and nothing may be silently dropped.
+- `test_compute_parameter_marginals_summarizes_each_value` — Inputs
+  (parametrized over `max` and `min`): four candidates over
+  `n_estimators` in `{5, 10}` with scores `0.7/0.4` and `0.9/0.6`, ranked in the
+  objective's direction. Expected outputs: values are ranked against each other
+  in that direction, the winner's `best_score` is `0.9` under `max` and `0.4`
+  under `min`, each value counts 2 candidates and reaches `best_rank` 1, and the
+  winner is flagged `upper_bound` / `lower_bound` respectively while the runner-up
+  carries no flag. Purpose: the marginal summary drives the guidance block, so
+  the direction handling and the bound flag are checked in both directions.
+- `test_parameter_influence_ranks_by_best_score_spread` — Inputs: four candidates
+  crossing `n_estimators` and `max_depth` with scores `0.9/0.7/0.6/0.4`. Expected
+  outputs: `max_depth` ranks first with a best- and mean-score spread of `0.3`,
+  ahead of `n_estimators` at `0.2`. Purpose: the influence ordering tells a user
+  which dimension to keep searching.
+- `test_search_space_guidance_flags_a_dimension_with_no_effect` — Inputs: two
+  candidates differing only in `max_features`, both scoring `0.8`. Expected
+  outputs: the guidance reports a score spread of zero and names `max_features`
+  as having no effect on the objective. Purpose: an inert search dimension is
+  the finding a user most needs called out.
+- `test_create_run_logger_routes_on_the_use_wandb_choice` — Inputs
+  (parametrized): `use_wandb` false and true, with `_import_wandb` patched to a
+  stub module. Expected outputs: with `false` the logger reports
+  `enabled is False`, forwards nothing, and creates no `wandb/` directory; with
+  `true` it forwards the log payload, writes the run summary, finishes the run,
+  and creates the directory. Purpose: one config flag is the only thing that
+  decides whether the run touches W&B.
+- `test_import_wandb_raises_config_error_when_unavailable` — Inputs: `wandb`
+  patched to raise `ModuleNotFoundError` on import. Expected outputs:
+  `ConfigError` whose message names `use_wandb: false`. Purpose: a missing
+  optional dependency surfaces as an actionable config error rather than an
+  import traceback.
+- `test_load_hyper_tune_config_normalizes_search_space_values` — Inputs
+  (parametrized): `search_space.max_features` as the list
+  `["sqrt", "none", null, 4]` and as the lone value `"None"`. Expected outputs:
+  `["sqrt", None, None, 4]` and `None` respectively. Purpose: search-space
+  candidates reach the estimator one at a time, so they need the same per-value
+  rules as the `model` block, and the container shape a user wrote (list or
+  scalar) has to survive normalization.
+- `test_load_hyper_tune_config_rejects_invalid_search_space_value` — Inputs:
+  `search_space.max_features: ["sqrt", "auto"]`. Expected outputs: `ConfigError`
+  naming `hyperparameter_tuning.search_space.max_features` and `'auto'`.
+  Purpose: one bad candidate among valid ones is caught before the search
+  starts, rather than partway through as the grid reaches it.
 
 ## Parity Tests (`@pytest.mark.parity`)
 

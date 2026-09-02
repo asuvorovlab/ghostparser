@@ -1367,3 +1367,51 @@ config defaults, and their inputs are the fixtures described in
 - **KNN neighbor capping** — `n_neighbors` cannot exceed the number of training
   samples, so the builder clamps it and the metrics report states the effective
   value.
+- **`max_features` / `class_weight` spellings** — the accepted set is read off
+  scikit-learn's own parameter constraint: `max_features` takes `'sqrt'`,
+  `'log2'`, an `int >= 1`, a `float` in `(0.0, 1.0]`, or `None`; `class_weight`
+  takes `'balanced'`, `'balanced_subsample'`, a dict, a list of dicts, or
+  `None`. The null spellings under test come from YAML's resolution rules: only
+  `null`, `~` and an empty value parse as null, so `None` and `none` arrive as
+  the strings `'None'` and `'none'` and are mapped back. `'auto'` is expected to
+  fail because scikit-learn removed it in 1.3. `true` is expected to fail
+  because `bool` is a subclass of `int` in Python and would otherwise satisfy
+  the `int >= 1` branch as the value `1`. The rejected numerics `0` and `1.5`
+  sit just outside the `int >= 1` and `(0.0, 1.0]` bounds respectively.
+- **Confusion-matrix row normalization** — the input counts are
+  `[[3, 1, 0], [0, 0, 0], [1, 1, 2]]`. Row totals are `4`, `0` and `4`. Rows 0
+  and 2 divide through by `4`, giving `[0.75, 0.25, 0]` and
+  `[0.25, 0.25, 0.5]`; row 1 has a zero total, so the `where=row_totals > 0`
+  guard leaves it at the `[0, 0, 0]` the output buffer was initialized with
+  rather than producing `nan`. That is also why the row sums come out `1, 0, 1`:
+  a class with no test samples contributes nothing, and the plot masks the whole
+  row.
+- **W&B artifact routing** — the expected split is read straight off the
+  `write_bulk_artifacts = not use_wandb` switch: the model pickle, the plaintext
+  report and the search plot are written unconditionally, while the results
+  JSON, ranked-candidate TSV, marginals TSV and predictions TSV sit behind the
+  switch and are logged as `tables/*` payloads plus the `results_json` run
+  summary in the other arm. `artifact_paths` is assembled from the same switch,
+  so the three unconditional entries are exactly what it holds under
+  `use_wandb: true`.
+- **Hyperparameter marginals** — four candidates cross a single parameter
+  `n_estimators`, with scores `(5, 0.7)`, `(5, 0.4)`, `(10, 0.9)`, `(10, 0.6)`;
+  ranks 1-4 are assigned by sorting on score in the objective's direction. Under
+  `max` the ordering is `0.9, 0.7, 0.6, 0.4`, so `n_estimators=10` holds ranks 1
+  and 3: its `best_score` is `max(0.9, 0.6) = 0.9`, its `best_rank` is `1`, and
+  it takes `value_rank` 1 ahead of `n_estimators=5` (`best_score 0.7`, `best_rank
+  2`). Under `min` the ordering reverses to `0.4, 0.6, 0.7, 0.9`, so
+  `n_estimators=5` wins with `best_score = min(0.7, 0.4) = 0.4` at `best_rank`
+  1. Both values are numeric, so the searched range is `[5, 10]` and the winning
+  value is flagged `upper_bound` under `max` (10 is the largest tried) and
+  `lower_bound` under `min` (5 is the smallest); the flag is set only on the
+  `value_rank` 1 row, so the runner-up's is empty.
+- **Parameter influence** — the same four scores `0.9, 0.7, 0.6, 0.4` crossed
+  over `n_estimators` (10, 5, 10, 5) and `max_depth` (5, 5, 3, 3). Per-value best
+  scores are `n_estimators`: 10 → 0.9, 5 → 0.7, a spread of `0.2`; `max_depth`:
+  5 → 0.9, 3 → 0.6, a spread of `0.3`. Mean scores give the same ordering
+  (`n_estimators`: 0.75 vs 0.55 = 0.2; `max_depth`: 0.8 vs 0.5 = 0.3), so
+  `max_depth` sorts first on both. Sub-`1e-12` differences are flattened to an
+  exact `0.0` so a dimension whose values all score alike reports zero spread
+  rather than floating-point noise, which is what lets the guidance block call it
+  out as having no effect.

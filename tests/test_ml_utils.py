@@ -1,6 +1,10 @@
+import numpy as np
 import pytest
 
-from ghostparser.ml.ml_utils import rows_to_matrix
+from ghostparser.ml.ml_utils import (
+    row_normalize_confusion_matrix,
+    rows_to_matrix,
+)
 
 
 def test_rows_to_matrix_uses_numeric_features_and_excludes_target_column():
@@ -81,3 +85,28 @@ def test_rows_to_matrix_rejects_string_features():
         match="string-valued columns must have at most 7 distinct values",
     ):
         rows_to_matrix(rows, target_column="class")
+
+
+def test_row_normalize_confusion_matrix_turns_counts_into_per_class_fractions():
+    """Every populated row sums to 1; a true class with no samples stays zero."""
+    counts = [
+        [3, 1, 0],
+        [0, 0, 0],
+        [1, 1, 2],
+    ]
+
+    fractions = row_normalize_confusion_matrix(counts)
+
+    np.testing.assert_allclose(
+        fractions,
+        [
+            [0.75, 0.25, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.25, 0.25, 0.5],
+        ],
+    )
+    assert fractions.min() >= 0.0
+    assert fractions.max() <= 1.0
+    # Rows with samples normalize to 1; the empty row is left at 0 so the plot
+    # masks it rather than dividing by zero.
+    np.testing.assert_allclose(fractions.sum(axis=1), [1.0, 0.0, 1.0])
