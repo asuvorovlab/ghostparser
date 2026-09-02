@@ -8,4 +8,5 @@ PyYAML>=6.0
 matplotlib>=3.8
 seaborn>=0.13
 pytest>=7.0
+# Optional: only needed for hyperparameter_tuning.use_wandb: true
 wandb>=0.18
