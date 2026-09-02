@@ -15,7 +15,6 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-import wandb
 
 from ..config import (
     DEFAULT_OVERWRITE,
@@ -26,6 +25,7 @@ from ..config import (
 from . import ml_utils as shared
 from . import multi_knn as knn_module
 from . import random_forest as rf_module
+from . import tuning_report
 from .config import (
     DEFAULT_CLASS_WEIGHT,
     DEFAULT_KNN_ALGORITHM,
@@ -43,7 +43,16 @@ from .config import (
     DEFAULT_RANDOM_STATE,
     DEFAULT_TARGET_COLUMN,
     _load_raw_config,
+    normalize_class_weight,
+    normalize_max_features,
 )
+
+# Search-space values reach the estimator one candidate at a time, so the same
+# per-value rules the `model` block enforces have to run across each list here.
+SEARCH_VALUE_NORMALIZERS = {
+    "max_features": normalize_max_features,
+    "class_weight": normalize_class_weight,
+}
 
 DEFAULT_TUNER_MODEL = "random_forest"
 DEFAULT_SEARCH_METHOD = "grid"
@@ -116,6 +125,20 @@ def _log_progress(message: str) -> None:
     print(f"[hyper_tune] {message}", flush=True)
 
 
+def _import_wandb():
+    """Import Weights & Biases only when a run actually opted into it."""
+    try:
+        import wandb
+    except ImportError as exc:
+        raise ConfigError(
+            "hyperparameter_tuning.use_wandb is true but the 'wandb' package could "
+            "not be imported. Install it with 'pip install .[wandb]', or set "
+            "hyperparameter_tuning.use_wandb: false to run the tuner with local "
+            "plaintext, TSV, and plot reporting only."
+        ) from exc
+    return wandb
+
+
 def _get_wandb_project() -> str:
     value = os.getenv("WANDB_PROJECT")
     if value is None:
@@ -140,12 +163,93 @@ def _build_wandb_run_name(config: argparse.Namespace) -> str:
     )
 
 
-def _start_wandb_run(
+class _NullRunLogger:
+    """Run logger used when ``use_wandb`` is false; every call is a no-op."""
+
+    enabled = False
+    detailed_payloads = False
+
+    def log(self, payload: dict) -> None:
+        return None
+
+    def log_table(self, name: str, rows: list[dict[str, object]]) -> None:
+        return None
+
+    def set_summary(self, key: str, value: object) -> None:
+        return None
+
+    def finish(self) -> None:
+        return None
+
+
+class _WandbRunLogger:
+    """Run logger that forwards tuning metrics to a Weights & Biases run."""
+
+    enabled = True
+
+    def __init__(self, wandb_module, run, detailed_payloads: bool) -> None:
+        self._wandb = wandb_module
+        self._run = run
+        self.detailed_payloads = detailed_payloads
+
+    def log(self, payload: dict) -> None:
+        self._wandb.log(payload)
+
+    def log_table(self, name: str, rows: list[dict[str, object]]) -> None:
+        """Send a row-oriented table to the run as a sortable W&B table.
+
+        Args:
+            name: Key the table appears under in the run.
+            rows: Row dicts; the union of their keys becomes the columns, in
+                first-seen order. An empty list logs nothing.
+        """
+        if not rows:
+            return
+        columns: list[str] = []
+        for row in rows:
+            for key in row:
+                if key not in columns:
+                    columns.append(key)
+        table = self._wandb.Table(
+            columns=columns,
+            data=[[row.get(column) for column in columns] for row in rows],
+        )
+        self._wandb.log({name: table})
+
+    def set_summary(self, key: str, value: object) -> None:
+        self._run.summary[key] = value
+
+    def finish(self) -> None:
+        self._run.finish()
+
+
+def _create_run_logger(
     config: argparse.Namespace,
     output_dir: Path,
     total_candidates: int,
     cv_folds: int,
-) -> wandb.sdk.wandb_run.Run:
+    use_wandb: bool,
+) -> _NullRunLogger | _WandbRunLogger:
+    """Build the run logger the config asked for.
+
+    Args:
+        config: Resolved tuning configuration.
+        output_dir: Run output directory; hosts the ``wandb/`` scratch folder.
+        total_candidates: Number of candidates the search will evaluate.
+        cv_folds: Effective cross-validation fold count.
+        use_wandb: Explicit ``hyperparameter_tuning.use_wandb`` choice.
+
+    Returns:
+        A no-op logger when W&B is off, otherwise a live W&B-backed logger.
+    """
+    if not use_wandb:
+        _log_progress(
+            "Weights & Biases logging is disabled; writing local plaintext, TSV, "
+            "and plot reports only"
+        )
+        return _NullRunLogger()
+
+    wandb = _import_wandb()
     wandb_dir = output_dir / "wandb"
     wandb_dir.mkdir(parents=True, exist_ok=True)
 
@@ -175,12 +279,17 @@ def _start_wandb_run(
     except Exception as exc:  # noqa: BLE001
         raise ConfigError(
             "Failed to initialize Weights & Biases for hyperparameter tuning. "
-            "Run 'wandb login' first, or set WANDB_MODE=offline if network is unavailable."
+            "Run 'wandb login' first, set WANDB_MODE=offline if network is "
+            "unavailable, or set hyperparameter_tuning.use_wandb: false."
         ) from exc
 
     wandb.define_metric("candidate_index")
     wandb.define_metric("candidate/*", step_metric="candidate_index")
-    return run
+    return _WandbRunLogger(
+        wandb,
+        run,
+        bool(getattr(config, "wandb_detailed_payloads", False)),
+    )
 
 
 RUNTIME_KEYS = {
@@ -265,6 +374,47 @@ def _validate_optional_bool(payload: dict, key: str, default: bool) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"Config field {key} must be a boolean")
     return value
+
+
+def _validate_required_bool(payload: dict, key: str, section: str) -> bool:
+    """Read a boolean that must be spelled out; there is deliberately no default."""
+    if key not in payload:
+        raise ConfigError(
+            f"Missing required config field: {section}.{key}. "
+            f"Set {section}.{key} to true or false explicitly."
+        )
+    value = payload[key]
+    if not isinstance(value, bool):
+        raise ConfigError(f"Config field {section}.{key} must be a boolean")
+    return value
+
+
+def _normalize_search_space_values(search_space: dict[str, object]) -> dict:
+    """Apply each key's per-value rules across its candidate list.
+
+    Args:
+        search_space: Raw search space, each key mapping to a candidate list or
+            a lone value.
+
+    Returns:
+        The same mapping with every value of a validated key normalized, and
+        the container shape (list or scalar) left as it was written.
+
+    Raises:
+        ConfigError: If any candidate value is invalid for its key.
+    """
+    normalized: dict[str, object] = {}
+    for key, value in search_space.items():
+        normalizer = SEARCH_VALUE_NORMALIZERS.get(key)
+        if normalizer is None:
+            normalized[key] = value
+            continue
+        where = f"hyperparameter_tuning.search_space.{key}"
+        if isinstance(value, (list, tuple)):
+            normalized[key] = [normalizer(item, where=where) for item in value]
+        else:
+            normalized[key] = normalizer(value, where=where)
+    return normalized
 
 
 def _normalize_search_values(value: object) -> list[object]:
@@ -406,11 +556,21 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
     max_candidates = _validate_optional_positive_int(
         tuning_section, "max_candidates", DEFAULT_MAX_CANDIDATES
     )
+    use_wandb = _validate_required_bool(
+        tuning_section,
+        "use_wandb",
+        "hyperparameter_tuning",
+    )
     wandb_detailed_payloads = _validate_optional_bool(
         tuning_section,
         "wandb_detailed_payloads",
         False,
     )
+    if wandb_detailed_payloads and not use_wandb:
+        raise ConfigError(
+            "Config field hyperparameter_tuning.wandb_detailed_payloads requires "
+            "hyperparameter_tuning.use_wandb: true"
+        )
 
     forbidden_search_keys = RUNTIME_KEYS | {"hyperparameter_tuning"}
     present_forbidden_search_keys = forbidden_search_keys & set(search_space)
@@ -427,6 +587,7 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
             f"Unsupported search_space keys for {model_name}: "
             f"{', '.join(sorted(unexpected_search_keys))}"
         )
+    search_space = _normalize_search_space_values(search_space)
 
     normalized_config = {
         "input_path": input_path,
@@ -452,6 +613,7 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
         "top_k": top_k,
         "n_iter": n_iter,
         "max_candidates": max_candidates,
+        "use_wandb": use_wandb,
         "wandb_detailed_payloads": wandb_detailed_payloads,
         "search_space": search_space,
     }
@@ -502,6 +664,17 @@ def _evaluate_candidate(
 
 def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     run_start = time.perf_counter()
+    if not hasattr(config, "use_wandb"):
+        raise ConfigError(
+            "Missing required config field: hyperparameter_tuning.use_wandb. "
+            "Set hyperparameter_tuning.use_wandb to true or false explicitly."
+        )
+    use_wandb = bool(config.use_wandb)
+    # The ranked-candidate table, the parameter marginals, the per-row
+    # predictions and the full results payload are the bulky outputs. With W&B
+    # on they go to the run instead of the output directory, which then keeps
+    # only the model pickle, the plaintext report and the search plot.
+    write_bulk_artifacts = not use_wandb
     _log_progress(
         f"Starting hyperparameter tuning for {config.model_name} with {config.search_method} search"
     )
@@ -539,7 +712,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         )
     cv_seconds = time.perf_counter() - cv_start
 
-    candidate_grid, _ = _build_candidate_grid(config.search_space)
+    candidate_grid, search_parameter_keys = _build_candidate_grid(config.search_space)
     if config.search_method == "grid":
         if len(candidate_grid) > config.max_candidates:
             raise ConfigError(
@@ -562,9 +735,11 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         f"(~{estimated_model_fits} model fits)"
     )
 
-    wandb_run = _start_wandb_run(config, output_dir, total_candidates, cv_folds)
-    detailed_wandb_logging = bool(getattr(config, "wandb_detailed_payloads", False))
-    wandb.log(
+    run_logger = _create_run_logger(
+        config, output_dir, total_candidates, cv_folds, use_wandb
+    )
+    detailed_wandb_logging = run_logger.detailed_payloads
+    run_logger.log(
         {
             "candidate_index": 0,
             "candidate/total": total_candidates,
@@ -603,6 +778,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             labels_train,
             cv_folds,
         )
+        candidate_seconds = time.perf_counter() - candidate_start
         objective_key = f"{config.objective_metric}_mean"
         aggregate = cv_results["aggregate"]
         candidate_row = {
@@ -614,6 +790,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             f"{config.objective_metric}_std": aggregate.get(
                 f"{config.objective_metric}_std"
             ),
+            "elapsed_seconds": candidate_seconds,
             **candidate_params,
         }
         evaluated_candidates.append(candidate_row)
@@ -635,7 +812,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             "candidate_index": candidate_index,
             "candidate/cv_score": float(score),
             "candidate/is_best": int(is_better),
-            "candidate/elapsed_seconds": time.perf_counter() - candidate_start,
+            "candidate/elapsed_seconds": candidate_seconds,
             "candidate/remaining": total_candidates - candidate_index,
         }
         candidate_log["candidate/bitwise_accuracy_mean"] = float(
@@ -647,9 +824,9 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         candidate_log.update(
             {f"candidate/param/{key}": value for key, value in candidate_params.items()}
         )
-        wandb.log(candidate_log)
+        run_logger.log(candidate_log)
         if detailed_wandb_logging:
-            wandb.log(
+            run_logger.log(
                 {
                     "candidate_index": candidate_index,
                     "candidate/detailed/params_json": json.dumps(
@@ -669,7 +846,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
 
         _log_progress(
             f"[{candidate_index}/{total_candidates}] done in "
-            f"{_format_seconds(time.perf_counter() - candidate_start)}; "
+            f"{_format_seconds(candidate_seconds)}; "
             f"cv_score={score:.6f}"
         )
     search_seconds = time.perf_counter() - search_start
@@ -728,6 +905,8 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     results_json_path = output_dir / "hyper_tune_results.json"
     results_txt_path = output_dir / "hyper_tune_results.txt"
     results_tsv_path = output_dir / "hyper_tune_results.tsv"
+    marginals_tsv_path = output_dir / "hyper_tune_parameter_marginals.tsv"
+    plot_path = output_dir / "hyper_tune_search_report.png"
     predictions_path = output_dir / "predictions.tsv"
 
     best_candidate_record = {
@@ -746,6 +925,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         "objective_metric": config.objective_metric,
         "objective_direction": objective_direction,
         "candidate_count": len(evaluated_candidates),
+        "use_wandb": use_wandb,
         "split_notes": split_notes,
         "cv_notes": cv_warnings,
         "dataset_summary": dataset_summary,
@@ -782,9 +962,14 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         pickle.dump(best_model, handle)
 
     artifact_start = time.perf_counter()
-    _log_progress("Writing tuning artifacts")
-    shared.write_json(results_json_path, results_payload)
-    shared.write_tsv(predictions_path, prediction_rows)
+    if write_bulk_artifacts:
+        _log_progress("Writing tuning artifacts")
+    else:
+        _log_progress(
+            "Weights & Biases logging is on; sending the ranked candidates, "
+            "parameter marginals, predictions and full results payload to the "
+            "run instead of writing them to the output directory"
+        )
 
     sorted_candidates = sorted(
         evaluated_candidates,
@@ -795,13 +980,86 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         row["rank"] = rank
         row["is_best"] = rank == 1
 
-    shared.write_tsv(results_tsv_path, sorted_candidates)
+    marginals = tuning_report.compute_parameter_marginals(
+        sorted_candidates, search_parameter_keys, objective_direction
+    )
+    marginal_rows = tuning_report.marginal_tsv_rows(marginals)
+
+    if write_bulk_artifacts:
+        shared.write_json(results_json_path, results_payload)
+        shared.write_tsv(predictions_path, prediction_rows)
+        shared.write_tsv(results_tsv_path, sorted_candidates)
+        shared.write_tsv(marginals_tsv_path, marginal_rows)
+    else:
+        run_logger.log_table("tables/ranked_candidates", sorted_candidates)
+        run_logger.log_table("tables/parameter_marginals", marginal_rows)
+        run_logger.log_table("tables/predictions", prediction_rows)
+
+    saved_plot_path = tuning_report.save_tuning_plots(
+        sorted_candidates,
+        search_parameter_keys,
+        config.objective_metric,
+        objective_direction,
+        plot_path,
+        top_k=config.top_k,
+    )
+
     artifact_seconds = time.perf_counter() - artifact_start
     results_payload["timings_seconds"]["artifact_write"] = artifact_seconds
     results_payload["timings_seconds"]["total"] = time.perf_counter() - run_start
-    shared.write_json(results_json_path, results_payload)
+    results_payload["parameter_marginals"] = marginal_rows
+    results_payload["parameter_influence"] = tuning_report.parameter_influence(
+        marginals
+    )
 
-    wandb.log(
+    artifact_paths = {
+        "best_model": str(best_model_path),
+        "results_txt": str(results_txt_path),
+    }
+    if write_bulk_artifacts:
+        artifact_paths["results_json"] = str(results_json_path)
+        artifact_paths["ranked_candidates_tsv"] = str(results_tsv_path)
+        artifact_paths["parameter_marginals_tsv"] = str(marginals_tsv_path)
+        artifact_paths["predictions_tsv"] = str(predictions_path)
+    if saved_plot_path is not None:
+        artifact_paths["search_report_plot"] = saved_plot_path
+    results_payload["artifact_paths"] = artifact_paths
+
+    shared.write_text(
+        results_txt_path,
+        tuning_report.build_results_text(
+            config=config,
+            ranked_candidates=sorted_candidates,
+            marginals=marginals,
+            parameter_keys=search_parameter_keys,
+            best_candidate_record=best_candidate_record,
+            effective_n_neighbors=effective_n_neighbors,
+            test_metrics=test_metrics,
+            dataset_summary=dataset_summary,
+            cv_warnings=cv_warnings,
+            split_notes=split_notes,
+            timings={
+                "load": load_seconds,
+                "split": split_seconds,
+                "cv_feasibility": cv_seconds,
+                "candidate_search": search_seconds,
+                "fit_and_predict": fit_predict_seconds,
+                "artifact_write": artifact_seconds,
+            },
+            total_seconds=results_payload["timings_seconds"]["total"],
+            cv_folds=cv_folds,
+            wandb_enabled=use_wandb,
+            artifact_paths=artifact_paths,
+        ),
+    )
+    if write_bulk_artifacts:
+        shared.write_json(results_json_path, results_payload)
+    else:
+        run_logger.set_summary(
+            "results_json", json.dumps(results_payload, sort_keys=True, default=str)
+        )
+
+    run_logger.log(
         {
             "timing/load_seconds": load_seconds,
             "timing/split_seconds": split_seconds,
@@ -820,99 +1078,46 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             "final/best_candidate_index": best_candidate_index,
         }
     )
-    wandb_run.summary["artifact_dir"] = str(output_dir)
-    wandb_run.summary["best_candidate_params"] = dict(best_candidate_params)
-    wandb_run.summary["results_json_path"] = str(results_json_path)
-    wandb_run.summary["results_tsv_path"] = str(results_tsv_path)
-    wandb_run.summary["predictions_path"] = str(predictions_path)
-    wandb_run.summary["wandb_detailed_payloads"] = detailed_wandb_logging
+    run_logger.set_summary("artifact_dir", str(output_dir))
+    run_logger.set_summary("best_candidate_params", dict(best_candidate_params))
+    # Only advertise paths that were actually written, so a W&B run never points
+    # at a file the run deliberately skipped.
+    run_logger.set_summary(
+        "local_artifact_paths", json.dumps(artifact_paths, sort_keys=True)
+    )
+    run_logger.set_summary("bulk_artifacts_written_locally", write_bulk_artifacts)
+    run_logger.set_summary("wandb_detailed_payloads", detailed_wandb_logging)
     if detailed_wandb_logging:
-        wandb_run.summary["dataset_summary_json"] = json.dumps(
-            dataset_summary,
-            sort_keys=True,
+        run_logger.set_summary(
+            "dataset_summary_json", json.dumps(dataset_summary, sort_keys=True)
         )
-        wandb_run.summary["best_candidate_cv_results_json"] = json.dumps(
-            best_cv_results,
-            sort_keys=True,
+        run_logger.set_summary(
+            "best_candidate_cv_results_json",
+            json.dumps(best_cv_results, sort_keys=True),
         )
-    wandb_run.finish()
+    run_logger.finish()
     _log_progress(
         f"Finished in {_format_seconds(results_payload['timings_seconds']['total'])}; artifacts written to {output_dir}"
     )
-
-    text_lines = [
-        f"Ghostparser ML hyperparameter tuning ({config.model_name})",
-        f"Search method: {config.search_method}",
-        f"Objective metric: {config.objective_metric} ({objective_direction})",
-        f"Candidates evaluated: {len(evaluated_candidates)}",
-        "",
-        "Best candidate:",
-        f"  Candidate index: {best_candidate_record['candidate_index']}",
-    ]
-    if effective_n_neighbors is not None:
-        text_lines.append(f"  Effective n_neighbors: {effective_n_neighbors}")
-    for key, value in best_candidate_record["candidate_params"].items():
-        text_lines.append(f"  {key}: {value}")
-    text_lines.extend(
-        [
-            "",
-            "Test metrics:",
-            f"  Hamming loss: {test_metrics['hamming_loss']:.6f}",
-            f"  Bitwise accuracy: {test_metrics['bitwise_accuracy']:.6f}",
-            f"  Exact-match accuracy: {test_metrics['exact_match_accuracy']:.6f}",
-            f"  Micro F1: {test_metrics['micro_f1']:.6f}",
-            f"  Macro F1: {test_metrics['macro_f1']:.6f}",
-            f"  Weighted F1: {test_metrics['weighted_f1']:.6f}",
-            "",
-            "Dataset summary:",
-            "  Label map:",
-        ]
-    )
-    for key, value in dataset_summary["label_map"].items():
-        text_lines.append(f"    {key}: {value}")
-    text_lines.append("  Split:")
-    for key, value in dataset_summary["split"].items():
-        text_lines.append(f"    {key}: {value}")
-    text_lines.extend(
-        [
-            "",
-            "Top candidates:",
-        ]
-    )
-    for row in sorted_candidates[: config.top_k]:
-        candidate_pairs = ", ".join(
-            f"{key}={value}" for key, value in row.items() if key in config.search_space
-        )
-        text_lines.append(
-            f"  rank={row['rank']} score={row['cv_score']:.6f} {candidate_pairs}"
-        )
-    if cv_warnings:
-        text_lines.extend(["", "CV notes:"] + [f"  {note}" for note in cv_warnings])
-    if split_notes:
-        text_lines.extend(["", "Split notes:"] + [f"  {note}" for note in split_notes])
-    text_lines.extend(
-        [
-            "",
-            "Timings (seconds):",
-            f"  load: {load_seconds:.6f}",
-            f"  split: {split_seconds:.6f}",
-            f"  cv_feasibility: {cv_seconds:.6f}",
-            f"  candidate_search: {search_seconds:.6f}",
-            f"  fit_and_predict: {fit_predict_seconds:.6f}",
-            f"  artifact_write: {artifact_seconds:.6f}",
-            f"  total: {results_payload['timings_seconds']['total']:.6f}",
-        ]
-    )
-    shared.write_text(results_txt_path, "\n".join(text_lines) + "\n")
+    _log_progress(f"Ranked candidate report: {results_txt_path}")
+    if write_bulk_artifacts:
+        _log_progress(f"Per-parameter value summary: {marginals_tsv_path}")
+    if saved_plot_path is not None:
+        _log_progress(f"Search report plot: {saved_plot_path}")
 
     return {
         "best_model_path": str(best_model_path),
-        "results_json_path": str(results_json_path),
+        "results_json_path": str(results_json_path) if write_bulk_artifacts else None,
         "results_txt_path": str(results_txt_path),
-        "results_tsv_path": str(results_tsv_path),
-        "predictions_path": str(predictions_path),
+        "results_tsv_path": str(results_tsv_path) if write_bulk_artifacts else None,
+        "marginals_tsv_path": (
+            str(marginals_tsv_path) if write_bulk_artifacts else None
+        ),
+        "plot_path": saved_plot_path,
+        "predictions_path": str(predictions_path) if write_bulk_artifacts else None,
         "results": results_payload,
         "candidates": sorted_candidates,
+        "parameter_marginals": marginals,
     }
 
 

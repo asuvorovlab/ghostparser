@@ -20,7 +20,7 @@ ghostparser/
 | Module | Purpose | Guide |
 | --- | --- | --- |
 | `ghostparser.orchestrator` | Streaming triplet extraction + introgression inference. The main entry point. | [orchestrator/ORCHESTRATOR.md](orchestrator/ORCHESTRATOR.md) |
-| `ghostparser.ml` | Trains multi-label classifiers on an orchestrator run's `summary_statistics.tsv`. Requires `pip install .[ml]`. | [ml/ML.md](ml/ML.md) |
+| `ghostparser.ml` | Trains multi-label classifiers on an orchestrator run's `summary_statistics.tsv`, and tunes their hyperparameters. Requires `pip install .[ml]`; Weights & Biases logging is a separate opt-in extra (`pip install .[wandb]`). | [ml/ML.md](ml/ML.md) |
 
 `python -m ghostparser` prints a usage banner; the runnable entry points are
 `python -m ghostparser.orchestrator` and `python -m ghostparser.ml`. The

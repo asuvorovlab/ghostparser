@@ -3,7 +3,7 @@
 
 This document describes the machine-learning baselines included with Ghostparser under `ghostparser.ml`. It focuses on how the trainers work — the data contract, the training and evaluation flow, and how to read the outputs. The random forest baseline is the primary focus; multi-label KNN remains available as a secondary baseline. The full configuration reference lives in [CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml).
 
-Install the optional ML dependency set with `pip install .[ml]` if you want to run these baselines. The ML extra includes `scikit-learn` and `wandb`.
+Install the optional ML dependency set with `pip install .[ml]` if you want to run these baselines. The ML extra includes `scikit-learn`. Weights & Biases is a separate extra (`pip install .[wandb]`) that only `hyper_tune` can use, and only when a run asks for it — see [Weights & Biases logging](#weights--biases-logging-optional).
 
 ## Contents
 - [Overview](#overview)
@@ -12,6 +12,8 @@ Install the optional ML dependency set with `pip install .[ml]` if you want to r
 - [Configuration](#configuration)
 - [Choosing an evaluation mode](#choosing-an-evaluation-mode)
 - [Hyperparameter tuning](#hyperparameter-tuning)
+- [Reading a tuning run](#reading-a-tuning-run)
+- [Weights & Biases logging (optional)](#weights--biases-logging-optional)
 - [Tuning the estimators](#tuning-the-estimators)
 - [Feature Importance](#feature-importance)
 - [What the model outputs mean](#what-the-model-outputs-mean)
@@ -66,6 +68,14 @@ To run the hyperparameter tuner explicitly:
 ```bash
 python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_random_forest.yaml
 ```
+
+The tuner is config-file only. Two runnable samples ship with the package, one per
+format and per model, and both set every required key:
+
+- `sample_configs/hyperparameter_tuning_random_forest.yaml` — random-forest grid search
+- `sample_configs/hyperparameter_tuning_multi_knn.json` — multi-label KNN random search
+
+Both set `use_wandb: false`, so they run without a Weights & Biases account.
 
 ## Configuration
 
@@ -144,16 +154,95 @@ Use `method: random` when the space is large and you want a sampled search inste
 
 The tuner prints console progress while it runs, including the number of candidate cases it plans to evaluate, the approximate number of model fits implied by CV, and per-candidate timing updates.
 
-#### Weights & Biases setup (required for tuner)
+### Reading a tuning run
 
-`ghostparser.ml.hyper_tune` initializes Weights & Biases for every tuning run.
+Every tuning run with `use_wandb: false` writes a self-contained set of local
+artifacts, so a search can be navigated end to end without any external service. With
+`use_wandb: true` the bulk outputs move into the Weights & Biases run and the output
+directory keeps only `hyper_tune_best_model.pkl`, `hyper_tune_results.txt`, and
+`hyper_tune_search_report.png` — see [Weights & Biases logging](#weights--biases-logging-optional).
 
-Initial setup:
+`hyper_tune_results.txt` is the place to start. It opens with the run header (model,
+method, objective and its direction, candidate count, CV folds, whether W&B logging
+was on), echoes the `search_space` that was actually explored, then reports:
 
-1. Install ML dependencies:
+- **Top _k_ candidates** — an aligned table of the best candidates, one row each, with
+  the CV score, its standard deviation across folds, the wall-clock seconds the
+  candidate took, and every search-space parameter as its own column. `top_k` sets the
+  row count.
+- **Per-parameter value summary** — one row per (parameter, value) pair: how many
+  candidates used the value, the best/mean/std/worst score it reached, the best rank
+  it achieved, and its rank among the values of the same parameter. This is the marginal
+  view: it answers "was `n_estimators: 400` ever worth it?" without re-reading the full
+  candidate list.
+- **Search-space guidance** — the observed score range; a parameter-influence ordering
+  (how far the objective moved across each parameter's values, by both best and mean
+  score, so a dimension that changed nothing is named outright); the best value for each
+  parameter; and a warning for any winning value that sits at the edge of the range that
+  was searched, which is the signal to extend the range in that direction and search again.
+- **Timings** and the **artifact paths** for the rest of the run.
+
+The same content is available in machine-readable form, written to the output
+directory when `use_wandb: false` and logged to the W&B run when `use_wandb: true`:
+
+- `hyper_tune_results.tsv` — every candidate, ranked best-first, with `rank`, `is_best`,
+  `cv_score`, the objective's mean and standard deviation, `elapsed_seconds`, and one
+  column per search-space parameter.
+- `hyper_tune_parameter_marginals.tsv` — the per-parameter value summary, plus an
+  `at_search_bound` column marking a winning value that is the smallest or largest
+  numeric value tried.
+- `hyper_tune_results.json` — the full run payload, including `parameter_marginals`,
+  `parameter_influence`, `artifact_paths`, and `use_wandb`.
+- `predictions.tsv` — one row per test sample, with the true and predicted bits.
+
+`hyper_tune_search_report.png` is the visual counterpart, stacked in one figure:
+
+1. **Search progress in evaluation order** — every candidate's score against the order
+   it was evaluated, with the running-best trace over it. On a random search this shows
+   whether the search had converged or was still improving when it stopped.
+2. **Top candidates** — a ranked dot plot of the best candidates, each labelled with its
+   parameter combination and score. Objective scores sit in a narrow band away from zero,
+   so this is a dot plot on a zoomed axis rather than bars from a zero baseline.
+3. **One panel per parameter that actually varied** — the score distribution for each
+   value, box plus the individual candidates. A panel with clearly separated levels is a
+   parameter that matters; a flat panel is a dimension you can drop from the next search.
+
+### Weights & Biases logging (optional)
+
+`hyperparameter_tuning.use_wandb` is a **required** boolean — there is no default, so
+every tuning config states whether the run logs to Weights & Biases. Runs with
+`use_wandb: false` need neither a W&B account nor the `wandb` package installed, and
+they still produce the full local report described above.
+
+With `use_wandb: false` the tuner writes no `wandb/` directory and makes no network
+calls; the report header records `Weights & Biases logging: disabled` and
+`hyper_tune_results.json` carries `"use_wandb": false`.
+
+`use_wandb: true` also changes where the bulk outputs land. The W&B run becomes their
+home, so the tuner does not duplicate them on disk:
+
+| Output | `use_wandb: false` | `use_wandb: true` |
+| --- | --- | --- |
+| `hyper_tune_best_model.pkl` | output directory | output directory |
+| `hyper_tune_results.txt` | output directory | output directory |
+| `hyper_tune_search_report.png` | output directory | output directory |
+| `hyper_tune_results.tsv` | output directory | W&B table `tables/ranked_candidates` |
+| `hyper_tune_parameter_marginals.tsv` | output directory | W&B table `tables/parameter_marginals` |
+| `predictions.tsv` | output directory | W&B table `tables/predictions` |
+| `hyper_tune_results.json` | output directory | W&B run summary key `results_json` |
+
+The plaintext report still carries the top candidates, the per-parameter value summary,
+and the search-space guidance in full, so the output directory stays readable on its own.
+Its `Artifacts:` block lists only the files that were actually written, and names W&B as
+the home of the rest. The `artifact_paths` key of the run payload follows the same rule,
+and the run summary records `local_artifact_paths` and `bulk_artifacts_written_locally`.
+
+To use `use_wandb: true`:
+
+1. Install the extras:
 
 ```bash
-pip install .[ml]
+pip install .[ml,wandb]
 ```
 
 2. Authenticate once:
@@ -175,15 +264,22 @@ export WANDB_ENTITY=<your-wandb-entity>
 export WANDB_MODE=offline
 ```
 
-What the tuner logs to WandB:
+What the tuner logs to W&B:
 
 - run metadata (model, method, objective, candidate count, CV folds)
 - one lightweight record per candidate (score, params, elapsed time, best-so-far flag)
 - final metrics and timing summaries
+- the ranked candidates, parameter marginals, and per-row predictions as W&B tables,
+  plus the full results payload as the `results_json` run-summary field
 
-If you set `hyperparameter_tuning.wandb_detailed_payloads: true`, the tuner also logs additional JSON payloads per candidate (CV aggregate and fold-level details) and richer run-summary JSON fields.
+`hyperparameter_tuning.wandb_detailed_payloads: true` adds per-candidate CV payloads
+(aggregate and fold-level JSON) and richer run-summary JSON fields. It requires
+`use_wandb: true`; setting it alongside `use_wandb: false` is rejected by the config
+loader.
 
-To keep network and memory overhead low on long runs, the integration logs scalar summaries only (no per-fold raw prediction payload uploads and no large artifact uploads to WandB by default).
+To keep network and memory overhead low on long runs, the integration logs scalar
+summaries only (no per-fold raw prediction payload uploads and no large artifact uploads
+to W&B by default).
 
 ### Tuning the estimators
 
@@ -197,7 +293,7 @@ intuition is:
   the trees can chase noise, so raising them makes the model more conservative
   (useful on small or noisy training sets). `max_features` controls per-split
   feature sampling: smaller values make the trees more diverse, larger values
-  make each tree greedier. `class_weight` can favour rare outcomes.
+  make each tree greedier, and `null` lets every split see every feature. `class_weight` can favour rare outcomes.
 - **Multi-label KNN** — `n_neighbors` sets how local a prediction is, and
   `weights: distance` lets closer neighbours dominate. `algorithm` and
   `leaf_size` affect search performance rather than the model's meaning, while
@@ -242,9 +338,16 @@ Stratified here means we try to preserve the frequency of each 6-bit label combi
 - `*_overall_metrics.json` — Structured metrics, timings, and the consolidated dataset summary
 - `*_metrics.txt` — Human-readable summary. Opens with a `Hyperparameters:` block listing every knob that shaped the run — the estimator settings, `test_size`, the requested and effective `cv_folds`, `rare_class_policy`, and `target_column` — followed by the metrics, dataset summary, and diagnostic notes. The same mapping is available under the `hyperparameters` key of `*_overall_metrics.json`.
 - `*_confusion_matrices.png` — Heatmap grid of all confusion matrices on the `cividis` scale, dark for smaller counts and bright for larger ones
-- `*_confusion_matrix_64_classes.png` — Heatmap of the full 64-class confusion matrix across all possible 6-bit labels, on the same scale
+- `*_confusion_matrix_64_classes.png` — Heatmap of the full 64-class confusion matrix across all possible 6-bit labels, on the same colormap. Cells are row-normalized: each one is the fraction of its true class that was predicted into that column, so the scale is a fixed 0-1 regardless of how many test rows a class drew, every populated row sums to 1, and the diagonal reads as per-class recall. Cells at 0 are masked and left unshaded, so the handful of label combinations that actually occur stand out against the empty majority of the matrix; a note in the figure's bottom-left corner records that those cells are not on the colour scale
 - `feature_importances.tsv` — Ranked features and importance scores (tree-based for RF, permutation for KNN)
 - `predictions.tsv` — Per-row predictions with true/pred bit flags, exact-match indicator, and matched-bit count
+
+`hyper_tune` writes its own set instead — `hyper_tune_best_model.pkl`,
+`hyper_tune_results.json`, `hyper_tune_results.txt`, `hyper_tune_results.tsv`,
+`hyper_tune_parameter_marginals.tsv`, `hyper_tune_search_report.png`, and
+`predictions.tsv` — all described in [Reading a tuning run](#reading-a-tuning-run).
+With `use_wandb: true` the bulk members of that set are logged to the W&B run rather
+than written to the output directory.
 
 ### Using the model pickle
 

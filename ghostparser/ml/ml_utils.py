@@ -32,9 +32,12 @@ BIT_LABELS = (
 BIT_COUNT = len(BIT_LABELS)
 MAX_STRING_CATEGORIES = 7
 
-# Colormap for both confusion-matrix figures. Counts are a sequential quantity,
+# Colormap for both confusion-matrix figures. Both plot a sequential quantity,
 # and cividis is perceptually uniform and colour-vision-deficiency safe.
 CONFUSION_MATRIX_COLORMAP = "cividis"
+# Fill behind masked heatmap cells, so an empty cell reads as "nothing here"
+# rather than as the colormap's dark low end.
+EMPTY_CELL_COLOR = "#f0f0f0"
 
 
 @dataclass(frozen=True)
@@ -538,25 +541,54 @@ def build_64_class_confusion_matrix(
     }
 
 
+def row_normalize_confusion_matrix(matrix: object) -> np.ndarray:
+    """Convert confusion-matrix counts into per-true-class fractions.
+
+    Each cell becomes the share of its true class that landed in that predicted
+    column, so every populated row sums to 1 and the diagonal reads as recall.
+
+    Args:
+        matrix: Square array-like of confusion-matrix counts.
+
+    Returns:
+        A float array on ``[0, 1]`` with the same shape. Rows whose true class
+        has no samples stay all-zero instead of dividing by zero.
+    """
+    counts = np.asarray(matrix, dtype=float)
+    row_totals = counts.sum(axis=1, keepdims=True)
+    return np.divide(
+        counts, row_totals, out=np.zeros_like(counts), where=row_totals > 0
+    )
+
+
 def save_64_class_confusion_matrix_plot(
     class_confusion: dict[str, object],
     output_path: Path,
 ) -> str:
     labels = [str(label) for label in class_confusion["class_labels"]]
-    data = np.asarray(class_confusion["matrix"], dtype=int)
+    # Raw counts depend on how many test rows each class happened to draw, which
+    # is fixed per run but arbitrary to a reader. Row-normalizing puts every cell
+    # on a common 0-1 scale that is comparable across rows and across runs.
+    data = row_normalize_confusion_matrix(class_confusion["matrix"])
 
     fig, ax = plt.subplots(figsize=(18, 16), constrained_layout=True)
     cmap = plt.get_cmap(CONFUSION_MATRIX_COLORMAP)
-    vmax = max(int(data.max()), 1)
+    # Most of a 64x64 matrix is empty: only a handful of the possible label
+    # combinations ever occur, and rows for classes absent from the test set are
+    # entirely zero. Masking those cells lets them fall through to the axes
+    # facecolor, so the sparse real signal stays legible instead of being buried
+    # under a solid block of the colormap's dark low end.
+    ax.set_facecolor(EMPTY_CELL_COLOR)
     sns.heatmap(
         data,
         ax=ax,
         cmap=cmap,
-        vmin=0,
-        vmax=vmax,
+        vmin=0.0,
+        vmax=1.0,
+        mask=data == 0.0,
         square=True,
         cbar=True,
-        cbar_kws={"label": "Count"},
+        cbar_kws={"label": "Fraction of true class"},
         xticklabels=False,
         yticklabels=False,
         linewidths=0,
@@ -570,7 +602,26 @@ def save_64_class_confusion_matrix_plot(
     ax.set_yticklabels(tick_labels, rotation=0, fontsize=8)
     ax.set_xlabel("Predicted 6-bit class")
     ax.set_ylabel("True 6-bit class")
-    ax.set_title("Confusion matrix across all 64 possible 6-bit classes")
+    ax.set_title(
+        "Confusion matrix across all 64 possible 6-bit classes "
+        "(row-normalized: fraction of each true class)"
+    )
+
+    # A corner note explaining why most of the matrix is blank, so the colorbar
+    # is not read as covering those cells too. Anchored below the figure's
+    # bottom-left corner: `constrained_layout` keeps the axes inside [0, 1], so
+    # nothing can collide with it there, and the `bbox_inches="tight"` save
+    # expands the output to include it.
+    fig.text(
+        0.0,
+        0.0,
+        "Cells at 0 are left uncoloured and are not represented on the colour scale.",
+        ha="left",
+        va="top",
+        fontsize=10,
+        fontweight="bold",
+        color="#4d4d4d",
+    )
 
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)

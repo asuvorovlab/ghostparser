@@ -43,6 +43,23 @@ RARE_CLASS_POLICY_CHOICES = ("warn_reduce_cv", "warn_skip_cv", "error")
 KNN_WEIGHT_CHOICES = ("uniform", "distance")
 KNN_ALGORITHM_CHOICES = ("auto", "ball_tree", "kd_tree", "brute")
 EVALUATION_METRICS_CHOICES = ("all", "primary", "diagnostic", "per_bit")
+MAX_FEATURES_STRING_CHOICES = ("sqrt", "log2")
+CLASS_WEIGHT_STRING_CHOICES = ("balanced", "balanced_subsample")
+
+# YAML resolves only `null`, `~` and an empty value to null; the bare words
+# `none` and `None` come through as plain strings and would reach scikit-learn
+# as the literal text. Accepting them here spares every config the trap.
+_NULL_SPELLINGS = frozenset({"none", "null", "~"})
+
+# `auto` was scikit-learn's max_features default until 1.1 and was removed in
+# 1.3 for being ambiguous between classifiers and regressors. It is worth its
+# own message because it is the value most users reach for first.
+_REMOVED_MAX_FEATURES_SPELLINGS = frozenset({"auto"})
+
+_YAML_NULL_HINT = (
+    "In YAML write null (or ~) for the null value -- the bare words None and "
+    "none are read as strings, not null."
+)
 
 
 def _validate_optional_path(payload: dict, key: str, default: str) -> str:
@@ -118,6 +135,100 @@ def _validate_optional_bool(payload: dict, key: str, default: bool) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"Config field {key} must be a boolean")
     return value
+
+
+def normalize_max_features(value: object, *, where: str) -> object:
+    """Validate one ``max_features`` value against what scikit-learn accepts.
+
+    Args:
+        value: The configured value, straight from the config file.
+        where: Dotted config location used in the error message.
+
+    Returns:
+        ``None``, one of :data:`MAX_FEATURES_STRING_CHOICES`, an ``int >= 1``,
+        or a ``float`` in ``(0.0, 1.0]``.
+
+    Raises:
+        ConfigError: If the value is anything else, naming what was received
+            and every accepted form.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lower() in _NULL_SPELLINGS:
+            return None
+        if stripped in MAX_FEATURES_STRING_CHOICES:
+            return stripped
+        if stripped.lower() in _REMOVED_MAX_FEATURES_SPELLINGS:
+            raise ConfigError(
+                f"Config field {where} got {value!r}, which scikit-learn removed "
+                "in 1.3. Use 'sqrt' for the same behaviour on a classifier, or "
+                "null to use every feature at each split."
+            )
+        raise ConfigError(_max_features_message(where, value))
+    # bool is a subclass of int, so it has to be rejected before the int check.
+    if isinstance(value, bool):
+        raise ConfigError(_max_features_message(where, value))
+    if isinstance(value, int):
+        if value < 1:
+            raise ConfigError(_max_features_message(where, value))
+        return value
+    if isinstance(value, float):
+        if not 0.0 < value <= 1.0:
+            raise ConfigError(_max_features_message(where, value))
+        return value
+    raise ConfigError(_max_features_message(where, value))
+
+
+def _max_features_message(where: str, value: object) -> str:
+    choices = ", ".join(repr(choice) for choice in MAX_FEATURES_STRING_CHOICES)
+    return (
+        f"Config field {where} got {value!r}. Valid values are {choices}, an "
+        "integer >= 1 (that many features per split), a float in (0.0, 1.0] "
+        "(that fraction of the features), or null to use every feature at each "
+        f"split. {_YAML_NULL_HINT}"
+    )
+
+
+def normalize_class_weight(value: object, *, where: str) -> object:
+    """Validate one ``class_weight`` value against what scikit-learn accepts.
+
+    Args:
+        value: The configured value, straight from the config file.
+        where: Dotted config location used in the error message.
+
+    Returns:
+        ``None``, one of :data:`CLASS_WEIGHT_STRING_CHOICES`, a mapping of
+        class label to weight, or a list of such mappings (one per label).
+
+    Raises:
+        ConfigError: If the value is anything else, naming what was received
+            and every accepted form.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lower() in _NULL_SPELLINGS:
+            return None
+        if stripped in CLASS_WEIGHT_STRING_CHOICES:
+            return stripped
+        raise ConfigError(_class_weight_message(where, value))
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+        return value
+    raise ConfigError(_class_weight_message(where, value))
+
+
+def _class_weight_message(where: str, value: object) -> str:
+    choices = ", ".join(repr(choice) for choice in CLASS_WEIGHT_STRING_CHOICES)
+    return (
+        f"Config field {where} got {value!r}. Valid values are {choices}, a "
+        "mapping of class label to weight, a list of such mappings (one per "
+        f"label), or null for no class weighting. {_YAML_NULL_HINT}"
+    )
 
 
 def normalize_ml_payload(payload: dict) -> dict:
@@ -220,8 +331,14 @@ def normalize_ml_payload(payload: dict) -> dict:
         "min_samples_leaf": _validate_optional_positive_int(
             model_section, "min_samples_leaf", DEFAULT_MIN_SAMPLES_LEAF
         ),
-        "max_features": model_section.get("max_features", DEFAULT_MAX_FEATURES),
-        "class_weight": model_section.get("class_weight", DEFAULT_CLASS_WEIGHT),
+        "max_features": normalize_max_features(
+            model_section.get("max_features", DEFAULT_MAX_FEATURES),
+            where="model.max_features",
+        ),
+        "class_weight": normalize_class_weight(
+            model_section.get("class_weight", DEFAULT_CLASS_WEIGHT),
+            where="model.class_weight",
+        ),
         "n_neighbors": _validate_optional_positive_int(
             model_section, "n_neighbors", DEFAULT_N_NEIGHBORS
         ),

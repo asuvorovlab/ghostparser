@@ -432,8 +432,10 @@ If you want to avoid a string column being encoded, remove it from the TSV befor
   - `max_depth` (int or null, default: `null`) — `null` leaves tree depth unconstrained.
   - `min_samples_split` (int, default: `2`) — controls how many samples are required before a split is allowed. Larger values make the trees more conservative when the data is noisy or small.
   - `min_samples_leaf` (int, default: `1`) — controls how many samples must remain in a leaf. Larger values smooth the model and can reduce noise.
-  - `max_features` (string|int or null, default: `sqrt`) — `null` keeps the estimator's default split-feature behavior.
-  - `class_weight` (null|dict, default: `null`) — `null` disables class weighting.
+  - `max_features` (string, int, float or null, default: `sqrt`) — how many features each split may consider. Accepts `sqrt`, `log2`, an integer `>= 1` (that many features per split), a float in `(0.0, 1.0]` (that fraction of the features), or `null` to use **every** feature at each split. `auto` is rejected: scikit-learn removed it in 1.3, and `sqrt` is its classifier equivalent.
+  - `class_weight` (string, dict, list or null, default: `null`) — accepts `balanced`, `balanced_subsample`, a mapping of class label to weight, a list of such mappings (one per label), or `null` for no class weighting.
+
+  In YAML, write the null value as `null` or `~`. The bare words `None` and `none` are read as plain strings, not null, so GhostParser maps them (and `null` written as a string) back to null for `max_features` and `class_weight` rather than passing the literal text to the estimator. Any other value is rejected with a message naming what it received and every accepted form.
 
   Leave `min_samples_split` and `min_samples_leaf` out of the config if you want the defaults. The loader does not infer them from the dataset, and explicit `null` values are rejected.
 
@@ -470,7 +472,8 @@ Inside `hyperparameter_tuning`, the following keys are expected:
 - `top_k` (int, default `10`): number of top candidates to include in the text summary.
 - `n_iter` (int, default `20`): number of sampled candidates when `method: random`.
 - `max_candidates` (int, default `5000`): hard cap for full grid evaluation.
-- `wandb_detailed_payloads` (bool, default `false`): when `true`, log additional per-candidate CV payloads (aggregate and fold-level JSON) and extra summary JSON blobs to Weights & Biases. Keep `false` when network/storage overhead matters.
+- `use_wandb` (bool, **required**, no default): whether the run logs to Weights & Biases. There is deliberately no default — every tuning config states the choice, and the loader rejects a config that omits it or gives a non-boolean. With `false` the tuner needs neither a W&B account nor the `wandb` package, makes no network calls, writes no `wandb/` directory, and writes the full local artifact set. With `true` the `wandb` package must be installed (`pip install .[wandb]`) and authenticated, and the bulk outputs (`hyper_tune_results.json`, `hyper_tune_results.tsv`, `hyper_tune_parameter_marginals.tsv`, `predictions.tsv`) are logged to the W&B run instead of the output directory, which then keeps only the model pickle, the plaintext report, and the search-report plot.
+- `wandb_detailed_payloads` (bool, default `false`): when `true`, log additional per-candidate CV payloads (aggregate and fold-level JSON) and extra summary JSON blobs to Weights & Biases. Requires `use_wandb: true`; combining it with `use_wandb: false` is rejected. Keep `false` when network/storage overhead matters.
 - `search_space` (mapping): model hyperparameter candidates. Each parameter should map to a list of values. Omit a parameter from `search_space` if you want the trainer default to apply during tuning.
 
 Allowed `search_space` keys depend on `model`:
@@ -490,6 +493,7 @@ hyperparameter_tuning:
   top_k: 5
   n_iter: 20
   max_candidates: 5000
+  use_wandb: false
   search_space:
     n_estimators: [100, 200, 400]
     max_depth: [null, 10, 20]
@@ -498,6 +502,23 @@ hyperparameter_tuning:
     max_features: [sqrt, log2]
     class_weight: [null]
 ```
+
+`max_features` and `class_weight` candidates are validated value by value against
+the same rules as the `model` block above, so an invalid entry is reported against
+its `search_space` key before the search starts rather than at the first fit.
+
+To log the run to Weights & Biases instead, install and authenticate the extra
+(`pip install .[wandb]`, then `wandb login`) and swap the two flags:
+
+```yaml
+hyperparameter_tuning:
+  use_wandb: true
+  wandb_detailed_payloads: true
+```
+
+Runnable samples for both formats ship as
+`sample_configs/hyperparameter_tuning_random_forest.yaml` and
+`sample_configs/hyperparameter_tuning_multi_knn.json`.
 
 Use `method: grid` to evaluate every combination in the search space. Use `method: random` when you want to sample a fixed number of combinations from a larger space.
 
