@@ -209,10 +209,23 @@ Settable either on the CLI or in a config file.
 
 - CLI: `--p-value-correction`
 - Default: `bfn`
-- Allowed: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`, `fdr_tsbh`
+- Allowed: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`
 - Multiple-testing correction, applied in three places. Run-wide, it adjusts every triplet's DCT and KS p-value in a single pass. Inside each permutation test, it adjusts that test's pair of one-tailed p-values against each other — never across triplets, because a Monte Carlo p-value has a resolution floor that across-triplet correction would fall through. Inside the bootstrap, each iteration's DCT and KS p-values are corrected across triplets for that iteration index, so iterations answer to the same thresholds the reported classification does. Corrected p-values drive the significance decisions; the uncorrected values are retained in the output for reporting. Under `no` the results TSV carries the raw p-values and the significance flags only.
-- The choice affects run time. `no` and `bfn` are applied inline while triplets stream; the others must hold every triplet's per-iteration p-values until the stream finishes. `fdr_tsbh` is the most expensive: it is the one method whose adjusted p-value can fall *below* the raw one, so it cannot skip the direction test on iterations an earlier gate already settled.
+- The choice affects run time. `no` and `bfn` are applied inline while triplets stream; the others must hold every triplet's per-iteration p-values until the stream finishes.
+- Every supported method is monotone — none can adjust a p-value *below* its raw value — which is what lets both the point estimate and the bootstrap skip a test once an earlier gate has failed. See [`pipeline_mode`](#pipeline_mode).
 - In YAML, `p_value_correction: no` may be written with or without quotes. YAML resolves the bare word `no` to a boolean, and enumerated fields map booleans back to the choice they spell (`no`/`off`/`n`/`false`, `yes`/`on`/`y`/`true`), so both forms select the same value.
+
+##### `pipeline_mode`
+
+- CLI: `--pipeline-mode`
+- Default: `efficient`
+- Allowed: `efficient`, `detailed`
+- `efficient` stops measuring a triplet once the decision cascade is settled: a triplet the count gate settled skips the tree-height test, and one either of the first two gates settled skips the permutation direction test, rather than computing a result nothing reads. `detailed` runs all three gates for every triplet.
+- **Both modes produce identical results.** No supported correction can lower a p-value, so a gate that failed on the raw value cannot clear on the corrected one — the efficient mode only ever declines a test the cascade could not have consulted. Neither does the extra work change any correction family: the tree-height family is always the triplets that cleared the count gate, so whatever `detailed` measures below a settled gate is never enrolled. `classification`, `decision_gate`, the `dct_*` columns, `ks_p_value_corrected`, `ks_significant`, and every bootstrap column match exactly.
+- What differs is which columns are populated, never their values. Triplets the efficient mode settled early leave the `perm_*` block empty and carry `perm_note: direction_test_not_consulted`, which distinguishes a deliberate skip from a test that ran and hit a guard; they also leave the raw `ks_statistic`/`ks_p_value` empty, since the tree-height test below a settled count gate decides nothing and takes no part in its correction family either way.
+- The direction test is the most expensive of the three, so not running it where it cannot matter is where the time goes. How much that is worth depends on how many of your triplets stop at an earlier gate.
+- Choose `detailed` when you want the direction test's statistics for every triplet regardless of whether they decided anything, which is a debugging need rather than an analysis one.
+- The bootstrap already skipped a settled gate per iteration in both modes; this key governs the point estimate.
 
 ##### `consolidation`
 
@@ -224,7 +237,8 @@ Settable either on the CLI or in a config file.
 
 - CLI: `--no-bootstrap` (sets `bootstrap: false`)
 - Default: `true`
-- Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV.
+- Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV. Setting it false skips the iterations entirely, so `bootstrap_stat_ci_low`/`bootstrap_stat_ci_high` are empty too — that interval is a bootstrap percentile interval, not a permutation output.
+- This is an instruction about what to compute, so it holds under `pipeline_mode: detailed` as well: `detailed` declines to skip work the cascade cannot consult, which is not the same as reinstating work you switched off. The same is true of `generate_summary_stats` and `shape_diagnostics`.
 
 ##### `preflight_data_check`
 
@@ -265,7 +279,7 @@ These have no CLI flag. They take their default unless set in a config file.
 
 - Default: `false`
 - Appends fifteen columns describing the shape of each height group: a KDE mode count, a Silverman modality p-value, skewness, excess kurtosis, and a generalized-Pareto tail index. They are descriptive only and never affect a classification.
-- They land in the results TSV as `con_*`/`dis1_*`/`dis2_*` and, when `generate_summary_stats` is also set, in `summary_statistics.tsv` as `concordant_*`/`discordant1_*`/`discordant2_*` — each file under its own group naming, carrying the same values.
+- They land in the results TSV as `con_*`/`dis1_*`/`dis2_*`, and nowhere else. `summary_statistics.tsv` never carries them: it is a feature matrix, and these columns are undefined for groups below their observation floors, so including them would leave holes in it.
 - Off by default because the modality p-value is a smoothed bootstrap: it costs about 0.2s per group, so roughly 0.6s of extra CPU per triplet. On a large taxon set that dominates the run.
 - Measured once per triplet from the observed heights. Bootstrap iterations do not recompute them.
 - Groups with fewer than 20 observations are left empty, as are the tail indices of groups whose upper decile holds fewer than 10 points. See "Shape diagnostics" in the [orchestrator guide](ghostparser/orchestrator/ORCHESTRATOR.md) for how to read each column.

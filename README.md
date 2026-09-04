@@ -167,6 +167,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 - `--output-folder`, `--no-overwrite`, `--triplet-filter`
 - `--processes`, `--parallelization-mode {auto,taxon,gene}`
 - `--alpha-dct`, `--alpha-ks`, `--alpha-perm`, `--p-value-correction`
+- `--pipeline-mode {efficient,detailed}`
 - `--no-consolidation`, `--no-bootstrap`
 
 **Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, and the `bootstrap_options` block (`iterations`, `seed`, `debug_mode`, `summary_only`).
@@ -203,6 +204,12 @@ Consolidation details:
 - Consolidation is enabled by default; disable it with `--no-consolidation`.
 - Its artifacts go in a dedicated `consolidation/` subfolder so its own output-directory reset cannot remove the run's results.
 
+#### How Much Gets Computed
+
+- `--pipeline-mode efficient` (the default) stops measuring a triplet once the decision cascade is settled. Only the third gate consults the permutation direction test, so a triplet an earlier gate already decided skips it instead of computing a result nothing reads. It is the most expensive of the three tests, so this is where the time goes. See [CONFIG.md](CONFIG.md#pipeline_mode).
+- **This does not change any classification.** No supported correction can lower a p-value below its raw value, so a gate that failed raw cannot clear once corrected — the skipped test could not have been reached. `--pipeline-mode detailed` computes all three gates for every triplet and reaches the same conclusions; use it when you want the direction test's statistics everywhere for debugging.
+- Skipped triplets have an empty `perm_*` block and carry `perm_note: direction_test_not_consulted`, so a deliberate skip is distinguishable from a test that ran and hit a guard. A triplet the count gate settled also leaves the raw tree-height columns empty. `metrics.txt` reports how many triplets skipped, and how many cleared the count gate to form the tree-height correction family.
+
 #### Direction Test Behavior
 
 - The third decision gate is an adaptive studentized permutation test on the concordant versus discordant1 mean tree heights. It resamples until a confidence interval around the p-value excludes `alpha_perm`, or until the total reaches `max_resamples` — `metrics.txt` counts the triplets that spend the budget, and the `perm_converged` column identifies them. The final batch is drawn whole rather than trimmed, so the reported resample count can sit just above `max_resamples`.
@@ -210,12 +217,13 @@ Consolidation details:
 - The direction is read off the corrected one-tailed p-values, so the results TSV carries no per-group mean or median columns. Descriptive per-group statistics live in `summary_statistics.tsv` (`generate_summary_stats`).
 - Triplets whose samples are too small or too degenerate to support the test are reported as `inconclusive` with the reason in the `perm_note` column, rather than being given a direction the data cannot justify.
 - When neither direction is significant, TOST — two one-sided tests, the standard equivalence procedure — at a Cohen's *d* of 0.5 decides whether the mean heights were *shown* to be close (`perm_decision = equivalent`, with the p-value in `perm_p_tost`) or nothing was established (`inconclusive`). Both classify the triplet as `ambiguous`.
-- `perm_stat_ci_low` / `perm_stat_ci_high` give a bootstrap-percentile interval on the studentized mean difference, so a direction can be read as an effect size rather than only as a threshold crossing.
+- TOST rides on the direction test's own resamples rather than drawing its own. Its two nulls sit a margin either side of zero, which is a constant added to one group, and a shifted permutation's statistic follows from the unshifted power sums plus two extra reductions — so the equivalence step costs a fraction of a pass instead of two more, and both questions are answered at the same Monte Carlo resolution by construction.
+- `bootstrap_stat_ci_low` / `bootstrap_stat_ci_high` give a bootstrap-percentile interval on the studentized mean difference, so a direction can be read as an effect size rather than only as a threshold crossing. It comes from the bootstrap loop, so `--no-bootstrap` leaves it empty.
 - See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#the-statistical-tests) for the method, its citations, and its known small-sample limitation.
 
 #### Bootstrap Behavior
 
-- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`; the remaining controls (`iterations`, `seed`, `debug_mode`, `summary_only`) are set through the config file's `bootstrap_options` block.
+- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`, which skips the iterations rather than merely dropping their columns; the remaining controls (`iterations`, `seed`, `debug_mode`, `summary_only`) are set through the config file's `bootstrap_options` block.
 - Bootstrap iterations re-run the direction test at one fifth of the configured resample budget.
 - Iterations are judged against the same *corrected* p-value thresholds as the reported classification, so `bootstrap_value` measures support for the decision actually made. With `no` or `bfn` the correction is applied as each iteration runs; the rank-based methods need every triplet's p-value for the same iteration, so those are corrected after the streaming pass.
 - Iterations with incomplete required metrics are counted as `ambiguous` and processing continues.
@@ -272,7 +280,7 @@ An orchestrator run generates these output files:
 2. **`processed_genes.tree`** - Processed gene trees with support values removed and outgroup rooting applied
 3. **`metrics.txt`** - Metrics log with warnings, timings, and counts
 4. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `ambiguous`)
-5. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `generate_summary_stats` is enabled. With `shape_diagnostics` also set it carries the per-group shape columns (`concordant_*`, `discordant1_*`, `discordant2_*`) alongside the metric columns. Its `discordant1_*` columns describe whichever discordant topology is more frequent (matching the `dis1_topology` column) and `discordant2_*` the other. It includes:
+5. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `generate_summary_stats` is enabled. It carries no shape columns; those go to the results TSV alone. Its `discordant1_*` columns describe whichever discordant topology is more frequent (matching the `dis1_topology` column) and `discordant2_*` the other. It includes:
    - identity columns (`triplet`, `abc_mapping`, `species_tree`, `dis1_topology`)
    - topology counts (`n_con`, `n_dis1`, `n_dis2`)
    - 63 topology/metric summary columns (7 statistics x 3 topology classes x 3 metric types)
@@ -294,8 +302,8 @@ When bootstrap debug mode is enabled, the TSV also adds:
 - `bootstrap_dct_p_value`
 - `bootstrap_ks_stats`
 - `bootstrap_ks_p_value`
-- `bootstrap_con_<mean|median|mode>`
-- `bootstrap_dis_<mean|median|mode>`
+- `bootstrap_con_mean`
+- `bootstrap_dis_mean`
 - `bootstrap_gene_tree_heights`
 
 Bootstrap payload columns are serialized as JSON strings by default.
@@ -401,6 +409,7 @@ Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
 
 - `processes`: `0` (all available CPU cores)
 - `parallelization_mode`: `auto`
+- `pipeline_mode`: `efficient`
 - `output_folder`: `./results`
 - `overwrite`: `true`
 - `min_support_value`: `0.5`
