@@ -52,6 +52,7 @@ def _make_config(
     processes,
     consolidation=False,
     bootstrap=True,
+    pipeline_mode=None,
 ):
     """Build a resolved orchestrator config for a run with a fixed bootstrap seed.
 
@@ -63,6 +64,7 @@ def _make_config(
         processes: Worker process count.
         consolidation: Whether to enable consolidation.
         bootstrap: Whether to enable bootstrap resampling.
+        pipeline_mode: ``efficient``/``detailed``, or ``None`` for the default.
 
     Returns:
         The resolved config dict with a fixed bootstrap seed and iterations.
@@ -81,6 +83,7 @@ def _make_config(
         alpha_ks=None,
         alpha_perm=None,
         p_value_correction=None,
+        pipeline_mode=pipeline_mode,
         consolidation=consolidation,
         bootstrap=bootstrap,
     )
@@ -188,9 +191,12 @@ def test_run_orchestrator_matches_derived_expectation(
         # Set by the run-wide correction pass, which recomputes the gate from the
         # corrected significance alongside the classification.
         assert result.decision_gate == "DCT"
-        assert result.ks_p_value_corrected == pytest.approx(
-            _bonferroni(result.ks_p_value)
-        )
+        # The count gate settles every triplet here, so under the default
+        # efficient mode the tree-height test below it is never measured, and it
+        # would take no part in the correction family in either mode.
+        assert result.ks_p_value is None
+        assert result.ks_p_value_corrected is None
+        assert result.ks_significant is None
         assert result.classification == "no_introgression"
 
         assert 0.0 <= result.bootstrap_value <= 1.0
@@ -198,9 +204,9 @@ def test_run_orchestrator_matches_derived_expectation(
         # The interval is reported only when some resample yielded two
         # observations in both groups; either way its two bounds agree on
         # whether they exist, and an existing pair is ordered.
-        assert (result.perm_stat_ci_low is None) == (result.perm_stat_ci_high is None)
-        if result.perm_stat_ci_low is not None:
-            assert result.perm_stat_ci_low <= result.perm_stat_ci_high
+        assert (result.bootstrap_stat_ci_low is None) == (result.bootstrap_stat_ci_high is None)
+        if result.bootstrap_stat_ci_low is not None:
+            assert result.bootstrap_stat_ci_low <= result.bootstrap_stat_ci_high
 
 
 def test_run_orchestrator_writes_results_tsv(
@@ -231,8 +237,8 @@ def test_run_orchestrator_writes_results_tsv(
     assert "decision_gate" in header
     # The equivalence p-value and the interval on the studentized difference.
     assert "perm_p_tost" in header
-    assert "perm_stat_ci_low" in header
-    assert "perm_stat_ci_high" in header
+    assert "bootstrap_stat_ci_low" in header
+    assert "bootstrap_stat_ci_high" in header
     assert len(lines) - 1 == len(results)
 
 
@@ -262,6 +268,38 @@ def test_no_bootstrap_omits_the_bootstrap_columns(
     # The inference columns are still present and the triplets still resolved.
     assert "classification" in header
     assert len(results) == _N_TRIPLETS
+
+
+@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
+def test_no_bootstrap_skips_the_bootstrap_itself(
+    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, pipeline_mode
+):
+    """Disabling the bootstrap stops the work, not just the columns.
+
+    The studentized interval is produced by the bootstrap loop, so its absence
+    is the observable proof no iterations ran. The detailed mode declines to
+    skip work the cascade cannot consult, which is not a licence to reinstate
+    work the user switched off, so the skip holds in both modes.
+    """
+    config = _make_config(
+        orchestrator_species_tree,
+        orchestrator_gene_trees,
+        tmp_path / "out",
+        mode="taxon",
+        processes=1,
+        bootstrap=False,
+        pipeline_mode=pipeline_mode,
+    )
+    results = run_orchestrator(config)
+
+    assert len(results) == _N_TRIPLETS
+    for result in results:
+        assert result.bootstrap_value is None
+        assert result.all_bootstrap is None
+        assert result.bootstrap_stat_ci_low is None
+        assert result.bootstrap_stat_ci_high is None
+        # The point estimate is unaffected by the bootstrap being off.
+        assert result.classification == "no_introgression"
 
 
 def test_consolidation_preserves_run_outputs(

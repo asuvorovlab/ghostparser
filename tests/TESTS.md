@@ -81,6 +81,13 @@ End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixt
   `bootstrap=False`. Expected outputs: `bootstrap_value` and `all_bootstrap` are
   absent from the header while `classification` remains, and all 4 triplets are
   still produced. Purpose: the bootstrap toggle only removes bootstrap output.
+- `test_no_bootstrap_skips_the_bootstrap_itself` — Inputs (parametrized over both
+  pipeline modes): a run with `bootstrap=False`. Expected outputs: every result
+  has `bootstrap_value`, `all_bootstrap`, `bootstrap_stat_ci_low` and
+  `bootstrap_stat_ci_high` at `None`, and the classification is unchanged.
+  Purpose: the toggle stops the work rather than only the columns, and the
+  detailed mode does not reinstate it — the studentized interval comes from the
+  bootstrap loop, so its absence is the observable proof no iterations ran.
 - `test_consolidation_preserves_run_outputs` — Inputs: a run with
   `consolidation=True`. Expected outputs: the results TSV, `metrics.txt`, and
   both processed tree files survive, and a non-empty `consolidation/` subfolder
@@ -195,13 +202,28 @@ because the shared fixture never produces a significant DCT.
   `_classification_codes` maps to the same label `_classify_introgression`
   returns. Purpose: the array-form cascade used to tally deferred votes cannot
   drift from the scalar one.
-- `test_monotonicity_matches_which_methods_may_short_circuit` — Inputs
-  (parametrized over all 6 methods): a family of eight p-values at 0.001 plus 0.4
-  and 0.9. Expected outputs: no adjusted value falls below its raw one for
-  `no`/`bfn`/`holm`/`fdr_bh`/`fdr_by`, at least one does for `fdr_tsbh`, and
-  `is_monotone_correction` agrees with the measurement in every case. Purpose:
-  asserts the property that licenses skipping the direction test, and pins the
-  one method excluded from it, without trusting method names.
+- `test_every_supported_correction_is_monotone` — Inputs (parametrized over
+  `P_VALUE_CORRECTION_CHOICES`): a family of eight p-values at 0.001 plus 0.4 and
+  0.9. Expected outputs: no adjusted value falls below its raw one, for every
+  method. Purpose: asserts the property that licenses both short-circuits — the
+  point estimate's and the bootstrap's — over the whole choice list rather than a
+  fixed set of names, so adding a non-monotone method fails here immediately.
+- `test_efficient_and_detailed_modes_agree_on_every_classification` — Inputs
+  (parametrized over `bfn` and `holm`): one observation set per cascade outcome,
+  analyzed in both pipeline modes, then run through the
+  run-wide correction pass as one family. Expected outputs: the two modes agree
+  field for field on counts, DCT/KS values, `classification`, `decision_gate`,
+  `bootstrap_value`, and `all_bootstrap`; the efficient run has an empty `perm_*`
+  block with `perm_note = direction_test_not_consulted` on exactly the rows whose
+  gate is not `PERM`. Purpose: the efficient mode changes what is computed, never
+  what is concluded, across an inline correction and a deferred one.
+- `test_tree_height_family_holds_only_the_count_gate_survivors` — Inputs
+  (parametrized over both pipeline modes): three triplets under `bfn`, two
+  settled by the count gate and one not. Expected outputs: the settled two report
+  no `ks_p_value_corrected` and no `ks_significant` and classify
+  `no_introgression`; the survivor's corrected value equals its raw one, since it
+  is the only family member. Purpose: pins that the tree-height correction family
+  is the count-gate survivors, and that the set does not depend on the mode.
 - `test_inline_bonferroni_matches_the_family_correction` — Inputs (parametrized
   over family sizes 1, 7, 250): p=0.004 padded out to that family. Expected
   outputs: `_adjust_p_value_inline` equals the full `_adjust_p_values` pass on
@@ -327,6 +349,24 @@ exhaustive enumeration, and over randomized inputs.
   and `(2, 3)`. Expected outputs: `(500, 5000)` and `(1, 1)`. Purpose: the
   bootstrap budget divisor and its floor.
 
+- `test_shifted_statistics_match_an_explicit_shift` — Inputs (parametrized over
+  five group-size splits including both orderings): a gamma-drawn pooled sample,
+  drawn once with `shifts=(0.75, -0.75)` and once per shift on explicitly shifted
+  data under the same seed. Expected outputs: the fused rows equal the explicit
+  re-draws to `rel=1e-9`. Purpose: the equivalence test folds its shift into the
+  power sums the directional draw already computed; same seed means same
+  permutations, so the two must agree to floating point, not merely in
+  distribution.
+- `test_equivalence_reuses_the_directional_resamples` — Inputs: two same-mean
+  normal samples of 40 at a fixed 2000 resamples. Expected outputs: a `p_tost` at
+  or above `1 / (n_resamples + 1)` and an exact multiple of it. Purpose: TOST is
+  an add-one estimator over the directional test's own draws, so it answers at
+  that resolution and draws nothing extra.
+- `test_equivalence_test_disabled_reports_no_tost` — Inputs: the same samples with
+  `equivalence_test=False`. Expected outputs: `p_tost is None` and the decision
+  falls through to `inconclusive`. Purpose: the bootstrap path, which disables the
+  equivalence step, pays nothing for it.
+
 ### tests/orchestrator/test_orchestrator_shape.py
 
 The optional distribution-shape diagnostics: moment parity against SciPy, the
@@ -360,14 +400,14 @@ column contract.
   outputs: identical `con_skew` and `con_modes_p`. Purpose: the diagnostics come
   from the point estimate only, so iteration count cannot move them and the
   modality bootstrap is not paid per iteration.
-- `test_summary_statistics_tsv_carries_shape_columns_only_when_enabled` — Inputs
+- `test_summary_statistics_tsv_never_carries_shape_columns` — Inputs
   (parametrized over `shape_diagnostics` on/off): the same triplet written
-  through `write_summary_statistics_tsv`. Expected outputs: the fifteen
-  `concordant_*`/`discordant1_*`/`discordant2_*` columns present exactly when
-  enabled, no short-prefixed `con_*` names in the header, the row aligned, and
-  `concordant_skew` equal to the result's `con_skew`. Purpose: the summary file
-  repeats the same values under its own group naming, so the ML trainers can
-  consume them as features.
+  through `write_summary_statistics_tsv`. Expected outputs: no column ending in
+  any `SHAPE_FIELD_NAMES` suffix appears in the header under either setting, the
+  row stays aligned with it, and the descriptive per-topology columns and
+  `classification` are still present. Purpose: that file is consumed as a
+  feature matrix and the diagnostics are undefined below their observation
+  floors, so they must not reach it even when measured.
 - `test_results_tsv_carries_shape_columns_only_when_enabled` — Inputs
   (parametrized over `shape_diagnostics` on/off): a 60/40/30 lognormal triplet
   written through `write_pipeline_results`. Expected outputs: the fifteen
@@ -479,7 +519,11 @@ Orchestrator config resolution and config-file precedence.
   `None`. Expected outputs: `alpha_dct`/`alpha_ks` 0.05, the orchestrator-specific
   `p_value_correction == "bfn"`, `alpha_perm == 0.05`, the permutation
   resample/CI defaults (2500, 25000, `wilson`), `overwrite is True`, the config-file-only keys at their defaults,
-  and `preflight_data_check is False`. Purpose: default resolution in CLI mode.
+  `preflight_data_check is False`, `pipeline_mode == "efficient"`, and
+  and `pipeline_mode == "efficient"`. Purpose: default resolution in CLI mode.
+- `test_pipeline_mode_rejects_an_unknown_value` — Inputs: `pipeline_mode: fast`.
+  Expected outputs: `ConfigError` naming the field. Purpose: the choice list is
+  enforced.
 - `test_parser_flags_resolve_into_their_config_values` — Inputs: the CLI flag
   strings parsed by `build_argument_parser`, then resolved. Expected outputs:
   each flag's value reaches its config key, `--no-overwrite` gives

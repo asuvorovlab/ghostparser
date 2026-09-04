@@ -354,23 +354,22 @@ while `_classify_introgression` returns a label for one row; the code indexes
 every combination. The expected value is whatever the scalar function returns —
 the point is agreement between the two implementations, not a third derivation.
 
-### `test_monotonicity_matches_which_methods_may_short_circuit`
+### `test_every_supported_correction_is_monotone`
 
-**Inputs:** the family `[0.001] * 8 + [0.4, 0.9]` under each of the six methods.
+**Inputs:** the family `[0.001] * 8 + [0.4, 0.9]` under each method in
+`P_VALUE_CORRECTION_CHOICES`.
 
 **Derivation:** each of `no`, `bfn`, `holm`, `fdr_bh`, and `fdr_by` applies a
 multiplier of at least 1 to the `j`-th smallest of `n` — `n` for Bonferroni,
 `n - j + 1` for Holm, `n/j` for BH, and `(n/j) x sum(1/i)` for BY — so no
-adjusted value can fall below its raw one, and `is_monotone_correction` is
-`True`.
+adjusted value can fall below its raw one.
 
-`fdr_tsbh` runs BH once to estimate the number of true nulls `n0`, then re-runs
-with `n0` in place of `n`. Eight strong signals against two nulls make the first
-stage reject 8, so `n0 = 2` and the multiplier becomes `2/j`, which is below 1
-for every `j > 2`; the later strong p-values therefore land beneath their raw
-ones and `is_monotone_correction` is `False`. Measured over 20,000 random
-families this happened in 19,747 of them, worst gap `-0.987`, while the other
-four methods produced zero cases.
+The family is deliberately the hostile case for that property: a method that
+estimates the number of true nulls `n0` and substitutes it for `n` would reject
+8 at the first stage, giving `n0 = 2` and a multiplier of `2/j` — below 1 for
+every `j > 2`, so the later strong p-values would land beneath their raw ones.
+Parametrizing over the choice list rather than a fixed set of names means such a
+method fails here the moment it is added.
 
 The `1e-12` slack absorbs floating-point rounding in the running max/min sweeps.
 
@@ -437,7 +436,7 @@ and one of the six methods, `alpha = 0.05`.
 **Derivation:** `no` must return the input list unchanged. Every other method
 must equal `statsmodels.stats.multitest.multipletests(p_values, alpha=0.05,
 method=m)[1]` where `m` maps `bfn → bonferroni`, `holm → holm`,
-`fdr_bh → fdr_bh`, `fdr_by → fdr_by`, `fdr_tsbh → fdr_tsbh`.
+`fdr_bh → fdr_bh`, `fdr_by → fdr_by`.
 
 ### `test_adjust_p_values_bonferroni_by_definition`
 
@@ -1323,18 +1322,23 @@ the flag is an added column rather than a replacement for the strength value.
   a fourth child does not disturb the first three, so both runs draw the same
   stream. The two results must therefore agree exactly, not approximately.
 
-### `test_summary_statistics_tsv_carries_shape_columns_only_when_enabled`
+### `test_summary_statistics_tsv_never_carries_shape_columns`
 
-- **Input** — the same triplet, written through `write_summary_statistics_tsv`.
-- **Expected column names** — `SHAPE_SUMMARY_GROUP_LABELS` (3) crossed with
-  `SHAPE_FIELD_NAMES` (5), so 15 columns, using the full-word group prefixes
-  that the file's other 63 per-topology columns already use.
-- **`concordant_skew == con_skew`** — the summary writer re-keys the same dict
-  rather than recomputing, so the values are identical rather than close.
-- **No `con_*` in the header** — guards against the short results-TSV prefixes
-  leaking into a file whose convention is the full words.
-- **`discordant2_tail_xi` empty** — 30 observations leave 3 above the 90th
-  percentile, under the 10-exceedance floor.
+- **Input** — the same triplet, written through `write_summary_statistics_tsv`
+  with the diagnostics off and on.
+- **Expected column names** — none. No header entry ends in any of
+  `SHAPE_FIELD_NAMES`, under either setting. The "on" case is the one that
+  matters: the result carries a populated `shape_statistics` dict and the file
+  still ignores it.
+- **Row width equals header width** — dropping a column block is exactly the
+  kind of change that leaves a row misaligned.
+- **`concordant_avg_tree_height_mean` and `classification` still present** — the
+  63 descriptive columns and the label are untouched.
+- **Why** — the diagnostics are undefined below their observation floors: a
+  group under `SHAPE_MIN_OBSERVATIONS` (20) has no modality p-value or moments,
+  and a group whose upper decile holds under `SHAPE_MIN_TAIL_EXCEEDANCES` (10)
+  points has no tail index. `ml_utils.rows_to_matrix` raises on any empty
+  feature cell, so those gaps made whole runs unusable as training data.
 
 ### `test_results_tsv_carries_shape_columns_only_when_enabled`
 
@@ -1415,3 +1419,85 @@ config defaults, and their inputs are the fixtures described in
   exact `0.0` so a dimension whose values all score alike reports zero spread
   rather than floating-point noise, which is what lets the guidance block call it
   out as having no effect.
+
+### `test_efficient_and_detailed_modes_agree_on_every_classification`
+
+**Inputs:** the five crafted observation sets from the cascade table (one per
+outcome), analyzed in both pipeline modes with `family_size=5`, 30 bootstrap
+iterations and seed 11, then passed through
+`_apply_triplet_result_p_value_correction` under `bfn` and under `holm`.
+
+**Derivation:** the efficient mode omits the tree-height test when the *raw*
+count gate failed, and the direction test when either raw gate failed. Every
+supported correction is monotone, so a raw-failed gate stays failed after
+correction and the omitted test could not have been reached — the cascade
+returns the same `(classification, decision_gate)` pair either way. Neither does
+the extra work the detailed mode does change a correction family: the
+tree-height family is the corrected count-gate survivors, a subset of the raw
+survivors the efficient mode already measured, so both runs correct the same
+members. The bootstrap votes are compared too, since they answer to the
+corrected thresholds and would move with any gate that shifted. `bfn` and `holm`
+cover a method whose multiplier is known up front and one that is rank-based.
+
+### `test_tree_height_family_holds_only_the_count_gate_survivors`
+
+**Inputs:** three triplets under `bfn` with `family_size=3` — two copies of the
+20-vs-10-vs-10 set the count gate settles (chi-square on 10 vs 10 gives p = 1.0)
+and one `_HIGH`/`_LOW` set it does not — run in each pipeline mode.
+
+**Derivation:** the tree-height family is the triplets whose corrected DCT
+p-value cleared alpha. The two settled triplets are outside it, so they have no
+corrected value and no significance to report, and the cascade has already
+called them `no_introgression`. The survivor is the family's only member, so
+Bonferroni multiplies by 1 and its corrected value equals its raw one. The mode
+does not enter the derivation, which is the point: the detailed mode measures the
+settled triplets' raw tree-height values but never enrols them.
+
+### `test_shifted_statistics_match_an_explicit_shift`
+
+**Inputs:** `x ~ Gamma(2.0, 1.0)` and `y ~ Gamma(2.5, 1.2)` at five `(nx, ny)`
+splits — `(10, 30)`, `(30, 10)`, `(7, 7)`, `(4, 25)`, `(2, 60)` — pooled,
+mean-centered, and drawn 2000 times under seed 31 with `shifts=(0.75, -0.75)`.
+
+**Derivation:** adding a constant `c` to the first `nx` entries of the pooled
+vector is what makes the samples exchangeable under
+`H0: mean(x) - mean(y) == -c`. For a permutation gathering subset `S`, with
+`a = |S ∩ X|` the count of sampled entries from the x block and `b` the sum of
+their values:
+
+    sum_w(S)   = sum_v(S)   + c * a
+    sumsq_w(S) = sumsq_v(S) + 2c * b + c^2 * a
+
+and the pooled totals shift by `c * nx` and `2c * sum(v over X) + c^2 * nx`. The
+studentized statistic is a function of those power sums alone, so the fused row
+is algebraically identical to re-running the draw on shifted data — not an
+approximation. Requesting the same count under the same seed produces the same
+`indices`, since the shifts consume no randomness, so the comparison is
+element-wise. Both group orderings and lopsided splits are covered because the
+kernel samples whichever group is smaller and recovers the other by subtraction,
+which is where a sign or role error would surface. Measured agreement is at
+`1e-14` relative; the `1e-9` tolerance is slack.
+
+### `test_equivalence_reuses_the_directional_resamples`
+
+**Inputs:** two `Normal(0, 1)` samples of 40 under seed 8, tested with
+`min_resamples = max_resamples = 2000` under seed 2.
+
+**Derivation:** equal means leave neither tail significant, so the equivalence
+step runs. Its p-value is `max` of two add-one estimators `(1 + count) / (n + 1)`
+over the directional test's own `n_done` draws, so it is an exact multiple of
+`1 / (n_resamples + 1)` and cannot fall below that floor. Both properties would
+break if the step drew its own resamples at a different count.
+
+### `test_no_bootstrap_skips_the_bootstrap_itself`
+
+**Inputs:** the shared 4-triplet orchestrator fixture with `bootstrap=False`,
+under each pipeline mode.
+
+**Derivation:** `bootstrap_stat_ci_low`/`_high` are a percentile interval over
+the per-iteration studentized differences, computed inside the bootstrap loop.
+If any iteration ran they would be populated, so `None` on every triplet is the
+observable proof the loop was skipped rather than merely having its columns
+dropped. The classification comes from the point estimate, which the bootstrap
+does not feed, so it stays `no_introgression` as in
+`test_run_orchestrator_matches_derived_expectation`.

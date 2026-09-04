@@ -196,13 +196,15 @@ def test_shape_is_measured_once_and_not_per_bootstrap_iteration():
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-def test_summary_statistics_tsv_carries_shape_columns_only_when_enabled(
-    enabled, tmp_path
-):
-    """The summary TSV repeats the diagnostics under its own group names.
+def test_summary_statistics_tsv_never_carries_shape_columns(enabled, tmp_path):
+    """The summary TSV holds no shape diagnostics, measured or not.
 
-    Its other per-topology columns spell the groups out in full, so these do
-    too; the values are the same numbers the results TSV carries.
+    That file is a feature matrix, and the diagnostics are undefined for groups
+    below their observation floors — a group of 12 has no modality p-value and a
+    thin upper tail has no tail index. Carrying them there would punch holes in
+    every row that hit one, so they live in the results TSV alone. Asserted with
+    the diagnostics both off and on, since the "on" case is the one that would
+    otherwise leak columns.
     """
     result = _shape_result(enabled=enabled)
     path = tmp_path / "summary.tsv"
@@ -210,22 +212,17 @@ def test_summary_statistics_tsv_carries_shape_columns_only_when_enabled(
 
     lines = path.read_text().strip().splitlines()
     header = lines[0].split("\t")
-    expected = [
-        f"{label}_{field}"
-        for label in pinf.SHAPE_SUMMARY_GROUP_LABELS
-        for field in pshape.SHAPE_FIELD_NAMES
-    ]
-    assert all((column in header) is enabled for column in expected)
-    assert len(lines[1].split("\t")) == len(header)
-    # The short-prefixed results-TSV names never leak into this file.
-    assert not any(column.startswith("con_") for column in header)
+    row = lines[1].split("\t")
 
+    assert not any(column.endswith(f"_{field}") for column in header
+                   for field in pshape.SHAPE_FIELD_NAMES)
+    assert len(row) == len(header)
+    # The descriptive per-topology columns the file does carry are unaffected.
+    assert "concordant_avg_tree_height_mean" in header
+    assert "classification" in header
+    # Even with the diagnostics measured, nothing of theirs reaches this file.
     if enabled:
-        row = dict(zip(header, lines[1].split("\t")))
-        assert float(row["concordant_skew"]) == pytest.approx(
-            result.shape_statistics["con_skew"]
-        )
-        assert row["discordant2_tail_xi"] == ""
+        assert result.shape_statistics is not None
 
 
 @pytest.mark.parametrize("enabled", [False, True])

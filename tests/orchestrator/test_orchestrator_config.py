@@ -38,6 +38,7 @@ def _base_cli_args(**overrides):
         alpha_ks=None,
         alpha_perm=None,
         p_value_correction=None,
+        pipeline_mode=None,
         consolidation=None,
         bootstrap=None,
         preflight_data_check=None,
@@ -69,6 +70,7 @@ def test_cli_defaults_resolve():
     assert config["bootstrap_debug_mode"] is False
     assert config["bootstrap_summary_only"] is False
     assert config["preflight_data_check"] is False
+    assert config["pipeline_mode"] == "efficient"
 
 
 def test_config_only_keys_read_from_config_file(tmp_path):
@@ -284,6 +286,7 @@ def test_parser_flags_resolve_into_their_config_values():
             "--alpha-dct", "0.01",
             "--alpha-ks", "0.2",
             "--p-value-correction", "fdr_bh",
+            "--pipeline-mode", "detailed",
             "--alpha-perm", "0.02",
             "--no-overwrite",
             "--preflight-data-check",
@@ -295,6 +298,34 @@ def test_parser_flags_resolve_into_their_config_values():
     assert config["alpha_dct"] == 0.01
     assert config["alpha_ks"] == 0.2
     assert config["alpha_perm"] == 0.02
+    assert config["pipeline_mode"] == "detailed"
     assert config["p_value_correction"] == "fdr_bh"
     assert config["overwrite"] is False
     assert config["preflight_data_check"] is True
+
+
+def _payload(tmp_path, **extra):
+    """Write a minimal orchestrator config file with extra keys merged in.
+
+    Args:
+        tmp_path: The pytest temporary directory.
+        **extra: Additional config keys.
+
+    Returns:
+        The path to the written YAML file.
+    """
+    payload = {
+        "species_tree_path": "species.tree",
+        "gene_trees_path": "genes.tree",
+        "outgroup": "OUT",
+    }
+    payload.update(extra)
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(payload))
+    return path
+
+
+def test_pipeline_mode_rejects_an_unknown_value(tmp_path):
+    """An unsupported pipeline mode is refused by name."""
+    with pytest.raises(ConfigError, match="pipeline_mode"):
+        load_orchestrator_config(str(_payload(tmp_path, pipeline_mode="fast")))

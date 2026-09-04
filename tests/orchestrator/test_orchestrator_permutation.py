@@ -233,9 +233,10 @@ def test_permutation_statistics_match_exhaustive_enumeration():
 
     assert len(exact) == math.comb(nx + ny, nx)
 
+    # Row 0 is the unshifted draw; no equivalence shifts are requested here.
     sampled = pperm._permutation_statistics(
         centered, nx, ny, 5000, np.random.default_rng(7)
-    )
+    )[0]
     observed = {round(float(value), 9) for value in sampled}
 
     assert observed <= exact
@@ -412,7 +413,7 @@ def test_null_skewness_is_measured_and_matches_scipy():
     pooled = pooled - pooled.mean()
     drawn = pperm._permutation_statistics(
         pooled, con.size, dis1.size, resamples, np.random.default_rng(22)
-    )
+    )[0]
 
     assert result.statistic < 0
     assert result.decision == "less"
@@ -484,3 +485,76 @@ def test_bootstrap_resample_budget_scales_by_one_fifth():
     assert pperm.bootstrap_resample_budget(2500, 25000) == (500, 5000)
     # The floor keeps a usable budget when the configured numbers are tiny.
     assert pperm.bootstrap_resample_budget(2, 3) == (1, 1)
+
+
+@pytest.mark.parametrize("nx, ny", [(10, 30), (30, 10), (7, 7), (4, 25), (2, 60)])
+def test_shifted_statistics_match_an_explicit_shift(nx, ny):
+    """A shifted row equals re-running the draw on explicitly shifted data.
+
+    The equivalence test rides on the directional test's permutations: rather
+    than resampling shifted data, the kernel folds the shift into the power sums
+    it already computed. Requesting the same draw count under the same seed
+    yields the same permutations either way, so the two must agree to floating
+    point, not merely in distribution. Both group orderings and several lopsided
+    splits are covered because the kernel samples whichever group is smaller and
+    recovers the other by subtraction.
+    """
+    rng = np.random.default_rng(4)
+    x = rng.gamma(2.0, 1.0, nx)
+    y = rng.gamma(2.5, 1.2, ny)
+    pooled = np.concatenate([x, y])
+    pooled = pooled - pooled.mean()
+    shift = 0.75
+
+    fused = pperm._permutation_statistics(
+        pooled, nx, ny, 2000, np.random.default_rng(31), shifts=(shift, -shift)
+    )
+
+    for row, value in enumerate((0.0, shift, -shift)):
+        shifted = pooled.copy()
+        shifted[:nx] += value
+        shifted = shifted - shifted.mean()
+        expected = pperm._permutation_statistics(
+            shifted, nx, ny, 2000, np.random.default_rng(31)
+        )[0]
+        assert fused[row] == pytest.approx(expected, rel=1e-9, abs=1e-12)
+
+
+def test_equivalence_reuses_the_directional_resamples():
+    """TOST answers at the resample count the directional test settled on.
+
+    The equivalence p-value is an add-one estimator over the same draws, so it
+    is a multiple of ``1 / (n_resamples + 1)`` and can never sit below that
+    floor. Fusing the two also means no extra resampling happens for it.
+    """
+    rng = np.random.default_rng(8)
+    # Same mean, so no direction is significant and the equivalence step runs.
+    x = rng.normal(0.0, 1.0, 40)
+    y = rng.normal(0.0, 1.0, 40)
+
+    result = pperm.run_studentized_permutation_test(
+        x, y, min_resamples=2000, max_resamples=2000, rng=np.random.default_rng(2)
+    )
+
+    assert result.decision in {"equivalent", "inconclusive"}
+    assert result.p_tost is not None
+    resolution = 1.0 / (result.n_resamples + 1)
+    assert result.p_tost >= resolution
+    assert result.p_tost * (result.n_resamples + 1) == pytest.approx(
+        round(result.p_tost * (result.n_resamples + 1)), abs=1e-9
+    )
+
+
+def test_equivalence_test_disabled_reports_no_tost():
+    """With the equivalence step off the decision falls through to inconclusive."""
+    rng = np.random.default_rng(8)
+    x = rng.normal(0.0, 1.0, 40)
+    y = rng.normal(0.0, 1.0, 40)
+
+    result = pperm.run_studentized_permutation_test(
+        x, y, min_resamples=2000, max_resamples=2000,
+        equivalence_test=False, rng=np.random.default_rng(2),
+    )
+
+    assert result.p_tost is None
+    assert result.decision == "inconclusive"
