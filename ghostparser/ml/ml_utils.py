@@ -35,9 +35,6 @@ MAX_STRING_CATEGORIES = 7
 # Colormap for both confusion-matrix figures. Both plot a sequential quantity,
 # and cividis is perceptually uniform and colour-vision-deficiency safe.
 CONFUSION_MATRIX_COLORMAP = "cividis"
-# Fill behind masked heatmap cells, so an empty cell reads as "nothing here"
-# rather than as the colormap's dark low end.
-EMPTY_CELL_COLOR = "#f0f0f0"
 
 
 @dataclass(frozen=True)
@@ -573,19 +570,15 @@ def save_64_class_confusion_matrix_plot(
 
     fig, ax = plt.subplots(figsize=(18, 16), constrained_layout=True)
     cmap = plt.get_cmap(CONFUSION_MATRIX_COLORMAP)
-    # Most of a 64x64 matrix is empty: only a handful of the possible label
-    # combinations ever occur, and rows for classes absent from the test set are
-    # entirely zero. Masking those cells lets them fall through to the axes
-    # facecolor, so the sparse real signal stays legible instead of being buried
-    # under a solid block of the colormap's dark low end.
-    ax.set_facecolor(EMPTY_CELL_COLOR)
+    # Zero cells are painted at the colormap's low end like any other value, so
+    # the grid reads as one continuous surface and the colour scale covers every
+    # cell in it.
     sns.heatmap(
         data,
         ax=ax,
         cmap=cmap,
         vmin=0.0,
         vmax=1.0,
-        mask=data == 0.0,
         square=True,
         cbar=True,
         cbar_kws={"label": "Fraction of true class"},
@@ -605,22 +598,6 @@ def save_64_class_confusion_matrix_plot(
     ax.set_title(
         "Confusion matrix across all 64 possible 6-bit classes "
         "(row-normalized: fraction of each true class)"
-    )
-
-    # A corner note explaining why most of the matrix is blank, so the colorbar
-    # is not read as covering those cells too. Anchored below the figure's
-    # bottom-left corner: `constrained_layout` keeps the axes inside [0, 1], so
-    # nothing can collide with it there, and the `bbox_inches="tight"` save
-    # expands the output to include it.
-    fig.text(
-        0.0,
-        0.0,
-        "Cells at 0 are left uncoloured and are not represented on the colour scale.",
-        ha="left",
-        va="top",
-        fontsize=10,
-        fontweight="bold",
-        color="#4d4d4d",
     )
 
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
