@@ -27,6 +27,10 @@ processes: 0                      # 0 = all available cores
 parallelization_mode: auto        # auto | taxon | gene
 
 # --- Statistical tests -----------------------------------------------------
+# efficient stops measuring once the cascade is settled; detailed runs all three
+# gates for every triplet. Both reach the same classification.
+pipeline_mode: efficient          # efficient | detailed
+
 # Gate 1: discordant count test.
 discordant_test: chi-square       # chi-square | z-test
 alpha_dct: 0.05
@@ -45,7 +49,7 @@ permutation_options:
 
 # Applied run-wide across triplets (DCT and KS), and inside each permutation
 # test across its pair of one-tailed p-values.
-p_value_correction: bfn           # no | bfn | holm | fdr_bh | fdr_by | fdr_tsbh
+p_value_correction: bfn           # no | bfn | holm | fdr_bh | fdr_by
 
 # How H(T) is computed per gene tree.
 tree_height_calculation_strategy: AVG   # AVG | A | B | C | SIS | INT
