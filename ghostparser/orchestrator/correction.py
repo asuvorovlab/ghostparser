@@ -10,11 +10,9 @@ from .config import DEFAULT_P_VALUE_CORRECTION, P_VALUE_CORRECTION_CHOICES
 
 __all__ = [
     "INLINE_CORRECTION_CHOICES",
-    "MONOTONE_CORRECTION_CHOICES",
     "adjust_p_value_inline",
     "adjust_p_values",
     "is_inline_correction",
-    "is_monotone_correction",
 ]
 
 # GhostParser config names mapped onto the statsmodels ``multipletests`` methods.
@@ -23,32 +21,20 @@ _METHOD_MAP = {
     "holm": "holm",
     "fdr_bh": "fdr_bh",
     "fdr_by": "fdr_by",
-    "fdr_tsbh": "fdr_tsbh",
 }
 
-# Corrections that never return an adjusted p-value below the raw one, so
-# ``raw > alpha`` already implies ``adjusted > alpha``. That implication is what
-# licenses skipping a downstream test once an upstream raw gate has failed; the
-# per-method argument is under "Correction inside the bootstrap" in the
-# orchestrator guide.
-MONOTONE_CORRECTION_CHOICES = ("no", "bfn", "holm", "fdr_bh", "fdr_by")
+# Every supported correction is monotone: none ever returns an adjusted p-value
+# below the raw one, so ``raw > alpha`` already implies ``adjusted > alpha``.
+# That implication is what licenses skipping a downstream test once an upstream
+# raw gate has failed, in the point estimate and in the bootstrap alike. Keep it
+# true of anything added to ``P_VALUE_CORRECTION_CHOICES``: a method whose
+# adjusted value can fall below the raw one silently breaks both short-circuits.
+# The argument is under "Skipping a settled gate" in the orchestrator guide.
 
 # Corrections that can be applied to a single p-value knowing only the family
 # size, without the other members. Everything else is rank-based and needs the
 # whole family in hand.
 INLINE_CORRECTION_CHOICES = ("no", "bfn")
-
-
-def is_monotone_correction(method):
-    """Report whether a correction method can only raise p-values.
-
-    Args:
-        method: One of :data:`~ghostparser.orchestrator.config.P_VALUE_CORRECTION_CHOICES`.
-
-    Returns:
-        ``True`` when the method is in :data:`MONOTONE_CORRECTION_CHOICES`.
-    """
-    return method in MONOTONE_CORRECTION_CHOICES
 
 
 def is_inline_correction(method):
@@ -96,8 +82,7 @@ def adjust_p_values(p_values, method=DEFAULT_P_VALUE_CORRECTION, alpha=0.05):
     Args:
         p_values: Sequence of raw p-values forming one testing family.
         method: One of :data:`~ghostparser.orchestrator.config.P_VALUE_CORRECTION_CHOICES`.
-        alpha: FDR level, used by the two-stage BH method and by statsmodels
-            when deciding rejections.
+        alpha: FDR level, used by statsmodels when deciding rejections.
 
     Returns:
         A list of adjusted p-values in the input order.

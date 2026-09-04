@@ -39,12 +39,16 @@ DEFAULT_BOOTSTRAP_DEBUG_MODE = False
 DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
 DEFAULT_GENERATE_SUMMARY_STATS = False
 DEFAULT_SHAPE_DIAGNOSTICS = False
+DEFAULT_PIPELINE_MODE = "efficient"
 DEFAULT_CONSOLIDATION = True
 DEFAULT_PREFLIGHT_DATA_CHECK = False
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
+PIPELINE_MODE_EFFICIENT = "efficient"
+PIPELINE_MODE_DETAILED = "detailed"
+PIPELINE_MODE_CHOICES = (PIPELINE_MODE_EFFICIENT, PIPELINE_MODE_DETAILED)
 TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C", "SIS", "INT")
-P_VALUE_CORRECTION_CHOICES = ("no", "bfn", "holm", "fdr_bh", "fdr_by", "fdr_tsbh")
+P_VALUE_CORRECTION_CHOICES = ("no", "bfn", "holm", "fdr_bh", "fdr_by")
 
 # Binomial proportion interval methods accepted by statsmodels'
 # ``proportion_confint``. ``wilson`` is the default: it stays inside [0, 1] and
@@ -85,6 +89,7 @@ _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "alpha_ks",
     "alpha_perm",
     "p_value_correction",
+    "pipeline_mode",
     "consolidation",
     "bootstrap",
     "preflight_data_check",
@@ -510,6 +515,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
     )
     parser.add_argument(
+        "--pipeline-mode",
+        choices=PIPELINE_MODE_CHOICES,
+        default=None,
+        help=(
+            "efficient skips tests the decision cascade cannot consult; "
+            "detailed runs every test for every triplet "
+            f"(default: {DEFAULT_PIPELINE_MODE})"
+        ),
+    )
+    parser.add_argument(
         "--no-consolidation",
         dest="consolidation",
         action="store_false",
@@ -566,6 +581,9 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
 
     bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
     permutation_options = _validate_permutation_options(payload)
+    pipeline_mode = _validate_choice(
+        payload, "pipeline_mode", DEFAULT_PIPELINE_MODE, PIPELINE_MODE_CHOICES
+    )
 
     return {
         "species_tree": species_tree,
@@ -592,6 +610,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "shape_diagnostics": _validate_optional_bool(
             payload, "shape_diagnostics", DEFAULT_SHAPE_DIAGNOSTICS
         ),
+        "pipeline_mode": pipeline_mode,
         "generate_summary_stats": _validate_optional_bool(
             payload, "generate_summary_stats", DEFAULT_GENERATE_SUMMARY_STATS
         ),

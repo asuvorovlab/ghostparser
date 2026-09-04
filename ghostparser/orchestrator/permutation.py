@@ -181,7 +181,50 @@ def studentized_mean_diff(x, y):
     return (float(np.mean(x)) - float(np.mean(y))) / standard_error
 
 
-def _permutation_statistics(pooled, nx, ny, count, rng):
+def _studentize(sum_small, sumsq_small, total_sum, total_sumsq, geometry):
+    """Studentize one batch of permuted group assignments from its power sums.
+
+    Works from the sampled group's sum and sum of squares plus the pooled
+    totals, so the complement never has to be gathered.
+
+    Args:
+        sum_small: Per-permutation sum over the sampled group.
+        sumsq_small: Per-permutation sum of squares over the sampled group.
+        total_sum: Sum over the whole pooled sample.
+        total_sumsq: Sum of squares over the whole pooled sample.
+        geometry: The ``(k, m, nx, ny, small_is_x)`` layout tuple.
+
+    Returns:
+        A float array of Welch-studentized mean differences.
+    """
+    k, m, nx, ny, small_is_x = geometry
+
+    mean_small = sum_small / k
+    mean_large = (total_sum - sum_small) / m
+    var_small = (sumsq_small - k * mean_small * mean_small) / (k - 1)
+    var_large = ((total_sumsq - sumsq_small) - m * mean_large * mean_large) / (m - 1)
+    # Rounding can push a zero-variance group microscopically negative.
+    np.maximum(var_small, 0.0, out=var_small)
+    np.maximum(var_large, 0.0, out=var_large)
+
+    if small_is_x:
+        mean_x, var_x, mean_y, var_y = mean_small, var_small, mean_large, var_large
+    else:
+        mean_x, var_x, mean_y, var_y = mean_large, var_large, mean_small, var_small
+
+    standard_error = np.sqrt(var_x / nx + var_y / ny)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        statistics = (mean_x - mean_y) / standard_error
+    # A zero standard error means both permuted groups are internally
+    # constant. If their means also match, the permutation carries no
+    # evidence either way (0/0) and scores 0; if the means differ, there is
+    # no scale to divide by and +-inf is the correct extreme value, which
+    # numpy already produces.
+    np.nan_to_num(statistics, copy=False, nan=0.0)
+    return statistics
+
+
+def _permutation_statistics(pooled, nx, ny, count, rng, shifts=()):
     """Draw ``count`` random group assignments and studentize each one.
 
     Samples only the smaller group and recovers the larger by subtracting from
@@ -189,8 +232,19 @@ def _permutation_statistics(pooled, nx, ny, count, rng):
     ``pooled`` must be mean-centered, which is what keeps that subtraction safe
     in floating point.
 
-    The algebra is derived under "Gate 3 - Adaptive studentized permutation
-    test" in the orchestrator guide.
+    ``shifts`` lets one set of draws answer several hypotheses at once. Adding a
+    constant ``c`` to the first ``nx`` entries is what makes the samples
+    exchangeable under ``H0: mean(x) - mean(y) == -c``, and the shifted power
+    sums follow from the unshifted ones plus two extra reductions over the same
+    gather::
+
+        sum_w(S)   = sum_v(S)   + c * a
+        sumsq_w(S) = sumsq_v(S) + 2c * b + c**2 * a
+
+    where ``a`` counts the sampled entries drawn from the x block and ``b`` sums
+    their values. The equivalence test therefore costs two reductions rather
+    than two more full passes. The algebra is derived under "Gate 3 - Adaptive
+    studentized permutation test" in the orchestrator guide.
 
     Args:
         pooled: Mean-centered concatenation of both samples.
@@ -198,9 +252,11 @@ def _permutation_statistics(pooled, nx, ny, count, rng):
         ny: Size of the second group.
         count: Number of permutations to draw.
         rng: A ``numpy.random.Generator``.
+        shifts: Constants added to the x block, one per extra hypothesis.
 
     Returns:
-        A float array of ``count`` studentized statistics.
+        A float array of shape ``(1 + len(shifts), count)``. Row 0 holds the
+        unshifted statistics; row ``i + 1`` holds those for ``shifts[i]``.
     """
     n_total = nx + ny
     # Sample whichever group is smaller; the complement is recovered by
@@ -208,16 +264,21 @@ def _permutation_statistics(pooled, nx, ny, count, rng):
     small_is_x = nx <= ny
     k = nx if small_is_x else ny
     m = n_total - k
+    geometry = (k, m, nx, ny, small_is_x)
 
     total_sum = float(pooled.sum())
     total_sumsq = float(np.dot(pooled, pooled))
+    # Restricted to the x block, so a shift applied to x alone folds into the
+    # pooled totals without re-summing them.
+    x_sum = float(pooled[:nx].sum())
 
-    statistics = np.empty(count, dtype=np.float64)
+    statistics = np.empty((1 + len(shifts), count), dtype=np.float64)
     chunk_size = max(1, min(count, _MAX_PERMUTATION_CELLS // n_total))
 
     filled = 0
     while filled < count:
         size = min(chunk_size, count - filled)
+        stop = filled + size
 
         keys = rng.random((size, n_total))
         indices = np.argpartition(keys, k - 1, axis=1)[:, :k]
@@ -226,31 +287,24 @@ def _permutation_statistics(pooled, nx, ny, count, rng):
         sum_small = values.sum(axis=1)
         sumsq_small = np.einsum("ij,ij->i", values, values)
 
-        mean_small = sum_small / k
-        mean_large = (total_sum - sum_small) / m
-        var_small = (sumsq_small - k * mean_small * mean_small) / (k - 1)
-        var_large = ((total_sumsq - sumsq_small) - m * mean_large * mean_large) / (m - 1)
-        # Rounding can push a zero-variance group microscopically negative.
-        np.maximum(var_small, 0.0, out=var_small)
-        np.maximum(var_large, 0.0, out=var_large)
+        statistics[0, filled:stop] = _studentize(
+            sum_small, sumsq_small, total_sum, total_sumsq, geometry
+        )
 
-        if small_is_x:
-            mean_x, var_x, mean_y, var_y = mean_small, var_small, mean_large, var_large
-        else:
-            mean_x, var_x, mean_y, var_y = mean_large, var_large, mean_small, var_small
+        if shifts:
+            in_x = indices < nx
+            a = in_x.sum(axis=1)
+            b = (values * in_x).sum(axis=1)
+            for row, shift in enumerate(shifts, start=1):
+                statistics[row, filled:stop] = _studentize(
+                    sum_small + shift * a,
+                    sumsq_small + 2.0 * shift * b + (shift * shift) * a,
+                    total_sum + shift * nx,
+                    total_sumsq + 2.0 * shift * x_sum + (shift * shift) * nx,
+                    geometry,
+                )
 
-        standard_error = np.sqrt(var_x / nx + var_y / ny)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            chunk_statistics = (mean_x - mean_y) / standard_error
-        # A zero standard error means both permuted groups are internally
-        # constant. If their means also match, the permutation carries no
-        # evidence either way (0/0) and scores 0; if the means differ, there is
-        # no scale to divide by and +-inf is the correct extreme value, which
-        # numpy already produces.
-        np.nan_to_num(chunk_statistics, copy=False, nan=0.0)
-
-        statistics[filled : filled + size] = chunk_statistics
-        filled += size
+        filled = stop
 
     return statistics
 
@@ -303,39 +357,6 @@ def _running_skewness(count, sum_t, sum_t2, sum_t3):
     return float(m3 / m2**1.5)
 
 
-def _shifted_null_tail_p(x, y, shift, tail, count, rng):
-    """Run a one-sided permutation test against a shifted null.
-
-    Subtracting ``shift`` from ``x`` makes the samples exchangeable under
-    ``H0: mean(x) - mean(y) == shift``.
-
-    Args:
-        x: First sample.
-        y: Second sample.
-        shift: The mean difference asserted by the null hypothesis.
-        tail: ``greater`` or ``less``, the direction that rejects the null.
-        count: Number of permutations to draw.
-        rng: A ``numpy.random.Generator``.
-
-    Returns:
-        The add-one one-sided p-value.
-    """
-    shifted = x - shift
-    observed = studentized_mean_diff(shifted, y)
-    if not math.isfinite(observed):
-        return 1.0
-
-    pooled = np.concatenate([shifted, y])
-    pooled = pooled - pooled.mean()
-    statistics = _permutation_statistics(pooled, x.size, y.size, count, rng)
-
-    if tail == "greater":
-        extreme = int(np.count_nonzero(statistics >= observed))
-    else:
-        extreme = int(np.count_nonzero(statistics <= observed))
-    return (1 + extreme) / (count + 1)
-
-
 def _pooled_standard_deviation(x, y):
     """Compute the pooled standard deviation of two samples.
 
@@ -349,30 +370,6 @@ def _pooled_standard_deviation(x, y):
     return math.sqrt(
         (float(np.var(x, ddof=1)) + float(np.var(y, ddof=1))) / 2.0
     )
-
-
-def _equivalence_p_value(x, y, pooled_sd, delta, count, rng):
-    """Run the two one-sided tests (TOST) for equivalence of the two means.
-
-    Equivalence needs both nulls rejected, which makes this an
-    intersection-union test and is why the pair needs no correction.
-
-    Args:
-        x: First sample.
-        y: Second sample.
-        pooled_sd: The pooled standard deviation, which sets the scale of the
-            margin.
-        delta: Equivalence margin as an effect size.
-        count: Number of permutations to draw per one-sided test.
-        rng: A ``numpy.random.Generator``.
-
-    Returns:
-        The TOST p-value ``max(p_lower, p_upper)``.
-    """
-    margin = delta * pooled_sd
-    p_lower = _shifted_null_tail_p(x, y, -margin, "greater", count, rng)
-    p_upper = _shifted_null_tail_p(x, y, margin, "less", count, rng)
-    return max(p_lower, p_upper)
 
 
 def run_studentized_permutation_test(
@@ -467,6 +464,23 @@ def run_studentized_permutation_test(
     pooled = np.concatenate([x, y])
     pooled = pooled - pooled.mean()
 
+    # The equivalence test rides along on the directional draws. Its two nulls
+    # sit a margin either side of zero, which is a constant added to the x block
+    # -- so the same permutations answer all three hypotheses and both questions
+    # land at the same Monte Carlo resolution by construction. Reusing one
+    # permutation set across hypotheses is standard (maxT/minP do it to preserve
+    # the dependence); each p-value is still a valid permutation p-value for its
+    # own null.
+    margin = EQUIVALENCE_DELTA * _pooled_standard_deviation(x, y)
+    run_equivalence = bool(equivalence_test) and math.isfinite(margin) and margin > 0.0
+    shifts = (margin, -margin) if run_equivalence else ()
+    # Shifting x up by the margin puts it under ``H0: mean(x) - mean(y) == -m``,
+    # whose rejection region is the upper tail; shifting down mirrors it.
+    observed_lower = studentized_mean_diff(x + margin, y) if run_equivalence else 0.0
+    observed_upper = studentized_mean_diff(x - margin, y) if run_equivalence else 0.0
+    count_tost_lower = 0
+    count_tost_upper = 0
+
     max_resamples = max(int(max_resamples), int(min_resamples))
     ci_alpha = 1.0 - _CI_LEVEL
 
@@ -499,10 +513,14 @@ def run_studentized_permutation_test(
         # 2.25x it. ``_permutation_statistics`` chunks internally against
         # ``_MAX_PERMUTATION_CELLS``, so an oversized batch stays memory-safe.
         batch = max(1, batch)
-        statistics = _permutation_statistics(pooled, nx, ny, batch, rng)
+        drawn = _permutation_statistics(pooled, nx, ny, batch, rng, shifts=shifts)
+        statistics = drawn[0]
 
         count_greater += int(np.count_nonzero(statistics >= observed))
         count_less += int(np.count_nonzero(statistics <= observed))
+        if run_equivalence:
+            count_tost_lower += int(np.count_nonzero(drawn[1] >= observed_lower))
+            count_tost_upper += int(np.count_nonzero(drawn[2] <= observed_upper))
         sum_t += float(statistics.sum())
         sum_t2 += float(np.dot(statistics, statistics))
         sum_t3 += float(np.sum(statistics**3))
@@ -555,20 +573,24 @@ def run_studentized_permutation_test(
         decision = DECISION_GREATER
     elif less_significant and not greater_significant:
         decision = DECISION_LESS
-    elif not equivalence_test:
+    elif not run_equivalence:
         decision = DECISION_INCONCLUSIVE
     else:
-        # The equivalence step reuses the resample count the directional test
-        # settled on, so both questions are answered at the same Monte Carlo
-        # resolution.
-        p_tost = _equivalence_p_value(
-            x,
-            y,
-            _pooled_standard_deviation(x, y),
-            EQUIVALENCE_DELTA,
-            int(n_done),
-            rng,
+        # Equivalence needs both nulls rejected, which makes this an
+        # intersection-union test and is why the pair needs no correction. A
+        # non-finite shifted statistic leaves its own tail at the add-one
+        # ceiling rather than failing the whole test.
+        p_lower = (
+            (1 + count_tost_lower) / (n_done + 1)
+            if math.isfinite(observed_lower)
+            else 1.0
         )
+        p_upper = (
+            (1 + count_tost_upper) / (n_done + 1)
+            if math.isfinite(observed_upper)
+            else 1.0
+        )
+        p_tost = max(p_lower, p_upper)
         decision = (
             DECISION_EQUIVALENT if p_tost <= alpha else DECISION_INCONCLUSIVE
         )

@@ -8,7 +8,11 @@ import dendropy
 
 from .config import prepare_output_directory, resolve_config
 from .consolidation import generate_introgression_maps
-from .inference import write_pipeline_results, write_summary_statistics_tsv
+from .inference import (
+    PERM_NOTE_NOT_CONSULTED,
+    write_pipeline_results,
+    write_summary_statistics_tsv,
+)
 from .preflight import run_preflight_data_check
 from .stream import resolve_parallelization_mode, stream_triplet_results
 from .trees import (
@@ -78,10 +82,18 @@ def _log_permutation_diagnostics(metrics, results):
     # A guarded test reports zero resamples and no p-values, so "ran" means the
     # test actually resampled rather than merely having been attempted.
     ran = [result for result in results if result.perm_n_resamples]
+    # A skipped test and a guarded one both leave the block empty, but they mean
+    # opposite things: the first is the efficient mode declining work the
+    # cascade could not consult, the second is a test that could not be run.
+    skipped = [
+        result for result in results if result.perm_note == PERM_NOTE_NOT_CONSULTED
+    ]
     guarded = [
         result
         for result in results
-        if not result.perm_n_resamples and result.perm_note
+        if not result.perm_n_resamples
+        and result.perm_note
+        and result.perm_note != PERM_NOTE_NOT_CONSULTED
     ]
     no_comparison = [
         result
@@ -95,11 +107,28 @@ def _log_permutation_diagnostics(metrics, results):
         if result.perm_null_skew is not None
     ]
 
+    # The tree-height correction family is the triplets the count gate let
+    # through, so its size is a run parameter worth reporting rather than
+    # inferring from the columns.
+    dct_cleared = [result for result in results if result.dct_significant]
+    tht_family = [result for result in dct_cleared if result.ks_p_value is not None]
+    metrics.log(
+        f"  Triplets clearing the discordant count gate: {len(dct_cleared)} "
+        f"of {len(results)}"
+    )
+    metrics.log(
+        f"  Tree-height test correction family: {len(tht_family)} triplet(s)"
+    )
     metrics.log(f"  Permutation tests run: {len(ran)}")
     metrics.log(
         f"  Permutation resamples drawn: {sum(result.perm_n_resamples for result in ran)}"
     )
 
+    if skipped:
+        metrics.log(
+            f"  Direction tests skipped as already settled: {len(skipped)} "
+            f"of {len(results)} triplet(s)"
+        )
     if no_comparison:
         metrics.log(
             f"  ⚠ No concordant/discordant1 heights to compare for "
@@ -233,6 +262,7 @@ def run_orchestrator(config):
         metrics.log(f"Bootstrap debug mode: {config['bootstrap_debug_mode']}")
         metrics.log(f"Generate summary statistics TSV: {config['generate_summary_stats']}")
         metrics.log(f"Shape diagnostics: {config['shape_diagnostics']}")
+        metrics.log(f"Pipeline mode: {config['pipeline_mode']}")
         metrics.log(f"Parallelization mode: {config['parallelization_mode']}")
         metrics.log(f"Consolidation enabled: {config['consolidation']}")
         metrics.log(f"Support threshold: {support_threshold}")
@@ -405,6 +435,8 @@ def run_orchestrator(config):
                 },
                 "triplet_seed": config["bootstrap_seed"],
                 "shape_diagnostics": config["shape_diagnostics"],
+                "pipeline_mode": config["pipeline_mode"],
+                "bootstrap": config["bootstrap"],
             }
 
             metrics.log("✓ Starting fused extraction + inference stage...")

@@ -138,10 +138,15 @@ returning the classification and the name of the test that settled it as one
 pair. That pair populates the `classification` and `decision_gate` columns, so
 the two are derived in a single pass and cannot drift apart.
 
-The cascade *consults* the tests in order, but the point estimate *computes* all
-three for every triplet, so the `perm_*` columns are populated even where the
-cascade never reached them. Read `decision_gate` before reading `perm_decision`:
-only `PERM` means the direction result produced the classification. A row
+How much of that actually gets computed is set by `pipeline_mode`. Under
+`efficient` (the default) a gate that settles the call stops the work there, so
+the `perm_*` block is empty on those rows and carries
+`perm_note = direction_test_not_consulted`; under `detailed` all three gates run
+for every triplet and every column is populated. Both modes reach the same
+classification — see "Skipping a settled gate" for why.
+
+Either way, read `decision_gate` before reading `perm_decision`: only `PERM`
+means the direction result produced the classification. Under `detailed`, a row
 carrying `decision_gate = THT`, `perm_decision = ambiguous`, and
 `classification = inflow_introgression` is consistent — the direction test ran
 and was recorded, but the tree-height test had already settled the call.
@@ -497,8 +502,8 @@ The equivalence step runs only in the point estimate, and only when no direction
 was found. Bootstrap iterations skip it: `equivalent` and `inconclusive` classify
 identically, so an iteration's vote can never depend on which of the two it is.
 
-**The interval on the studentized difference.** `perm_stat_ci_low` and
-`perm_stat_ci_high` bracket `perm_statistic` — the observed `T` — at the
+**The interval on the studentized difference.** `bootstrap_stat_ci_low` and
+`bootstrap_stat_ci_high` bracket `perm_statistic` — the observed `T` — at the
 `1 - 2 * alpha_perm` percentile level of its bootstrap distribution. Each
 bootstrap iteration recomputes `T` on its own resample of the gene trees, and
 the interval is the empirical percentile range of those values.
@@ -561,6 +566,34 @@ an `outflow` or `ghost` call always rests on a corrected one-tailed p-value
 below `alpha_perm`. A separation the data cannot resolve at that threshold is
 reported `equivalent` or `inconclusive` and classified `ambiguous`.
 
+### The two run-wide correction families
+
+The DCT and KS p-values are each corrected once across triplets, but they do not
+share a family.
+
+Every triplet runs the discordant count test, so the **DCT family is every
+triplet**. The tree-height test only decides something for a triplet whose count
+gate cleared — below a failed gate the cascade has already answered
+`no_introgression` and never looks at it — so the **KS family is the triplets
+whose corrected DCT p-value cleared `alpha_dct`**. Enrolling the rest would pad
+the family with p-values nothing reads and push the corrected values of the
+triplets that do decide something towards non-significance.
+
+Two consequences follow.
+
+- Triplets outside the family report no `ks_p_value_corrected` and no
+  `ks_significant`. There is no family for them to be corrected against, and
+  their classification was settled a gate earlier.
+- **The family is the same set under either pipeline mode**, which is what makes
+  the two modes' results identical rather than merely similar. Correction can
+  only raise a p-value, so the corrected survivors are always a subset of the raw
+  survivors — and the efficient mode measures the tree-height test for every raw
+  survivor. Whatever the detailed mode measures on top of that is never enrolled.
+
+Because the family's size is only known once every triplet has been counted, no
+correction method can be applied to a KS p-value while the stream is still
+running. That is what forces the bootstrap to defer, below.
+
 ### Correction inside the bootstrap
 
 `bootstrap_value` is only meaningful if the iterations answer to the same
@@ -574,29 +607,35 @@ The obstacle is that a correction is a property of a *family*, not of a single
 p-value, and the family here spans triplets: iteration `i` of triplet A belongs
 with iteration `i` of every other triplet. A streaming engine that finishes one
 triplet before starting the next does not have the rest of the family in hand.
-The orchestrator therefore splits methods by what they need:
 
-| `p_value_correction` | When the iteration is corrected | Direction test skipped once a gate fails |
-| --- | --- | --- |
-| `no` | Inline — nothing to apply | Yes |
-| `bfn` | Inline — the multiplier is the triplet count, known before streaming | Yes |
-| `holm`, `fdr_bh`, `fdr_by` | Deferred — raw p-values parked per iteration, corrected across triplets after the stream | Yes |
-| `fdr_tsbh` | Deferred | **No** |
-
-Deferred iterations store their raw DCT and KS p-values and their direction code
+For the DCT that obstacle is surmountable under `no` and `bfn`, whose multiplier
+follows from the triplet count alone. For the KS test it is not, under any
+method: its family is the iteration's count-gate survivors, and how many those
+are is not known until every triplet has been resampled. **Every method therefore
+defers.** Each iteration parks its raw DCT and KS p-values and its direction code
 in a `DeferredBootstrapRecord`; `_resolve_deferred_bootstrap` then corrects
 iteration `i` across every triplet at once, classifies the whole grid, and tallies
-each triplet's votes. The DCT and KS tests always run in a deferred iteration,
-even below a failed gate, so each per-iteration family holds exactly one p-value
-per triplet — the same family the point estimate is corrected over.
+each triplet's votes.
 
-**Why skipping the direction test is sound.** Once a raw gate has failed, the
-cascade's answer is already fixed for any correction that cannot *lower* a
-p-value: `p_raw > alpha` implies `p_adjusted > alpha`, so the corrected gate
-fails too and nothing below it can change the classification. Skipping the
-direction test there costs nothing, and it is the run's largest cost centre.
+An iteration measures its tree-height test on the same rule the point estimate
+uses — only where its own count gate cleared — so each per-iteration family is
+shaped like the run-wide family it is compared against.
 
-That property holds for four of the five methods by construction:
+The inline shortcut survives in one narrow place: `_iteration_corrected` uses it
+to tighten the *short-circuit* test, so an iteration under `bfn` can skip more
+work than one under a rank-based method. It no longer decides any classification.
+
+### Skipping a settled gate
+
+Once a raw gate has failed, the cascade's answer is already fixed: `p_raw > alpha`
+implies `p_adjusted > alpha` for every supported correction, so the corrected gate
+fails too and nothing below it can change the classification. The direction test
+below such a gate can therefore be skipped outright — and it is much the most
+expensive of the three. This licenses both short-circuits: a bootstrap
+iteration skipping its own direction test, and the point estimate skipping a
+triplet's under `pipeline_mode: efficient`.
+
+The monotonicity it rests on holds for every supported method by construction:
 
 - **Bonferroni** multiplies by the family size `n >= 1`, so `p_adj = min(1, np) >= p`.
 - **Holm** (Holm 1979, *Scandinavian Journal of Statistics* 6(2), 65–70,
@@ -610,25 +649,49 @@ That property holds for four of the five methods by construction:
   29(4), 1165–1188, https://doi.org/10.1214/aos/1013699998) multiplies BH by the
   harmonic factor `sum(1/i) >= 1`, so it is uniformly larger still.
 
-`fdr_tsbh` is the exception and is excluded. Two-stage BH (Benjamini, Krieger &
-Yekutieli 2006, *Biometrika* 93(3), 491–507,
-https://doi.org/10.1093/biomet/93.3.491) first *estimates* the number of true
-null hypotheses `n₀ <= n` and substitutes it for `n`, so the multiplier `n₀/j`
-can fall below 1 and an adjusted p-value can land beneath its raw value. Measured
-over 20,000 random p-value families, `bonferroni`, `holm`, `fdr_bh` and `fdr_by`
-produced zero such cases while `fdr_tsbh` did so in 19,747 of them, with a worst
-gap of `-0.987`. An iteration that failed a raw gate under `fdr_tsbh` could
-genuinely pass the corrected one, so under that method every test runs
-unconditionally. `test_short_circuiting_methods_never_lower_a_p_value` and
-`test_two_stage_bh_can_lower_a_p_value_and_so_never_short_circuits` assert both
-halves of this.
+This is a constraint on the supported set, not an accident of it. The property
+is easy to lose: a procedure that *estimates* the number of true null hypotheses
+`n₀ <= n` and substitutes it for `n` has a multiplier `n₀/j` that can fall below
+1, so an adjusted p-value can land beneath its raw one. Adding such a method
+would silently break both short-circuits — every skipped test would become a
+test that might have changed the answer — so monotonicity is a precondition for
+anything entering `P_VALUE_CORRECTION_CHOICES`.
+`test_every_supported_correction_is_monotone` asserts it over the whole choice
+list rather than a fixed set of names, so a method that violates it fails
+immediately on being added.
 
 The family size is the triplet count regardless of any skipping, so the
 correction never depends on the optimization. Whichever tier applies, the
 resample stream is untouched: the bootstrap draws its resamples from a generator
 independent of the permutation tests', so a fixed `bootstrap_seed` reproduces the
-same resamples — and the same `perm_stat_ci_*` interval — under every correction
-method.
+same resamples — and the same `bootstrap_stat_ci_*` interval — under every
+correction method.
+
+### The point estimate's short-circuit
+
+`pipeline_mode: efficient` (the default) applies the same argument to the point
+estimate: `_run_triplet_pipeline_from_observations` runs the direction test only
+when both earlier gates cleared. `detailed` runs it for every triplet.
+
+Two things make this safe to do triplet by triplet while the stream is still
+running, before the run-wide correction pass has seen the whole family:
+
+- **Monotonicity**, above: a raw-failed gate cannot clear once corrected, so a
+  skipped triplet could never have reached gate 3.
+- **Permutation p-values are corrected within the test only**, across its pair of
+  one-tailed p-values, never across triplets. Omitting one triplet's direction
+  test therefore changes nothing for any other triplet — unlike the DCT and KS
+  p-values, whose families span the run.
+
+`_apply_triplet_result_p_value_correction` replays the stored `perm_decision`
+after correction rather than recomputing it. A skipped test leaves that field
+`None`, while a guard or an empty group still records a string, so reaching gate 3
+without a decision is an invariant violation rather than an ambiguous call; the
+pass raises instead of silently classifying such a triplet `ambiguous`.
+
+Skipped triplets report `perm_note = direction_test_not_consulted` and leave the
+rest of the `perm_*` block empty, which distinguishes a deliberate skip from a
+test that ran and hit a guard. `metrics.txt` counts them.
 
 ## Shape diagnostics
 
@@ -636,6 +699,11 @@ Off by default, enabled with `shape_diagnostics: true`. Fifteen columns
 describing the shape of each height group — `con_*`, `dis1_*`, `dis2_*`, the
 same three groups the tests are built on. Nothing here feeds a classification;
 they exist to say what the height distributions actually look like.
+
+They are written to the results TSV only. `summary_statistics.tsv` is consumed
+as a feature matrix, and several of these columns are undefined below their
+observation floors (see the thresholds below), so carrying them there would
+leave a hole in every row that hit one.
 
 | Column | Meaning |
 | --- | --- |
@@ -745,9 +813,8 @@ Written under the output folder:
   group named by the `dis1_topology` column and used by all three tests — and
   `discordant2_*` the other one. The roles are resolved per triplet from the
   observed counts, not fixed to a topology label, so a triplet where `AC|B`
-  outnumbers `BC|A` has its `AC|B` gene trees under `discordant1_*`. With
-  `shape_diagnostics` also set, the fifteen shape columns follow the same
-  naming and are appended after the metric columns.
+  outnumbers `BC|A` has its `AC|B` gene trees under `discordant1_*`. The shape
+  diagnostics are not repeated here — see below.
 - `processed_<species tree>` / `processed_<gene trees>` — cleaned, rooted trees.
 - `metrics.txt` — per-stage wall/CPU timing and run parameters.
 - `consolidation/` — the combined heatmap/bar-chart plot and TSV matrices from
@@ -769,22 +836,22 @@ Written under the output folder:
 | `dct_statistic` / `dct_p_value` | DCT | SciPy chi-square or statsmodels z-test over `[n_dis1, n_dis2]`. An all-zero discordant split short-circuits to `(0.0, 1.0)`. |
 | `dct_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's DCT p-value. Omitted under `no`. |
 | `dct_significant` | Decision gate 1 | Corrected DCT p-value below `alpha_dct`. |
-| `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. |
+| `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. Empty under the efficient mode when the count gate settled the triplet. |
 | `ks_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's KS p-value. Omitted under `no`. |
 | `ks_significant` | Decision gate 2 | Corrected KS p-value below `alpha_ks`. |
 | `perm_statistic` | Direction test | Observed Welch-studentized mean difference. Empty when a guard fired. |
 | `perm_p_greater` / `perm_p_less` | Direction test | Raw one-tailed p-values, add-one estimator. |
 | `perm_p_greater_<method>_corr` / `perm_p_less_<method>_corr` | Direction test | The one-tailed p-values corrected against each other, and the values compared to `alpha_perm`. Omitted under `no`. |
 | `perm_p_tost` | Equivalence test | TOST (two one-sided tests) p-value: `max(p_lower, p_upper)` over the two shifted-null permutation tests, one per side of the equivalence margin. Below `alpha_perm` the two mean heights were shown to differ by less than half a pooled standard deviation, which is what makes `perm_decision` read `equivalent` rather than `inconclusive`. Populated only when neither direction was significant. |
-| `perm_stat_ci_low` / `perm_stat_ci_high` | Bootstrap | Percentile interval on the studentized difference at the `1 - 2 * alpha_perm` level. Empty without bootstrap, or when no iteration had two observations in both groups. |
+| `bootstrap_stat_ci_low` / `bootstrap_stat_ci_high` | Bootstrap | Percentile interval on the studentized difference at the `1 - 2 * alpha_perm` level. Empty without bootstrap, or when no iteration had two observations in both groups. |
 | `perm_n_resamples` | Direction test | Permutations drawn; `0` when a guard fired. Can exceed `max_resamples` by up to one batch, since the final batch is not trimmed. |
 | `perm_converged` | Direction test | True when the confidence interval excluded `alpha_perm` before the budget ran out. |
 | `perm_null_skew` | Direction test | Sample skewness of the permutation null: the third standardized moment of the `perm_n_resamples_skew` studentized statistics drawn while testing this triplet. It describes the *reference distribution the test built*, not the tree heights themselves. `0` is a symmetric null and the p-values behave like a textbook two-sample test; a large magnitude means a few extreme heights in the smaller group dominate the resampling, so the null breaks into clusters by how many of them land where, and the sign names the long tail. Reported for every test that resampled, including `equivalent` and `inconclusive` ones. Never consulted by any decision — see "Null skewness" above for the worked 700-vs-19 case. |
-| `perm_note` | Direction test | Guard slug, or `max_resamples_reached`; empty on a clean run. |
-| `perm_decision` | Decision gate 3 | `greater`, `less`, `equivalent`, or `inconclusive` for concordant relative to discordant1. Always populated; consulted only when `decision_gate` is `PERM`. |
+| `perm_note` | Direction test | Guard slug, `max_resamples_reached`, or `direction_test_not_consulted` when the efficient mode skipped a test an earlier gate had settled; empty on a clean run that resampled. |
+| `perm_decision` | Decision gate 3 | `greater`, `less`, `equivalent`, or `inconclusive` for concordant relative to discordant1. Consulted only when `decision_gate` is `PERM`, and populated only there under the default `pipeline_mode: efficient`; `detailed` populates it for every triplet. |
 | `decision_gate` | Decision logic | Which test settled the classification: `DCT`, `THT`, or `PERM`. |
 | `classification` | Decision logic | `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`. |
-| `inference_description` | Reporting | Human-readable direction naming the actual species. |
+| `inference` | Reporting | Human-readable direction naming the actual species. |
 | `bootstrap_value` / `all_bootstrap` | Bootstrap | Fraction of iterations agreeing with the final classification, plus the full class-fraction map. Iterations are judged against the same corrected thresholds as the point estimate. Present unless `--no-bootstrap`. |
 | `con_*` / `dis1_*` / `dis2_*` shape columns | Shape diagnostics | Mode count, Silverman modality p-value, skewness, excess kurtosis and generalized-Pareto tail index per height group. Present only with `shape_diagnostics`; see above for how to read each. |
 | `bootstrap_*` debug columns | Bootstrap debug | Per-iteration DCT/KS statistics, con/dis means, and gene-tree heights. Present only with `bootstrap_debug_mode`. |
