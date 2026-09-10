@@ -260,7 +260,9 @@ def write_clean_trees(trees, output_filepath, decimal_places=15):
             f.write(newick_str + "\n")
 
 
-def clean_and_save_trees(input_filepath, output_filepath, min_avg_support=0.5):
+def clean_and_save_trees(
+    input_filepath, output_filepath, min_avg_support=0.5, rename_map=None
+):
     """Read, support-filter, standardize, and save trees.
 
     Args:
@@ -268,12 +270,16 @@ def clean_and_save_trees(input_filepath, output_filepath, min_avg_support=0.5):
         output_filepath: Path where cleaned trees are written.
         min_avg_support: Minimum average support threshold; trees below it are
             dropped.
+        rename_map: Optional display-name map applied to terminal labels before
+            anything else, so every later stage and output uses those names.
 
     Returns:
         A tuple ``(cleaned_trees, dropped_trees)`` where ``dropped_trees`` maps
         the 1-based input index to its average support value.
     """
     trees = read_tree_file(input_filepath)
+    for tree in trees:
+        rename_taxa_in_tree(tree, rename_map)
 
     dropped_trees = {}
     cleaned_trees = []
@@ -415,7 +421,7 @@ def _root_tree_on_any_outgroup(tree, outgroup_taxa):
 
 
 def clean_and_save_gene_trees(
-    input_filepath, output_filepath, outgroup_taxa, min_avg_support=0.5
+    input_filepath, output_filepath, outgroup_taxa, min_avg_support=0.5, rename_map=None
 ):
     """Read, support-filter, root on outgroup, standardize, and save gene trees.
 
@@ -425,6 +431,8 @@ def clean_and_save_gene_trees(
         outgroup_taxa: Iterable of outgroup taxon names used for rooting.
         min_avg_support: Minimum average support threshold; trees below it are
             dropped.
+        rename_map: Optional display-name map applied to terminal labels before
+            rooting, so ``outgroup_taxa`` must already be display names.
 
     Returns:
         A tuple ``(cleaned_trees, dropped_trees, rooted_count,
@@ -433,6 +441,8 @@ def clean_and_save_gene_trees(
         lacking an outgroup taxon.
     """
     trees = read_tree_file(input_filepath)
+    for tree in trees:
+        rename_taxa_in_tree(tree, rename_map)
 
     dropped_trees = {}
     cleaned_trees = []
@@ -458,6 +468,112 @@ def clean_and_save_gene_trees(
     write_clean_trees(cleaned_trees, output_filepath)
 
     return cleaned_trees, dropped_trees, rooted_count, missing_outgroup_indices
+
+
+def load_species_rename_map(filepath):
+    """Read a display-name map keyed by the taxon labels used in the trees.
+
+    Accepts a YAML mapping (``.yaml``/``.yml``) or a two-column TSV, where the
+    first column is the label as it appears in the species and gene trees and
+    the second is the name to show in the outputs.
+
+    Args:
+        filepath: Path to the rename map file.
+
+    Returns:
+        A dict mapping tree label to display name.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If the file is malformed, or maps a label more than once,
+            or maps two labels onto the same display name.
+    """
+    path = str(filepath)
+    try:
+        if path.lower().endswith((".yaml", ".yml")):
+            import yaml
+
+            with open(path, "r") as handle:
+                payload = yaml.safe_load(handle) or {}
+            if not isinstance(payload, dict):
+                raise ValueError(
+                    f"Species rename map {path} must be a mapping of tree label to display name"
+                )
+            pairs = [(str(key), str(value)) for key, value in payload.items()]
+        else:
+            pairs = []
+            with open(path, "r") as handle:
+                for line_number, line in enumerate(handle, start=1):
+                    raw = line.strip()
+                    if not raw or raw.startswith("#"):
+                        continue
+                    columns = [part.strip() for part in raw.split("\t")]
+                    columns = [part for part in columns if part]
+                    if len(columns) != 2:
+                        raise ValueError(
+                            f"Species rename map {path} line {line_number} must have "
+                            f"two tab-separated columns: {raw}"
+                        )
+                    pairs.append((columns[0], columns[1]))
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Species rename map not found: {path}")
+
+    rename_map = {}
+    display_names = {}
+    for original, display in pairs:
+        if not original or not display:
+            raise ValueError(f"Species rename map {path} has an empty label or name")
+        if original in rename_map:
+            raise ValueError(
+                f"Species rename map {path} maps {original} more than once"
+            )
+        if display in display_names:
+            # Two labels sharing a display name would collapse into duplicate
+            # tree labels, which the Newick parser rejects further downstream.
+            raise ValueError(
+                f"Species rename map {path} maps both {display_names[display]} and "
+                f"{original} to {display}"
+            )
+        rename_map[original] = display
+        display_names[display] = original
+    return rename_map
+
+
+def rename_taxa_in_tree(tree, rename_map):
+    """Rename a tree's terminal labels in place.
+
+    Args:
+        tree: A ``Bio.Phylo`` tree object.
+        rename_map: Mapping of tree label to display name. Labels absent from
+            the map keep their original name.
+
+    Returns:
+        The number of terminals renamed.
+    """
+    if not rename_map:
+        return 0
+    renamed = 0
+    for terminal in tree.get_terminals():
+        display = rename_map.get(terminal.name)
+        if display is not None and display != terminal.name:
+            terminal.name = display
+            renamed += 1
+    return renamed
+
+
+def rename_taxon_labels(labels, rename_map):
+    """Map a sequence of taxon labels through the rename map.
+
+    Args:
+        labels: Iterable of taxon labels.
+        rename_map: Mapping of tree label to display name.
+
+    Returns:
+        A list of display names, leaving unmapped labels unchanged.
+    """
+    if not rename_map:
+        return list(labels)
+    return [rename_map.get(label, label) for label in labels]
 
 
 def read_triplet_filter_file(filepath):
