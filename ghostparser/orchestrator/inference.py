@@ -395,27 +395,6 @@ def _compute_triplet_tree_metrics(
     return selected_tree_height, summary_metrics
 
 
-def compute_tree_height_statistic(
-    tree, strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY, species_triplet=None
-):
-    """Compute H(T) from root-to-tip distances per the selected strategy.
-
-    Args:
-        tree: A rooted 3-tip DendroPy tree.
-        strategy: One of ``AVG``/``A``/``B``/``C``/``SIS``/``INT``.
-        species_triplet: The ``(A, B, C)`` triplet, required for A/B/C.
-
-    Returns:
-        The tree-height value H(T) as a float.
-    """
-    selected_tree_height, _ = _compute_triplet_tree_metrics(
-        tree,
-        species_triplet=species_triplet,
-        tree_height_calculation_strategy=strategy,
-    )
-    return selected_tree_height
-
-
 def _resolve_topology_roles(topology_counts, species_topology):
     """Resolve concordant/discordant1/discordant2 roles with deterministic ties.
 
@@ -933,19 +912,6 @@ def _build_triplet_seed_sequence(seed, triplet):
     triplet_key = "|".join(triplet)
     digest = hashlib.sha256(f"{seed}|{triplet_key}".encode("utf-8")).digest()
     return np.random.SeedSequence(int.from_bytes(digest[:8], "little"))
-
-
-def _build_triplet_np_rng(seed, triplet):
-    """Build a deterministic per-triplet NumPy RNG when a base seed is given.
-
-    Args:
-        seed: The global base seed, or ``None`` for a non-deterministic RNG.
-        triplet: The triplet used to derive a stable per-triplet seed.
-
-    Returns:
-        A ``numpy.random.Generator`` instance.
-    """
-    return np.random.default_rng(_build_triplet_seed_sequence(seed, triplet))
 
 
 def observation_from_subtree(
