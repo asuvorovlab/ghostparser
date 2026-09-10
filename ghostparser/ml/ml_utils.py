@@ -33,6 +33,10 @@ BIT_LABELS = (
 BIT_COUNT = len(BIT_LABELS)
 MAX_STRING_CATEGORIES = 7
 
+# All 64 class labels are drawn on each axis of the 64-class figure, so the tick
+# font has to fit a 6-character label into one cell of the square grid.
+_CLASS_TICK_FONT_SIZE = 6
+
 # Colormap for both confusion-matrix figures. Both plot a sequential quantity,
 # and cividis is perceptually uniform and colour-vision-deficiency safe.
 CONFUSION_MATRIX_COLORMAP = "cividis"
@@ -531,7 +535,7 @@ def save_confusion_matrix_plot(
             linecolor="white",
             annot_kws={"size": 11, "weight": "bold"},
         )
-        ax.set_title(f"{bit_label}", fontsize=12)
+        ax.set_title(format_bit_label_title(bit_label), fontsize=12)
         ax.set_xlabel("Predicted label (0 = predicted zero, 1 = predicted one)")
         ax.set_ylabel("True label (0 = true zero, 1 = true one)")
         ax.set_xticklabels(["0", "1"], rotation=0)
@@ -624,15 +628,16 @@ def save_64_class_confusion_matrix_plot(
         yticklabels=False,
         linewidths=0,
     )
-    tick_step = 4
-    tick_positions = np.arange(0, len(labels), tick_step) + 0.5
-    tick_labels = [labels[index] for index in range(0, len(labels), tick_step)]
+    # Every class is labelled on both axes: a reader looking up one specific
+    # 6-bit class cannot count rows inwards from a subsampled tick.
+    tick_positions = np.arange(len(labels)) + 0.5
     ax.set_xticks(tick_positions)
-    ax.set_xticklabels(tick_labels, rotation=90, fontsize=8)
+    ax.set_xticklabels(labels, rotation=90, fontsize=_CLASS_TICK_FONT_SIZE)
     ax.set_yticks(tick_positions)
-    ax.set_yticklabels(tick_labels, rotation=0, fontsize=8)
-    ax.set_xlabel("Predicted 6-bit class")
-    ax.set_ylabel("True 6-bit class")
+    ax.set_yticklabels(labels, rotation=0, fontsize=_CLASS_TICK_FONT_SIZE)
+    ax.tick_params(axis="both", length=2, pad=1.5)
+    ax.set_xlabel("Predicted 6 binary class")
+    ax.set_ylabel("True 6 binary class")
     ax.set_title(
         "Confusion matrix across all 64 possible 6-bit classes "
         "(row-normalized: fraction of each true class)"

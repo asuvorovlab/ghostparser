@@ -16,6 +16,7 @@ from ghostparser.ml.ml_utils import (
     build_feature_importance_rows,
     build_prediction_rows,
     evaluate_predictions,
+    format_bit_label_title,
     is_valid_bitstring,
     parse_classes,
     read_tsv_rows,
@@ -32,6 +33,34 @@ def test_bit_labels_stay_in_step_with_the_bit_count():
     """
     assert len(BIT_LABELS) == BIT_COUNT
     assert len(set(BIT_LABELS)) == BIT_COUNT
+
+
+@pytest.mark.parametrize(
+    "bit_label, expected",
+    [
+        ("ghost_into_A", "Ghost into A"),
+        ("ghost_into_B", "Ghost into B"),
+        ("inflow_into_A_from_C", "Inflow into A from C"),
+        ("inflow_into_B_from_C", "Inflow into B from C"),
+        ("outflow_from_A_to_C", "Outflow from A to C"),
+        ("outflow_from_B_to_C", "Outflow from B to C"),
+    ],
+)
+def test_bit_label_titles_keep_the_taxon_letters_upper_case(bit_label, expected):
+    """Titles read as prose without lower-casing the taxon letters.
+
+    The trap is `str.capitalize`, which upper-cases the first character and
+    lower-cases everything after it -- turning `ghost_into_A` into
+    `Ghost into a` and renaming the taxon. Only the first character may change.
+    """
+    assert format_bit_label_title(bit_label) == expected
+
+
+def test_every_bit_label_has_a_title():
+    """The formatter covers the whole label set, so no plot falls back to a slug."""
+    titles = [format_bit_label_title(label) for label in BIT_LABELS]
+    assert len(set(titles)) == len(BIT_LABELS)
+    assert all("_" not in title and title[0].isupper() for title in titles)
 
 
 @pytest.mark.parametrize(
