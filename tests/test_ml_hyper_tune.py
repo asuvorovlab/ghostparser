@@ -94,17 +94,22 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
 
 @pytest.mark.parametrize(
     "use_wandb, detailed_payloads",
-    [(False, None), (True, None), (True, True)],
+    [(None, None), (False, None), (True, None), (True, True)],
 )
 def test_load_hyper_tune_config_fills_model_defaults(
     use_wandb, detailed_payloads, tmp_path
 ):
-    """Keys absent from the tuning block take their defaults; present ones win."""
+    """Keys absent from the tuning block take their defaults; present ones win.
+
+    A `None` case omits the key entirely, pinning `use_wandb`'s default as off --
+    W&B is opt-in, so a config that never mentions it must not reach for a run.
+    """
     tuning = {
         "model": "random_forest",
-        "use_wandb": use_wandb,
         "search_space": {"n_estimators": [5, 10]},
     }
+    if use_wandb is not None:
+        tuning["use_wandb"] = use_wandb
     if detailed_payloads is not None:
         tuning["wandb_detailed_payloads"] = detailed_payloads
 
@@ -116,18 +121,13 @@ def test_load_hyper_tune_config_fills_model_defaults(
     assert config["max_features"] == "sqrt"
     assert config["min_samples_split"] == 2
     assert config["overwrite"] is True
-    assert config["use_wandb"] is use_wandb
+    assert config["use_wandb"] is bool(use_wandb)
     assert config["wandb_detailed_payloads"] is bool(detailed_payloads)
 
 
 @pytest.mark.parametrize(
     "tuning, expected_message",
     [
-        pytest.param(
-            {"model": "random_forest", "search_space": {"n_estimators": [5]}},
-            "use_wandb",
-            id="missing_use_wandb",
-        ),
         pytest.param(
             {
                 "model": "random_forest",
@@ -152,7 +152,7 @@ def test_load_hyper_tune_config_fills_model_defaults(
 def test_load_hyper_tune_config_rejects_invalid_wandb_choice(
     tuning, expected_message, tmp_path
 ):
-    """`use_wandb` must be spelled out as a boolean and must gate the extra payloads."""
+    """`use_wandb` must be a boolean, and it gates the extra W&B payloads."""
     config_path = _write_config(tmp_path, "hyper_tune_wandb.json", tuning)
 
     with pytest.raises(ConfigError, match=expected_message):
@@ -167,11 +167,10 @@ def test_load_hyper_tune_config_rejects_invalid_wandb_choice(
     ],
 )
 def test_shipped_tuning_sample_configs_resolve(sample_name, expected_model):
-    """The shipped tuner samples load and spell out every required key.
+    """The shipped tuner samples load and resolve to the model each one names.
 
     Guards against a sample drifting out of step with the validator, which would
-    leave users copying a config the loader rejects. `use_wandb` has no default,
-    so a successful load proves the key is present in both config formats.
+    leave users copying a config the loader rejects, in both config formats.
     """
     sample_dir = Path(__file__).resolve().parents[1] / "sample_configs"
     config = load_hyper_tune_config(str(sample_dir / sample_name))
@@ -217,15 +216,23 @@ def test_load_hyper_tune_config_requires_hyperparameter_tuning_section(tmp_path)
         load_hyper_tune_config(str(config_path))
 
 
-def test_tune_hyperparameters_requires_explicit_use_wandb(
+def test_tune_hyperparameters_defaults_to_wandb_off(
     summary_statistics_tsv_tuning, tmp_path
 ):
-    """The programmatic entry point enforces the same deliberate choice."""
-    config = _tuning_namespace(summary_statistics_tsv_tuning, tmp_path / "no_choice")
+    """A namespace carrying no `use_wandb` runs locally instead of failing.
+
+    The programmatic entry point takes the same default as the config loader, so
+    a caller building its own namespace does not have to know the key exists.
+    """
+    output_dir = tmp_path / "no_choice"
+    config = _tuning_namespace(summary_statistics_tsv_tuning, output_dir)
     del config.use_wandb
 
-    with pytest.raises(ConfigError, match="use_wandb"):
-        tune_hyperparameters(config)
+    result = tune_hyperparameters(config)
+
+    assert result["results"]["use_wandb"] is False
+    assert not (output_dir / "wandb").exists()
+    assert (output_dir / "hyper_tune_results.json").exists()
 
 
 def test_tune_hyperparameters_grid_search_smoke(summary_statistics_tsv_tuning, tmp_path):

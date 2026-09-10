@@ -91,7 +91,7 @@ Run the tuner directly with:
 python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_random_forest.yaml
 ```
 
-Every tuning config must set `hyperparameter_tuning.use_wandb` to `true` or `false` — there is no default. With `false` the tuner runs entirely locally and writes a plaintext report, ranked-candidate and per-parameter TSVs, and a search-report figure. Weights & Biases logging is opt-in and ships as its own extra:
+Weights & Biases logging is opt-in: `hyperparameter_tuning.use_wandb` defaults to `false`, and the tuner then runs entirely locally, writing a plaintext report, ranked-candidate and per-parameter TSVs, and a search-report figure. Set it to `true` to log to W&B instead, which ships as its own extra:
 
 ```bash
 pip install .[ml,wandb]
@@ -547,8 +547,6 @@ This section summarizes user-facing errors and validation failures that GhostPar
 
 ### Hyperparameter Tuning (`ghostparser.ml.hyper_tune`)
 
-- `Missing required config field: hyperparameter_tuning.use_wandb ...`
-   The tuning config did not state whether the run logs to Weights & Biases; set it to `true` or `false`.
 - `hyperparameter_tuning.use_wandb is true but the 'wandb' package could not be imported ...`
    W&B logging was requested without the optional dependency; install `.[wandb]` or set `use_wandb: false`.
 - `Config field hyperparameter_tuning.wandb_detailed_payloads requires hyperparameter_tuning.use_wandb: true`

@@ -209,8 +209,8 @@ directory when `use_wandb: false` and logged to the W&B run when `use_wandb: tru
 
 ### Weights & Biases logging (optional)
 
-`hyperparameter_tuning.use_wandb` is a **required** boolean — there is no default, so
-every tuning config states whether the run logs to Weights & Biases. Runs with
+`hyperparameter_tuning.use_wandb` is an optional boolean defaulting to `false`, so a
+config that never mentions it logs nothing to Weights & Biases. Runs with
 `use_wandb: false` need neither a W&B account nor the `wandb` package installed, and
 they still produce the full local report described above.
 

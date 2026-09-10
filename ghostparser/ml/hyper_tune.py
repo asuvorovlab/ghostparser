@@ -68,6 +68,7 @@ DEFAULT_TOP_K = 10
 DEFAULT_RANDOM_ITERATIONS = 20
 DEFAULT_MAX_CANDIDATES = 5000
 DEFAULT_WANDB_PROJECT = "ghostparser-hyper-tune"
+DEFAULT_USE_WANDB = False
 
 SUPPORTED_MODELS = ("multi_knn", "random_forest")
 SUPPORTED_SEARCH_METHODS = ("grid", "random")
@@ -244,7 +245,7 @@ def _create_run_logger(
         output_dir: Run output directory; hosts the ``wandb/`` scratch folder.
         total_candidates: Number of candidates the search will evaluate.
         cv_folds: Effective cross-validation fold count.
-        use_wandb: Explicit ``hyperparameter_tuning.use_wandb`` choice.
+        use_wandb: Resolved ``hyperparameter_tuning.use_wandb`` choice.
 
     Returns:
         A no-op logger when W&B is off, otherwise a live W&B-backed logger.
@@ -310,19 +311,6 @@ RUNTIME_KEYS = {
     "random_state",
     "n_jobs",
 }
-
-
-def _validate_required_bool(payload: dict, key: str, section: str) -> bool:
-    """Read a boolean that must be spelled out; there is deliberately no default."""
-    if key not in payload:
-        raise ConfigError(
-            f"Missing required config field: {section}.{key}. "
-            f"Set {section}.{key} to true or false explicitly."
-        )
-    value = payload[key]
-    if not isinstance(value, bool):
-        raise ConfigError(f"Config field {section}.{key} must be a boolean")
-    return value
 
 
 def _normalize_search_space_values(search_space: dict[str, object]) -> dict:
@@ -492,10 +480,10 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
     max_candidates = _validate_optional_positive_int(
         tuning_section, "max_candidates", DEFAULT_MAX_CANDIDATES
     )
-    use_wandb = _validate_required_bool(
+    use_wandb = _validate_optional_bool(
         tuning_section,
         "use_wandb",
-        "hyperparameter_tuning",
+        DEFAULT_USE_WANDB,
     )
     wandb_detailed_payloads = _validate_optional_bool(
         tuning_section,
@@ -600,12 +588,7 @@ def _evaluate_candidate(
 
 def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     run_start = time.perf_counter()
-    if not hasattr(config, "use_wandb"):
-        raise ConfigError(
-            "Missing required config field: hyperparameter_tuning.use_wandb. "
-            "Set hyperparameter_tuning.use_wandb to true or false explicitly."
-        )
-    use_wandb = bool(config.use_wandb)
+    use_wandb = bool(getattr(config, "use_wandb", DEFAULT_USE_WANDB))
     # The ranked-candidate table, the parameter marginals, the per-row
     # predictions and the full results payload are the bulky outputs. With W&B
     # on they go to the run instead of the output directory, which then keeps

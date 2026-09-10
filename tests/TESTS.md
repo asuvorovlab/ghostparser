@@ -891,32 +891,35 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
   tuning config with `use_wandb: false`. Expected outputs: the section loads and
   `use_wandb` resolves to `False`.
 - `test_load_hyper_tune_config_fills_model_defaults` — Inputs (parametrized):
-  a tuning block omitting model parameters, over `use_wandb` false/true and
-  `wandb_detailed_payloads` absent or `true`. Expected outputs: trainer defaults
-  are filled in and both flags follow what was written. Purpose: defaults and
-  explicit values both resolve out of the nested `hyperparameter_tuning` block.
+  a tuning block omitting model parameters, over `use_wandb` absent/false/true
+  and `wandb_detailed_payloads` absent or `true`. Expected outputs: trainer
+  defaults are filled in, an absent `use_wandb` resolves to `False`, and both
+  flags otherwise follow what was written. Purpose: defaults and explicit values
+  both resolve out of the nested `hyperparameter_tuning` block, and W&B logging
+  is opt-in rather than reached for by a config that never mentions it.
 - `test_load_hyper_tune_config_rejects_invalid_wandb_choice` — Inputs
-  (parametrized): a tuning block with `use_wandb` missing, with `use_wandb` set
-  to the string `"yes"`, and with `wandb_detailed_payloads: true` alongside
-  `use_wandb: false`. Expected outputs: `ConfigError` in each case. Purpose:
-  `use_wandb` carries no default, so it has to be spelled out as a boolean, and
-  it gates the detailed-payload flag rather than letting it be silently ignored.
+  (parametrized): a tuning block with `use_wandb` set to the string `"yes"`, and
+  one with `wandb_detailed_payloads: true` alongside `use_wandb: false`. Expected
+  outputs: `ConfigError` in each case. Purpose: `use_wandb` may be omitted but
+  not mistyped, and it gates the detailed-payload flag rather than letting it be
+  silently ignored.
 - `test_shipped_tuning_sample_configs_resolve` — Inputs (parametrized):
   `sample_configs/hyperparameter_tuning_random_forest.yaml` and
   `sample_configs/hyperparameter_tuning_multi_knn.json`. Expected outputs: both
   load, resolve to their stated model, report `use_wandb` and
   `wandb_detailed_payloads` as `False`, and use only search-space keys their
-  model supports. Purpose: `use_wandb` has no default, so a successful load
-  proves the shipped samples spell out the required key in both config formats
-  and have not drifted out of step with the validator.
+  model supports. Purpose: the shipped samples have not drifted out of step with
+  the validator in either config format.
 - `test_load_hyper_tune_config_rejects_evaluation_section` — Inputs: a tuning
   config containing `evaluation`. Expected outputs: `ConfigError`.
 - `test_load_hyper_tune_config_requires_hyperparameter_tuning_section` — Inputs:
   a config without the section. Expected outputs: `ConfigError`.
-- `test_tune_hyperparameters_requires_explicit_use_wandb` — Inputs: a tuning
-  namespace with the `use_wandb` attribute deleted. Expected outputs:
-  `ConfigError`. Purpose: the programmatic entry point enforces the same
-  deliberate choice as the config loader.
+- `test_tune_hyperparameters_defaults_to_wandb_off` — Inputs: a tuning namespace
+  with the `use_wandb` attribute deleted. Expected outputs: the search runs,
+  `results.use_wandb` is `False`, no `wandb/` directory is written, and
+  `hyper_tune_results.json` is. Purpose: the programmatic entry point takes the
+  same default as the config loader, so a caller building its own namespace need
+  not know the key exists.
 - `test_tune_hyperparameters_grid_search_smoke` /
   `test_tune_hyperparameters_random_search_smoke` — Inputs:
   `summary_statistics_tsv_tuning` with each search method and `use_wandb=False`.
