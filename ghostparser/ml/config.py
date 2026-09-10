@@ -4,6 +4,9 @@ Owns the ML defaults, choices, and validation rules; shared helpers come from
 the :mod:`ghostparser.config` trunk.
 """
 
+import argparse
+
+from ..cli_config import resolve_cli_or_config_args
 from ..config import (
     DEFAULT_OVERWRITE,
     ConfigError,
@@ -99,12 +102,21 @@ def _validate_optional_float(payload: dict, key: str, default: float) -> float:
     return value
 
 
+def _validate_positive_int(payload: dict, key: str, default: int | None) -> int:
+    """Require an integer >= 1, taking ``default`` when the key is absent."""
+    value = payload.get(key, default)
+    if not isinstance(value, int) or value < 1:
+        raise ConfigError(f"Config field {key} must be an integer >= 1")
+    return value
+
+
 def _validate_optional_positive_int(
     payload: dict, key: str, default: int | None
 ) -> int | None:
+    """Allow ``None``, else require an integer >= 1."""
     value = payload.get(key, default)
     if value is None:
-        raise ConfigError(f"Config field {key} must be an integer >= 1")
+        return None
     if not isinstance(value, int) or value < 1:
         raise ConfigError(f"Config field {key} must be an integer >= 1")
     return value
@@ -306,7 +318,7 @@ def normalize_ml_payload(payload: dict) -> dict:
         "overwrite": _validate_overwrite_flag(payload, DEFAULT_OVERWRITE),
         "target_column": target_column,
         "test_size": _validate_optional_float(payload, "test_size", DEFAULT_TEST_SIZE),
-        "cv_folds": _validate_optional_positive_int(
+        "cv_folds": _validate_positive_int(
             payload, "cv_folds", DEFAULT_CV_FOLDS
         ),
         "rare_class_policy": _validate_optional_choice(
@@ -319,16 +331,16 @@ def normalize_ml_payload(payload: dict) -> dict:
             payload, "random_state", DEFAULT_RANDOM_STATE
         ),
         "n_jobs": _validate_optional_int(payload, "n_jobs", DEFAULT_N_JOBS),
-        "n_estimators": _validate_optional_positive_int(
+        "n_estimators": _validate_positive_int(
             model_section, "n_estimators", DEFAULT_N_ESTIMATORS
         ),
         "max_depth": _validate_optional_int(
             model_section, "max_depth", DEFAULT_MAX_DEPTH
         ),
-        "min_samples_split": _validate_optional_positive_int(
+        "min_samples_split": _validate_positive_int(
             model_section, "min_samples_split", DEFAULT_MIN_SAMPLES_SPLIT
         ),
-        "min_samples_leaf": _validate_optional_positive_int(
+        "min_samples_leaf": _validate_positive_int(
             model_section, "min_samples_leaf", DEFAULT_MIN_SAMPLES_LEAF
         ),
         "max_features": normalize_max_features(
@@ -339,7 +351,7 @@ def normalize_ml_payload(payload: dict) -> dict:
             model_section.get("class_weight", DEFAULT_CLASS_WEIGHT),
             where="model.class_weight",
         ),
-        "n_neighbors": _validate_optional_positive_int(
+        "n_neighbors": _validate_positive_int(
             model_section, "n_neighbors", DEFAULT_N_NEIGHBORS
         ),
         "weights": _validate_optional_choice(
@@ -348,13 +360,13 @@ def normalize_ml_payload(payload: dict) -> dict:
         "algorithm": _validate_optional_choice(
             model_section, "algorithm", DEFAULT_KNN_ALGORITHM, KNN_ALGORITHM_CHOICES
         ),
-        "leaf_size": _validate_optional_positive_int(
+        "leaf_size": _validate_positive_int(
             model_section, "leaf_size", DEFAULT_KNN_LEAF_SIZE
         ),
         "metric": _validate_optional_string(
             model_section, "metric", DEFAULT_KNN_METRIC
         ),
-        "p": _validate_optional_positive_int(model_section, "p", DEFAULT_KNN_P),
+        "p": _validate_positive_int(model_section, "p", DEFAULT_KNN_P),
         "evaluation_metrics": _validate_optional_choice(
             evaluation_section,
             "metrics",
@@ -392,3 +404,49 @@ def normalize_ml_payload(payload: dict) -> dict:
 def load_ml_config(config_file: str) -> dict:
     """Load and normalize an ML config file."""
     return normalize_ml_payload(_load_raw_config(config_file))
+
+
+def build_trainer_argument_parser(description: str) -> argparse.ArgumentParser:
+    """Build the argument parser both trainers expose.
+
+    Args:
+        description: The trainer's own ``--help`` description.
+
+    Returns:
+        A parser carrying the shared config/input/output/overwrite flags.
+    """
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "-c", "--config-file", type=str, default=None,
+        help="Path to a JSON or YAML config file",
+    )
+    parser.add_argument(
+        "-i", "--input-path", type=str, default=None,
+        help="Path to summary_statistics.tsv",
+    )
+    parser.add_argument(
+        "-o", "--output-dir", type=str, default=None,
+        help="Directory for ML outputs",
+    )
+    parser.add_argument(
+        "--no-overwrite", dest="no_overwrite", action="store_true", default=None,
+        help="Append a numeric suffix when the output directory already exists",
+    )
+    return parser
+
+
+def resolve_trainer_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
+    """Resolve a trainer's CLI/config arguments under config-file-wins precedence.
+
+    Args:
+        args: The parsed CLI namespace.
+
+    Returns:
+        The resolved namespace.
+    """
+    return resolve_cli_or_config_args(
+        args,
+        load_config=load_ml_config,
+        normalize_payload=normalize_ml_payload,
+        payload_arg_names=["input_path", "output_dir", "no_overwrite"],
+    )

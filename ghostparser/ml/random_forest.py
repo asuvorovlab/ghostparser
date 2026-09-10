@@ -7,66 +7,20 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold
 from sklearn.multioutput import MultiOutputClassifier
 
-from ..cli_config import resolve_cli_or_config_args
 from ..config import ConfigError, prepare_output_directory
 from . import ml_utils as shared
-from .config import DEFAULT_N_JOBS, load_ml_config, normalize_ml_payload
+from .config import (
+    DEFAULT_N_JOBS,
+    build_trainer_argument_parser,
+    resolve_trainer_runtime_args,
+)
 
 BIT_LABELS = shared.BIT_LABELS
 BIT_COUNT = shared.BIT_COUNT
 DatasetSplit = shared.DatasetSplit
-
-
-def _build_argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Ghostparser ML random forest baseline for summary statistics."
-    )
-    parser.add_argument(
-        "-c",
-        "--config-file",
-        type=str,
-        default=None,
-        help="Path to a JSON or YAML config file",
-    )
-    parser.add_argument(
-        "-i",
-        "--input-path",
-        type=str,
-        default=None,
-        help="Path to summary_statistics.tsv",
-    )
-    parser.add_argument(
-        "-o", "--output-dir", type=str, default=None, help="Directory for ML outputs"
-    )
-    parser.add_argument(
-        "--no-overwrite",
-        dest="no_overwrite",
-        action="store_true",
-        default=None,
-        help="Append a numeric suffix when the output directory already exists",
-    )
-    return parser
-
-
-def _resolve_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
-    return resolve_cli_or_config_args(
-        args,
-        load_config=load_ml_config,
-        normalize_payload=normalize_ml_payload,
-        payload_arg_names=["input_path", "output_dir", "no_overwrite"],
-    )
-
-
-def _read_tsv_rows(input_path: str):
-    return shared.read_tsv_rows(input_path)
-
-
-def _parse_classes(raw_labels):
-    return shared.parse_classes(raw_labels)
 
 
 def _rows_to_matrix(rows, target_column: str):
@@ -74,14 +28,6 @@ def _rows_to_matrix(rows, target_column: str):
         return shared.rows_to_matrix(rows, target_column)
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
-
-
-def _combination_labels(bit_labels):
-    return shared.combination_labels(bit_labels)
-
-
-def _split_dataset(features, targets, labels, test_size, random_state):
-    return shared.split_dataset(features, targets, labels, test_size, random_state)
 
 
 def _build_model(config: argparse.Namespace) -> MultiOutputClassifier:
@@ -101,26 +47,6 @@ def _build_model(config: argparse.Namespace) -> MultiOutputClassifier:
     )
 
 
-def _model_factory(config: argparse.Namespace):
-    return _build_model(config)
-
-
-def _evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
-    return shared.evaluate_predictions(y_true, y_pred)
-
-
-def _summarize_distribution(labels):
-    return shared.summarize_distribution(labels)
-
-
-def _bit_distribution(targets):
-    return shared.bit_distribution(targets)
-
-
-def _auto_cv_folds(labels, requested_folds, policy):
-    return shared.auto_cv_folds(labels, requested_folds, policy)
-
-
 def _cross_validate(
     model_factory,
     x_train: np.ndarray,
@@ -136,7 +62,7 @@ def _cross_validate(
     ):
         model = model_factory()
         model.fit(x_train[fit_index], y_train[fit_index])
-        fold_result = _evaluate_predictions(
+        fold_result = shared.evaluate_predictions(
             y_train[val_index], model.predict(x_train[val_index])
         )
         fold_metrics.append(
@@ -170,40 +96,17 @@ _write_json = shared.write_json
 _write_tsv = shared.write_tsv
 
 
-def _build_label_map():
-    return shared.build_label_map()
-
-
-def _build_prediction_rows(y_true, y_pred):
-    return shared.build_prediction_rows(y_true, y_pred)
-
-
-def _build_feature_importance_rows(feature_names, scores):
-    return shared.build_feature_importance_rows(feature_names, scores)
-
-
-def _build_confusion_matrices(
-    y_true: np.ndarray, y_pred: np.ndarray
-) -> dict[str, list[list[int]]]:
-    return {
-        bit_label: confusion_matrix(
-            y_true[:, bit_index], y_pred[:, bit_index], labels=[0, 1]
-        ).tolist()
-        for bit_index, bit_label in enumerate(BIT_LABELS)
-    }
-
-
 def train_random_forest(config: argparse.Namespace) -> dict:
     run_start = time.perf_counter()
     load_start = time.perf_counter()
-    rows = _read_tsv_rows(config.input_path)
+    rows = shared.read_tsv_rows(config.input_path)
     matrix = _rows_to_matrix(rows, config.target_column)
-    labels = _combination_labels(matrix.train_labels)
+    labels = shared.combination_labels(matrix.train_labels)
     load_seconds = time.perf_counter() - load_start
 
     split_start = time.perf_counter()
     x_train, x_test, y_train, y_test, labels_train, labels_test, split_notes = (
-        _split_dataset(
+        shared.split_dataset(
             matrix.train_features,
             matrix.train_targets,
             labels,
@@ -214,10 +117,10 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     split_seconds = time.perf_counter() - split_start
 
     def model_factory() -> MultiOutputClassifier:
-        return _model_factory(config)
+        return _build_model(config)
 
     cv_start = time.perf_counter()
-    cv_folds, cv_warnings = _auto_cv_folds(
+    cv_folds, cv_warnings = shared.auto_cv_folds(
         labels_train, config.cv_folds, config.rare_class_policy
     )
     cv_results = {"folds": [], "aggregate": {}}
@@ -231,7 +134,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     model = model_factory()
     model.fit(x_train, y_train)
     test_predictions = model.predict(x_test)
-    test_metrics = _evaluate_predictions(y_test, test_predictions)
+    test_metrics = shared.evaluate_predictions(y_test, test_predictions)
     fit_predict_seconds = time.perf_counter() - fit_start
 
     output_dir = Path(
@@ -263,7 +166,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         feature_importances = np.mean(
             [estimator.feature_importances_ for estimator in model.estimators_], axis=0
         )
-        feature_rows = _build_feature_importance_rows(
+        feature_rows = shared.build_feature_importance_rows(
             matrix.feature_names, feature_importances
         )
     feature_importance_seconds = time.perf_counter() - feature_start
@@ -271,13 +174,13 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     prediction_start = time.perf_counter()
     prediction_rows = None
     if save_predictions:
-        prediction_rows = _build_prediction_rows(y_test, test_predictions)
+        prediction_rows = shared.build_prediction_rows(y_test, test_predictions)
     prediction_build_seconds = time.perf_counter() - prediction_start
 
     confusion_matrices = None
     confusion_matrix_64_classes = None
     if report_confusion_matrix and include_diagnostic:
-        confusion_matrices = _build_confusion_matrices(y_test, test_predictions)
+        confusion_matrices = shared.build_confusion_matrices(y_test, test_predictions)
         confusion_matrix_64_classes = shared.build_64_class_confusion_matrix(
             y_test, test_predictions
         )
@@ -482,11 +385,13 @@ def train_random_forest(config: argparse.Namespace) -> dict:
 
 
 def main() -> None:
-    parser = _build_argument_parser()
+    parser = build_trainer_argument_parser(
+        "Ghostparser ML random forest baseline for summary statistics."
+    )
     parsed_args = parser.parse_args()
 
     try:
-        args = _resolve_runtime_args(parsed_args)
+        args = resolve_trainer_runtime_args(parsed_args)
     except (ValueError, ConfigError) as exc:
         print(f"Error: {exc}")
         return

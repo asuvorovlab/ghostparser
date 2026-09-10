@@ -66,10 +66,6 @@ def _render_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     return lines
 
 
-def _better(score: float, other: float, objective_direction: str) -> bool:
-    return score < other if objective_direction == "min" else score > other
-
-
 def compute_parameter_marginals(
     ranked_candidates: list[dict[str, object]],
     parameter_keys: list[str],

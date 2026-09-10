@@ -14,6 +14,7 @@ import seaborn as sns
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
+    confusion_matrix,
     f1_score,
     hamming_loss,
     precision_recall_fscore_support,
@@ -310,6 +311,43 @@ def write_tsv(path: Path, rows: list[dict[str, object]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def format_bit_label_title(bit_label: str) -> str:
+    """Render a bit label as a plot title.
+
+    Underscores become spaces and the first character is upper-cased. Only the
+    first -- ``str.capitalize`` would lower-case the rest and destroy the taxon
+    letters, turning ``ghost_into_A`` into ``Ghost into a``.
+
+    Args:
+        bit_label: One of :data:`BIT_LABELS`, e.g. ``inflow_into_A_from_C``.
+
+    Returns:
+        The title form, e.g. ``Inflow into A from C``.
+    """
+    spaced = bit_label.replace("_", " ")
+    return spaced[:1].upper() + spaced[1:]
+
+
+def build_confusion_matrices(
+    y_true: np.ndarray, y_pred: np.ndarray
+) -> dict[str, list[list[int]]]:
+    """Build a 2x2 confusion matrix per label bit.
+
+    Args:
+        y_true: True multi-label targets, one column per bit.
+        y_pred: Predicted multi-label targets, aligned with ``y_true``.
+
+    Returns:
+        A mapping of bit label to its ``[[tn, fp], [fn, tp]]`` matrix.
+    """
+    return {
+        bit_label: confusion_matrix(
+            y_true[:, bit_index], y_pred[:, bit_index], labels=[0, 1]
+        ).tolist()
+        for bit_index, bit_label in enumerate(BIT_LABELS)
+    }
 
 
 def build_label_map() -> dict:

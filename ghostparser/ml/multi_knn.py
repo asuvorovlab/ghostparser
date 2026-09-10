@@ -7,58 +7,20 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.inspection import permutation_importance
-from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.neighbors import KNeighborsClassifier
 
-from ..cli_config import resolve_cli_or_config_args
 from ..config import ConfigError, prepare_output_directory
 from . import ml_utils as shared
-from .config import DEFAULT_N_JOBS, load_ml_config, normalize_ml_payload
+from .config import (
+    DEFAULT_N_JOBS,
+    build_trainer_argument_parser,
+    resolve_trainer_runtime_args,
+)
 
 BIT_LABELS = shared.BIT_LABELS
 BIT_COUNT = shared.BIT_COUNT
-
-
-def _build_argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Ghostparser ML multi-label KNN baseline for summary statistics."
-    )
-    parser.add_argument(
-        "-c",
-        "--config-file",
-        type=str,
-        default=None,
-        help="Path to a JSON or YAML config file",
-    )
-    parser.add_argument(
-        "-i",
-        "--input-path",
-        type=str,
-        default=None,
-        help="Path to summary_statistics.tsv",
-    )
-    parser.add_argument(
-        "-o", "--output-dir", type=str, default=None, help="Directory for ML outputs"
-    )
-    parser.add_argument(
-        "--no-overwrite",
-        dest="no_overwrite",
-        action="store_true",
-        default=None,
-        help="Append a numeric suffix when the output directory already exists",
-    )
-    return parser
-
-
-def _resolve_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
-    return resolve_cli_or_config_args(
-        args,
-        load_config=load_ml_config,
-        normalize_payload=normalize_ml_payload,
-        payload_arg_names=["input_path", "output_dir", "no_overwrite"],
-    )
 
 
 def _build_model(
@@ -79,23 +41,6 @@ def _build_model(
         n_jobs=config.n_jobs if config.n_jobs is not None else DEFAULT_N_JOBS,
     )
     return model, effective_n_neighbors
-
-
-def _model_factory(
-    config: argparse.Namespace, train_size: int
-) -> tuple[MultiOutputClassifier, int]:
-    return _build_model(config, train_size)
-
-
-def _build_confusion_matrices(
-    y_true: np.ndarray, y_pred: np.ndarray
-) -> dict[str, list[list[int]]]:
-    return {
-        bit_label: confusion_matrix(
-            y_true[:, bit_index], y_pred[:, bit_index], labels=[0, 1]
-        ).tolist()
-        for bit_index, bit_label in enumerate(BIT_LABELS)
-    }
 
 
 def _cross_validate(
@@ -164,7 +109,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     split_seconds = time.perf_counter() - split_start
 
     def model_factory(train_size: int) -> tuple[MultiOutputClassifier, int]:
-        return _model_factory(config, train_size)
+        return _build_model(config, train_size)
 
     cv_start = time.perf_counter()
     cv_folds, cv_warnings = shared.auto_cv_folds(
@@ -232,7 +177,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     confusion_matrices = None
     confusion_matrix_64_classes = None
     if report_confusion_matrix and include_diagnostic:
-        confusion_matrices = _build_confusion_matrices(y_test, test_predictions)
+        confusion_matrices = shared.build_confusion_matrices(y_test, test_predictions)
         confusion_matrix_64_classes = shared.build_64_class_confusion_matrix(
             y_test, test_predictions
         )
@@ -439,11 +384,13 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
 
 
 def main() -> None:
-    parser = _build_argument_parser()
+    parser = build_trainer_argument_parser(
+        "Ghostparser ML multi-label KNN baseline for summary statistics."
+    )
     parsed_args = parser.parse_args()
 
     try:
-        args = _resolve_runtime_args(parsed_args)
+        args = resolve_trainer_runtime_args(parsed_args)
     except (ValueError, ConfigError) as exc:
         print(f"Error: {exc}")
         return

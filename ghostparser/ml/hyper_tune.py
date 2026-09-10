@@ -20,6 +20,7 @@ from ..config import (
     DEFAULT_OVERWRITE,
     ConfigError,
     _validate_overwrite_flag,
+    _validate_required_path,
     prepare_output_directory,
 )
 from . import ml_utils as shared
@@ -43,6 +44,12 @@ from .config import (
     DEFAULT_RANDOM_STATE,
     DEFAULT_TARGET_COLUMN,
     _load_raw_config,
+    _validate_optional_bool,
+    _validate_optional_choice,
+    _validate_optional_float,
+    _validate_optional_int,
+    _validate_optional_positive_int,
+    _validate_optional_string,
     normalize_class_weight,
     normalize_max_features,
 )
@@ -303,77 +310,6 @@ RUNTIME_KEYS = {
     "random_state",
     "n_jobs",
 }
-
-
-def _validate_required_path(payload: dict, key: str) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"Missing required config field: {key}")
-    return str(Path(value.strip()).expanduser().resolve())
-
-
-def _validate_optional_string(
-    payload: dict, key: str, default: str | None
-) -> str | None:
-    value = payload.get(key, default)
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise ConfigError(
-            f"Config field {key} must be a non-empty string when provided"
-        )
-    return value.strip()
-
-
-def _validate_optional_float(payload: dict, key: str, default: float) -> float:
-    value = payload.get(key, default)
-    if value is None:
-        value = default
-    try:
-        value = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ConfigError(f"Config field {key} must be numeric") from exc
-    if not 0 < value < 1:
-        raise ConfigError(f"Config field {key} must be a fraction between 0 and 1")
-    return value
-
-
-def _validate_optional_positive_int(
-    payload: dict, key: str, default: int | None
-) -> int | None:
-    value = payload.get(key, default)
-    if value is None:
-        return None
-    if not isinstance(value, int) or value < 1:
-        raise ConfigError(f"Config field {key} must be an integer >= 1")
-    return value
-
-
-def _validate_optional_int(payload: dict, key: str, default: int | None) -> int | None:
-    value = payload.get(key, default)
-    if value is None:
-        return None
-    if not isinstance(value, int):
-        raise ConfigError(f"Config field {key} must be an integer when provided")
-    return value
-
-
-def _validate_optional_choice(
-    payload: dict, key: str, default: str, choices: tuple[str, ...]
-) -> str:
-    value = payload.get(key, default)
-    if value is None:
-        value = default
-    if not isinstance(value, str) or value not in choices:
-        raise ConfigError(f"Config field {key} must be one of: {', '.join(choices)}")
-    return value
-
-
-def _validate_optional_bool(payload: dict, key: str, default: bool) -> bool:
-    value = payload.get(key, default)
-    if not isinstance(value, bool):
-        raise ConfigError(f"Config field {key} must be a boolean")
-    return value
 
 
 def _validate_required_bool(payload: dict, key: str, section: str) -> bool:
