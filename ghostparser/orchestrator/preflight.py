@@ -34,7 +34,7 @@ PREFLIGHT_REPORT_FILENAME = "preflight_data_check.txt"
 
 # Caps keep the check fast on large inputs; both are analysis-only limits and do
 # not change what a real run would process.
-DEFAULT_MAX_TRIPLETS = 1500
+DEFAULT_MAX_TRIPLETS = 15000
 DEFAULT_MAX_GENE_TREES = 0  # 0 means "all"
 DEFAULT_REPORT_LIMIT = 25
 
