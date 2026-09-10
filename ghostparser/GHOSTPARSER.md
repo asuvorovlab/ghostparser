@@ -54,6 +54,11 @@ Anything that differs between modules deliberately does **not** live here.
 their own validators — for example both have a `_validate_optional_float`, but
 the ML one additionally requires a fraction strictly between 0 and 1.
 
+Within the ML subpackage, `ml/config.py` is the single home for that module's
+validators and for the CLI plumbing its two trainers share
+(`build_trainer_argument_parser`, `resolve_trainer_runtime_args`);
+`ml/hyper_tune.py` imports them rather than restating them.
+
 ### `ghostparser.cli_config` — CLI/config precedence
 
 `resolve_cli_or_config_args(args, *, load_config, normalize_payload,
@@ -65,10 +70,10 @@ list.
 
 ### `ghostparser.triplet_utils` — topology helpers
 
-Pure functions for triplet topology handling (`find_sister_pair`,
-`normalize_abc_from_sister_pair`, `classify_triplet_topology_string`,
-`rank_topologies_by_frequency`), used by the orchestrator for both preprocessing and
-inference.
+Pure functions for triplet topology handling (`triplet_taxa_labels`,
+`find_sister_pair`, `normalize_abc_from_sister_pair`,
+`topology_from_sister_pair`, `classify_triplet_topology_string`), used by the
+orchestrator for both preprocessing and inference.
 
 ## Consolidation Stage (`ghostparser.orchestrator.consolidation`)
 

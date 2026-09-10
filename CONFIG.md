@@ -109,7 +109,7 @@ gene_trees_path: data/genes.tree
 outgroup: Out1,Out2
 output_folder: results
 processes: 0
-parallelization_mode: auto
+seed: 42
 alpha_dct: 0.05
 alpha_ks: 0.05
 alpha_perm: 0.05
@@ -123,7 +123,6 @@ consolidation: true
 bootstrap: true
 bootstrap_options:
   iterations: 100
-  seed: 42
   debug_mode: false
   summary_only: false
 permutation_options:
@@ -174,18 +173,57 @@ Settable either on the CLI or in a config file.
 - Default: none (all triplets)
 - Path to a file of comma-separated taxa triplets, one per line. Only the listed triplets are analyzed.
 
+##### `species_rename_map`
+
+- CLI: `--species-rename-map`
+- Default: none (taxa keep their tree labels)
+- Path to a map giving the name each taxon should appear under in the outputs.
+  Accepts a two-column TSV (tree label, then display name, tab-separated; blank
+  lines and `#` comments ignored) or a YAML mapping, chosen by file extension:
+
+  ```tsv
+  T1	Homo sapiens
+  T2	Pan troglodytes
+  ```
+
+  ```yaml
+  T1: Homo sapiens
+  T2: Pan troglodytes
+  ```
+
+  The rename is applied to the species and gene trees as they are read, so every
+  later stage uses the display names: the results TSV, `summary_statistics.tsv`,
+  the processed tree files, and the consolidation matrices and plots. Taxa absent
+  from the map keep their tree labels, so a partial map is fine.
+
+  Because the rename happens first, the outgroup and any triplet-filter entries
+  are matched against the display names as well. Supply those in the tree's own
+  labels and they are mapped for you.
+
+  The map is rejected if it maps a label more than once, or maps two labels onto
+  the same display name — the latter would collapse two taxa into duplicate tree
+  labels, which the Newick parser refuses further downstream.
+
+##### `seed`
+
+- CLI: `--seed`
+- Default: none
+- Base RNG seed for the whole run. Every random draw derives from it: the
+  permutation direction test, the bootstrap resampling, the bootstrap's own
+  permutations, and the modality bootstrap in the shape diagnostics. Each
+  triplet derives its own stream from `(seed, triplet)`, so a run is
+  reproducible at any worker count and independent of how many resamples any
+  single adaptive test happens to draw.
+- When omitted, a seed is drawn at run time instead. Either way the value used
+  is written to `metrics.txt` as `Seed: <n> (configured|generated)`, so a run
+  started without a seed can still be reproduced by passing back the value it
+  reports.
+
 ##### `processes`
 
 - CLI: `--processes`
 - Default: `0`
 - Worker process count. `0` uses all available cores; `1` runs serially in the parent process.
-
-##### `parallelization_mode`
-
-- CLI: `--parallelization-mode`
-- Default: `auto`
-- Allowed: `auto`, `taxon`, `gene`
-- `taxon` dispatches chunks of triplets across workers; `gene` parallelizes per-gene-tree subtree extraction within one triplet; `auto` selects `gene` when the ingroup taxa count is below 15 or the gene-tree count exceeds 3500, otherwise `taxon`.
 
 ##### `alpha_dct`
 
@@ -289,7 +327,6 @@ These have no CLI flag. They take their default unless set in a config file.
 A nested block; each key may also be given flat as `bootstrap_<key>`.
 
 - `iterations` (flat: `bootstrap_iterations`) — default `100`. Bootstrap iterations per triplet; must be an integer >= 1.
-- `seed` (flat: `bootstrap_seed`) — default none. Base RNG seed; each triplet derives a deterministic per-triplet seed from it, so results are reproducible and independent of the parallelization mode.
 - `debug_mode` (flat: `bootstrap_debug_mode`) — default `false`. Appends the per-iteration bootstrap-debug columns to the results TSV.
 - `summary_only` (flat: `bootstrap_summary_only`) — default `false`. With debug mode on, emits compact summaries instead of full per-iteration lists.
 
@@ -312,7 +349,6 @@ python -m ghostparser.orchestrator \
   -og Out1,Out2 \
   --output-folder results \
   --processes 0 \
-  --parallelization-mode auto \
   --alpha-dct 0.05 \
   --alpha-ks 0.05 \
   --alpha-perm 0.05 \

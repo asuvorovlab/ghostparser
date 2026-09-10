@@ -132,18 +132,18 @@ Run via CLI flags:
 python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 ```
 
-With an explicit worker count and parallelization mode:
+With an explicit worker count:
 
 ```bash
 python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup \
-    --processes 4 --parallelization-mode auto
+    --processes 4
 ```
 
 #### How the Orchestrator Works
 
 1. The species tree is standardized, filtered on mean internal support, rooted on the outgroup MRCA, and pruned; gene trees are also cleaned and rooted on the outgroup similarly.
 2. Every ingroup triplet is enumerated (or restricted by `--triplet-filter`) and normalized to `(A, B, C)` with A and B the species-tree sisters.
-3. For each triplet the engine extracts its subtree from every gene tree, classifies the topology as concordant or one of two discordant alternatives, and records a tree height H(T).
+3. Every gene tree is measured once up front, and for each triplet the engine reads that triplet's rooted shape back out of those measurements: it classifies the topology as concordant or one of two discordant alternatives, and records a tree height H(T).
 4. A three-gate decision follows: the discordant count test, then the KS tree-height test, then a studentized permutation test on the concordant-versus-discordant1 mean heights. Each triplet lands on `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`.
 5. Multiple-testing correction is applied once across every triplet in the run.
 6. Results are written, and consolidation renders the introgression maps.
@@ -164,13 +164,18 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 
 **Config + CLI:**
 
-- `--output-folder`, `--no-overwrite`, `--triplet-filter`
-- `--processes`, `--parallelization-mode {auto,taxon,gene}`
+- `--output-folder`, `--no-overwrite`, `--triplet-filter`, `--species-rename-map`
+- `--seed`
+
+   - Base RNG seed for the whole run; every random draw derives from it.
+   - Omit for a fresh seed each run; the value used is reported in `metrics.txt`.
+
+- `--processes`
 - `--alpha-dct`, `--alpha-ks`, `--alpha-perm`, `--p-value-correction`
 - `--pipeline-mode {efficient,detailed}`
 - `--no-consolidation`, `--no-bootstrap`
 
-**Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, and the `bootstrap_options` block (`iterations`, `seed`, `debug_mode`, `summary_only`).
+**Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, and the `bootstrap_options` block (`iterations`, `debug_mode`, `summary_only`).
 
 The statistical tests always use the scipy/statsmodels backend. The full key reference is in the **[Configuration Guide](CONFIG.md#orchestrator-primary-module)**.
 
@@ -223,12 +228,12 @@ Consolidation details:
 
 #### Bootstrap Behavior
 
-- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`, which skips the iterations rather than merely dropping their columns; the remaining controls (`iterations`, `seed`, `debug_mode`, `summary_only`) are set through the config file's `bootstrap_options` block.
+- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`, which skips the iterations rather than merely dropping their columns; the remaining controls (`iterations`, `debug_mode`, `summary_only`) are set through the config file's `bootstrap_options` block.
 - Bootstrap iterations re-run the direction test at one fifth of the configured resample budget.
 - Iterations are judged against the same *corrected* p-value thresholds as the reported classification, so `bootstrap_value` measures support for the decision actually made. With `no` or `bfn` the correction is applied as each iteration runs; the rank-based methods need every triplet's p-value for the same iteration, so those are corrected after the streaming pass.
 - Iterations with incomplete required metrics are counted as `ambiguous` and processing continues.
 - `bootstrap_value` reports the bootstrap fraction for the final `classification` value after correction.
-- A fixed `seed` makes results reproducible and identical across parallelization modes, because each triplet derives its own seed from it.
+- The run-wide `--seed` makes results reproducible and identical at any worker count, because each triplet derives its own stream from it. It seeds every random draw in the run, not just the bootstrap. When omitted, a seed is drawn and reported in `metrics.txt`, so any run can be reproduced from its own log.
 
 #### Orchestrator Input/Output
 
@@ -258,6 +263,14 @@ Consolidation details:
 
    - Path to a triplet filter file (comma-separated taxa per line).
    - When provided, only those triplets are processed.
+
+- `--species-rename-map`
+
+   - Path to a two-column TSV or YAML mapping from the taxon labels used in the
+     trees to the names that should appear in the outputs.
+   - Applied as the trees are read, so the results TSV, the processed trees, and
+     the consolidation matrices and plots all use the display names. Taxa absent
+     from the map keep their tree labels. See [CONFIG.md](CONFIG.md).
    - Triplets containing taxa missing from the species tree are skipped with a warning.
 
 - `--processes`
@@ -265,12 +278,6 @@ Consolidation details:
    - Number of worker processes.
    - Defaults to `0` (all cores). Use `--processes 1` to run serially in the
      parent process, which is useful for debugging or constrained systems.
-
-- `--parallelization-mode`
-
-   - `taxon` dispatches chunks of triplets across workers; `gene` parallelizes
-     per-gene-tree subtree extraction within one triplet; `auto` (default)
-     chooses based on the input size.
 
 ##### Output Files
 
@@ -408,7 +415,6 @@ Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
 **Execution Defaults:**
 
 - `processes`: `0` (all available CPU cores)
-- `parallelization_mode`: `auto`
 - `pipeline_mode`: `efficient`
 - `output_folder`: `./results`
 - `overwrite`: `true`
@@ -418,7 +424,7 @@ Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
 - `shape_diagnostics`: `false`
 - `bootstrap`: `true`
 - `bootstrap_options.iterations`: `100`
-- `bootstrap_options.seed`: unset
+- `seed`: unset (drawn per run and reported)
 - `bootstrap_options.debug_mode`: `false`
 - `bootstrap_options.summary_only`: `false`
 
@@ -464,11 +470,11 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Config field ... must be a boolean when provided` / `Config field ... must be a numeric value`
    Boolean/float-style fields were provided with incompatible types.
 - `Config field ... must be one of: ...`
-   Choice-constrained fields (discordant test, summary statistic, tree-height strategy, p-value correction, parallelization mode) contain unsupported values.
+   Choice-constrained fields (discordant test, summary statistic, tree-height strategy, p-value correction, pipeline mode) contain unsupported values.
 - `Config field overwrite must be a boolean when provided` / `Config field no_overwrite must be a boolean when provided`
    The overwrite flags were given non-boolean values.
 - `Config field bootstrap_options.* ...`
-   Bootstrap options failed validation (`iterations >= 1`, integer seed, boolean debug/summary flags).
+   Bootstrap options failed validation (`iterations >= 1`, boolean debug/summary flags).
 
 ### Tree Preprocessing (`ghostparser.orchestrator.trees`)
 

@@ -63,19 +63,28 @@ analysis runs and the only artifact is `preflight_data_check.txt`.
 `preflight.run_preflight_data_check` replays the same structural logic the
 engine uses, but collects failures instead of raising on the first one:
 
-1. Root the species tree on the outgroup and normalize each triplet to A/B/C
-   via `find_sister_pair` and `normalize_abc_from_sister_pair`, recording
-   triplets whose rooted topology cannot be resolved.
+1. Root the species tree on the outgroup, build one
+   `triplet_geometry.TripletGeometry` over it, and normalize each triplet to
+   A/B/C from the sister pair `triplet_geometry.triplet_subtree_shape` reports,
+   recording triplets whose rooted topology cannot be resolved.
 2. Root every gene tree with `trees._root_tree_on_any_outgroup`, recording the
    ones where no outgroup label is present.
-3. For each triplet contained in a gene tree, extract the subtree and replay
-   `triplet_taxa_labels` → `find_sister_pair` → `topology_from_sister_pair` →
-   sister-pair MRCA lookup, recording whichever step fails.
+3. Cache each rooted gene tree's geometry and ask
+   `triplet_geometry.triplet_resolution` about every triplet, recording the ones
+   it reports as missing a taxon or unresolved.
+
+Both tree sides go through the cached geometry the engine itself uses, so the
+skip decisions reported here are the ones a run would make.
 
 Every failure becomes an `Issue` with a dotted category. The report groups them
 by category with counts, up to 25 examples each naming the gene-tree index and
 triplet plus the offending input line, and an attribution summary separating
-species-tree causes from gene-tree causes. `PreflightResult.passed` is `True`
+species-tree causes from gene-tree causes. A `usable_pairs` line accounts for
+every triplet/gene-tree pair the check looked at, splitting them into the ones a
+run could measure, the ones it would drop as unresolved, and the ones skipped
+because that gene tree does not carry all three taxa. The last group is not a
+defect -- a gene tree need not be complete, and the engine skips those pairs
+too -- so it is counted rather than reported as an issue. `PreflightResult.passed` is `True`
 only when nothing was detected.
 
 Three conditions make the check itself impossible and raise `ValueError`
@@ -93,16 +102,21 @@ tree, and a species tree containing none of the outgroups.
 2. **Triplet setup** — `trees.generate_triplets` enumerates every ingroup
    triplet (or `trees.read_triplet_filter_file` plus
    `trees.filter_triplets_by_taxa` restricts them).
-   `trees._build_species_triplet_metadata` normalizes each triplet to
-   `(A, B, C)` with A and B the species-tree sisters, and builds the triplet's
+   `trees._build_species_triplet_metadata` builds one
+   `triplet_geometry.TripletGeometry` over the species tree, then reads each
+   triplet out of it: `triplet_geometry.triplet_subtree_shape` gives the sister
+   pair, which normalizes the triplet to `(A, B, C)` with A and B the
+   species-tree sisters, and the edges the triplet's induced subtree would
+   carry, which `trees._format_triplet_subtree_newick` writes out as the
    species subtree.
 3. **Gene-tree preprocessing** — `trees.clean_and_save_gene_trees` cleans each
    gene tree and roots it on the outgroup.
-4. **Fused extraction + inference** — `stream.stream_triplet_results` walks the
-   triplets, extracts each one's subtree per gene tree, converts it directly to
-   an observation (`inference.observation_from_subtree`), and immediately runs
+4. **Fused extraction + inference** — `stream.stream_triplet_results` caches
+   every gene tree's geometry once (`stream.build_run_geometry`), then walks the
+   triplets, reads each one's observation out of that cache
+   (`triplet_geometry.geometry_observation`), and immediately runs
    `inference.analyze_triplet_from_observations`. Only the small result object
-   is retained; the subtrees are discarded.
+   is retained.
 5. **Run-wide correction** —
    `inference._apply_triplet_result_p_value_correction` applies the
    multiple-testing correction once across all triplets, because a global
@@ -663,7 +677,7 @@ immediately on being added.
 The family size is the triplet count regardless of any skipping, so the
 correction never depends on the optimization. Whichever tier applies, the
 resample stream is untouched: the bootstrap draws its resamples from a generator
-independent of the permutation tests', so a fixed `bootstrap_seed` reproduces the
+independent of the permutation tests', so a fixed `seed` reproduces the
 same resamples — and the same `bootstrap_stat_ci_*` interval — under every
 correction method.
 
@@ -872,16 +886,12 @@ The results TSV is named `orchestrator_triplet_results.tsv`. Consolidation
 writes its own artifacts into a `consolidation/` subfolder, so the two never
 collide in the run's output folder.
 
-## Parallelization modes
+## Parallelization
 
-- `taxon` — triplets are split into chunks and dispatched across workers; each
-  worker runs the fused extract-then-infer loop for its chunk over the shared
-  gene-tree list.
-- `gene` — triplets are processed serially in the parent; within a single
-  triplet, per-gene-tree subtree extraction is parallelized across cores.
-- `auto` — selects `gene` when the ingroup taxa count is below
-  `AUTO_TAXA_SMALL_THRESHOLD` (15) or the gene-tree count exceeds
-  `AUTO_GENE_TREES_THRESHOLD` (3500), otherwise `taxon`.
+Triplets are split into chunks and dispatched across `--processes` workers; each
+worker runs the fused extract-then-infer loop for its chunk over the shared
+gene-tree list and the shared geometry cache. Triplet chunks are the only unit
+worth distributing, because a run's cost is per-triplet inference.
 
 With one worker (or one triplet) the engine runs the fused loop serially in the
 parent process regardless of mode.
@@ -928,22 +938,28 @@ observations, species_subtree, ...)`, which takes precomputed `(topology,
 tree-height, metrics)` observations. The third element carries the per-tree
 summary metrics and is `None` unless `generate_summary_stats` is enabled.
 
-The processing unit is a chunk of triplets that share one parse pass over the
-gene trees. For each parsed gene tree the engine extracts every in-chunk
-triplet's subtree and computes its observation directly from the subtree object
-(`inference.observation_from_subtree`) — there is **no** serialize-to-Newick and
-reparse round trip. It then runs `analyze_triplet_from_observations` for each
-triplet in the chunk and drops the observations. This bounds live memory to one
-chunk while amortizing the DendroPy parse cost across the chunk's triplets. Gene
-trees are loaded once in the parent and shared read-only to workers via a
-fork/forkserver initializer.
+Every gene tree is parsed and cached once per run, before any triplet is
+touched: `stream.build_run_geometry` walks each tree twice — pre-order for a
+parent/edge-length array, post-order for a pairwise LCA table — and keeps only
+those arrays. The processing unit is then a chunk of triplets read out of that
+cache. For each gene tree the engine looks up the triplet's three pairwise LCAs
+and sums a few short paths up the parent chain
+(`triplet_geometry.geometry_observation`) — no subtree is copied, and there is
+**no** serialize-to-Newick and reparse round trip. It then runs
+`analyze_triplet_from_observations` for each triplet in the chunk and drops the
+observations. The cache is built once in the parent and shared read-only to
+workers via a fork/forkserver initializer, so a triplet chunk costs table
+lookups rather than tree copies.
+
+`trees.extract_triplet_subtree` and `inference.observation_from_subtree` still
+exist as the DendroPy reference implementation of that read-out. Nothing in a
+run calls them; the parity tests hold the cached path to agreement with them.
 
 Bootstrap resampling is vectorized with NumPy: per-triplet resample indices are
 drawn with a seeded `numpy.random.Generator`, and topology counts and
 per-topology height groups are computed with array operations. Bootstrap values
-are deterministic under a fixed `bootstrap_seed` — the per-triplet seed is
-derived from the run seed and the triplet, so every parallelization mode agrees
-exactly.
+are deterministic under a fixed `seed` — the per-triplet seed is
+derived from the run seed and the triplet, so any worker count agrees exactly.
 
 ### Memory rationale
 
