@@ -1,29 +1,31 @@
 """Fused extract-and-infer streaming engine for the orchestrator.
 
 Extracts a chunk of triplets' observations in one gene-tree parse pass and runs
-inference immediately, with no serialize-then-reparse round trip. Also resolves
-the parallelization mode and applies the run-wide p-value correction.
+inference immediately, with no serialize-then-reparse round trip. Caches every
+gene tree's geometry once for the run, dispatches triplet chunks across workers,
+and applies the run-wide p-value correction.
 """
 
 import time
 from multiprocessing import cpu_count
+from typing import NamedTuple
 
 import dendropy
 
-from .config import (
-    AUTO_GENE_TREES_THRESHOLD,
-    AUTO_TAXA_SMALL_THRESHOLD,
-    DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
-)
+from .config import DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY
 from .inference import (
     _apply_triplet_result_p_value_correction,
     analyze_triplet_from_observations,
-    observation_from_subtree,
 )
-from .trees import _get_mp_context, extract_triplet_subtree
+from .trees import _get_mp_context
+from .triplet_geometry import (
+    build_taxon_index,
+    build_triplet_geometry,
+    geometry_observation,
+)
 
 # Worker-global state shared read-only via fork/forkserver initializer.
-_GENE_TREES: list[str] = []
+_RUN_GEOMETRY = None
 _SPECIES_TRIPLET_TREES: dict[tuple[str, str, str], str] = {}
 _STRATEGY: str = DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY
 _COLLECT_SUMMARY: bool = False
@@ -80,54 +82,79 @@ def _calculate_worker_count(total_items, processes):
     return max(1, min(worker_count, total_items))
 
 
-def resolve_parallelization_mode(mode, n_taxa, n_gene_trees):
-    """Resolve the ``auto`` mode to ``gene`` or ``taxon`` from input size.
+class RunGeometry(NamedTuple):
+    """Every gene tree's cached geometry, built once for the whole run.
+
+    Attributes:
+        taxon_index: Taxon-to-position map spanning every triplet taxon, shared
+            by all the cached geometries.
+        geometries: One :class:`~.triplet_geometry.TripletGeometry` per gene
+            tree, positionally aligned with the gene-tree list.
+    """
+
+    taxon_index: dict
+    geometries: list
+
+
+def build_run_geometry(gene_trees, triplets):
+    """Parse and cache every gene tree once, for reuse across all triplets.
 
     Args:
-        mode: The requested mode (``auto``, ``taxon``, or ``gene``).
-        n_taxa: Number of distinct ingroup taxa.
-        n_gene_trees: Number of gene trees.
+        gene_trees: Gene-tree Newick strings.
+        triplets: Every triplet the run will analyze, used to size the shared
+            taxon index.
 
     Returns:
-        ``taxon`` or ``gene`` (``mode`` unchanged when it is not ``auto``).
+        A :class:`RunGeometry` holding the shared taxon index and one cached
+        geometry per gene tree.
     """
-    if mode != "auto":
-        return mode
-    if n_taxa < AUTO_TAXA_SMALL_THRESHOLD or n_gene_trees > AUTO_GENE_TREES_THRESHOLD:
-        return "gene"
-    return "taxon"
+    taxon_index = build_taxon_index(triplets)
+    geometries = [
+        build_triplet_geometry(
+            dendropy.Tree.get(
+                data=newick_str, schema="newick", preserve_underscores=True
+            ),
+            taxon_index,
+        )
+        for newick_str in gene_trees
+    ]
+    return RunGeometry(taxon_index, geometries)
 
 
 def _extract_chunk_observations(
-    triplet_chunk, gene_trees, strategy, collect_summary_statistics=False
+    triplet_chunk,
+    run_geometry,
+    strategy,
+    collect_summary_statistics=False,
 ):
-    """Compute every triplet's observations in one pass over the gene trees.
+    """Read every triplet's observations out of the cached gene-tree geometries.
 
     Args:
         triplet_chunk: Iterable of triplets in this chunk.
-        gene_trees: Iterable of gene-tree Newick strings.
+        run_geometry: The :class:`RunGeometry` cached for the whole run.
         strategy: Tree-height strategy used to compute each observation.
         collect_summary_statistics: When ``True``, each observation also carries
             its per-tree summary metrics.
 
     Returns:
         A dict mapping each triplet to its list of
-        ``(topology, tree_height, summary_metrics)`` observations.
+        ``(topology, tree_height, summary_metrics)`` observations, in gene-tree
+        order.
     """
     observations = {triplet: [] for triplet in triplet_chunk}
-    for newick_str in gene_trees:
-        tree = dendropy.Tree.get(
-            data=newick_str, schema="newick", preserve_underscores=True
-        )
-        tree_taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
+    taxon_index = run_geometry.taxon_index
+    positions = {
+        triplet: tuple(taxon_index[label] for label in triplet)
+        for triplet in triplet_chunk
+    }
+
+    for geometry in run_geometry.geometries:
         for triplet in triplet_chunk:
-            if not set(triplet).issubset(tree_taxa):
-                continue
-            subtree = extract_triplet_subtree(tree, triplet)
-            if subtree is None:
-                continue
-            observation = observation_from_subtree(
-                subtree, triplet, strategy, collect_summary_statistics
+            observation = geometry_observation(
+                geometry,
+                positions[triplet],
+                strategy,
+                collect_summary_statistics,
             )
             if observation is not None:
                 observations[triplet].append(observation)
@@ -136,7 +163,7 @@ def _extract_chunk_observations(
 
 def _analyze_chunk(
     triplet_chunk,
-    gene_trees,
+    run_geometry,
     species_triplet_trees,
     strategy,
     collect_summary_statistics,
@@ -146,7 +173,7 @@ def _analyze_chunk(
 
     Args:
         triplet_chunk: Iterable of triplets in this chunk.
-        gene_trees: Iterable of gene-tree Newick strings.
+        run_geometry: The run-wide geometry cache.
         species_triplet_trees: Mapping of triplet to its species subtree Newick.
         strategy: Tree-height strategy used to compute observations.
         collect_summary_statistics: When ``True``, gather per-triplet summary
@@ -158,7 +185,10 @@ def _analyze_chunk(
         A list of ``TripletPipelineResult`` objects for the chunk.
     """
     observations = _extract_chunk_observations(
-        triplet_chunk, gene_trees, strategy, collect_summary_statistics
+        triplet_chunk,
+        run_geometry,
+        strategy,
+        collect_summary_statistics,
     )
     results = []
     for triplet in triplet_chunk:
@@ -173,24 +203,26 @@ def _analyze_chunk(
     return results
 
 
-def _init_stream_worker(gene_trees, species_triplet_trees, inference_kwargs):
+def _init_stream_worker(run_geometry, species_triplet_trees, inference_kwargs):
     """Seed worker globals with shared read-only state.
 
     Args:
-        gene_trees: Gene-tree Newick strings, or ``None`` to keep the value the
-            parent already set via fork.
+        run_geometry: The run-wide geometry cache, or ``None`` to keep the value
+            the parent already set via fork.
         species_triplet_trees: Mapping of triplet to its species subtree Newick.
         inference_kwargs: Combined inference kwargs (split into strategy and
             analysis kwargs).
     """
-    global _GENE_TREES, _SPECIES_TRIPLET_TREES, _STRATEGY, _COLLECT_SUMMARY
-    global _ANALYSIS_KWARGS
-    if gene_trees is not None:
-        _GENE_TREES = gene_trees
+    global _RUN_GEOMETRY, _SPECIES_TRIPLET_TREES, _STRATEGY
+    global _COLLECT_SUMMARY, _ANALYSIS_KWARGS
+    if run_geometry is not None:
+        _RUN_GEOMETRY = run_geometry
     _SPECIES_TRIPLET_TREES = species_triplet_trees or {}
-    _STRATEGY, _COLLECT_SUMMARY, _ANALYSIS_KWARGS = _split_inference_kwargs(
-        inference_kwargs
-    )
+    (
+        _STRATEGY,
+        _COLLECT_SUMMARY,
+        _ANALYSIS_KWARGS,
+    ) = _split_inference_kwargs(inference_kwargs)
 
 
 def _analyze_chunk_worker(triplet_chunk):
@@ -207,7 +239,7 @@ def _analyze_chunk_worker(triplet_chunk):
     start_cpu = time.process_time()
     results = _analyze_chunk(
         triplet_chunk,
-        _GENE_TREES,
+        _RUN_GEOMETRY,
         _SPECIES_TRIPLET_TREES,
         _STRATEGY,
         _COLLECT_SUMMARY,
@@ -216,46 +248,15 @@ def _analyze_chunk_worker(triplet_chunk):
     return results, time.process_time() - start_cpu
 
 
-def _extract_triplet_range_worker(args):
-    """Compute one triplet's observations from a gene-tree index range.
-
-    Args:
-        args: A tuple ``(triplet, lo, hi)`` selecting ``_GENE_TREES[lo:hi]``.
-
-    Returns:
-        A tuple ``(observations, worker_cpu_seconds)`` where ``observations`` is
-        a list of ``(topology, tree_height)`` tuples and ``worker_cpu_seconds``
-        is the CPU time this worker spent on the range.
-    """
-    start_cpu = time.process_time()
-    triplet, lo, hi = args
-    out = []
-    triplet_set = set(triplet)
-    for newick_str in _GENE_TREES[lo:hi]:
-        tree = dendropy.Tree.get(
-            data=newick_str, schema="newick", preserve_underscores=True
-        )
-        tree_taxa = {taxon.label for taxon in tree.taxon_namespace if taxon.label}
-        if not triplet_set.issubset(tree_taxa):
-            continue
-        subtree = extract_triplet_subtree(tree, triplet)
-        if subtree is None:
-            continue
-        observation = observation_from_subtree(
-            subtree, triplet, _STRATEGY, _COLLECT_SUMMARY
-        )
-        if observation is not None:
-            out.append(observation)
-    return out, time.process_time() - start_cpu
-
-
-def _run_taxon_mode(triplets, species_triplet_trees, gene_trees, worker_count, inference_kwargs):
+def _run_taxon_mode(
+    triplets, species_triplet_trees, run_geometry, worker_count, inference_kwargs
+):
     """Dispatch triplet chunks across workers, each running the fused loop.
 
     Args:
         triplets: List of triplets to analyze.
         species_triplet_trees: Mapping of triplet to its species subtree Newick.
-        gene_trees: Gene-tree Newick strings, shared read-only to workers.
+        run_geometry: The run-wide geometry cache, shared read-only to workers.
         worker_count: Number of worker processes.
         inference_kwargs: Combined inference kwargs forwarded to workers.
 
@@ -268,16 +269,18 @@ def _run_taxon_mode(triplets, species_triplet_trees, gene_trees, worker_count, i
     triplet_chunks = list(_chunk_list(triplets, chunksize))
 
     ctx = _get_mp_context()
-    init_gene_trees = gene_trees
+    init_run_geometry = run_geometry
     if hasattr(ctx, "get_start_method") and ctx.get_start_method() == "fork":
-        global _GENE_TREES
-        _GENE_TREES = gene_trees
-        init_gene_trees = None
+        # Children inherit this, so hand the initializer None and let
+        # copy-on-write share one copy instead of pickling per worker.
+        global _RUN_GEOMETRY
+        _RUN_GEOMETRY = run_geometry
+        init_run_geometry = None
 
     with ctx.Pool(
         processes=worker_count,
         initializer=_init_stream_worker,
-        initargs=(init_gene_trees, species_triplet_trees, inference_kwargs),
+        initargs=(init_run_geometry, species_triplet_trees, inference_kwargs),
     ) as pool:
         chunk_payloads = list(
             pool.imap(_analyze_chunk_worker, iter(triplet_chunks), chunksize=1)
@@ -288,71 +291,11 @@ def _run_taxon_mode(triplets, species_triplet_trees, gene_trees, worker_count, i
     return results, worker_cpu_seconds
 
 
-def _run_gene_mode(triplets, species_triplet_trees, gene_trees, worker_count, inference_kwargs):
-    """Process triplets serially, parallelizing per-gene-tree extraction within each.
-
-    Args:
-        triplets: List of triplets to analyze.
-        species_triplet_trees: Mapping of triplet to its species subtree Newick.
-        gene_trees: Gene-tree Newick strings, shared read-only to workers.
-        worker_count: Number of worker processes.
-        inference_kwargs: Combined inference kwargs (strategy used by extraction
-            workers, analysis kwargs used by the parent).
-
-    Returns:
-        A tuple ``(results, worker_cpu_seconds)`` where ``results`` is a list of
-        ``TripletPipelineResult`` objects in triplet order and
-        ``worker_cpu_seconds`` is the total CPU time spent across all extraction
-        workers. Per-triplet inference and bootstrap run in the parent, so their
-        CPU is captured by the caller's own timing.
-    """
-    _strategy, _collect_summary, analysis_kwargs = _split_inference_kwargs(
-        inference_kwargs
-    )
-    n_gene_trees = len(gene_trees)
-    range_chunk = max(1, n_gene_trees // (worker_count * 4))
-    ranges = [
-        (lo, min(lo + range_chunk, n_gene_trees))
-        for lo in range(0, n_gene_trees, range_chunk)
-    ]
-
-    ctx = _get_mp_context()
-    init_gene_trees = gene_trees
-    if hasattr(ctx, "get_start_method") and ctx.get_start_method() == "fork":
-        global _GENE_TREES
-        _GENE_TREES = gene_trees
-        init_gene_trees = None
-
-    results = []
-    worker_cpu_seconds = 0.0
-    with ctx.Pool(
-        processes=worker_count,
-        initializer=_init_stream_worker,
-        initargs=(init_gene_trees, species_triplet_trees, inference_kwargs),
-    ) as pool:
-        for triplet in triplets:
-            tasks = [(triplet, lo, hi) for lo, hi in ranges]
-            payloads = pool.map(_extract_triplet_range_worker, tasks)
-            observations = [obs for payload in payloads for obs in payload[0]]
-            worker_cpu_seconds += sum(payload[1] for payload in payloads)
-            results.append(
-                analyze_triplet_from_observations(
-                    triplet,
-                    observations,
-                    species_subtree=species_triplet_trees.get(triplet),
-                    **analysis_kwargs,
-                )
-            )
-
-    return results, worker_cpu_seconds
-
-
 def stream_triplet_results(
     triplets,
     species_triplet_trees,
     gene_trees,
     *,
-    mode="auto",
     processes=0,
     inference_kwargs=None,
     p_value_correction="no",
@@ -360,14 +303,14 @@ def stream_triplet_results(
 ):
     """Fuse extraction and inference over all triplets and apply run-wide correction.
 
-    Resolves the mode and worker count, runs the fused engine (serial, ``taxon``,
-    or ``gene``), then applies the run-wide p-value correction in a single pass.
+    Resolves the worker count, caches every gene tree's geometry once, runs the
+    fused engine over triplet chunks, then applies the run-wide p-value
+    correction in a single pass.
 
     Args:
         triplets: List of triplets to analyze.
         species_triplet_trees: Mapping of triplet to its species subtree Newick.
         gene_trees: Gene-tree Newick strings.
-        mode: Parallelization mode (``auto``, ``taxon``, or ``gene``).
         processes: Requested worker count; ``0`` means all cores.
         inference_kwargs: Keyword arguments for the per-triplet analysis (also
             the source of ``tree_height_calculation_strategy`` used at
@@ -390,31 +333,33 @@ def stream_triplet_results(
     inference_kwargs["p_value_correction"] = p_value_correction
     inference_kwargs["family_size"] = len(triplets)
 
-    n_taxa = len({taxon for triplet in triplets for taxon in triplet})
-    resolved_mode = resolve_parallelization_mode(mode, n_taxa, len(gene_trees))
     worker_count = _calculate_worker_count(len(triplets), processes)
+
+    # Cache every gene tree's geometry once for the whole run. Chunks reuse it,
+    # so a tree is parsed once rather than once per chunk per worker.
+    strategy, collect_summary, analysis_kwargs = _split_inference_kwargs(
+        inference_kwargs
+    )
+    run_geometry = build_run_geometry(gene_trees, triplets)
 
     worker_cpu_seconds = 0.0
     if worker_count <= 1:
         # Serial: work runs in the parent, so its CPU is captured by the caller.
-        strategy, collect_summary, analysis_kwargs = _split_inference_kwargs(
-            inference_kwargs
-        )
         results = _analyze_chunk(
             triplets,
-            gene_trees,
+            run_geometry,
             species_triplet_trees,
             strategy,
             collect_summary,
             analysis_kwargs,
         )
-    elif resolved_mode == "gene":
-        results, worker_cpu_seconds = _run_gene_mode(
-            triplets, species_triplet_trees, gene_trees, worker_count, inference_kwargs
-        )
     else:
         results, worker_cpu_seconds = _run_taxon_mode(
-            triplets, species_triplet_trees, gene_trees, worker_count, inference_kwargs
+            triplets,
+            species_triplet_trees,
+            run_geometry,
+            worker_count,
+            inference_kwargs,
         )
 
     corrected = _apply_triplet_result_p_value_correction(

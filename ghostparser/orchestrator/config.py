@@ -64,16 +64,11 @@ PERMUTATION_CI_METHOD_CHOICES = (
 )
 
 # Parallelization knobs specific to this package.
-PARALLELIZATION_MODE_CHOICES = ("auto", "taxon", "gene")
-DEFAULT_PARALLELIZATION_MODE = "auto"
-# `auto` picks `gene` for small-taxa/large-gene-tree runs, else `taxon`.
-AUTO_TAXA_SMALL_THRESHOLD = 15
-AUTO_GENE_TREES_THRESHOLD = 3500
 
 # CLI argument dest names that also map to config-file payload keys. These are
 # the config+CLI options; config-file-only keys (discordant_test,
 # tree_height_calculation_strategy, min_support_value, bootstrap_iterations,
-# bootstrap_seed, generate_summary_stats, shape_diagnostics, bootstrap_debug_mode,
+# generate_summary_stats, shape_diagnostics, bootstrap_debug_mode,
 # bootstrap_summary_only, permutation_options) are intentionally absent so they
 # are read only from a config file and otherwise take their defaults.
 _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
@@ -82,9 +77,10 @@ _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "outgroup",
     "output_folder",
     "triplet_filter",
+    "species_rename_map",
+    "seed",
     "no_overwrite",
     "processes",
-    "parallelization_mode",
     "alpha_dct",
     "alpha_ks",
     "alpha_perm",
@@ -138,6 +134,27 @@ def _validate_non_negative_int(payload: dict, key: str, default: int) -> int:
         value = default
     if not isinstance(value, int) or value < 0:
         raise ConfigError(f"Config field {key} must be an integer >= 0")
+    return value
+
+
+def _validate_optional_int(payload: dict, key: str) -> int | None:
+    """Validate an optional integer field.
+
+    Args:
+        payload: The config/CLI payload.
+        key: The field name.
+
+    Returns:
+        The integer, or ``None`` when the field is absent.
+
+    Raises:
+        ConfigError: If the field is present but not an integer.
+    """
+    value = payload.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"Config field {key} must be an integer when provided")
     return value
 
 
@@ -253,7 +270,8 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
 
     Accepts the canonical ``bootstrap`` toggle plus either a nested
     ``bootstrap_options`` block or the flat ``bootstrap_iterations``/
-    ``bootstrap_seed``/``bootstrap_debug_mode``/``bootstrap_summary_only`` keys.
+    ``bootstrap_debug_mode``/``bootstrap_summary_only`` keys. The RNG seed is a
+    run-wide key, not a bootstrap option.
 
     Args:
         payload: The config/CLI payload.
@@ -286,12 +304,6 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
             "Config field bootstrap_options.iterations must be an integer >= 1"
         )
 
-    seed = payload.get("bootstrap_seed", raw_options.get("seed"))
-    if seed is not None and not isinstance(seed, int):
-        raise ConfigError(
-            "Config field bootstrap_options.seed must be an integer when provided"
-        )
-
     debug_mode = payload.get(
         "bootstrap_debug_mode",
         raw_options.get("debug_mode", DEFAULT_BOOTSTRAP_DEBUG_MODE),
@@ -316,7 +328,6 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
 
     return bootstrap, {
         "iterations": iterations,
-        "seed": seed,
         "debug_mode": debug_mode,
         "summary_only": summary_only,
     }
@@ -468,6 +479,20 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Path to triplet filter file (comma-separated taxa per line)",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Base RNG seed for the whole run; every random draw derives from "
+        "it. Omit for a fresh seed each run (the value used is reported in "
+        "metrics.txt either way)",
+    )
+    parser.add_argument(
+        "--species-rename-map",
+        default=None,
+        help="Path to a species rename map (two-column TSV, or YAML mapping) "
+        "giving the name each taxon should appear under in the outputs",
+    )
+    parser.add_argument(
         "--no-overwrite",
         dest="no_overwrite",
         action="store_true",
@@ -479,16 +504,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Number of worker processes (0 = all cores)",
-    )
-    parser.add_argument(
-        "--parallelization-mode",
-        choices=PARALLELIZATION_MODE_CHOICES,
-        default=None,
-        help=(
-            "Parallelization strategy: 'taxon' dispatches triplet chunks across "
-            "workers, 'gene' parallelizes subtree extraction within a triplet, "
-            f"'auto' selects one from the input size (default: {DEFAULT_PARALLELIZATION_MODE})"
-        ),
     )
     parser.add_argument(
         "--alpha-dct",
@@ -590,17 +605,13 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "gene_trees": gene_trees,
         "outgroup": outgroup,
         "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
+        "species_rename_map": _validate_optional_path(payload, "species_rename_map"),
         "output": output,
         "overwrite": _validate_overwrite_flag(payload),
         "processes": _validate_non_negative_int(
             payload, "processes", DEFAULT_PROCESSES
         ),
-        "parallelization_mode": _validate_choice(
-            payload,
-            "parallelization_mode",
-            DEFAULT_PARALLELIZATION_MODE,
-            PARALLELIZATION_MODE_CHOICES,
-        ),
+        "seed": _validate_optional_int(payload, "seed"),
         "consolidation": _validate_optional_bool(
             payload, "consolidation", DEFAULT_CONSOLIDATION
         ),
@@ -642,7 +653,6 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "permutation_ci_method": permutation_options["ci_method"],
         "bootstrap": bootstrap,
         "bootstrap_iterations": bootstrap_options["iterations"],
-        "bootstrap_seed": bootstrap_options["seed"],
         "bootstrap_debug_mode": bootstrap_options["debug_mode"],
         "bootstrap_summary_only": bootstrap_options["summary_only"],
     }

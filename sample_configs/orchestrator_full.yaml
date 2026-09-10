@@ -21,10 +21,11 @@ output_folder: ./results
 overwrite: true
 # Restrict the run to specific triplets; one comma-separated triplet per line.
 triplet_filter: null
+species_rename_map: null        # two-column TSV or YAML: tree label -> output name
 
 # --- Execution -------------------------------------------------------------
-processes: 0                      # 0 = all available cores
-parallelization_mode: auto        # auto | taxon | gene
+processes: 0
+seed: null                        # run-wide RNG seed; null draws a fresh one and reports it                      # 0 = all available cores
 
 # --- Statistical tests -----------------------------------------------------
 # efficient stops measuring once the cascade is settled; detailed runs all three
@@ -61,7 +62,6 @@ min_support_value: 0.5
 bootstrap: true
 bootstrap_options:
   iterations: 100
-  seed: null                      # set an integer for a reproducible run
   debug_mode: false
   summary_only: false
 

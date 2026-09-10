@@ -48,11 +48,11 @@ def _make_config(
     genes_path,
     output_folder,
     *,
-    mode,
     processes,
     consolidation=False,
     bootstrap=True,
     pipeline_mode=None,
+    species_rename_map=None,
 ):
     """Build a resolved orchestrator config for a run with a fixed bootstrap seed.
 
@@ -60,11 +60,11 @@ def _make_config(
         species_path: Path to the species tree.
         genes_path: Path to the gene trees.
         output_folder: Output directory for the run.
-        mode: Parallelization mode.
         processes: Worker process count.
         consolidation: Whether to enable consolidation.
         bootstrap: Whether to enable bootstrap resampling.
         pipeline_mode: ``efficient``/``detailed``, or ``None`` for the default.
+        species_rename_map: Path to a rename map, or ``None``.
 
     Returns:
         The resolved config dict with a fixed bootstrap seed and iterations.
@@ -76,9 +76,9 @@ def _make_config(
         outgroup="OUT",
         output_folder=str(output_folder),
         triplet_filter=None,
+        species_rename_map=species_rename_map,
         no_overwrite=None,
         processes=processes,
-        parallelization_mode=mode,
         alpha_dct=None,
         alpha_ks=None,
         alpha_perm=None,
@@ -88,7 +88,7 @@ def _make_config(
         bootstrap=bootstrap,
     )
     config = resolve_config(args)
-    config["bootstrap_seed"] = _SEED
+    config["seed"] = _SEED
     config["bootstrap_iterations"] = _ITERATIONS
     return config
 
@@ -164,7 +164,6 @@ def test_run_orchestrator_matches_derived_expectation(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         tmp_path / "out",
-        mode="taxon",
         processes=1,
     )
     results = run_orchestrator(config)
@@ -218,7 +217,6 @@ def test_run_orchestrator_writes_results_tsv(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         output_folder,
-        mode="taxon",
         processes=1,
     )
     results = run_orchestrator(config)
@@ -251,7 +249,6 @@ def test_no_bootstrap_omits_the_bootstrap_columns(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         output_folder,
-        mode="taxon",
         processes=1,
         bootstrap=False,
     )
@@ -285,7 +282,6 @@ def test_no_bootstrap_skips_the_bootstrap_itself(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         tmp_path / "out",
-        mode="taxon",
         processes=1,
         bootstrap=False,
         pipeline_mode=pipeline_mode,
@@ -302,6 +298,65 @@ def test_no_bootstrap_skips_the_bootstrap_itself(
         assert result.classification == "no_introgression"
 
 
+def test_species_rename_map_reaches_every_output(
+    orchestrator_species_tree, orchestrator_gene_trees, tmp_path
+):
+    """Mapped taxa appear under their display names in every named output.
+
+    The rename is applied as the trees are read, so it has to reach the
+    in-memory results, the results TSV, the per-triplet species subtree, the
+    processed tree files, and the consolidation artifacts alike.
+    """
+    rename_path = tmp_path / "names.tsv"
+    rename_path.write_text("A\tHomo\nB\tPan\n")
+    output_folder = tmp_path / "out"
+    config = _make_config(
+        orchestrator_species_tree,
+        orchestrator_gene_trees,
+        output_folder,
+        processes=1,
+        consolidation=True,
+        species_rename_map=str(rename_path),
+    )
+
+    results = run_orchestrator(config)
+    assert len(results) == _N_TRIPLETS
+
+    # Mapped taxa are renamed; unmapped ones (C, D) are untouched.
+    seen = {taxon for result in results for taxon in result.triplet}
+    assert seen == {"Homo", "Pan", "C", "D"}
+
+    # The per-triplet species subtree is rebuilt from the renamed tree.
+    assert any("Homo" in (result.species_tree or "") for result in results)
+
+    results_tsv = (output_folder / "orchestrator_triplet_results.tsv").read_text()
+    assert "Homo" in results_tsv and "Pan" in results_tsv
+
+    # The cleaned trees written alongside the results carry the display names,
+    # which is what consolidation reads back for its taxon ordering.
+    assert "Homo" in (output_folder / "processed_species.tree").read_text()
+    assert "Homo" in (output_folder / "processed_genes.tree").read_text()
+
+    # The taxa-order file is what labels the heatmap axes and the bar chart, so
+    # it standing in display names is the evidence the plots do too.
+    taxa_order = (
+        output_folder
+        / "consolidation"
+        / "consolidation_data"
+        / "introgression_taxa_order.tsv"
+    ).read_text()
+    assert "Homo" in taxa_order and "Pan" in taxa_order
+    assert (output_folder / "consolidation" / "introgression_combined.png").exists()
+
+    matrix = (
+        output_folder
+        / "consolidation"
+        / "consolidation_data"
+        / "introgression_matrix_inflow_outflow.tsv"
+    ).read_text()
+    assert "Homo" in matrix and "Pan" in matrix
+
+
 def test_consolidation_preserves_run_outputs(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
@@ -311,7 +366,6 @@ def test_consolidation_preserves_run_outputs(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         output_folder,
-        mode="taxon",
         processes=1,
         consolidation=True,
     )
@@ -337,7 +391,6 @@ def test_generate_summary_stats_writes_tsv(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         output_folder,
-        mode="taxon",
         processes=1,
     )
     config["generate_summary_stats"] = True
@@ -367,7 +420,6 @@ def test_bootstrap_debug_mode_writes_debug_columns(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         output_folder,
-        mode="taxon",
         processes=1,
     )
     config["bootstrap_debug_mode"] = True
@@ -386,19 +438,15 @@ def test_bootstrap_debug_mode_writes_debug_columns(
     assert any(result.bootstrap_dct_stats is not None for result in results)
 
 
-@pytest.mark.parametrize(
-    "mode,processes",
-    [("taxon", 2), ("gene", 2)],
-)
-def test_parallel_modes_match_serial(
-    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, mode, processes
+@pytest.mark.parametrize("processes", [2, 4])
+def test_parallel_runs_match_serial(
+    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, processes
 ):
-    """taxon and gene parallel modes yield identical results to the serial run."""
+    """Parallel runs yield identical results to the serial run."""
     serial_config = _make_config(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         tmp_path / "serial",
-        mode="taxon",
         processes=1,
     )
     serial = {r.triplet: r for r in run_orchestrator(serial_config)}
@@ -407,7 +455,6 @@ def test_parallel_modes_match_serial(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         tmp_path / "parallel",
-        mode=mode,
         processes=processes,
     )
     parallel = run_orchestrator(parallel_config)

@@ -1,6 +1,7 @@
 """Structural preflight checks for species and gene trees.
 
-Reproduces the engine's structural logic and reports every problem at once,
+Reproduces the engine's structural logic -- including the cached per-tree
+geometry it reads every triplet out of -- and reports every problem at once,
 rather than raising on the first from deep inside a run. The checks say whether
 the data can be processed, not whether the result is biologically meaningful.
 """
@@ -12,18 +13,21 @@ from pathlib import Path
 
 import dendropy
 
-from ..triplet_utils import (
-    find_sister_pair,
-    normalize_abc_from_sister_pair,
-    topology_from_sister_pair,
-    triplet_taxa_labels,
-)
+from ..triplet_utils import normalize_abc_from_sister_pair
 from .trees import (
     _root_tree_on_any_outgroup,
     format_newick_with_precision,
     read_tree_file,
     read_triplet_filter_file,
     standardize_tree,
+)
+from .triplet_geometry import (
+    TRIPLET_MISSING_TAXON,
+    TRIPLET_UNRESOLVED,
+    build_taxon_index,
+    build_triplet_geometry,
+    triplet_resolution,
+    triplet_subtree_shape,
 )
 
 PREFLIGHT_REPORT_FILENAME = "preflight_data_check.txt"
@@ -61,7 +65,11 @@ class PreflightResult:
             requested no file.
         report_text: The full report as a single string.
         issues: Every issue detected, in discovery order.
-        counters: Per-category tallies plus ``gene_tree.total_checked``.
+        counters: Per-category tallies plus ``gene_tree.total_checked``,
+            ``gene_tree.rooted``, and the three that account for every
+            triplet/gene-tree pair seen: ``triplet.resolved``,
+            ``triplet.unresolved_rooted_sister_pair``, and
+            ``triplet.taxa_absent_from_gene_tree``.
         triplets_checked: Number of normalized species triplets analyzed.
         passed: ``True`` when no issues were detected.
     """
@@ -208,6 +216,13 @@ def _load_filtered_triplets(triplet_filter, species_labels_sorted, outgroups, is
 def _normalize_species_triplets(species_tree_d, triplets, issues):
     """Normalize each triplet to A/B/C order, recording those the species tree rejects.
 
+    Replays :func:`trees._build_species_triplet_metadata`, including its single
+    cached geometry over the species tree, so the triplets accepted here are
+    exactly the ones a run would analyze. Every label reaching this point is
+    known to be a species-tree leaf -- the unfiltered path builds triplets from
+    those labels and the filtered path drops entries naming anything else -- so
+    the only rejection left is an unresolved triplet.
+
     Args:
         species_tree_d: Rooted, standardized species tree as a DendroPy tree.
         triplets: Candidate taxon triples.
@@ -219,33 +234,29 @@ def _normalize_species_triplets(species_tree_d, triplets, issues):
     normalized = []
     seen = set()
 
-    for triplet in triplets:
-        subtree = species_tree_d.extract_tree_with_taxa_labels(triplet)
-        if subtree is None:
-            issues.append(
-                Issue(
-                    category="species_triplet.subtree_missing",
-                    message=f"Species triplet subtree missing for {','.join(triplet)}",
-                )
-            )
-            continue
+    taxon_index = build_taxon_index(triplets)
+    geometry = build_triplet_geometry(species_tree_d, taxon_index)
 
-        try:
-            labels = sorted(triplet)
-            sister_pair = find_sister_pair(subtree)
-            abc_triplet = normalize_abc_from_sister_pair(labels, sister_pair)
-            topology_from_sister_pair(sister_pair, abc_triplet)
-        except ValueError as exc:
+    for triplet in triplets:
+        positions = tuple(taxon_index[label] for label in triplet)
+        shape = triplet_subtree_shape(geometry, positions)
+        if shape is None:
             issues.append(
                 Issue(
                     category="species_triplet.invalid_rooting_or_topology",
                     message=(
-                        f"Species triplet {','.join(triplet)} failed rooted "
-                        f"topology checks: {exc}"
+                        f"Species triplet {','.join(triplet)} has no resolved "
+                        "rooted sister pair in the species tree"
                     ),
                 )
             )
             continue
+
+        label_of = dict(zip(positions, triplet))
+        sister_pair = frozenset(
+            label_of[position] for position in shape.sister_positions
+        )
+        abc_triplet = normalize_abc_from_sister_pair(sorted(triplet), sister_pair)
 
         if abc_triplet in seen:
             continue
@@ -294,6 +305,13 @@ def _check_gene_tree_triplets(
     gene_tree_lines = _load_gene_tree_lines(gene_tree_path, max_gene_trees)
 
     counters: dict[str, int] = defaultdict(int)
+    # Mirror the engine: cache each gene tree's geometry once and read every
+    # triplet out of it, rather than copying a subtree per triplet.
+    taxon_index = build_taxon_index(normalized_triplets)
+    triplet_positions = {
+        triplet: tuple(taxon_index[label] for label in triplet)
+        for triplet in normalized_triplets
+    }
 
     if len(gene_tree_lines) != len(gene_trees):
         issues.append(
@@ -347,88 +365,76 @@ def _check_gene_tree_triplets(
             )
             continue
 
+        geometry = build_triplet_geometry(tree_d, taxon_index)
         gene_labels = _get_leaf_labels_dendropy(tree_d)
         for triplet in normalized_triplets:
-            if set(triplet).issubset(gene_labels):
-                _check_one_triplet(tree_d, triplet, idx, line_preview, counters, issues)
+            if not set(triplet).issubset(gene_labels):
+                # Not a defect: a gene tree need not carry every taxon, and the
+                # engine skips these pairs too. Counted so the report can
+                # account for every pair it looked at.
+                counters["triplet.taxa_absent_from_gene_tree"] += 1
+                continue
+            _check_one_triplet(
+                geometry,
+                triplet_positions[triplet],
+                triplet,
+                idx,
+                line_preview,
+                counters,
+                issues,
+            )
 
     counters["gene_tree.total_checked"] = len(gene_trees)
     return counters
 
 
-def _check_one_triplet(tree_d, triplet, gene_index, line_preview, counters, issues):
-    """Replay subtree extraction and sister-pair resolution for one triplet."""
-    subtree = tree_d.extract_tree_with_taxa_labels(triplet)
-    if subtree is None:
-        counters["triplet.subtree_extraction_failed"] += 1
-        issues.append(
-            Issue(
-                category="triplet.subtree_extraction_failed",
-                message=(
-                    f"Gene tree #{gene_index}, triplet {','.join(triplet)}: "
-                    f"subtree extraction returned None; gene_tree_line={line_preview}"
-                ),
-            )
-        )
-        return
+def _check_one_triplet(
+    geometry, positions, triplet, gene_index, line_preview, counters, issues
+):
+    """Replay the engine's triplet resolution for one triplet against one tree.
 
-    try:
-        labels = triplet_taxa_labels(subtree)
-    except ValueError as exc:
-        counters["triplet.invalid_leaf_count"] += 1
-        issues.append(
-            Issue(
-                category="triplet.invalid_leaf_count",
-                message=(
-                    f"Gene tree #{gene_index}, triplet {','.join(triplet)}: {exc}; "
-                    f"gene_tree_line={line_preview}"
-                ),
-            )
-        )
-        return
-
-    try:
-        sister_pair = find_sister_pair(subtree)
-    except ValueError as exc:
+    Args:
+        geometry: The gene tree's cached ``TripletGeometry``.
+        positions: The triplet's taxon positions in the shared taxon index.
+        triplet: The ``(A, B, C)`` triplet, used for the issue message.
+        gene_index: 1-based gene-tree index, used for the issue message.
+        line_preview: The gene tree's input line, used for the issue message.
+        counters: Mutable counter mapping, incremented in place.
+        issues: Mutable list that detected issues are appended to.
+    """
+    status = triplet_resolution(geometry, positions)
+    if status == TRIPLET_UNRESOLVED:
         counters["triplet.unresolved_rooted_sister_pair"] += 1
         issues.append(
             Issue(
                 category="triplet.unresolved_rooted_sister_pair",
                 message=(
-                    f"Gene tree #{gene_index}, triplet {','.join(triplet)}: {exc} "
-                    "(likely unresolved/polytomous triplet or ambiguous rooting); "
-                    f"gene_tree_line={line_preview}"
+                    f"Gene tree #{gene_index}, triplet {','.join(triplet)}: "
+                    "all three pairwise MRCAs coincide, so no rooted sister "
+                    "pair can be determined (likely an unresolved/polytomous "
+                    f"triplet or ambiguous rooting); gene_tree_line={line_preview}"
                 ),
             )
         )
         return
 
-    try:
-        topology_from_sister_pair(sister_pair, triplet)
-    except ValueError as exc:
-        counters["triplet.abc_mapping_mismatch"] += 1
+    if status == TRIPLET_MISSING_TAXON:
+        # The caller already confirmed all three labels are in this tree, so
+        # this means the cache and the label set disagree.
+        counters["triplet.geometry_unavailable"] += 1
         issues.append(
             Issue(
-                category="triplet.abc_mapping_mismatch",
-                message=(
-                    f"Gene tree #{gene_index}, triplet {','.join(triplet)} with "
-                    f"labels {','.join(labels)}: {exc}; gene_tree_line={line_preview}"
-                ),
-            )
-        )
-        return
-
-    if subtree.mrca(taxon_labels=sorted(sister_pair)) is None:
-        counters["triplet.sister_mrca_missing"] += 1
-        issues.append(
-            Issue(
-                category="triplet.sister_mrca_missing",
+                category="triplet.geometry_unavailable",
                 message=(
                     f"Gene tree #{gene_index}, triplet {','.join(triplet)}: "
-                    f"sister-pair MRCA not found; gene_tree_line={line_preview}"
+                    "a triplet taxon is present in the tree's labels but has no "
+                    f"leaf in its cached geometry; gene_tree_line={line_preview}"
                 ),
             )
         )
+        return
+
+    counters["triplet.resolved"] += 1
 
 
 def _build_report(
@@ -461,6 +467,12 @@ def _build_report(
         f"outgroups:          {','.join(outgroups)}",
         f"triplets_checked:   {triplets_checked}",
         f"gene_trees_checked: {counters.get('gene_tree.total_checked', 0)}",
+        # How each triplet/gene-tree pair this check looked at would fare in a
+        # run: measurable, dropped as unresolved, or skipped because the gene
+        # tree does not carry all three taxa. The three sum to the pairs seen.
+        f"usable_pairs:       {counters.get('triplet.resolved', 0)} usable, "
+        f"{counters.get('triplet.unresolved_rooted_sister_pair', 0)} unresolved, "
+        f"{counters.get('triplet.taxa_absent_from_gene_tree', 0)} with a taxon absent",
         "",
     ]
 
@@ -517,10 +529,12 @@ def _build_report(
             "- gene_tree.rooting_failed: outgroup labels are missing/mismatched "
             "in gene trees.",
             "- triplet.unresolved_rooted_sister_pair: often unresolved "
-            "triplets/polytomies or ambiguous rooting; these can trigger "
-            "'Could not determine rooted sister pair for triplet tree'.",
-            "- species_triplet.invalid_rooting_or_topology: species tree "
-            "rooting/topology itself failed triplet checks.",
+            "triplets/polytomies or ambiguous rooting; the engine drops these "
+            "triplet/gene-tree pairs rather than classifying them.",
+            "- species_triplet.invalid_rooting_or_topology: the species tree "
+            "resolves no rooted sister pair for this triplet (a polytomy, or "
+            "ambiguous rooting), so it cannot be normalized to A/B/C and is "
+            "dropped from the run.",
         ]
     )
     return "\n".join(lines) + "\n"

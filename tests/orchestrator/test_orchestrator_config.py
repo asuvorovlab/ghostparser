@@ -33,7 +33,6 @@ def _base_cli_args(**overrides):
         triplet_filter=None,
         no_overwrite=None,
         processes=None,
-        parallelization_mode=None,
         alpha_dct=None,
         alpha_ks=None,
         alpha_perm=None,
@@ -65,7 +64,7 @@ def test_cli_defaults_resolve():
     assert config["tree_height_calculation_strategy"] == "AVG"
     assert config["min_support_value"] == 0.5
     assert config["bootstrap_iterations"] == 100
-    assert config["bootstrap_seed"] is None
+    assert config["seed"] is None
     assert config["generate_summary_stats"] is False
     assert config["bootstrap_debug_mode"] is False
     assert config["bootstrap_summary_only"] is False
@@ -84,9 +83,9 @@ def test_config_only_keys_read_from_config_file(tmp_path):
         "min_support_value": 0.9,
         "generate_summary_stats": True,
         "alpha_dct": 0.02,
+        "seed": 7,
         "bootstrap_options": {
             "iterations": 25,
-            "seed": 7,
             "debug_mode": True,
             "summary_only": True,
         },
@@ -101,7 +100,7 @@ def test_config_only_keys_read_from_config_file(tmp_path):
     assert config["generate_summary_stats"] is True
     assert config["alpha_dct"] == 0.02
     assert config["bootstrap_iterations"] == 25
-    assert config["bootstrap_seed"] == 7
+    assert config["seed"] == 7
     assert config["bootstrap_debug_mode"] is True
     assert config["bootstrap_summary_only"] is True
 
@@ -329,3 +328,10 @@ def test_pipeline_mode_rejects_an_unknown_value(tmp_path):
     """An unsupported pipeline mode is refused by name."""
     with pytest.raises(ConfigError, match="pipeline_mode"):
         load_orchestrator_config(str(_payload(tmp_path, pipeline_mode="fast")))
+
+
+def test_seed_rejects_a_non_integer(tmp_path):
+    """The run-wide seed must be an integer when provided."""
+    with pytest.raises(ConfigError, match="seed"):
+        load_orchestrator_config(str(_payload(tmp_path, seed="abc")))
+

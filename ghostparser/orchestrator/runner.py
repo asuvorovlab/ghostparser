@@ -1,5 +1,6 @@
 """Orchestrator coordinator: run_orchestrator drives cleaning, triplet setup, the fused streaming engine, correction, TSV writing, and consolidation end-to-end with per-stage timing."""
 
+import os
 import time
 from collections import Counter
 from pathlib import Path
@@ -14,7 +15,7 @@ from .inference import (
     write_summary_statistics_tsv,
 )
 from .preflight import run_preflight_data_check
-from .stream import resolve_parallelization_mode, stream_triplet_results
+from .stream import stream_triplet_results
 from .trees import (
     MetricsLogger,
     _build_species_triplet_metadata,
@@ -24,10 +25,12 @@ from .trees import (
     clean_and_save_gene_trees,
     clean_and_save_trees,
     filter_triplets_by_taxa,
+    load_species_rename_map,
     format_newick_with_precision,
     generate_triplets,
     get_taxa_from_tree,
     read_tree_file,
+    rename_taxon_labels,
     read_triplet_filter_file,
     write_clean_trees,
 )
@@ -242,6 +245,20 @@ def run_orchestrator(config):
         metrics.log(f"Processing species tree: {config['species_tree']}")
         metrics.log(f"Processing gene trees: {config['gene_trees']}")
         outgroup_taxa = _parse_outgroup_arg(config["outgroup"])
+        # The rename runs on the trees as they are read, so every name after
+        # this point -- outgroup, triplets, outputs, plots -- is a display name.
+        rename_map = {}
+        if config["species_rename_map"]:
+            try:
+                rename_map = load_species_rename_map(config["species_rename_map"])
+            except (FileNotFoundError, ValueError) as exc:
+                metrics.log(f"✗ Error reading species rename map: {exc}")
+                return None
+            metrics.log(
+                f"Species rename map: {config['species_rename_map']} "
+                f"({len(rename_map)} taxa)"
+            )
+            outgroup_taxa = rename_taxon_labels(outgroup_taxa, rename_map)
         metrics.log(f"Outgroup: {', '.join(outgroup_taxa)}")
         metrics.log(f"Discordant count test: {config['discordant_test']}")
         metrics.log(
@@ -257,13 +274,21 @@ def run_orchestrator(config):
         metrics.log(f"DCT alpha: {config['alpha_dct']}")
         metrics.log(f"KS alpha: {config['alpha_ks']}")
         metrics.log(f"Permutation alpha: {config['alpha_perm']}")
+        # One seed drives every random draw in the run. When none is
+        # configured a fresh one is drawn and reported, so an exploratory run
+        # stays reproducible from its own metrics file.
+        run_seed = config["seed"]
+        seed_origin = "configured"
+        if run_seed is None:
+            run_seed = int.from_bytes(os.urandom(8), "little")
+            seed_origin = "generated"
+        metrics.log(f"Seed: {run_seed} ({seed_origin})")
         metrics.log(f"Bootstrap enabled: {config['bootstrap']}")
         metrics.log(f"Bootstrap iterations: {config['bootstrap_iterations']}")
         metrics.log(f"Bootstrap debug mode: {config['bootstrap_debug_mode']}")
         metrics.log(f"Generate summary statistics TSV: {config['generate_summary_stats']}")
         metrics.log(f"Shape diagnostics: {config['shape_diagnostics']}")
         metrics.log(f"Pipeline mode: {config['pipeline_mode']}")
-        metrics.log(f"Parallelization mode: {config['parallelization_mode']}")
         metrics.log(f"Consolidation enabled: {config['consolidation']}")
         metrics.log(f"Support threshold: {support_threshold}")
         metrics.log("")
@@ -274,6 +299,7 @@ def run_orchestrator(config):
                 str(species_tree_path),
                 species_tree_clean,
                 min_avg_support=support_threshold,
+                rename_map=rename_map,
             )
             metrics.log(f"✓ Species tree cleaned and saved to: {species_tree_clean}")
             metrics.log(f"  Processed {len(species_trees)} tree(s)")
@@ -332,6 +358,10 @@ def run_orchestrator(config):
                             f"⚠ Warning: Skipping invalid triplet line {line_number} in {filter_path}: {raw}"
                         )
 
+                    raw_triplets = [
+                        tuple(rename_taxon_labels(triplet, rename_map))
+                        for triplet in raw_triplets
+                    ]
                     triplets, skipped_triplets = filter_triplets_by_taxa(
                         raw_triplets, set(ingroup_taxa)
                     )
@@ -384,6 +414,7 @@ def run_orchestrator(config):
                     gene_trees_clean,
                     outgroup_taxa,
                     min_avg_support=support_threshold,
+                    rename_map=rename_map,
                 )
             )
             metrics.log(f"\n✓ Gene trees cleaned and saved to: {gene_trees_clean}")
@@ -407,11 +438,6 @@ def run_orchestrator(config):
 
         try:
             gene_trees_newick = _read_gene_trees_file(gene_trees_clean)
-            n_taxa = len(ingroup_taxa)
-            resolved_mode = resolve_parallelization_mode(
-                config["parallelization_mode"], n_taxa, len(gene_trees_newick)
-            )
-            metrics.log(f"\n✓ Resolved parallelization mode: {resolved_mode}")
 
             inference_kwargs = {
                 "alpha_dct": config["alpha_dct"],
@@ -433,7 +459,7 @@ def run_orchestrator(config):
                     "debug_mode": config["bootstrap_debug_mode"],
                     "summary_only": config["bootstrap_summary_only"],
                 },
-                "triplet_seed": config["bootstrap_seed"],
+                "triplet_seed": run_seed,
                 "shape_diagnostics": config["shape_diagnostics"],
                 "pipeline_mode": config["pipeline_mode"],
                 "bootstrap": config["bootstrap"],
@@ -445,7 +471,6 @@ def run_orchestrator(config):
                 triplets,
                 species_triplet_trees,
                 gene_trees_newick,
-                mode=config["parallelization_mode"],
                 processes=config["processes"],
                 inference_kwargs=inference_kwargs,
                 p_value_correction=config["p_value_correction"],

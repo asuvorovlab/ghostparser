@@ -9,9 +9,12 @@ from itertools import combinations
 from Bio import Phylo
 from Bio.Phylo.BaseTree import Clade, Tree
 
-from ghostparser.triplet_utils import (
-    find_sister_pair,
-    normalize_abc_from_sister_pair,
+from ghostparser.triplet_utils import normalize_abc_from_sister_pair
+
+from .triplet_geometry import (
+    build_taxon_index,
+    build_triplet_geometry,
+    triplet_subtree_shape,
 )
 
 
@@ -647,6 +650,11 @@ def generate_triplets(taxa_list, outgroup):
 def extract_triplet_subtree(tree, triplet_taxa):
     """Extract the subtree spanning only the triplet taxa.
 
+    Reference implementation. The pipeline reads triplets out of a cached
+    :class:`~.triplet_geometry.TripletGeometry` instead of copying a subtree per
+    (triplet, gene tree) pair; this is kept as the independent second opinion the
+    parity tests check that path against.
+
     Args:
         tree: A DendroPy tree object.
         triplet_taxa: Iterable of the three taxon names.
@@ -660,6 +668,41 @@ def extract_triplet_subtree(tree, triplet_taxa):
 
     subtree = tree.extract_tree_with_taxa_labels(triplet_taxa)
     return subtree
+
+
+def _format_triplet_subtree_newick(shape, label_of, decimal_places=10):
+    """Write the Newick for a triplet's induced subtree from its shape.
+
+    Reproduces what serializing a copied-out subtree produces, including the
+    branch-length formatting and the order the children are listed in, so the
+    ``species_tree`` column is unchanged by computing the shape directly.
+
+    Args:
+        shape: The triplet's :class:`~.triplet_geometry.TripletSubtreeShape`.
+        label_of: Mapping of taxon position to label.
+        decimal_places: Number of decimal places for branch lengths.
+
+    Returns:
+        The Newick string, terminated with ``;``.
+    """
+
+    def branch(length):
+        formatted = f"{length:.{decimal_places}f}"
+        if "." in formatted:
+            formatted = formatted.rstrip("0").rstrip(".")
+        return formatted
+
+    first_position, second_position = shape.sister_positions
+    first_edge, second_edge = shape.sister_edges
+    clade = (
+        f"({label_of[first_position]}:{branch(first_edge)},"
+        f"{label_of[second_position]}:{branch(second_edge)})"
+        f":{branch(shape.internal_edge)}"
+    )
+    odd = f"{label_of[shape.odd_position]}:{branch(shape.odd_edge)}"
+    inner = f"{clade},{odd}" if shape.sister_clade_first else f"{odd},{clade}"
+    root = "" if shape.root_edge is None else f":{branch(shape.root_edge)}"
+    return f"({inner}){root};"
 
 
 def _build_species_triplet_metadata(species_tree, triplets):
@@ -680,27 +723,31 @@ def _build_species_triplet_metadata(species_tree, triplets):
     species_triplet_trees = {}
     skipped_triplets = []
 
+    # One cached pass over the species tree answers every triplet, the same way
+    # the gene trees are handled.
+    taxon_index = build_taxon_index(triplets)
+    geometry = build_triplet_geometry(species_tree, taxon_index)
+
     seen = set()
     for triplet in triplets:
-        subtree = extract_triplet_subtree(species_tree, triplet)
-        if subtree is None:
+        positions = tuple(taxon_index[label] for label in triplet)
+        shape = triplet_subtree_shape(geometry, positions)
+        if shape is None:
             skipped_triplets.append(triplet)
             continue
 
-        try:
-            labels = sorted(triplet)
-            sister_pair = find_sister_pair(subtree)
-            abc_triplet = normalize_abc_from_sister_pair(labels, sister_pair)
-        except ValueError:
-            skipped_triplets.append(triplet)
-            continue
+        label_of = dict(zip(positions, triplet))
+        sister_pair = frozenset(label_of[p] for p in shape.sister_positions)
+        abc_triplet = normalize_abc_from_sister_pair(sorted(triplet), sister_pair)
 
         if abc_triplet in seen:
             continue
 
         seen.add(abc_triplet)
         normalized_triplets.append(abc_triplet)
-        species_triplet_trees[abc_triplet] = format_newick_with_precision(subtree)
+        species_triplet_trees[abc_triplet] = _format_triplet_subtree_newick(
+            shape, label_of
+        )
 
     return normalized_triplets, species_triplet_trees, skipped_triplets
 

@@ -302,6 +302,10 @@ def _compute_triplet_tree_metrics(
 ):
     """Compute the selected tree-height value H(T) and optional summary metrics.
 
+    Reached only from the DendroPy-tree reference path
+    (:func:`observation_from_subtree`, :func:`_serialize_triplet_gene_trees`);
+    a run computes these values from a cached geometry.
+
     Args:
         tree: A rooted 3-tip DendroPy tree.
         species_triplet: The ``(A, B, C)`` triplet, required for the ``A``/``B``/
@@ -952,8 +956,11 @@ def observation_from_subtree(
 ):
     """Compute a ``(topology, tree_height, metrics)`` observation from a subtree.
 
-    Computes the observation directly from the extracted DendroPy subtree,
-    avoiding a serialize-then-reparse round trip.
+    Reference implementation, paired with
+    :func:`~.trees.extract_triplet_subtree`. The pipeline derives observations
+    from a cached :class:`~.triplet_geometry.TripletGeometry`
+    (:func:`~.triplet_geometry.geometry_observation`); this path walks a real
+    DendroPy subtree instead, and the parity tests hold the two to agreement.
 
     Args:
         subtree: The extracted triplet subtree as a DendroPy tree.
@@ -1994,6 +2001,11 @@ def analyze_triplet(
     Serializes the gene subtrees into observations (reparsing each Newick), then
     runs the base pipeline and bootstrap. The returned p-values are uncorrected;
     run-wide correction is applied later.
+
+    A run reaches the same pipeline through
+    :func:`analyze_triplet_from_observations`, which takes observations the
+    stream already has; this Newick-taking entry point is the reference the tests
+    hold that one against.
 
     Args:
         triplet: The ``(A, B, C)`` triplet.
