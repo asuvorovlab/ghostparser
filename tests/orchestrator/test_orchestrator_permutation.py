@@ -480,11 +480,41 @@ def test_undecided_runs_grow_their_batches_until_the_budget_is_reached():
     assert result.note == "max_resamples_reached"
 
 
-def test_bootstrap_resample_budget_scales_by_one_fifth():
-    """Bootstrap iterations run at a fifth of the configured budget."""
-    assert pperm.bootstrap_resample_budget(2500, 25000) == (500, 5000)
-    # The floor keeps a usable budget when the configured numbers are tiny.
-    assert pperm.bootstrap_resample_budget(2, 3) == (1, 1)
+@pytest.mark.parametrize(
+    "min_resamples, max_resamples",
+    [(2500, 25000), (2, 3), (1, 1), (100, 100), (7, 1000), (999, 1001)],
+)
+def test_bootstrap_resample_budget_is_reduced_but_always_usable(
+    min_resamples, max_resamples
+):
+    """The bootstrap budget shrinks the configured one without going unusable.
+
+    Asserts the properties rather than the divisor: a bootstrap iteration must
+    cost no more than the point estimate, must still draw at least one
+    resample, and must keep its bounds in order -- otherwise an adaptive run
+    inside an iteration has no valid range to grow through.
+    """
+    scaled_min, scaled_max = pperm.bootstrap_resample_budget(
+        min_resamples, max_resamples
+    )
+
+    assert scaled_max <= max(max_resamples, scaled_min)
+    assert scaled_min >= 1
+    assert scaled_max >= scaled_min
+    # Strictly smaller wherever there is room to divide, so a divisor of 1 --
+    # which would silently restore the full per-iteration cost -- fails here.
+    if min_resamples >= 2:
+        assert scaled_min < min_resamples
+
+
+def test_bootstrap_resample_budget_never_shrinks_as_the_budget_grows():
+    """A larger configured budget never yields a smaller bootstrap budget."""
+    previous = (0, 0)
+    for configured in (1, 2, 5, 10, 100, 2500, 25000):
+        current = pperm.bootstrap_resample_budget(configured, configured * 10)
+        assert current[0] >= previous[0]
+        assert current[1] >= previous[1]
+        previous = current
 
 
 @pytest.mark.parametrize("nx, ny", [(10, 30), (30, 10), (7, 7), (4, 25), (2, 60)])

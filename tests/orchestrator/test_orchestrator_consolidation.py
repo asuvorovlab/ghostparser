@@ -1,6 +1,5 @@
 """Tests for the orchestrator's consolidation stage."""
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest

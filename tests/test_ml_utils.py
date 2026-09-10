@@ -8,6 +8,12 @@ from ghostparser.ml.ml_utils import (
 
 
 def test_rows_to_matrix_uses_numeric_features_and_excludes_target_column():
+    """Numeric columns pass through, the target is dropped, strings are one-hot.
+
+    Feature order is asserted because the model pickle is reused across runs:
+    one-hot columns come first in sorted-category order, then the numerics in
+    input order, and a reader scoring new data must reproduce that layout.
+    """
     rows = [
         {
             "class": "001010",
@@ -41,6 +47,12 @@ def test_rows_to_matrix_uses_numeric_features_and_excludes_target_column():
 
 
 def test_rows_to_matrix_encodes_multiple_string_columns():
+    """Each string column is one-hot encoded on its own categories.
+
+    Two string columns must not share a category space -- the names stay
+    prefixed by their column, and the blocks stay grouped per column rather
+    than interleaved.
+    """
     rows = [
         {
             "class": "001010",
@@ -71,6 +83,11 @@ def test_rows_to_matrix_encodes_multiple_string_columns():
 
 
 def test_rows_to_matrix_rejects_string_features():
+    """A high-cardinality string column is refused rather than one-hot exploded.
+
+    Eight distinct values exceed the 7-category cap, which exists because a
+    free-text column would otherwise silently add a column per value.
+    """
     rows = [
         {
             "class": "001010",

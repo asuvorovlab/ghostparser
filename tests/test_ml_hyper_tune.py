@@ -56,6 +56,12 @@ def _tuning_namespace(input_path, output_dir, **overrides):
 
 
 def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
+    """A full tuning section resolves, with its keys renamed to their config names.
+
+    The section's `model`/`method`/`objective` keys surface as `model_name`,
+    `search_method` and `objective_metric`, so this pins the rename as well as
+    the acceptance -- a caller reading the resolved config uses the latter names.
+    """
     config_path = _write_config(
         tmp_path,
         "hyper_tune.json",
@@ -179,6 +185,11 @@ def test_shipped_tuning_sample_configs_resolve(sample_name, expected_model):
 
 
 def test_load_hyper_tune_config_rejects_evaluation_section(tmp_path):
+    """An `evaluation` block is refused rather than silently ignored.
+
+    The tuner has no use for it, and accepting it would let a user believe their
+    evaluation settings were applied to every candidate.
+    """
     config_path = _write_config(
         tmp_path,
         "hyper_tune_with_evaluation.json",
@@ -195,6 +206,11 @@ def test_load_hyper_tune_config_rejects_evaluation_section(tmp_path):
 
 
 def test_load_hyper_tune_config_requires_hyperparameter_tuning_section(tmp_path):
+    """A config with no tuning section fails by name.
+
+    Nothing about the search can be defaulted -- there is no search space to
+    infer -- so the omission has to be reported rather than filled in.
+    """
     config_path = _write_config(tmp_path, "hyper_tune_missing_section.json", None)
 
     with pytest.raises(ConfigError, match="hyperparameter_tuning"):
@@ -213,6 +229,12 @@ def test_tune_hyperparameters_requires_explicit_use_wandb(
 
 
 def test_tune_hyperparameters_grid_search_smoke(summary_statistics_tsv_tuning, tmp_path):
+    """Grid search runs end to end and enumerates the whole space.
+
+    The search space crosses one parameter over two values, so grid search must
+    evaluate exactly 2 candidates -- the count is what distinguishes exhaustive
+    enumeration from sampling.
+    """
     output_dir = tmp_path / "hyper_tune_out"
     config = _tuning_namespace(summary_statistics_tsv_tuning, output_dir)
 
@@ -230,6 +252,12 @@ def test_tune_hyperparameters_grid_search_smoke(summary_statistics_tsv_tuning, t
 def test_tune_hyperparameters_random_search_smoke(
     summary_statistics_tsv_tuning, tmp_path
 ):
+    """Random search samples `n_iter` candidates instead of enumerating.
+
+    The space here holds more combinations than `n_iter=1`, so a single
+    candidate proves the sampling budget is honoured rather than the grid being
+    walked; the best candidate is that one sample.
+    """
     config = _tuning_namespace(
         summary_statistics_tsv_tuning,
         tmp_path / "hyper_tune_random_out",

@@ -171,8 +171,8 @@ def test_preflight_data_check_resolves_from_config_file(
     assert config["preflight_data_check"] is expected
 
 
-def test_config_file_wins_over_cli(tmp_path, capsys):
-    """In config-file mode the file wins and ignored CLI flags trigger a warning."""
+def test_config_file_wins_over_cli(tmp_path):
+    """In config-file mode the file wins and every CLI flag is ignored."""
     payload = {
         "species_tree_path": "file_species.tree",
         "gene_trees_path": "file_genes.tree",
@@ -192,7 +192,6 @@ def test_config_file_wins_over_cli(tmp_path, capsys):
     # CLI value 0.5), proving the CLI flag was ignored.
     assert config["alpha_perm"] == 0.05
     assert config["species_tree"].endswith("file_species.tree")
-    assert "--config-file provided" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

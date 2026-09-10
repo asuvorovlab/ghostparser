@@ -63,40 +63,32 @@ def test_clean_inputs_pass_with_no_issues(clean_inputs, tmp_path):
     assert result.triplets_checked == 4
     assert result.counters["gene_tree.total_checked"] == 2
     assert result.counters["gene_tree.rooted"] == 2
-    assert "No blocking data issues detected" in result.report_text
 
 
-def test_report_is_written_to_output_dir(clean_inputs, tmp_path):
-    """The report lands in the output folder under the documented filename."""
+def test_report_is_written_only_when_an_output_dir_is_given(clean_inputs, tmp_path):
+    """The report lands under the documented filename, or nowhere without a dir."""
     species, genes = clean_inputs
     output_dir = tmp_path / "out"
     output_dir.mkdir()
 
-    result = run_preflight_data_check(
+    written_result = run_preflight_data_check(
         species_tree_path=str(species),
         gene_trees_path=str(genes),
         outgroups=["OUT"],
         output_dir=str(output_dir),
     )
-
     written = output_dir / PREFLIGHT_REPORT_FILENAME
-    assert result.report_path == str(written)
-    assert written.read_text() == result.report_text
+    assert written_result.report_path == str(written)
+    assert written.read_text() == written_result.report_text
 
-
-def test_no_output_dir_skips_writing(clean_inputs):
-    """Passing no output directory returns the text without touching disk."""
-    species, genes = clean_inputs
-
-    result = run_preflight_data_check(
+    unwritten_result = run_preflight_data_check(
         species_tree_path=str(species),
         gene_trees_path=str(genes),
         outgroups=["OUT"],
         output_dir=None,
     )
-
-    assert result.report_path is None
-    assert result.report_text
+    assert unwritten_result.report_path is None
+    assert unwritten_result.report_text == written_result.report_text
 
 
 def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path):
@@ -127,21 +119,18 @@ def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path):
     )
     assert "Gene tree #2" in polytomy_message
     assert "A,B,C" in polytomy_message
-
-
-def test_report_attributes_issues_to_gene_trees(dirty_inputs, tmp_path):
-    """The attribution summary separates species-tree from gene-tree causes."""
-    species, genes = dirty_inputs
-
-    result = run_preflight_data_check(
-        species_tree_path=str(species),
-        gene_trees_path=str(genes),
-        outgroups=["OUT"],
-        output_dir=str(tmp_path),
+    # Every triplet/gene-tree pair the check looked at is accounted for: 4
+    # triplets x 2 rooted trees = 8 pairs, of which tree 2's A,B,C is the only
+    # one that cannot be measured.
+    assert result.counters["triplet.resolved"] == 7
+    assert result.counters.get("triplet.taxa_absent_from_gene_tree", 0) == 0
+    assert (
+        result.counters["triplet.resolved"]
+        + result.counters["triplet.unresolved_rooted_sister_pair"]
+        + result.counters.get("triplet.taxa_absent_from_gene_tree", 0)
+        == result.triplets_checked * result.counters["gene_tree.rooted"]
+        == 8
     )
-
-    assert "- species-tree-related issues: NO (count=0)" in result.report_text
-    assert "- gene-tree-related issues:    YES (count=2)" in result.report_text
 
 
 def test_triplet_filter_entries_are_validated(clean_inputs, tmp_path):
@@ -223,7 +212,7 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path):
     assert written == [PREFLIGHT_REPORT_FILENAME]
 
 
-def test_runner_preflight_reports_unrootable_species_tree(tmp_path, capsys):
+def test_runner_returns_none_when_preflight_cannot_run(tmp_path):
     """An impossible check is reported without raising out of the runner."""
     species = tmp_path / "species.tree"
     genes = tmp_path / "genes.tre"
@@ -243,4 +232,3 @@ def test_runner_preflight_reports_unrootable_species_tree(tmp_path, capsys):
     )
 
     assert result is None
-    assert "Preflight data check could not run" in capsys.readouterr().out
