@@ -666,11 +666,59 @@ assertion is the bracket `1000 <= n_resamples < 2000`: the run does not stop
 before the budget is met, and overshoots it by at most one batch. The exact
 1122 is left unasserted because it encodes the growth factor.
 
-### `test_bootstrap_resample_budget_scales_by_one_fifth`
+### `test_seeded_runs_are_reproducible`
 
-**Inputs and derivation:** `2500 // 5 = 500` and `25000 // 5 = 5000`. For
-`(2, 3)`, `2 // 5 = 0` and `3 // 5 = 0`, both raised to the floor of 1, and the
-maximum is held at least equal to the minimum → `(1, 1)`.
+**Inputs:** one random sample pair, run twice through
+`run_studentized_permutation_test` with `min_resamples=800`,
+`max_resamples=2000`, and a fresh `default_rng(42)` each time.
+
+**Derivation:** every random draw in the test comes from the passed generator,
+so two runs seeded alike must agree on every field -- not approximately, but
+exactly, including the resample count the adaptive rule stopped at. This is the
+property the whole per-triplet seeding scheme rests on: the orchestrator hands
+each triplet a stream derived from `(seed, triplet)`, so a triplet's result
+cannot depend on how many workers ran or in what order they finished.
+
+### `test_equivalence_test_disabled_reports_no_tost`
+
+**Inputs:** two 40-point standard-normal samples (so neither direction is
+significant), with `equivalence_test=False` and a fixed 2000 resamples.
+
+**Derivation:** the equivalence step is what distinguishes `equivalent` from
+`inconclusive` when no direction is significant. Switched off, there is nothing
+left to make that distinction, so `p_tost` must be `None` and the decision must
+fall through to `inconclusive` -- never to `equivalent`, which would be an
+equivalence claim no test supported.
+
+### `test_bootstrap_resample_budget_is_reduced_but_always_usable`
+
+**Inputs:** the configured pairs `(2500, 25000)`, `(2, 3)`, `(1, 1)`,
+`(100, 100)`, `(7, 1000)`, `(999, 1001)`.
+
+**Derivation:** the expected values are not computed from the divisor, because
+the divisor is a performance knob — the assertions are the three properties an
+iteration budget has to satisfy whatever it is set to. *At least 1*: integer
+division sends a small configured budget to 0, so the floor is what stops an
+iteration drawing no resamples at all — `(2, 3)` and `(1, 1)` are the cases that
+reach it. *Strictly below the configured minimum once that is at least 2*: any
+divisor above 1 reduces such a value, so this is what would catch a divisor of 1
+silently restoring the full per-iteration cost. *Bounds in order*: `(100, 100)`
+and `(999, 1001)` are the cases where the scaled maximum would otherwise land
+below the scaled minimum, leaving an adaptive run no range to grow through, and
+the implementation holds the maximum at the minimum instead.
+
+Confirmed to have teeth by mutation: setting the divisor to 1 fails five of the
+six parametrized cases.
+
+### `test_bootstrap_resample_budget_never_shrinks_as_the_budget_grows`
+
+**Inputs:** configured minima of 1, 2, 5, 10, 100, 2500 and 25000, each paired
+with ten times itself as the maximum.
+
+**Derivation:** floor division is monotonic and the floor is a constant, so both
+ends of the scaled budget must be non-decreasing across that sequence. This is
+the property a reader actually depends on — that configuring a larger budget
+cannot give the bootstrap a smaller one — and it holds for any divisor.
 
 ## tests/orchestrator/test_orchestrator_trees.py
 
@@ -715,8 +763,18 @@ clade absorbs `0.1 + 0.2` when the `(D,OUT)` node dissolves.
 **Derivation:** 4 ingroup taxa give `C(4,3) = 4` triplets, enumerated over the
 sorted taxa: `(A,B,C)`, `(A,B,D)`, `(A,C,D)`, `(B,C,D)`. In each of these the
 first two listed taxa are already the species-tree sister pair, so ABC
-normalization is the identity and `triplets == raw_triplets`. Each species
-subtree keeps the triplet's taxa and sums the edges along collapsed paths:
+normalization is the identity and `triplets == raw_triplets`.
+
+One cached geometry over the species tree answers all four triplets:
+`triplet_subtree_shape` reports each one's sister pair and the edges its induced
+subtree carries, and `_format_triplet_subtree_newick` writes that out. Each
+subtree keeps the triplet's taxa and sums the edges along the paths that
+collapse when the taxa between them are dropped, which is what the `Why` column
+below states. The subtree's root edge is its own case: suppressing the
+unifurcations above the triplet's LCA collapses the whole path from the tree
+root into one edge, so `(A,B,C)` carries `0.3 + 0.5 = 0.8` -- the LCA's depth
+plus the tree root's own edge -- while the three triplets containing `D` are
+rooted at the tree root itself and keep its `0.5` unchanged:
 
 | Triplet | Species subtree | Why |
 | --- | --- | --- |
@@ -741,7 +799,10 @@ Tree 3: `0.10 + 0.55 = 0.65` →
 **Input:** the first cleaned gene tree, triplet `("A","B","C")`.
 
 **Derivation:** extraction retains only the requested taxa, so the resulting
-leaf-label set must be exactly `{A, B, C}` — `D` and `OUT` are dropped.
+leaf-label set must be exactly `{A, B, C}` — `D` and `OUT` are dropped. No run
+calls this function; it is the reference the geometry parity tests measure the
+cached path against, so it needs a correctness check of its own rather than only
+being compared to.
 
 ## tests/orchestrator/test_orchestrator_tree_parity.py
 
@@ -817,7 +878,7 @@ the permutation test enabled).
 - `test_consolidation_preserves_run_outputs` — consolidation writes into
   `consolidation/`, so the run's own files (results TSV, `metrics.txt`, both
   processed trees) must all still exist afterwards.
-- `test_parallel_modes_match_serial` — bootstrap seeding is per-triplet and
+- `test_parallel_runs_match_serial` — bootstrap seeding is per-triplet and
   derived from the run seed, so mode and worker count cannot change any value;
   every compared field must be equal, bootstrap included.
 
@@ -852,24 +913,20 @@ The defective file holds three, each planted with exactly one problem class:
 `counters["gene_tree.rooted"] == 2` and `gene_tree.total_checked == 2`. Every
 one of the 4 triplets resolves a sister pair in the species tree, so
 `triplets_checked == 4`. Each gene tree is fully resolved, so no triplet check
-fails and `issues == []`, which makes `passed` `True` and selects the
-"No blocking data issues detected" branch of the report.
+fails and `issues == []`, which makes `passed` `True`.
 
-### `test_report_is_written_to_output_dir`
+### `test_report_is_written_only_when_an_output_dir_is_given`
 
-**Inputs:** the clean pair, with `output_dir` set to a created directory.
+**Inputs:** the clean pair, checked once with `output_dir` set to a created
+directory and once with `output_dir=None`.
 
 **Derivation:** the writer joins `output_dir` with the module constant
 `PREFLIGHT_REPORT_FILENAME` (`preflight_data_check.txt`) and writes
 `report_text` verbatim, so the file content and `report_text` must be equal and
-`report_path` must equal that joined path.
-
-### `test_no_output_dir_skips_writing`
-
-**Inputs:** the clean pair with `output_dir=None`.
-
-**Derivation:** the write branch is guarded on `output_dir is not None`, so
-`report_path` stays `None` while `report_text` is still built.
+`report_path` must equal that joined path. The write branch is guarded on
+`output_dir is not None`, so the second call leaves `report_path` `None` while
+still building the same `report_text` -- the check itself does not depend on
+where its output goes.
 
 ### `test_detects_polytomy_and_missing_outgroup`
 
@@ -879,22 +936,20 @@ fails and `issues == []`, which makes `passed` `True` and selects the
 returns no used outgroup → one `gene_tree.rooting_failed`, and that tree is
 skipped before any triplet check. Trees 1 and 2 root, so
 `gene_tree.rooted == 2` while `gene_tree.total_checked == 3`. Tree 2 collapses
-A, B and C into a single polytomous clade, so `find_sister_pair` cannot pick a
-rooted pair for triplet `A,B,C` → one
+A, B and C into a single polytomous clade, so all three pairwise LCAs of triplet
+`A,B,C` are the same node and `triplet_resolution` reports it unresolved → one
 `triplet.unresolved_rooted_sister_pair`. The other three triplets each contain
 `D`, which sits outside the polytomy, so they still resolve — hence a count of
 exactly 1, not 4. The message is formatted with the enumeration index (`Gene
 tree #2`) and the comma-joined triplet (`A,B,C`).
 
-### `test_report_attributes_issues_to_gene_trees`
-
-**Inputs:** the defective trio.
-
-**Derivation:** the two categories above start with `gene_tree.` and `triplet.`,
-both in `_GENE_CATEGORY_PREFIXES`, and neither starts with `species_tree.`,
-`species_triplet.`, or `triplet_filter.`. Summing gives 0 species-tree issues
-and 2 gene-tree issues, which the report renders as `NO (count=0)` and
-`YES (count=2)` with the fixed column padding shown in the assertions.
+The pair accounting follows from the same reading. Two trees root, and each
+carries all four ingroup taxa, so the check looks at `4 x 2 = 8` triplet/
+gene-tree pairs: tree 1 resolves all 4, tree 2 resolves the three containing
+`D` and fails on `A,B,C`. That gives 7 usable, 1 unresolved, and 0 skipped for
+an absent taxon — and the three must sum to the 8 pairs seen, which is the
+property worth pinning: a pair that is neither measured nor reported would
+otherwise vanish silently between the counters.
 
 ### `test_triplet_filter_entries_are_validated`
 
@@ -936,13 +991,13 @@ into that directory is the report. Listing the directory must therefore yield
 exactly `["preflight_data_check.txt"]` — no `metrics.txt`, no processed trees,
 no results TSV. `passed` is `False` because the defective trio yields 2 issues.
 
-### `test_runner_preflight_reports_unrootable_species_tree`
+### `test_runner_returns_none_when_preflight_cannot_run`
 
 **Input:** the same config with `outgroup="NOT_PRESENT"`.
 
 **Derivation:** the `ValueError` raised above is caught in
-`_run_preflight_only`, which prints the message and returns `None`, so the
-runner returns `None` rather than propagating.
+`_run_preflight_only`, which returns `None`, so the runner returns `None`
+rather than propagating.
 
 ## tests/orchestrator/test_orchestrator_config.py
 
@@ -958,7 +1013,7 @@ optional argument `None`.
 `permutation_ci_method` `"wilson"`,
 `overwrite` `True`,
 `discordant_test` `"chi-square"`, `tree_height_calculation_strategy` `"AVG"`,
-`min_support_value` `0.5`, `bootstrap_iterations` `100`, `bootstrap_seed`
+`min_support_value` `0.5`, `bootstrap_iterations` `100`, `seed`
 `None`, and the boolean feature flags `False` — including
 `preflight_data_check`, whose default `DEFAULT_PREFLIGHT_DATA_CHECK` is `False`
 so that an ordinary run is never turned into a check-only run by accident.
@@ -973,7 +1028,7 @@ summary_only: true}`.
 
 **Derivation:** these keys have no CLI flag, so the file is the only way to set
 them. The nested block is flattened onto `bootstrap_iterations = 25`,
-`bootstrap_seed = 7`, `bootstrap_debug_mode = True`,
+`seed = 7`, `bootstrap_debug_mode = True`,
 `bootstrap_summary_only = True`.
 
 ### `test_config_file_wins_over_cli`
@@ -985,7 +1040,7 @@ plus conflicting CLI flags `alpha_dct=0.5` and `alpha_perm=0.5`.
 `alpha_dct` is `0.03` (not `0.5`). The decisive check is `alpha_perm`: the file
 omits it, so it must fall back to the orchestrator default `0.05` — if the CLI
 were consulted it would be `0.5`. The resolved species path must come from the
-file, and a warning naming the ignored flags must be printed.
+file.
 
 ### `test_outgroup_accepts_single_comma_separated_and_list_forms`
 
@@ -1045,6 +1100,22 @@ sample gaining it.
   `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2 --p-value-correction
   fdr_bh --alpha-perm 0.02 --no-overwrite` must yield those exact values with
   `config_file is None`.
+- `test_pipeline_mode_rejects_an_unknown_value` — `pipeline_mode: fast` is
+  resolved by `_validate_choice` against `PIPELINE_MODE_CHOICES`
+  (`efficient`/`detailed`), which raises `ConfigError` naming the field.
+- `test_preflight_data_check_resolves_from_config_file` — the key has no CLI
+  flag, so a config file is the only way to set it: `true` and `false` come back
+  as given, and omitting it yields `False`. The assertion is `is`, not `==`, so
+  a truthy non-boolean would fail.
+- `test_p_value_correction_accepts_yaml_bare_word_no` — YAML 1.1 resolves the
+  bare word `no` to boolean `False`, so the normalizer maps `False` back to the
+  string `"no"` before the choice check. Writing `no` unquoted is the natural
+  spelling for "no correction", which is why the mapping exists.
+- `test_p_value_correction_rejects_a_value_with_no_matching_choice` — the same
+  YAML rule turns bare `yes` into `True`, but `True` has no corresponding
+  choice, so it must still fail with `must be one of` and the received value
+  named. This is the guard that keeps the boolean mapping from laundering an
+  invalid value into a valid one.
 
 ## tests/test_config_trunk.py
 
@@ -1122,6 +1193,30 @@ untouched in the original directory.
 4x6 matrix. Re-joining each row must reproduce the trimmed label. Set bits per
 label: `100001 → 2`, `000000 → 0`, `111111 → 6`, `010010 → 2`, so the matrix sum
 is `2 + 0 + 6 + 2 = 10`.
+
+### `test_bit_label_titles_keep_the_taxon_letters_upper_case`
+
+**Inputs:** the six `BIT_LABELS` entries — `ghost_into_A`, `ghost_into_B`,
+`inflow_into_A_from_C`, `inflow_into_B_from_C`, `outflow_from_A_to_C`,
+`outflow_from_B_to_C`.
+
+**Derivation:** the transform is `replace("_", " ")` followed by upper-casing
+character 0 only, so `inflow_into_A_from_C` → `inflow into A from C` →
+`Inflow into A from C`. The expected values are written out per label rather
+than computed, because the point is the one spelling the obvious implementation
+gets wrong: `str.capitalize()` upper-cases the first character *and lower-cases
+the rest*, which would yield `Ghost into a` and rename taxon `A`. Every label in
+the set carries at least one trailing capital, so any label would catch it —
+they are all listed so the failure names which one broke.
+
+### `test_every_bit_label_has_a_title`
+
+**Inputs:** the whole `BIT_LABELS` tuple.
+
+**Derivation:** six inputs must give six distinct outputs — a collision would
+put the same title on two panels of the per-bit figure. No output may keep an
+underscore (the transform is total, not a lookup table with gaps) and each must
+start upper-case.
 
 ### `test_is_valid_bitstring`
 
@@ -1501,3 +1596,260 @@ observable proof the loop was skipped rather than merely having its columns
 dropped. The classification comes from the point estimate, which the bootstrap
 does not feed, so it stays `no_introgression` as in
 `test_run_orchestrator_matches_derived_expectation`.
+
+## tests/orchestrator/test_orchestrator_triplet_geometry.py
+
+All derivations use one reference tree:
+
+```
+(((P:1.0,Q:1.0):2.0,R:3.0):1.0,(S:2.0,T:2.0):2.0);
+```
+
+Nodes are numbered in pre-order, which is the numbering
+`build_triplet_geometry` assigns: `root=0, X=1, W=2, P=3, Q=4, R=5, Y=6, S=7,
+T=8`. `X` is the clade `((P,Q),R)`, `W` is `(P,Q)`, and `Y` is `(S,T)`. The
+cache therefore holds `parent = [-1,0,1,2,2,1,0,6,6]` and
+`edge_len = [0.0,1.0,2.0,1.0,1.0,3.0,2.0,2.0,2.0]`, and the pairwise LCA table
+records `PQ->2`, `PR=QR->1`, `ST->6`, and every P/Q/R-to-S/T pair `->0`.
+
+### `test_geometry_matches_subtree_extraction`
+
+**Inputs (parametrized over the six strategies x eleven trees):** the reference
+tree with a nested sister pair (`P,Q,R`), a pair spanning the root (`P,R,S`), a
+triplet drawn from both sides (`P,S,T`) and one whose odd taxon is listed first
+(`S,P,Q`); a five-taxon ladder read at two depths; a tree carrying three taxa
+that get pruned away; `(((A,B),C),(D,E));` with no branch lengths at all; one
+with a length missing from a single edge; one whose internal branch is exactly
+`0.0`; and one at the edge of double precision
+(`1e-12` tips under a `1e-13` internal branch against a `1.0000000000001`
+sister).
+
+**Derivation:** there is no closed form to compare against here -- the expected
+value *is* what extracting the subtree and measuring it produces, which is the
+point. `_dendropy_observation` copies the triplet's subtree out with
+`extract_triplet_subtree` and measures it with `observation_from_subtree`;
+`_geometry_observation` builds the cache and reads the same triplet out of it.
+The topology must be equal exactly, because both derive it from discrete
+structure rather than arithmetic: extraction from the copied subtree's sister
+clade, the cache from which two of the three pairwise LCAs coincide. Heights and
+summary metrics compare at `rel=1e-12`, about three orders of magnitude looser
+than the largest disagreement measured on real data (one unit in the last place,
+`AVG` only). The cases are chosen for what they break rather than for coverage:
+the zero-length internal branch would be read as a polytomy by any
+depth-comparing rule, the missing lengths must count as `0.0` rather than
+propagate `None`, the pruned taxa must not enter any path sum, and the
+`1e-12`/`1.0000000000001` case puts the two paths' summation orders as far apart
+as the fixture set can.
+
+### `test_geometry_omits_summary_metrics_when_not_collecting`
+
+**Inputs:** the reference tree's `(P,Q,R)` under `AVG`, with
+`collect_summary_statistics` false on both paths.
+
+**Derivation:** the third element of an observation carries the per-tree summary
+metrics, and a run only needs them under `generate_summary_stats`. Both paths
+must return `None` there rather than an empty dict, since `analyze_triplet`
+tests that slot for `None` to decide whether to aggregate.
+
+### `test_one_cache_serves_every_triplet_in_the_tree`
+
+**Inputs:** one cache built over the five-taxon reference tree, then all
+`C(5,3) = 10` triplets read out of it under `AVG`.
+
+**Derivation:** this is the property the whole design rests on -- the cache is
+built per tree, not per triplet, so one cache has to answer every triplet the
+tree can supply. The cache costs `O(k^2)` in the pairwise LCA table while a tree
+supplies `C(k,3)` triplets, which is what makes building it worthwhile; a
+per-triplet cache would cost more than the extraction it replaces. Each triplet
+is compared against its own extracted subtree, and the skip decisions are
+compared as well (`(actual is None) == (expected is None)`), so a cache that
+answered only the triplets it was built from -- or that went stale after the
+first read -- fails here.
+
+### `test_geometry_on_a_hand_derived_tree`
+
+**Inputs:** the reference tree, triplets `(P,Q,R)` and `(P,R,S)`, strategy
+`AVG`, summary metrics collected.
+
+**Derivation, `(P,Q,R)`:** `LCA(P,Q)=2` while `LCA(P,R)=LCA(Q,R)=1`. The two
+that agree name the triplet root, so `r=1` and the sister LCA is `s=2`, giving
+topology `((A,B),C)`. Walking edges up the parent chain, `internal_branch =
+edge_len[2] = 2.0`; `P` and `Q` are each `edge_len[3] = 1.0` below `W`, so each
+sits `1.0 + 2.0 = 3.0` below the subtree root, and `R` is `edge_len[5] = 3.0`
+below `r` directly. Hence `avg = (3.0+3.0+3.0)/3 = 3.0` and `sister_distance =
+3.0 + 3.0 - 2(2.0) = 2.0`, which is the real P-to-Q path `1.0 + 1.0`. Extracting
+the subtree gives `((P:1,Q:1):2,R:3);` and the same four numbers.
+
+**Derivation, `(P,R,S)`:** `LCA(P,R)=1` while `LCA(P,S)=LCA(R,S)=0`, so `r=0`
+(the root) and `s=1`, again `((A,B),C)` but with `P` and `R` as the sisters.
+`internal_branch = edge_len[1] = 1.0`. `P` is `edge_len[3] + edge_len[2] = 3.0`
+below `X`, so `3.0 + 1.0 = 4.0` below the root; `R` is `3.0 + 1.0 = 4.0`; `S` is
+`edge_len[7] + edge_len[6] = 4.0`. So `avg = 4.0` and `sister_distance =
+4.0 + 4.0 - 2(1.0) = 6.0`, the real P-to-R path `1.0 + 2.0 + 3.0`.
+
+### `test_zero_length_internal_branch_still_resolves`
+
+**Inputs:** `((A:1.0,B:1.0):0.0,C:1.0);`, triplet `(A,B,C)`, strategy `INT`.
+
+**Derivation:** the internal node sits at the same depth as the root, so any
+rule that picked the sister pair by comparing LCA *depths* would see a
+three-way tie and drop the observation. `find_sister_pair` compares node
+identity (`mrca is not root`) and resolves `((A,B),C)`; the cached path compares
+LCA node indices and resolves it the same way. `INT` is then the zero-length
+edge itself, and `sister_distance = 1.0 + 1.0 - 2(0.0) = 2.0`.
+
+### `test_missing_edge_lengths_count_as_zero`
+
+**Inputs:** `(((A,B),C),(D,E));`, triplet `(A,B,C)`, strategy `AVG`.
+
+**Derivation:** `build_triplet_geometry` stores `0.0` wherever the Newick omits
+a length, matching `_distance_to_root`, which skips a `None` edge. Every walk
+therefore sums zeros and all four derived values are `0.0`.
+
+### `test_geometry_skips_exactly_what_extraction_skips`
+
+**Inputs:** `(A:1.0,B:1.0,C:1.0);` and `((A:1.0,B:1.0):1.0,D:2.0);`, triplet
+`(A,B,C)`.
+
+**Derivation:** in the polytomy all three pairwise LCAs are the root, so the
+cached path sees three equal ids and returns `None`; the extraction path reaches
+`find_sister_pair`, finds no pair whose MRCA differs from the root, and raises
+`ValueError`, which `observation_from_subtree` converts to `None`. In the second
+tree `C` is absent, so `leaf_node[C] = -1` on one side and
+`set(triplet).issubset(tree_taxa)` fails on the other.
+
+A duplicated taxon label is deliberately not covered: DendroPy raises
+`NewickReaderDuplicateTaxonError` while parsing, so neither path can be reached
+with one.
+
+### `test_geometry_matches_dendropy_across_a_nine_taxon_tree`
+
+**Inputs:** the nine-taxon tree
+
+```
+((((T1:0.11,T2:0.19):0.23,(T3:0.07,T4:0.31):0.0):0.17,((T5:0.29,T6:0.13):0.41,T7:0.53):0.09):0.37,(T8:0.61,OUT:0.71):0.43);
+```
+
+and all `C(9,3) = 84` triplets, under each of the six tree-height strategies.
+
+**Derivation:** the expected values are whatever
+`extract_triplet_subtree` + `observation_from_subtree` produce, so the test is a
+differential one -- it asserts the two implementations agree rather than
+restating the arithmetic. The tree is shaped so the sweep covers the cases that
+distinguish them: `(T3,T4)` sit above a zero-length internal branch, `T1..T4`
+and `T5..T7` sit in sibling clades so many triplets have their sister pair on
+one side and the odd taxon on the other, `T7` hangs off a ladder at a different
+depth from its clade-mates, and `T8`/`OUT` sit across the root so triplets
+drawn from them resolve at the seed node. Every triplet of a nine-taxon rooted
+binary tree is resolved, so all 84 must yield an observation on both paths;
+`compared == 84` pins that none were silently skipped.
+
+The tolerance is `rel=1e-12`, matching the parity tolerance used elsewhere in
+the suite. Measured on real data the two paths agree exactly for the `A`, `B`,
+`C`, `SIS` and `INT` strategies and to within one unit in the last place for
+`AVG`, so the tolerance is roughly three orders of magnitude looser than the
+observed difference.
+
+## tests/orchestrator/test_orchestrator_rename_map.py
+
+### `test_rename_map_reads_a_two_column_tsv` / `test_rename_map_reads_a_yaml_mapping`
+
+**Inputs:** the same two pairs (`T1 -> Homo sapiens`, `T2 -> Pan troglodytes`)
+written once as a TSV carrying a `#` comment line and a blank line, and once as
+a YAML mapping.
+
+**Derivation:** the loader picks its parser from the file extension, so both
+files must yield the identical dict. The comment and blank lines are dropped
+before parsing, which is why the TSV's four lines produce two entries.
+
+### `test_rename_map_rejects_malformed_files`
+
+**Inputs:** `T1\tA\textra` (three columns), `T1` (one column), `T1\tA` twice
+with different values, `T1\tA` and `T2\tA`, and a YAML list.
+
+**Derivation:** a rename map is a bijection from tree label to display name.
+Three columns and one column both fail the two-column requirement. A repeated
+label is ambiguous about which name wins. Two labels sharing a name is the case
+worth singling out, and is checked in both file formats: it would rename two
+distinct taxa to the same string, and since DendroPy raises
+`NewickReaderDuplicateTaxonError` on duplicate labels the run would fail later
+in the parser with nothing pointing back at the map. A YAML list carries no
+keys, so it cannot be a mapping.
+
+### `test_rename_map_rejects_a_missing_file`
+
+**Inputs:** a path that does not exist.
+
+**Derivation:** `FileNotFoundError` rather than `ValueError`, because a mistyped
+path is a different mistake from a malformed map and the message names the path
+so it can be corrected without opening anything.
+
+### `test_renaming_a_tree_touches_only_mapped_terminals`
+
+**Inputs:** `((T1:0.1,T2:0.2):0.3,T3:0.4);` with a map covering `T1` and `T2`
+only.
+
+**Derivation:** the rename is applied per terminal against the map, so the two
+mapped taxa become `Alpha` and `Beta` while `T3` keeps its label -- a partial
+map is the normal case, since a study usually renames only the taxa it reports
+on. The return value counts terminals actually renamed, so it must be `2`, not
+the map's size or the tree's terminal count; and the resulting label set
+`["Alpha", "Beta", "T3"]` confirms nothing was dropped or duplicated in the
+process.
+
+### `test_renaming_labels_leaves_unmapped_names_alone`
+
+**Inputs:** `("T1", "T3")` under `{"T1": "Alpha"}`, and `("T1",)` under `{}`.
+
+**Derivation:** the label helper handles the outgroup and triplet-filter
+entries, which arrive as plain strings rather than tree nodes, and it has to
+agree with the tree helper or those keys would stop matching the renamed trees.
+An empty map is the no-rename case and must return the labels unchanged rather
+than an empty list.
+
+### `test_species_rename_map_reaches_every_output`
+
+**Inputs:** the shared 4-triplet orchestrator fixture (taxa `A`, `B`, `C`, `D`,
+outgroup `OUT`) with a TSV mapping `A -> Homo` and `B -> Pan`, consolidation
+enabled.
+
+**Derivation:** the rename is applied inside `clean_and_save_trees` and
+`clean_and_save_gene_trees`, immediately after the Newick is read and before
+anything else runs. Everything downstream therefore sees only display names,
+which is why the assertions can span outputs written by unrelated code paths:
+the triplet tuples (`{Homo, Pan, C, D}` -- `C` and `D` are absent from the map
+and so unchanged), the `triplet` and `abc_mapping` columns of the results TSV,
+the `species_tree` column whose Newick is rebuilt from the renamed species tree,
+the two `processed_*.tree` files, and the consolidation artifacts. The
+consolidation check reads `introgression_taxa_order.tsv` because that file holds
+the taxon ordering used to label the heatmap axes and the bar chart, so it
+standing in display names is the evidence the plot labels do too.
+
+### `test_triplet_resolution_agrees_with_the_observation_guards`
+
+**Inputs:** four hand-picked cases -- a normally resolved triplet, one whose
+sister pair sits above a zero-length internal branch, a root polytomy
+`(A:1.0,B:1.0,C:1.0);`, and a tree missing taxon `C` -- then every one of the 84
+triplets of the nine-taxon tree.
+
+**Derivation:** `geometry_observation` returns `None` for exactly two reasons: a
+triplet taxon with no leaf in the cache, and all three pairwise LCAs coinciding.
+`triplet_resolution` restates those two guards so preflight can report *which*
+one fired, and deliberately shares no code with the hot path, which is kept free
+of reason tracking. The expected statuses follow from the guards directly: the
+zero-length internal branch is `resolved` because the sister pair is chosen by
+LCA node identity rather than depth; the polytomy is `unresolved` because its
+three pair LCAs are all the root; the tree without `C` is `missing_taxon`. The
+whole-tree sweep then asserts the weaker but essential property -- that
+`resolved` and "yields an observation" coincide on every triplet -- so a future
+edit to one function that is not mirrored in the other fails here rather than
+silently changing what preflight reports.
+
+### `test_seed_rejects_a_non_integer`
+
+**Inputs:** a config payload with `seed: "abc"`.
+
+**Derivation:** `_validate_optional_int` accepts `None` or an `int` and raises
+`ConfigError` naming the field otherwise. It rejects `bool` explicitly, since
+`isinstance(True, int)` is true in Python and `seed: true` is a mistake rather
+than a seed of 1.

@@ -104,11 +104,18 @@ End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixt
   `bootstrap_ks_p_value`, `bootstrap_gene_tree_heights`) appear in the header
   and at least one result has a populated `bootstrap_dct_stats`. Purpose: the
   bootstrap-debug output path.
-- `test_parallel_modes_match_serial` — Inputs (parametrized over
-  `("taxon", 2)` and `("gene", 2)`): the same fixture run serially and in
-  parallel with a fixed seed. Expected outputs: every compared field, bootstrap
-  values included, is identical. Purpose: parallelization must not change
-  results.
+- `test_species_rename_map_reaches_every_output` — Inputs: the shared fixture
+  run with `species_rename_map` mapping `A -> Homo` and `B -> Pan`, with
+  consolidation on. Expected outputs: the triplet taxa are `{Homo, Pan, C, D}`,
+  the display names appear in the results TSV, the per-triplet species subtree,
+  both processed tree files, the consolidation taxa-order file and the inflow
+  /outflow matrix, and the combined plot is written. Purpose: renaming at read
+  time reaches every named output, and unmapped taxa are left alone.
+- `test_parallel_runs_match_serial` — Inputs (parametrized over 2 and 4
+  workers): the same fixture run serially and in parallel with a fixed seed.
+  Expected outputs: every compared field, bootstrap values included, is
+  identical. Purpose: distributing triplet chunks must not change results, at
+  either worker count.
 
 Also in `test_orchestrator.py`:
 
@@ -345,9 +352,18 @@ exhaustive enumeration, and over randomized inputs.
   the final batch whole rather than trimming it — so the total meets or slightly
   overshoots `max_resamples` — without pinning the growth factor (a performance
   knob).
-- `test_bootstrap_resample_budget_scales_by_one_fifth` — Inputs: `(2500, 25000)`
-  and `(2, 3)`. Expected outputs: `(500, 5000)` and `(1, 1)`. Purpose: the
-  bootstrap budget divisor and its floor.
+- `test_bootstrap_resample_budget_is_reduced_but_always_usable` — Inputs
+  (parametrized over six configured `(min, max)` pairs from `(1, 1)` to
+  `(2500, 25000)`). Expected outputs: the scaled minimum is at least 1 and,
+  wherever the configured minimum is at least 2, strictly below it; the scaled
+  maximum stays at or above the scaled minimum and no higher than the configured
+  one. Purpose: a bootstrap iteration must cost less than the point estimate
+  while still leaving an adaptive run a valid range to grow through — asserted
+  as properties, so the divisor stays a tunable rather than a pinned constant.
+- `test_bootstrap_resample_budget_never_shrinks_as_the_budget_grows` — Inputs:
+  configured budgets from 1 to 25000. Expected outputs: neither end of the
+  scaled budget ever decreases. Purpose: monotonicity, so raising the configured
+  budget cannot lower the bootstrap's.
 
 - `test_shifted_statistics_match_an_explicit_shift` — Inputs (parametrized over
   five group-size splits including both orderings): a gamma-drawn pooled sample,
@@ -448,7 +464,9 @@ Tree preprocessing, asserted against explicit Newick literals.
   Purpose: gene-tree rooting semantics.
 - `test_extract_triplet_subtree_selects_the_triplet_taxa` — Inputs: the first
   cleaned gene tree and triplet `(A, B, C)`. Expected outputs: a subtree whose
-  leaf set is exactly `{A, B, C}`. Purpose: subtree extraction.
+  leaf set is exactly `{A, B, C}`. Purpose: the DendroPy reference extraction
+  the geometry parity tests compare against — no run calls it, so its own
+  correctness has to be pinned here.
 
 ### tests/orchestrator/test_orchestrator_tree_parity.py
 
@@ -464,31 +482,109 @@ The suite's only parity tests, both marked `@pytest.mark.parity`.
   reference. Expected outputs: all three pairwise distances agree to `1e-12`.
   Purpose: DendroPy's triplet collapsing matches standard BioPython pruning.
 
+### tests/orchestrator/test_orchestrator_triplet_geometry.py
+
+Covers `orchestrator/triplet_geometry.py`, which reads a triplet's geometry out
+of a cached tree instead of extracting its subtree — the path every run takes,
+for gene trees and the species tree alike. Most tests compare against
+`extract_triplet_subtree` + `observation_from_subtree`, the DendroPy reference
+behaviour.
+
+- `test_geometry_matches_subtree_extraction` - Inputs (parametrized over the six
+  tree-height strategies and eleven `(newick, triplet)` cases covering nested
+  pairs, pairs spanning the root, pruned extra taxa, a ladder, absent and mixed
+  edge lengths, a zero-length internal branch, and near-degenerate lengths): the
+  same tree and triplet through `extract_triplet_subtree` +
+  `observation_from_subtree` and through `build_triplet_geometry` +
+  `geometry_observation`. Expected outputs: identical topology, and tree height
+  and all three summary metrics equal within `rel=1e-12`. Purpose: the cached
+  path is a drop-in for extraction across every strategy and tree shape.
+- `test_geometry_omits_summary_metrics_when_not_collecting` - Inputs: one case
+  with `collect_summary_statistics` false. Expected outputs: both paths leave
+  the metrics slot `None`. Purpose: the observation contract is unchanged.
+- `test_geometry_on_a_hand_derived_tree` - Inputs: a five-taxon tree whose
+  distances are worked out by hand. Expected outputs: the stated topology,
+  height, internal branch, and sister distance. Purpose: pins the arithmetic to
+  a derivation rather than only to the other implementation.
+- `test_geometry_skips_exactly_what_extraction_skips` - Inputs (parametrized): a
+  root polytomy and a triplet with an absent taxon. Expected outputs: both paths
+  return `None`. Purpose: the skip decisions match, so observation counts do.
+- `test_zero_length_internal_branch_still_resolves` - Inputs: `((A:1.0,B:1.0):0.0,C:1.0);`.
+  Expected outputs: both paths resolve `((A,B),C)` with a zero internal branch.
+  Purpose: the sister pair is chosen by LCA node identity, so a zero-length
+  internal branch is not mistaken for a polytomy.
+- `test_missing_edge_lengths_count_as_zero` - Inputs: a Newick with no lengths.
+  Expected outputs: every derived value is zero. Purpose: matches
+  `_distance_to_root` treating a missing length as zero.
+- `test_one_cache_serves_every_triplet_in_the_tree` - Inputs: one cache queried
+  for all ten triplets of a five-taxon tree. Expected outputs: each matches the
+  extraction path. Purpose: one build answers every triplet, which is the reuse
+  the cache exists for.
+- `test_triplet_resolution_agrees_with_the_observation_guards` - Inputs: a
+  resolved triplet, one across a zero-length internal branch, a root polytomy,
+  an absent taxon, and then all 84 triplets of the nine-taxon tree. Expected
+  outputs: `triplet_resolution` returns the named status, and returns
+  `resolved` exactly when `geometry_observation` returns an observation.
+  Purpose: the diagnostic preflight uses restates the hot path's guards without
+  sharing code, so this is what stops the two drifting apart.
+- `test_geometry_matches_dendropy_across_a_nine_taxon_tree` - Inputs
+  (parametrized over the six strategies): all 84 triplets of a nine-taxon tree
+  carrying an outgroup, nested clades, a ladder, uneven branch lengths and one
+  zero-length internal branch. Expected outputs: identical topology and skip
+  decision on every triplet, with heights and metrics equal within `rel=1e-12`.
+  Purpose: a whole-tree sweep rather than hand-picked shapes, so sister pairs on
+  either side of the root and across the zero-length branch are all covered.
+
+### tests/orchestrator/test_orchestrator_rename_map.py
+
+Covers loading and validating a species rename map. The end-to-end effect on
+the outputs is covered by `test_species_rename_map_reaches_every_output` in
+`test_orchestrator.py`.
+
+- `test_rename_map_reads_a_two_column_tsv` — Inputs: a TSV with a comment line,
+  a blank line, and two entries. Expected outputs: the two-entry mapping.
+  Purpose: the TSV form, and that blanks and comments are ignored.
+- `test_rename_map_reads_a_yaml_mapping` — Inputs: the same pairs as YAML.
+  Expected outputs: the same mapping. Purpose: format chosen by extension.
+- `test_rename_map_rejects_malformed_files` — Inputs (parametrized): a TSV row
+  with three columns, one with a single column, a repeated label, two labels
+  sharing a display name in each of the TSV and YAML forms, and a YAML list
+  rather than a mapping. Expected outputs: `ValueError` naming the problem.
+  Purpose: malformed maps fail at load rather than silently renaming nothing.
+- `test_rename_map_rejects_a_missing_file` — Inputs: a path that does not exist.
+  Expected outputs: `FileNotFoundError` naming the path. Purpose: a mistyped
+  path is reported as such.
+- `test_renaming_a_tree_touches_only_mapped_terminals` — Inputs: a three-taxon
+  tree and a map covering two of them. Expected outputs: two renames, the third
+  label unchanged. Purpose: partial maps are supported.
+- `test_renaming_labels_leaves_unmapped_names_alone` — Inputs: label tuples with
+  a partial map and an empty map. Expected outputs: unmapped labels pass
+  through. Purpose: the helper used for the outgroup and triplet-filter entries.
+
 ### tests/orchestrator/test_orchestrator_preflight.py
 
 The structural preflight data check and the runner short-circuit that reaches it.
 
 - `test_clean_inputs_pass_with_no_issues` — Inputs: a 5-taxon species tree
   `(((A,B),C),(D,OUT))` and two well-formed gene trees. Expected outputs:
-  `passed is True`, an empty `issues` list, `triplets_checked == 4`, both gene
-  trees rooted, and the "No blocking data issues detected" line in the report.
-  Purpose: a clean dataset produces no false positives.
-- `test_report_is_written_to_output_dir` — Inputs: the clean dataset with an
-  explicit output directory. Expected outputs: `report_path` points at
+  `passed is True`, an empty `issues` list, `triplets_checked == 4`, and both
+  gene trees rooted. Purpose: a clean dataset produces no false positives.
+- `test_report_is_written_only_when_an_output_dir_is_given` — Inputs: the clean
+  dataset checked twice, once with an explicit output directory and once with
+  `output_dir=None`. Expected outputs: with a directory, `report_path` points at
   `preflight_data_check.txt` inside it and the file content equals
-  `report_text`. Purpose: the report is persisted where documented.
-- `test_no_output_dir_skips_writing` — Inputs: the clean dataset with
-  `output_dir=None`. Expected outputs: `report_path is None` and non-empty
-  `report_text`. Purpose: the check is usable without touching disk.
+  `report_text`; without one, `report_path is None` and the same report text
+  comes back. Purpose: the report is persisted where documented, and the check
+  is usable without touching disk.
 - `test_detects_polytomy_and_missing_outgroup` — Inputs: gene tree 1 well
   formed, gene tree 2 a polytomy over A/B/C, gene tree 3 with no outgroup
   label. Expected outputs: exactly one `gene_tree.rooting_failed` and one
   `triplet.unresolved_rooted_sister_pair`, two trees rooted out of three
-  checked, and the polytomy message naming `Gene tree #2` and `A,B,C`.
-  Purpose: each defect class is detected once and located precisely.
-- `test_report_attributes_issues_to_gene_trees` — Inputs: the same defective
-  dataset. Expected outputs: the report attributes 0 issues to the species tree
-  and 2 to the gene trees. Purpose: the attribution summary is correct.
+  checked, the polytomy message naming `Gene tree #2` and `A,B,C`, and the
+  pair counters accounting for all 8 triplet/gene-tree pairs as 7 usable, 1
+  unresolved, 0 with an absent taxon. Purpose: each defect class is detected
+  once and located precisely, and every pair the check looked at is accounted
+  for.
 - `test_triplet_filter_entries_are_validated` — Inputs: a filter file with one
   valid line, one naming an unknown taxon, one naming the outgroup. Expected
   outputs: one `triplet_filter.taxa_missing_in_species_tree`, one
@@ -506,10 +602,10 @@ The structural preflight data check and the runner short-circuit that reaches it
   the returned result has `passed is False` and the output directory contains
   only `preflight_data_check.txt`. Purpose: the flag runs the check and nothing
   else.
-- `test_runner_preflight_reports_unrootable_species_tree` — Inputs: the same
+- `test_runner_returns_none_when_preflight_cannot_run` — Inputs: the same
   config with an outgroup absent from the species tree. Expected outputs:
-  `run_orchestrator` returns `None` and prints "Preflight data check could not
-  run". Purpose: an impossible check is reported, not raised out of the runner.
+  `run_orchestrator` returns `None`. Purpose: an impossible check is reported,
+  not raised out of the runner.
 
 ### tests/orchestrator/test_orchestrator_config.py
 
@@ -524,6 +620,9 @@ Orchestrator config resolution and config-file precedence.
 - `test_pipeline_mode_rejects_an_unknown_value` — Inputs: `pipeline_mode: fast`.
   Expected outputs: `ConfigError` naming the field. Purpose: the choice list is
   enforced.
+- `test_seed_rejects_a_non_integer` — Inputs: `seed: "abc"`. Expected outputs:
+  `ConfigError` naming the field. Purpose: the run-wide seed must be an integer
+  when provided.
 - `test_parser_flags_resolve_into_their_config_values` — Inputs: the CLI flag
   strings parsed by `build_argument_parser`, then resolved. Expected outputs:
   each flag's value reaches its config key, `--no-overwrite` gives
@@ -549,9 +648,8 @@ Orchestrator config resolution and config-file precedence.
   fails, with the received value named.
 - `test_config_file_wins_over_cli` — Inputs: a config file plus conflicting CLI
   flags. Expected outputs: the file's `alpha_dct` wins, `alpha_perm`
-  falls back to the orchestrator default (proving the CLI value was ignored), the
-  file's paths are used, and a warning is printed. Purpose: config-file
-  precedence.
+  falls back to the orchestrator default (proving the CLI value was ignored),
+  and the file's paths are used. Purpose: config-file precedence.
 - `test_outgroup_accepts_single_comma_separated_and_list_forms` — Inputs
   (parametrized, 6 rows): `outgroup` given as a single label, a comma-separated
   string, a padded string with a trailing comma, a list, a tuple, and a list
@@ -665,6 +763,16 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
   Purpose: a label can be read back positionally only while the two constants
   agree; the bitstring width itself is pinned behaviorally by
   `test_is_valid_bitstring`.
+- `test_bit_label_titles_keep_the_taxon_letters_upper_case` — Inputs
+  (parametrized over all six bit labels): each `BIT_LABELS` entry. Expected
+  outputs: underscores become spaces and only the first character is
+  upper-cased, so `ghost_into_A` renders `Ghost into A`. Purpose: the plot-title
+  form, and specifically that `str.capitalize` is not used — it would lower-case
+  the taxon letters and rename the taxon.
+- `test_every_bit_label_has_a_title` — Inputs: the whole `BIT_LABELS` tuple.
+  Expected outputs: six distinct titles, none retaining an underscore and each
+  starting upper-case. Purpose: no label falls through the formatter and reaches
+  a figure as a raw slug.
 - `test_is_valid_bitstring` — Inputs (parametrized, 8 cases): valid and invalid
   strings. Expected outputs: only six-character 0/1 strings validate. Purpose:
   label validation.
@@ -756,12 +864,20 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 ### tests/test_ml_random_forest.py
 
 - `test_train_random_forest_smoke` — Inputs: `summary_statistics_tsv`. Expected
-  outputs: training completes and writes its artifacts.
+  outputs: training completes; the returned metrics name the objective and carry
+  both metric tiers, the dataset summary and the 64-class confusion matrix; the
+  written metrics JSON carries the bit-label order and one timing per stage; and
+  the predictions TSV, model pickle and both confusion-matrix figures are
+  written. Purpose: the one end-to-end smoke test for this entry point, plus its
+  output-file and metrics-field contract.
 
 ### tests/test_ml_multi_knn.py
 
 - `test_multi_knn_train_smoke` — Inputs: `summary_statistics_tsv`. Expected
-  outputs: training completes and writes its artifacts.
+  outputs: training completes; the returned metrics carry both metric tiers and
+  the cross-validation block, and the predictions TSV, model pickle and both
+  confusion-matrix figures are written. Purpose: the one end-to-end smoke test
+  for this entry point, plus its output-file contract.
 - `test_multi_knn_build_model_caps_neighbors_to_training_size` — Inputs:
   `n_neighbors=20` against training sets of 2 and of 50. Expected outputs: the
   effective count and the estimator's own `n_neighbors` are both `2` in the
