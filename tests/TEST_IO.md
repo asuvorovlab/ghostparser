@@ -982,14 +982,22 @@ triplet normalization to perform, so there is nothing to report on.
 
 ### `test_runner_preflight_mode_skips_analysis`
 
-**Input:** a config dict with `preflight_data_check: True` over the defective
-trio.
+**Input:** a config dict with `preflight_data_check: True` and
+`preflight_triplet_cap: 3` over the defective trio.
 
 **Derivation:** `run_orchestrator` prepares the output directory and then
 returns `_run_preflight_only(...)` before any tree cleaning, so the only write
 into that directory is the report. Listing the directory must therefore yield
 exactly `["preflight_data_check.txt"]` — no `metrics.txt`, no processed trees,
-no results TSV. `passed` is `False` because the defective trio yields 2 issues.
+no results TSV. `passed` is `False` because the defective trio yields issues.
+
+The cap: the species tree's ingroup is `A, B, C, D`, so `combinations(·, 3)`
+yields `C(4, 3) = 4` triplets. `_load_target_triplets` keeps the first
+`max_triplets` when `0 < max_triplets < 4`, so a cap of `3` gives
+`triplets_checked == 3` and appends one `analysis.triplet_cap_applied` issue.
+Had the runner ignored the config and used the module default (15,000), all 4
+would be checked and the cap issue would be absent, so both assertions would
+fail — which is what makes `3` rather than the default the right value here.
 
 ### `test_runner_returns_none_when_preflight_cannot_run`
 
@@ -1014,9 +1022,10 @@ optional argument `None`.
 `overwrite` `True`,
 `discordant_test` `"chi-square"`, `tree_height_calculation_strategy` `"AVG"`,
 `min_support_value` `0.5`, `bootstrap_iterations` `100`, `seed`
-`None`, and the boolean feature flags `False` — including
-`preflight_data_check`, whose default `DEFAULT_PREFLIGHT_DATA_CHECK` is `False`
-so that an ordinary run is never turned into a check-only run by accident.
+`None`, `preflight_triplet_cap` `15000` (`DEFAULT_PREFLIGHT_TRIPLET_CAP`), and
+the boolean feature flags `False` — including `preflight_data_check`, whose
+default `DEFAULT_PREFLIGHT_DATA_CHECK` is `False` so that an ordinary run is
+never turned into a check-only run by accident.
 
 ### `test_config_only_keys_read_from_config_file`
 
@@ -1098,8 +1107,11 @@ sample gaining it.
   required-path validation → `ConfigError`.
 - `test_parser_flags_resolve_into_their_config_values` — parsing
   `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2 --p-value-correction
-  fdr_bh --alpha-perm 0.02 --no-overwrite` must yield those exact values with
-  `config_file is None`.
+  fdr_bh --alpha-perm 0.02 --no-overwrite --preflight-data-check
+  --preflight-triplet-cap 0` must yield those exact values with
+  `config_file is None`; `0` is chosen for the cap because it is the one value
+  `_validate_non_negative_int` accepts that differs from the default and is
+  also the documented "no cap" spelling.
 - `test_pipeline_mode_rejects_an_unknown_value` — `pipeline_mode: fast` is
   resolved by `_validate_choice` against `PIPELINE_MODE_CHOICES`
   (`efficient`/`detailed`), which raises `ConfigError` naming the field.
@@ -1872,3 +1884,12 @@ silently changing what preflight reports.
 `ConfigError` naming the field otherwise. It rejects `bool` explicitly, since
 `isinstance(True, int)` is true in Python and `seed: true` is a mistake rather
 than a seed of 1.
+
+### `test_preflight_triplet_cap_rejects_a_negative_value`
+
+**Inputs:** a config payload with `preflight_triplet_cap: -1`.
+
+**Derivation:** the key resolves through `_validate_non_negative_int`, which
+accepts an `int >= 0` and raises `ConfigError` naming the field otherwise. `0`
+is the documented "no cap" value and every positive integer is a cap, so `-1`
+is the nearest value with no meaning.

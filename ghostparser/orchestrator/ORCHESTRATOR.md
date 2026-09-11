@@ -87,6 +87,11 @@ defect -- a gene tree need not be complete, and the engine skips those pairs
 too -- so it is counted rather than reported as an issue. `PreflightResult.passed` is `True`
 only when nothing was detected.
 
+Generated triplets are capped at `preflight_triplet_cap` (default 15,000; `0`
+lifts it), which the runner passes through as `max_triplets`; a bound cap is
+itself reported as `analysis.triplet_cap_applied`, so a partial check never
+reads as a complete one. Triplets named by a `triplet_filter` are not capped.
+
 Three conditions make the check itself impossible and raise `ValueError`
 instead: no outgroups given, a species-tree file that does not hold exactly one
 tree, and a species tree containing none of the outgroups.

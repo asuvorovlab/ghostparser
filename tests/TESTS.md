@@ -598,10 +598,13 @@ The structural preflight data check and the runner short-circuit that reaches it
   two trees. Expected outputs: `ValueError` matching "exactly one tree".
   Purpose: the single-tree precondition is enforced.
 - `test_runner_preflight_mode_skips_analysis` — Inputs: a config dict with
-  `preflight_data_check: True` against the defective dataset. Expected outputs:
-  the returned result has `passed is False` and the output directory contains
-  only `preflight_data_check.txt`. Purpose: the flag runs the check and nothing
-  else.
+  `preflight_data_check: True` and `preflight_triplet_cap: 3` against the
+  defective dataset, whose ingroup yields four triplets. Expected outputs: the
+  returned result has `passed is False`, `triplets_checked == 3`, an
+  `analysis.triplet_cap_applied` issue, and the output directory contains only
+  `preflight_data_check.txt`. Purpose: the flag runs the check and nothing
+  else, and the configured cap is what the check receives — set below the
+  triplet count so the module default could not pass in its place.
 - `test_runner_returns_none_when_preflight_cannot_run` — Inputs: the same
   config with an outgroup absent from the species tree. Expected outputs:
   `run_orchestrator` returns `None`. Purpose: an impossible check is reported,
@@ -615,18 +618,23 @@ Orchestrator config resolution and config-file precedence.
   `None`. Expected outputs: `alpha_dct`/`alpha_ks` 0.05, the orchestrator-specific
   `p_value_correction == "bfn"`, `alpha_perm == 0.05`, the permutation
   resample/CI defaults (2500, 25000, `wilson`), `overwrite is True`, the config-file-only keys at their defaults,
-  `preflight_data_check is False`, `pipeline_mode == "efficient"`, and
-  and `pipeline_mode == "efficient"`. Purpose: default resolution in CLI mode.
+  `preflight_data_check is False`, `preflight_triplet_cap == 15000`, and
+  `pipeline_mode == "efficient"`. Purpose: default resolution in CLI mode.
 - `test_pipeline_mode_rejects_an_unknown_value` — Inputs: `pipeline_mode: fast`.
   Expected outputs: `ConfigError` naming the field. Purpose: the choice list is
   enforced.
 - `test_seed_rejects_a_non_integer` — Inputs: `seed: "abc"`. Expected outputs:
   `ConfigError` naming the field. Purpose: the run-wide seed must be an integer
   when provided.
+- `test_preflight_triplet_cap_rejects_a_negative_value` — Inputs:
+  `preflight_triplet_cap: -1`. Expected outputs: `ConfigError` naming the
+  field. Purpose: the cap is a count with `0` meaning no cap, so a negative
+  value has no reading.
 - `test_parser_flags_resolve_into_their_config_values` — Inputs: the CLI flag
   strings parsed by `build_argument_parser`, then resolved. Expected outputs:
   each flag's value reaches its config key, `--no-overwrite` gives
-  `overwrite is False`, and `--preflight-data-check` gives `True`. Purpose: every
+  `overwrite is False`, `--preflight-data-check` gives `True`, and
+  `--preflight-triplet-cap 0` gives `0`. Purpose: every
   other config test builds a namespace directly, so this is the only place the
   flag names are pinned; resolving covers the override path in the same pass.
 - `test_config_only_keys_read_from_config_file` — Inputs: a JSON config setting

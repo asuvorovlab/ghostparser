@@ -14,6 +14,7 @@ from pathlib import Path
 import dendropy
 
 from ..triplet_utils import normalize_abc_from_sister_pair
+from .config import DEFAULT_PREFLIGHT_TRIPLET_CAP
 from .trees import (
     _root_tree_on_any_outgroup,
     format_newick_with_precision,
@@ -32,9 +33,8 @@ from .triplet_geometry import (
 
 PREFLIGHT_REPORT_FILENAME = "preflight_data_check.txt"
 
-# Caps keep the check fast on large inputs; both are analysis-only limits and do
-# not change what a real run would process.
-DEFAULT_MAX_TRIPLETS = 15000
+# The gene-tree cap is analysis-only like the triplet cap the config owns; it
+# does not change what a real run would process.
 DEFAULT_MAX_GENE_TREES = 0  # 0 means "all"
 DEFAULT_REPORT_LIMIT = 25
 
@@ -546,7 +546,7 @@ def run_preflight_data_check(
     outgroups,
     output_dir=None,
     triplet_filter=None,
-    max_triplets=DEFAULT_MAX_TRIPLETS,
+    max_triplets=DEFAULT_PREFLIGHT_TRIPLET_CAP,
     max_gene_trees=DEFAULT_MAX_GENE_TREES,
     report_limit=DEFAULT_REPORT_LIMIT,
 ):

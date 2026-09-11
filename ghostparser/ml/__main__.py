@@ -1,4 +1,4 @@
-"""Entry point for Ghostparser ML; dispatches to a trainer via ``--model``."""
+"""Usage banner for ``python -m ghostparser.ml``; the trainers are run directly."""
 
 import argparse
 

@@ -41,6 +41,7 @@ def _base_cli_args(**overrides):
         consolidation=None,
         bootstrap=None,
         preflight_data_check=None,
+        preflight_triplet_cap=None,
     )
     for key, value in overrides.items():
         setattr(args, key, value)
@@ -69,6 +70,7 @@ def test_cli_defaults_resolve():
     assert config["bootstrap_debug_mode"] is False
     assert config["bootstrap_summary_only"] is False
     assert config["preflight_data_check"] is False
+    assert config["preflight_triplet_cap"] == 15000
     assert config["pipeline_mode"] == "efficient"
 
 
@@ -288,6 +290,7 @@ def test_parser_flags_resolve_into_their_config_values():
             "--alpha-perm", "0.02",
             "--no-overwrite",
             "--preflight-data-check",
+            "--preflight-triplet-cap", "0",
         ]
     )
     assert opts.config_file is None
@@ -300,6 +303,7 @@ def test_parser_flags_resolve_into_their_config_values():
     assert config["p_value_correction"] == "fdr_bh"
     assert config["overwrite"] is False
     assert config["preflight_data_check"] is True
+    assert config["preflight_triplet_cap"] == 0
 
 
 def _payload(tmp_path, **extra):
@@ -333,4 +337,12 @@ def test_seed_rejects_a_non_integer(tmp_path):
     """The run-wide seed must be an integer when provided."""
     with pytest.raises(ConfigError, match="seed"):
         load_orchestrator_config(str(_payload(tmp_path, seed="abc")))
+
+
+def test_preflight_triplet_cap_rejects_a_negative_value(tmp_path):
+    """The cap is a count with 0 meaning no cap, so below zero has no reading."""
+    with pytest.raises(ConfigError, match="preflight_triplet_cap"):
+        load_orchestrator_config(
+            str(_payload(tmp_path, preflight_triplet_cap=-1))
+        )
 

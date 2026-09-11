@@ -42,6 +42,10 @@ DEFAULT_SHAPE_DIAGNOSTICS = False
 DEFAULT_PIPELINE_MODE = "efficient"
 DEFAULT_CONSOLIDATION = True
 DEFAULT_PREFLIGHT_DATA_CHECK = False
+# Caps the triplets the preflight check walks so it stays quick on large
+# inputs; 0 lifts the cap. Analysis-only: a real run always processes every
+# triplet.
+DEFAULT_PREFLIGHT_TRIPLET_CAP = 15000
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
 PIPELINE_MODE_EFFICIENT = "efficient"
@@ -89,6 +93,7 @@ _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "consolidation",
     "bootstrap",
     "preflight_data_check",
+    "preflight_triplet_cap",
 ]
 
 
@@ -564,6 +569,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "running any analysis (default: disabled)"
         ),
     )
+    parser.add_argument(
+        "--preflight-triplet-cap",
+        dest="preflight_triplet_cap",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of ingroup triplets the preflight data check walks; "
+            "0 checks every triplet (default: "
+            f"{DEFAULT_PREFLIGHT_TRIPLET_CAP})"
+        ),
+    )
     return parser
 
 
@@ -617,6 +633,9 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         ),
         "preflight_data_check": _validate_optional_bool(
             payload, "preflight_data_check", DEFAULT_PREFLIGHT_DATA_CHECK
+        ),
+        "preflight_triplet_cap": _validate_non_negative_int(
+            payload, "preflight_triplet_cap", DEFAULT_PREFLIGHT_TRIPLET_CAP
         ),
         "shape_diagnostics": _validate_optional_bool(
             payload, "shape_diagnostics", DEFAULT_SHAPE_DIAGNOSTICS

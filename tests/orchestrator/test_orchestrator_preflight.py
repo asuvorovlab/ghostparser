@@ -191,7 +191,12 @@ def test_multi_tree_species_file_raises(tmp_path):
 
 
 def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path):
-    """The flag short-circuits the run: only the report is produced."""
+    """The flag short-circuits the run: only the report is produced.
+
+    The cap is set below the four ingroup triplets so its effect is visible in
+    the result, proving the config value reaches the check rather than the
+    module default.
+    """
     species, genes = dirty_inputs
     output_dir = tmp_path / "results"
 
@@ -204,10 +209,15 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path):
             "overwrite": True,
             "triplet_filter": None,
             "preflight_data_check": True,
+            "preflight_triplet_cap": 3,
         }
     )
 
     assert result.passed is False
+    assert result.triplets_checked == 3
+    assert any(
+        issue.category == "analysis.triplet_cap_applied" for issue in result.issues
+    )
     written = sorted(path.name for path in output_dir.iterdir())
     assert written == [PREFLIGHT_REPORT_FILENAME]
 
@@ -228,6 +238,7 @@ def test_runner_returns_none_when_preflight_cannot_run(tmp_path):
             "overwrite": True,
             "triplet_filter": None,
             "preflight_data_check": True,
+            "preflight_triplet_cap": 15000,
         }
     )
 

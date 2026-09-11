@@ -286,6 +286,14 @@ Settable either on the CLI or in a config file.
 - The report lists each detected issue by category (for example `gene_tree.rooting_failed`, `triplet.unresolved_rooted_sister_pair`), a count per category, up to 25 example messages naming the offending gene-tree index and triplet, and a species-tree-versus-gene-tree attribution summary.
 - The checks are structural: they establish whether the data can be processed, not whether the result will be biologically meaningful.
 
+##### `preflight_triplet_cap`
+
+- CLI: `--preflight-triplet-cap <n>`
+- Default: `15000`
+- Type: integer `>= 0`; `0` lifts the cap.
+- The most ingroup triplets the preflight data check walks. Above it the check takes the first `n` in generation order and reports `analysis.triplet_cap_applied` with the total it skipped, so the report says when it is partial. Parsing the gene trees and building their geometry is a fixed cost, so raising the cap costs less than proportionally: on 1,475 gene trees, 15,000 triplets take about 25 s against 11 s for 1,500.
+- Applies only to the check. A real run always processes every triplet, and the key is ignored unless `preflight_data_check` is set. A `triplet_filter` is never capped -- the check walks every triplet the filter names.
+
 ### Config-File-Only Keys
 
 These have no CLI flag. They take their default unless set in a config file.

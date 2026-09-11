@@ -73,3 +73,6 @@ consolidation: true               # writes the consolidation/ subfolder
 # --- Data check ------------------------------------------------------------
 # When true, only the structural check runs and every key above is ignored.
 preflight_data_check: false
+# How many ingroup triplets that check walks; 0 checks every one. A real run
+# always processes every triplet regardless.
+preflight_triplet_cap: 15000

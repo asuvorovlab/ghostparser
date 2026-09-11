@@ -189,6 +189,7 @@ def _run_preflight_only(config, output_dir):
             outgroups=outgroup_taxa,
             output_dir=output_dir,
             triplet_filter=config["triplet_filter"],
+            max_triplets=config["preflight_triplet_cap"],
         )
     except ValueError as exc:
         print(f"✗ Error: Preflight data check could not run: {exc}")

@@ -174,6 +174,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 - `--alpha-dct`, `--alpha-ks`, `--alpha-perm`, `--p-value-correction`
 - `--pipeline-mode {efficient,detailed}`
 - `--no-consolidation`, `--no-bootstrap`
+- `--preflight-data-check`, `--preflight-triplet-cap`
 
 **Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, and the `bootstrap_options` block (`iterations`, `debug_mode`, `summary_only`).
 
@@ -188,7 +189,7 @@ python -m ghostparser.orchestrator \
     -st species.tree -gt genes.tree -og OutGroup --preflight-data-check
 ```
 
-It writes `preflight_data_check.txt` into the output folder, listing every structural problem it found — gene trees missing the outgroup, polytomous triplets with no resolvable sister pair, triplet-filter lines naming unknown taxa — with counts per category, examples naming the offending gene tree and triplet, and a summary attributing the issues to the species tree or the gene trees. These are the failures that would otherwise surface as errors partway through a long run. The checks are structural only: passing means the data can be processed, not that the result will be biologically meaningful.
+It writes `preflight_data_check.txt` into the output folder, listing every structural problem it found — gene trees missing the outgroup, polytomous triplets with no resolvable sister pair, triplet-filter lines naming unknown taxa — with counts per category, examples naming the offending gene tree and triplet, and a summary attributing the issues to the species tree or the gene trees. These are the failures that would otherwise surface as errors partway through a long run. The checks are structural only: passing means the data can be processed, not that the result will be biologically meaningful. By default the check walks at most 15,000 triplets and says so in the report when that cap binds; `--preflight-triplet-cap` (or `preflight_triplet_cap`) raises it, and `0` checks every triplet.
 
 #### Primary Outputs
 
