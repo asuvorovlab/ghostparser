@@ -447,7 +447,7 @@ model:
   max_depth: 10
   min_samples_split: 2
   min_samples_leaf: 1
-  max_features: sqrt
+  max_features: null   # null or ~, or omit the key; not the bare word None
   class_weight: null
   n_neighbors: 5
   weights: uniform
@@ -482,10 +482,12 @@ If you want to avoid a string column being encoded, remove it from the TSV befor
   - `max_depth` (int or null, default: `null`) — `null` leaves tree depth unconstrained.
   - `min_samples_split` (int, default: `2`) — controls how many samples are required before a split is allowed. Larger values make the trees more conservative when the data is noisy or small.
   - `min_samples_leaf` (int, default: `1`) — controls how many samples must remain in a leaf. Larger values smooth the model and can reduce noise.
-  - `max_features` (string, int, float or null, default: `sqrt`) — how many features each split may consider. Accepts `sqrt`, `log2`, an integer `>= 1` (that many features per split), a float in `(0.0, 1.0]` (that fraction of the features), or `null` to use **every** feature at each split. `auto` is rejected: scikit-learn removed it in 1.3, and `sqrt` is its classifier equivalent.
+  - `max_features` (string, int, float or null, default: `null`) — how many features each split may consider. `null` uses **every** feature at each split; `sqrt` and `log2` take that function of the feature count, an integer `>= 1` that many features, and a float in `(0.0, 1.0]` that fraction of them. `auto` is rejected: scikit-learn removed it in 1.3, and `sqrt` is its classifier equivalent.
   - `class_weight` (string, dict, list or null, default: `null`) — accepts `balanced`, `balanced_subsample`, a mapping of class label to weight, a list of such mappings (one per label), or `null` for no class weighting.
 
-  In YAML, write the null value as `null` or `~`. The bare words `None` and `none` are read as plain strings, not null, so GhostParser maps them (and `null` written as a string) back to null for `max_features` and `class_weight` rather than passing the literal text to the estimator. Any other value is rejected with a message naming what it received and every accepted form.
+  **Writing null.** For either key, null is the default, so the simplest way to get it is to omit the key. To write it out, use `null` in YAML or JSON (YAML also accepts `~`). Do **not** write the bare words `None` or `none`: YAML reads them as the strings `"None"` and `"none"`, which are not null and are rejected like any other unrecognized value. In a `hyperparameter_tuning.search_space` list the same applies per candidate — `max_features: [sqrt, null]`, not `[sqrt, None]`.
+
+  Any other value for either key is rejected with a message naming what it received, every accepted form, and how to write null.
 
   Leave `min_samples_split` and `min_samples_leaf` out of the config if you want the defaults. The loader does not infer them from the dataset, and explicit `null` values are rejected.
 

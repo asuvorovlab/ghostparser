@@ -12,7 +12,9 @@ model:
   max_depth: null
   min_samples_split: 2
   min_samples_leaf: 1
-  max_features: sqrt
+  # null (the default) lets every split consider every feature. Write it as
+  # null or ~, or omit the key -- YAML reads the bare word None as a string.
+  max_features: null
   class_weight: null
 
 evaluation:

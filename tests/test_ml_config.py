@@ -33,6 +33,7 @@ def _load(tmp_path, **extra):
         ("overwrite", True),
         ("min_samples_split", 2),
         ("min_samples_leaf", 1),
+        ("max_features", None),
     ],
 )
 def test_ml_config_fills_defaults_for_omitted_keys(key, expected, tmp_path):
@@ -62,27 +63,19 @@ def test_ml_config_explicit_values_win_over_defaults(payload, key, expected, tmp
     "key, value, expected",
     [
         ("max_features", None, None),
-        ("max_features", "None", None),
-        ("max_features", "none", None),
-        ("max_features", "null", None),
         ("max_features", "log2", "log2"),
         ("max_features", 3, 3),
         ("max_features", 0.5, 0.5),
         ("class_weight", None, None),
-        ("class_weight", "none", None),
         ("class_weight", "balanced", "balanced"),
         ("class_weight", {"0": 1.0}, {"0": 1.0}),
         ("class_weight", [{"0": 1.0}], [{"0": 1.0}]),
     ],
 )
-def test_ml_config_normalizes_estimator_passthrough_values(
+def test_ml_config_accepts_every_estimator_value_form(
     key, value, expected, tmp_path
 ):
-    """Every form scikit-learn accepts survives, and YAML's null spellings map to None.
-
-    ``None``/``none``/``null`` are plain strings after a YAML parse, so they
-    would otherwise reach the estimator as literal text and be rejected there.
-    """
+    """Every form scikit-learn accepts survives the normalizer unchanged."""
     assert _load(tmp_path, model={key: value})[key] == expected
 
 
@@ -90,6 +83,7 @@ def test_ml_config_normalizes_estimator_passthrough_values(
     "key, value, expected_message",
     [
         ("max_features", "auto", "removed"),
+        ("max_features", "None", "omit the key or write null"),
         ("max_features", "sqrt2", "'sqrt', 'log2'"),
         ("max_features", 0, "integer >= 1"),
         ("max_features", 1.5, "(0.0, 1.0]"),
@@ -101,7 +95,11 @@ def test_ml_config_normalizes_estimator_passthrough_values(
 def test_ml_config_rejects_invalid_estimator_values(
     key, value, expected_message, tmp_path
 ):
-    """An invalid value is caught in config, naming the value and what is valid."""
+    """An invalid value is caught in config, naming the value and what is valid.
+
+    The `"None"` case is the YAML trap -- the bare word parses as a string --
+    so its rejection has to say how null is actually written.
+    """
     with pytest.raises(ConfigError) as excinfo:
         _load(tmp_path, model={key: value})
 

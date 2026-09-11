@@ -1487,17 +1487,15 @@ config defaults, and their inputs are the fixtures described in
 - **KNN neighbor capping** — `n_neighbors` cannot exceed the number of training
   samples, so the builder clamps it and the metrics report states the effective
   value.
-- **`max_features` / `class_weight` spellings** — the accepted set is read off
+- **`max_features` / `class_weight` forms** — the accepted set is read off
   scikit-learn's own parameter constraint: `max_features` takes `'sqrt'`,
   `'log2'`, an `int >= 1`, a `float` in `(0.0, 1.0]`, or `None`; `class_weight`
   takes `'balanced'`, `'balanced_subsample'`, a dict, a list of dicts, or
-  `None`. The null spellings under test come from YAML's resolution rules: only
-  `null`, `~` and an empty value parse as null, so `None` and `none` arrive as
-  the strings `'None'` and `'none'` and are mapped back. `'auto'` is expected to
-  fail because scikit-learn removed it in 1.3. `true` is expected to fail
-  because `bool` is a subclass of `int` in Python and would otherwise satisfy
-  the `int >= 1` branch as the value `1`. The rejected numerics `0` and `1.5`
-  sit just outside the `int >= 1` and `(0.0, 1.0]` bounds respectively.
+  `None`. `'auto'` is expected to fail because scikit-learn removed it in 1.3.
+  `true` is expected to fail because `bool` is a subclass of `int` in Python
+  and would otherwise satisfy the `int >= 1` branch as the value `1`. The
+  rejected numerics `0` and `1.5` sit just outside the `int >= 1` and
+  `(0.0, 1.0]` bounds respectively.
 - **Confusion-matrix row normalization** — the input counts are
   `[[3, 1, 0], [0, 0, 0], [1, 1, 2]]`. Row totals are `4`, `0` and `4`. Rows 0
   and 2 divide through by `4`, giving `[0.75, 0.25, 0]` and

@@ -542,6 +542,8 @@ This section summarizes user-facing errors and validation failures that GhostPar
    ML config shape is invalid; expected nested `model` and `evaluation` sections.
 - `Place 'random_state' and 'n_jobs' at the top level, not under 'model'. ...`
    Runtime controls were placed in the wrong config section.
+- `Config field model.max_features got 'None'. Valid values are ...` (likewise `model.class_weight`)
+   The bare word `None` in YAML is a string, not null. Omit the key (null is the default) or write `null` / `~`.
 - `ConfigError(str(exc))` wrapping `rows_to_matrix` failures
    Random-forest CLI forwards TSV/feature validation failures as config errors.
 

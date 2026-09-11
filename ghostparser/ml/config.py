@@ -32,7 +32,7 @@ DEFAULT_N_ESTIMATORS = 200
 DEFAULT_MAX_DEPTH = None
 DEFAULT_MIN_SAMPLES_SPLIT = 2
 DEFAULT_MIN_SAMPLES_LEAF = 1
-DEFAULT_MAX_FEATURES = "sqrt"
+DEFAULT_MAX_FEATURES = None
 DEFAULT_CLASS_WEIGHT = None
 DEFAULT_N_JOBS = -1
 DEFAULT_N_NEIGHBORS = 5
@@ -49,21 +49,17 @@ EVALUATION_METRICS_CHOICES = ("all", "primary", "diagnostic", "per_bit")
 MAX_FEATURES_STRING_CHOICES = ("sqrt", "log2")
 CLASS_WEIGHT_STRING_CHOICES = ("balanced", "balanced_subsample")
 
-# YAML resolves only `null`, `~` and an empty value to null; the bare words
-# `none` and `None` come through as plain strings and would reach scikit-learn
-# as the literal text. Accepting them here spares every config the trap.
-_NULL_SPELLINGS = frozenset({"none", "null", "~"})
-
 # `auto` was scikit-learn's max_features default until 1.1 and was removed in
 # 1.3 for being ambiguous between classifiers and regressors. It is worth its
 # own message because it is the value most users reach for first.
 _REMOVED_MAX_FEATURES_SPELLINGS = frozenset({"auto"})
 
-_YAML_NULL_HINT = (
-    "In YAML write null (or ~) for the null value -- the bare words None and "
-    "none are read as strings, not null."
+# Both keys default to null and accept it, but YAML reads the bare words `None`
+# and `none` as strings, so a rejection has to say how null is actually written.
+_HOW_TO_WRITE_NULL = (
+    "To use null, omit the key or write null (YAML also accepts ~); the bare "
+    "words None and none are read as strings and rejected."
 )
-
 
 def _validate_optional_path(payload: dict, key: str, default: str) -> str:
     value = payload.get(key, default)
@@ -161,15 +157,14 @@ def normalize_max_features(value: object, *, where: str) -> object:
         or a ``float`` in ``(0.0, 1.0]``.
 
     Raises:
-        ConfigError: If the value is anything else, naming what was received
-            and every accepted form.
+        ConfigError: If the value is anything else, naming what was received,
+            every accepted form, and how to write null -- the strings ``"None"``
+            and ``"none"`` that YAML produces from the bare words land here.
     """
     if value is None:
         return None
     if isinstance(value, str):
         stripped = value.strip()
-        if stripped.lower() in _NULL_SPELLINGS:
-            return None
         if stripped in MAX_FEATURES_STRING_CHOICES:
             return stripped
         if stripped.lower() in _REMOVED_MAX_FEATURES_SPELLINGS:
@@ -199,7 +194,7 @@ def _max_features_message(where: str, value: object) -> str:
         f"Config field {where} got {value!r}. Valid values are {choices}, an "
         "integer >= 1 (that many features per split), a float in (0.0, 1.0] "
         "(that fraction of the features), or null to use every feature at each "
-        f"split. {_YAML_NULL_HINT}"
+        f"split. {_HOW_TO_WRITE_NULL}"
     )
 
 
@@ -215,15 +210,14 @@ def normalize_class_weight(value: object, *, where: str) -> object:
         class label to weight, or a list of such mappings (one per label).
 
     Raises:
-        ConfigError: If the value is anything else, naming what was received
-            and every accepted form.
+        ConfigError: If the value is anything else, naming what was received,
+            every accepted form, and how to write null -- the strings ``"None"``
+            and ``"none"`` that YAML produces from the bare words land here.
     """
     if value is None:
         return None
     if isinstance(value, str):
         stripped = value.strip()
-        if stripped.lower() in _NULL_SPELLINGS:
-            return None
         if stripped in CLASS_WEIGHT_STRING_CHOICES:
             return stripped
         raise ConfigError(_class_weight_message(where, value))
@@ -239,7 +233,7 @@ def _class_weight_message(where: str, value: object) -> str:
     return (
         f"Config field {where} got {value!r}. Valid values are {choices}, a "
         "mapping of class label to weight, a list of such mappings (one per "
-        f"label), or null for no class weighting. {_YAML_NULL_HINT}"
+        f"label), or null for no class weighting. {_HOW_TO_WRITE_NULL}"
     )
 
 

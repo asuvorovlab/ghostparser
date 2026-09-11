@@ -118,7 +118,7 @@ def test_load_hyper_tune_config_fills_model_defaults(
     config = load_hyper_tune_config(str(config_path))
 
     assert config["class_weight"] is None
-    assert config["max_features"] == "sqrt"
+    assert config["max_features"] is None
     assert config["min_samples_split"] == 2
     assert config["overwrite"] is True
     assert config["use_wandb"] is bool(use_wandb)
@@ -551,14 +551,14 @@ def test_tune_hyperparameters_routes_bulk_artifacts_to_wandb(
 @pytest.mark.parametrize(
     "values, expected",
     [
-        (["sqrt", "none", None, 4], ["sqrt", None, None, 4]),
-        ("None", None),
+        (["sqrt", None, 4], ["sqrt", None, 4]),
+        ("log2", "log2"),
     ],
 )
-def test_load_hyper_tune_config_normalizes_search_space_values(
+def test_load_hyper_tune_config_keeps_search_space_shape(
     values, expected, tmp_path
 ):
-    """Search-space candidates get the same per-value rules as the `model` block."""
+    """Valid candidates pass the `model`-block rules, list or lone value alike."""
     config_path = _write_config(
         tmp_path,
         "hyper_tune_search_values.json",

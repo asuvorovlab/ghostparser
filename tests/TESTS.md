@@ -824,32 +824,31 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 ### tests/test_ml_config.py
 
 - `test_ml_config_fills_defaults_for_omitted_keys` — Inputs (parametrized over
-  4 keys): a config carrying only `input_path` and `output_dir`. Expected
+  5 keys): a config carrying only `input_path` and `output_dir`. Expected
   outputs: `target_column` `class`, `overwrite` `True`, `min_samples_split` `2`,
-  `min_samples_leaf` `1`. Purpose: the documented defaults are what an otherwise
-  empty config resolves to.
+  `min_samples_leaf` `1`, `max_features` `None`. Purpose: the documented
+  defaults are what an otherwise empty config resolves to.
 - `test_ml_config_explicit_values_win_over_defaults` — Inputs (parametrized over
   4 payloads): `overwrite: false`, an explicit `target_column`, and two
   hyperparameters given under the nested `model` block. Expected outputs: each
   value replaces its default. Purpose: precedence, plus the `model` block
   flattening — a key given there must surface at the top level of the resolved
   config, including one that also has a default.
-- `test_ml_config_normalizes_estimator_passthrough_values` — Inputs
-  (parametrized over 12 cases): `model.max_features` as `null`, the strings
-  `None`/`none`/`null`, `log2`, `3` and `0.5`; `model.class_weight` as `null`,
-  `none`, `balanced`, a mapping, and a list of mappings. Expected outputs: every
-  null spelling resolves to `None` and every other form passes through
-  unchanged. Purpose: YAML reads the bare words `None`/`none` as strings, so
-  without this they reach scikit-learn as literal text and are rejected there
-  instead of in config.
+- `test_ml_config_accepts_every_estimator_value_form` — Inputs (parametrized
+  over 8 cases): `model.max_features` as `null`, `log2`, `3` and `0.5`;
+  `model.class_weight` as `null`, `balanced`, a mapping, and a list of mappings.
+  Expected outputs: each value passes through unchanged. Purpose: every form
+  scikit-learn accepts for these two keys survives the validator.
 - `test_ml_config_rejects_invalid_estimator_values` — Inputs (parametrized over
-  7 cases): `max_features` as `auto`, `sqrt2`, `0`, `1.5` and `true`;
-  `class_weight` as `nope` and `5`. Expected outputs: `ConfigError` whose
-  message names the dotted config location, the received value, and the
-  accepted forms — `auto` gets its own message saying scikit-learn removed it.
-  Purpose: the failure has to name the config key the user wrote, not surface
-  as a bare estimator error at fit time. `true` also pins that a bool is
-  rejected rather than passing the `int` check.
+  8 cases): `max_features` as `auto`, the string `None`, `sqrt2`, `0`, `1.5`
+  and `true`; `class_weight` as `nope` and `5`. Expected outputs: `ConfigError`
+  whose message names the dotted config location, the received value, and the
+  accepted forms — `auto` gets its own message saying scikit-learn removed it,
+  and the string `None` (what YAML makes of the bare word) is told to omit the
+  key or write `null`. Purpose: the failure has to name the config key the user
+  wrote, not surface as a bare estimator error at fit time, and the one
+  spelling users reach for by reflex has to be steered to the right one. `true`
+  also pins that a bool is rejected rather than passing the `int` check.
 
 ### tests/test_ml_utils.py
 
@@ -993,13 +992,12 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
   `ConfigError` whose message names `use_wandb: false`. Purpose: a missing
   optional dependency surfaces as an actionable config error rather than an
   import traceback.
-- `test_load_hyper_tune_config_normalizes_search_space_values` — Inputs
-  (parametrized): `search_space.max_features` as the list
-  `["sqrt", "none", null, 4]` and as the lone value `"None"`. Expected outputs:
-  `["sqrt", None, None, 4]` and `None` respectively. Purpose: search-space
-  candidates reach the estimator one at a time, so they need the same per-value
-  rules as the `model` block, and the container shape a user wrote (list or
-  scalar) has to survive normalization.
+- `test_load_hyper_tune_config_keeps_search_space_shape` — Inputs
+  (parametrized): `search_space.max_features` as the list `["sqrt", null, 4]`
+  and as the lone value `"log2"`. Expected outputs: the same list and the same
+  scalar. Purpose: search-space candidates reach the estimator one at a time,
+  so they pass the same per-value rules as the `model` block, and the container
+  shape a user wrote (list or scalar) has to survive them.
 - `test_load_hyper_tune_config_rejects_invalid_search_space_value` — Inputs:
   `search_space.max_features: ["sqrt", "auto"]`. Expected outputs: `ConfigError`
   naming `hyperparameter_tuning.search_space.max_features` and `'auto'`.

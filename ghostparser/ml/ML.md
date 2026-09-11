@@ -293,7 +293,9 @@ intuition is:
   the trees can chase noise, so raising them makes the model more conservative
   (useful on small or noisy training sets). `max_features` controls per-split
   feature sampling: smaller values make the trees more diverse, larger values
-  make each tree greedier, and `null` lets every split see every feature. `class_weight` can favour rare outcomes.
+  make each tree greedier, and `null` -- the default, written `null` or `~`
+  and never the bare word `None` -- lets every split see every feature.
+  `class_weight` can favour rare outcomes.
 - **Multi-label KNN** — `n_neighbors` sets how local a prediction is, and
   `weights: distance` lets closer neighbours dominate. `algorithm` and
   `leaf_size` affect search performance rather than the model's meaning, while

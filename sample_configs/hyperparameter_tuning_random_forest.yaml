@@ -36,4 +36,5 @@ hyperparameter_tuning:
     max_depth: [ null, 10, 20 ]
     min_samples_split: [ 2, 5 ]
     min_samples_leaf: [ 1, 2 ]
+    # Add null (not None) as a candidate to also try every feature per split.
     max_features: [ sqrt, log2 ]
