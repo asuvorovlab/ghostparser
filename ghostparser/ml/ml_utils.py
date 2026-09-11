@@ -573,7 +573,17 @@ def build_64_class_confusion_matrix(
     for true_idx, pred_idx in zip(true_indices, pred_indices):
         matrix[int(true_idx), int(pred_idx)] += 1
 
+    # Both axes run from 000000 through the single-bit classes up to 111111, so
+    # the number of set bits grows steadily down and across and a class sits on
+    # the diagonal opposite itself. Plain binary order would scatter the
+    # single-bit classes across the whole range instead.
     class_labels = [format(index, f"0{BIT_COUNT}b") for index in range(2**BIT_COUNT)]
+    order = sorted(
+        range(len(class_labels)),
+        key=lambda index: (class_labels[index].count("1"), class_labels[index]),
+    )
+    matrix = matrix[np.ix_(order, order)]
+    class_labels = [class_labels[index] for index in order]
     return {
         "class_labels": class_labels,
         "matrix": matrix.tolist(),

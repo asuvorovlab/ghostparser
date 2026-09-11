@@ -773,6 +773,15 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
   Expected outputs: six distinct titles, none retaining an underscore and each
   starting upper-case. Purpose: no label falls through the formatter and reaches
   a figure as a raw slug.
+- `test_64_class_matrix_orders_classes_by_set_bits` — Inputs: three rows with
+  true classes `110000`, `000001`, `111111` and predicted classes `000011`,
+  `000001`, `111111`. Expected outputs: 64 distinct `class_labels` whose set-bit
+  count never decreases along the list and which are lexically sorted within
+  each count, `000000` first and `111111` last; the matrix sums to 3 with a 1 at
+  each (true, predicted) position looked up by label. Purpose: both axes of the
+  64-class matrix run from no bits set to all six, in the same order, and the
+  counts are permuted along with the labels — a label-only sort would put every
+  off-diagonal count under the wrong pair of names.
 - `test_is_valid_bitstring` — Inputs (parametrized, 8 cases): valid and invalid
   strings. Expected outputs: only six-character 0/1 strings validate. Purpose:
   label validation.

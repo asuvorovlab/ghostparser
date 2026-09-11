@@ -330,8 +330,8 @@ def train_random_forest(config: argparse.Namespace) -> dict:
                     "",
                     "64-class confusion matrix:",
                     f"  Plot: {confusion_matrix_64_plot_path}",
-                    "  Note: matrix includes all 64 possible 6-bit labels (000000 to 111111).",
-                    "  Note: plotted cells are row-normalized fractions of each true class; empty cells are unshaded.",
+                    "  Note: matrix includes all 64 possible 6-bit labels, ordered by the number of set bits (000000 first, 111111 last).",
+                    "  Note: plotted cells are row-normalized fractions of each true class.",
                 ]
             )
     if report_class_distribution:

@@ -13,6 +13,7 @@ from ghostparser.ml.ml_utils import (
     BIT_LABELS,
     auto_cv_folds,
     bit_distribution,
+    build_64_class_confusion_matrix,
     build_feature_importance_rows,
     build_prediction_rows,
     evaluate_predictions,
@@ -54,6 +55,36 @@ def test_bit_label_titles_keep_the_taxon_letters_upper_case(bit_label, expected)
     `Ghost into a` and renaming the taxon. Only the first character may change.
     """
     assert format_bit_label_title(bit_label) == expected
+
+
+def test_64_class_matrix_orders_classes_by_set_bits():
+    """Both axes run from 000000 up to 111111 by the number of set bits.
+
+    The label list must be non-decreasing in set-bit count, lexical within a
+    count, and the count matrix must be permuted along with it -- a sort that
+    reordered the labels but left the counts in binary order would mislabel
+    every off-diagonal cell. Three rows with known true/predicted classes pin
+    the permutation: each lands where its labels say, and nowhere else.
+    """
+    y_true = np.array([[1, 1, 0, 0, 0, 0], [0, 0, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1]])
+    y_pred = np.array([[0, 0, 0, 0, 1, 1], [0, 0, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1]])
+
+    result = build_64_class_confusion_matrix(y_true, y_pred)
+    labels = result["class_labels"]
+    matrix = np.asarray(result["matrix"])
+
+    assert len(labels) == 64 and len(set(labels)) == 64
+    set_bits = [label.count("1") for label in labels]
+    assert set_bits == sorted(set_bits)
+    for count in range(BIT_COUNT + 1):
+        group = [label for label in labels if label.count("1") == count]
+        assert group == sorted(group)
+    assert labels[0] == "000000" and labels[-1] == "111111"
+
+    assert matrix.sum() == 3
+    assert matrix[labels.index("110000"), labels.index("000011")] == 1
+    assert matrix[labels.index("000001"), labels.index("000001")] == 1
+    assert matrix[labels.index("111111"), labels.index("111111")] == 1
 
 
 def test_every_bit_label_has_a_title():

@@ -1218,6 +1218,27 @@ put the same title on two panels of the per-bit figure. No output may keep an
 underscore (the transform is total, not a lookup table with gaps) and each must
 start upper-case.
 
+### `test_64_class_matrix_orders_classes_by_set_bits`
+
+**Inputs:** `y_true` rows `[1,1,0,0,0,0]`, `[0,0,0,0,0,1]`, `[1,1,1,1,1,1]` and
+`y_pred` rows `[0,0,0,0,1,1]`, `[0,0,0,0,0,1]`, `[1,1,1,1,1,1]` — classes
+`110000 → 000011`, `000001 → 000001`, `111111 → 111111`.
+
+**Derivation:** the builder sorts the 64 six-bit strings on
+`(count("1"), label)`, so the list opens `000000`, runs the six single-bit
+classes `000001 … 100000`, then the fifteen two-bit classes, and so on to
+`111111`: set-bit counts `[1, 6, 15, 20, 15, 6, 1]` — the binomial row for
+`n = 6` — and never decreasing. Within a count the tie-break is the string
+itself, so each group is lexically sorted. The three rows were chosen so that
+each of the three (true, predicted) pairs sits somewhere binary order and
+set-bit order disagree: in binary order `110000` is index 48 and `000011` index
+3, but after the sort they are at positions 21 and 7. The matrix is indexed by
+`labels.index(...)` on both axes, so the assertion passes only if rows *and*
+columns were permuted with the labels; a sort that reordered the label list but
+left the counts at their binary indices would report the `110000 → 000011`
+count at position `(48, 3)`, which the labels now name `(101011, 000100)`. The
+total of 3 confirms nothing was dropped or duplicated by the reindexing.
+
 ### `test_is_valid_bitstring`
 
 **Derivation:** validity is `len(value) == 6 and set(value) <= {"0","1"}`. Hence
