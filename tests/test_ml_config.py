@@ -1,9 +1,22 @@
+"""Config resolution for the ML trainers.
+
+Marked ``config`` throughout. Individual defaults are not pinned -- CONFIG.md
+and the shipped sample configs state them; what is pinned is that the loader
+resolves, that explicit values win, and that the two estimator passthrough keys
+accept every form scikit-learn does and nothing else.
+"""
+
 import json
+from pathlib import Path
 
 import pytest
 
 from ghostparser.config import ConfigError
 from ghostparser.ml.config import load_ml_config
+
+pytestmark = pytest.mark.config
+
+_SAMPLE_DIR = Path(__file__).resolve().parents[1] / "sample_configs"
 
 _REQUIRED = {
     "input_path": "./results/summary_statistics.tsv",
@@ -27,18 +40,18 @@ def _load(tmp_path, **extra):
 
 
 @pytest.mark.parametrize(
-    "key, expected",
-    [
-        ("target_column", "class"),
-        ("overwrite", True),
-        ("min_samples_split", 2),
-        ("min_samples_leaf", 1),
-        ("max_features", None),
-    ],
+    "sample_name", ["random_forest_minimal.yaml", "multi_knn_minimal.yaml"]
 )
-def test_ml_config_fills_defaults_for_omitted_keys(key, expected, tmp_path):
-    """A config carrying only the required paths takes every other default."""
-    assert _load(tmp_path)[key] == expected
+def test_shipped_trainer_sample_configs_resolve(sample_name):
+    """The trainer samples load cleanly and use the current key names.
+
+    Guards against a sample drifting out of step with the validator, which
+    would leave users copying a config the loader rejects.
+    """
+    config = load_ml_config(str(_SAMPLE_DIR / sample_name))
+
+    assert config["input_path"].endswith("summary_statistics.tsv")
+    assert config["target_column"]
 
 
 @pytest.mark.parametrize(

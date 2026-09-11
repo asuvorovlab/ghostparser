@@ -10,16 +10,54 @@ derivation of each expected result, see the companion [TEST_IO.md](TEST_IO.md).
 # Everything
 pytest
 
+# One category (see below); combine with -m "core and not integration" etc.
+pytest -m core           # the statistics and decisions
+pytest -m config         # config loading, resolution and validation
+pytest -m output         # what gets written: files, columns, report fields
+pytest -m integration    # entry points driven end to end
+pytest -m parity         # cached geometry vs the DendroPy reference
+
 # One file / one test
 pytest tests/orchestrator/test_orchestrator_inference.py
-pytest tests/orchestrator/test_orchestrator_decision.py::test_classify_ghost_when_discordant_heights_exceed_concordant
-
-# Only the cross-library parity tests (DendroPy vs BioPython)
-pytest -m parity
+pytest tests/orchestrator/test_orchestrator_decision.py::test_classify_introgression_truth_table
 ```
 
 On the SLURM cluster, route the suite onto a compute node rather than running it
 on a login node.
+
+## Categories
+
+Every test carries at least one of five markers, so a change to one part of the
+code can be checked with the tests that cover that part rather than the whole
+suite. The criteria are meant to be objective:
+
+| Marker | Criterion | Typical time |
+|---|---|---|
+| `core` | The statistics and decisions: the cascade, corrections, permutation and TOST, geometry, tree preprocessing, metrics math, tuner marginals. Every test with a hand derivation in TEST_IO.md. | ~30 s |
+| `config` | Exercises a loader, normalizer or validator; asserts on the resolved config dict or a `ConfigError`. | ~5 s |
+| `output` | Asserts on *what was written* -- files present, TSV columns, report fields, artifact routing, a figure saved -- not on the numbers in them. | ~15 s |
+| `integration` | Drives an entry point end to end: `run_orchestrator`, `train_random_forest`, `train_multi_knn`, `tune_hyperparameters`. | ~15 s |
+| `parity` | Cross-library agreement between the cached geometry and the DendroPy reference. | < 3 s |
+
+`config`, `output` and `integration` are applied in the test files -- module-wide
+with `pytestmark` where a file is homogeneous, per test otherwise. `core` is
+added by `tests/conftest.py` to every test that carries none of those three, so
+a new logic test needs no mark and `pytest -m core` never silently drops one.
+A test may carry several: the consolidation tests that check a computed average
+by reading the TSV it was written to are `core` and `output`; the trainer
+smoke tests are `integration` and `output`.
+
+`core` is the slowest category -- two `holm` cases in the decision tests run
+the full deferred bootstrap -- and that is the right shape: touching inference
+means paying for inference tests. What the split buys is the other direction:
+a changed default runs `config` in seconds, a changed report line runs
+`output`, and the end-to-end runs wait until commit time.
+
+Config tests do not pin individual default values. CONFIG.md and the sample
+configs state those, and two invariants keep them in step with the code
+without a per-key test: CLI mode and config-file mode resolve to one and the
+same set of defaults, and `orchestrator_full.yaml` names every runtime key at
+its default.
 
 ## Test Philosophy
 
@@ -64,6 +102,8 @@ suite by `tests/conftest.py`. Orchestrator-specific fixtures live in
 ### tests/orchestrator/test_orchestrator.py
 
 End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixture.
+
+Marked `integration` throughout -- every test drives `run_orchestrator` -- and `output` where it asserts on files or columns (`writes_results_tsv`, `no_bootstrap_omits_the_bootstrap_columns`, `species_rename_map_reaches_every_output`, `consolidation_preserves_run_outputs`, `generate_summary_stats_writes_tsv`, `bootstrap_debug_mode_writes_debug_columns`).
 
 - `test_run_orchestrator_matches_derived_expectation` — Inputs: `run_orchestrator`
   (serial, `taxon` mode, fixed bootstrap seed, consolidation off). Expected
@@ -125,6 +165,8 @@ Also in `test_orchestrator.py`:
 Per-triplet inference on a 10-gene-subtree fixture, with expectations recomputed
 from the tabulated tree geometry.
 
+All `core`.
+
 - `test_analyze_triplet_matches_derived_expectation` — Inputs (parametrized over
   6 tree-height strategies x permutation on/off x 2 discordant tests = 24
   cases): `analyze_triplet` over the 10 gene subtrees. Expected outputs: the
@@ -155,6 +197,8 @@ from the tabulated tree geometry.
 
 The decision logic and p-value correction, driven with crafted observation sets
 because the shared fixture never produces a significant DCT.
+
+All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcting`, which is `output`.
 
 - `test_decision_cascade_lands_on_each_classification` — Inputs (parametrized, 5
   rows): crafted observation sets, one per outcome — an even 10/10 discordant
@@ -277,6 +321,8 @@ because the shared fixture never produces a significant DCT.
 The adaptive studentized permutation test, checked against SciPy, against
 exhaustive enumeration, and over randomized inputs.
 
+All `core`.
+
 - `test_observed_statistic_matches_scipy` — Inputs (parametrized over 5 seeds):
   random sample pairs. Expected outputs: the observed statistic equals
   `scipy.stats.permutation_test`'s and the in-test reference formula exactly.
@@ -389,6 +435,8 @@ The optional distribution-shape diagnostics: moment parity against SciPy, the
 modality test's calibration on samples of known modality, and the results-TSV
 column contract.
 
+The statistics are `core`; the two TSV column-contract tests are `output`.
+
 - `test_shape_moments_match_scipy` — Inputs: 500 lognormal draws (seed 4).
   Expected outputs: `skew` and `excess_kurtosis` equal `scipy.stats.skew` and
   `scipy.stats.kurtosis(fisher=True)` called on the same sample, and both are
@@ -438,6 +486,8 @@ column contract.
 
 Tree preprocessing, asserted against explicit Newick literals.
 
+All `core`.
+
 - `test_clean_and_save_trees_preserves_a_well_supported_tree` — Inputs:
   `orchestrator_species_tree` with `min_avg_support=0.5`. Expected outputs: the
   cleaned file round-trips the input Newick verbatim and reads back as one tree.
@@ -472,6 +522,8 @@ Tree preprocessing, asserted against explicit Newick literals.
 
 The suite's only parity tests, both marked `@pytest.mark.parity`.
 
+Marked `parity` (and `core`).
+
 - `test_triplet_branch_lengths_match` — Inputs (parametrized over the pairs
   `(A,B)`, `(A,C)`, `(B,C)`): each `triplet_comparison_cases` tree, extracted
   with DendroPy then re-read through BioPython. Expected outputs: the pairwise
@@ -489,6 +541,8 @@ of a cached tree instead of extracting its subtree — the path every run takes,
 for gene trees and the species tree alike. Most tests compare against
 `extract_triplet_subtree` + `observation_from_subtree`, the DendroPy reference
 behaviour.
+
+All `core`.
 
 - `test_geometry_matches_subtree_extraction` - Inputs (parametrized over the six
   tree-height strategies and eleven `(newick, triplet)` cases covering nested
@@ -541,6 +595,8 @@ Covers loading and validating a species rename map. The end-to-end effect on
 the outputs is covered by `test_species_rename_map_reaches_every_output` in
 `test_orchestrator.py`.
 
+The four map-loading tests are `config`; the two renaming tests are `core`.
+
 - `test_rename_map_reads_a_two_column_tsv` — Inputs: a TSV with a comment line,
   a blank line, and two entries. Expected outputs: the two-entry mapping.
   Purpose: the TSV form, and that blanks and comments are ignored.
@@ -564,6 +620,8 @@ the outputs is covered by `test_species_rename_map_reaches_every_output` in
 ### tests/orchestrator/test_orchestrator_preflight.py
 
 The structural preflight data check and the runner short-circuit that reaches it.
+
+The checks themselves are `core`; `test_report_is_written_only_when_an_output_dir_is_given` is `output`; the two runner tests are `integration` (the first also `output`).
 
 - `test_clean_inputs_pass_with_no_issues` — Inputs: a 5-taxon species tree
   `(((A,B),C),(D,OUT))` and two well-formed gene trees. Expected outputs:
@@ -612,52 +670,31 @@ The structural preflight data check and the runner short-circuit that reaches it
 
 ### tests/orchestrator/test_orchestrator_config.py
 
-Orchestrator config resolution and config-file precedence.
+Orchestrator config resolution and config-file precedence. Marked `config`
+throughout. No individual default is pinned; two invariants stand in for all of
+them.
 
-- `test_cli_defaults_resolve` — Inputs: a CLI namespace with every optional arg
-  `None`. Expected outputs: `alpha_dct`/`alpha_ks` 0.05, the orchestrator-specific
-  `p_value_correction == "bfn"`, `alpha_perm == 0.05`, the permutation
-  resample/CI defaults (2500, 25000, `wilson`), `overwrite is True`, the config-file-only keys at their defaults,
-  `preflight_data_check is False`, `preflight_triplet_cap == 15000`, and
-  `pipeline_mode == "efficient"`. Purpose: default resolution in CLI mode.
-- `test_pipeline_mode_rejects_an_unknown_value` — Inputs: `pipeline_mode: fast`.
-  Expected outputs: `ConfigError` naming the field. Purpose: the choice list is
-  enforced.
-- `test_seed_rejects_a_non_integer` — Inputs: `seed: "abc"`. Expected outputs:
-  `ConfigError` naming the field. Purpose: the run-wide seed must be an integer
-  when provided.
-- `test_preflight_triplet_cap_rejects_a_negative_value` — Inputs:
-  `preflight_triplet_cap: -1`. Expected outputs: `ConfigError` naming the
-  field. Purpose: the cap is a count with `0` meaning no cap, so a negative
-  value has no reading.
-- `test_parser_flags_resolve_into_their_config_values` — Inputs: the CLI flag
-  strings parsed by `build_argument_parser`, then resolved. Expected outputs:
-  each flag's value reaches its config key, `--no-overwrite` gives
-  `overwrite is False`, `--preflight-data-check` gives `True`, and
-  `--preflight-triplet-cap 0` gives `0`. Purpose: every
-  other config test builds a namespace directly, so this is the only place the
-  flag names are pinned; resolving covers the override path in the same pass.
-- `test_config_only_keys_read_from_config_file` — Inputs: a JSON config setting
-  `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`,
-  `generate_summary_stats`, `alpha_dct`, and a nested `bootstrap_options` block.
-  Expected outputs: every key, including the flattened bootstrap options, is
-  read. Purpose: config-file-only keys and nested bootstrap parsing.
-- `test_p_value_correction_accepts_yaml_bare_word_no` — Inputs (parametrized):
-  a YAML config writing `p_value_correction` as the bare word `no`, as quoted
-  `"no"`, as `No`/`NO`, and as the unaffected `bfn`/`fdr_bh`. Expected outputs:
-  each resolves to its own choice. Purpose: YAML 1.1 resolves bare `no` to
-  boolean `False`, so
-  the value never reaches validation as a string; the mapping back to the
-  written choice is what makes the unquoted spelling work.
-- `test_p_value_correction_rejects_a_value_with_no_matching_choice` — Inputs: a
-  YAML config writing `p_value_correction: yes`. Expected outputs: `ConfigError`
-  matching `must be one of`. Purpose: the boolean mapping must not turn an
-  invalid value into a valid one — `yes` has no corresponding choice and still
-  fails, with the received value named.
+- `test_cli_and_config_file_share_one_set_of_defaults` — Inputs: the real
+  parser given only `-st`/`-gt`/`-og`, and a YAML file carrying only the three
+  required keys. Expected outputs: the two resolved dicts are equal. Purpose:
+  CLI mode and config-file mode fill every key from the same constants, pinned
+  without naming any default so a changed default never needs a test edit.
+- `test_config_only_keys_and_nested_blocks_flatten_from_a_file` — Inputs: a
+  file setting `discordant_test`, `tree_height_calculation_strategy`,
+  `min_support_value`, `generate_summary_stats`, `alpha_dct`, `seed`, and a
+  nested `bootstrap_options` block. Expected outputs: the nine resolved values,
+  compared as one dict, with the block flattened to `bootstrap_*`. Purpose:
+  config-file-only keys and nested-block flattening.
+- `test_p_value_correction_accepts_yaml_bare_word_no` — Inputs (parametrized,
+  5 rows): `p_value_correction` written as the bare word `no`, as quoted
+  `"no"`, as `No`/`NO`, and as the unaffected `bfn`. Expected outputs: each
+  resolves to its own choice. Purpose: YAML 1.1 resolves bare `no` to boolean
+  `False`, so the value never reaches validation as a string; the mapping back
+  to the written choice is what makes the unquoted spelling work.
 - `test_config_file_wins_over_cli` — Inputs: a config file plus conflicting CLI
-  flags. Expected outputs: the file's `alpha_dct` wins, `alpha_perm`
-  falls back to the orchestrator default (proving the CLI value was ignored),
-  and the file's paths are used. Purpose: config-file precedence.
+  flags. Expected outputs: the file's `alpha_dct` wins, `alpha_perm` is not the
+  CLI's value (the file omits it, so it took the default), and the file's paths
+  are used. Purpose: config-file precedence — ignored, not merged.
 - `test_outgroup_accepts_single_comma_separated_and_list_forms` — Inputs
   (parametrized, 6 rows): `outgroup` given as a single label, a comma-separated
   string, a padded string with a trailing comma, a list, a tuple, and a list
@@ -669,28 +706,39 @@ Orchestrator config resolution and config-file precedence.
   blank-only lists, and an integer. Expected outputs: `ConfigError` naming
   `outgroup`. Purpose: a value that yields no labels is an error rather than an
   empty outgroup list.
+- `test_invalid_values_are_rejected_by_field_name` — Inputs (parametrized, 5
+  rows): `species_tree_path: null`, `p_value_correction: true` (what YAML makes
+  of a bare `yes`), `pipeline_mode: fast`, `seed: "abc"`, and
+  `preflight_triplet_cap: -1`. Expected outputs: `ConfigError` whose message
+  names the field (or, for the choice list, says `must be one of`). Purpose:
+  one case per validator shape — required path, choice list, optional int,
+  non-negative int — each failing by name rather than surfacing later.
 - `test_shipped_sample_configs_resolve` — Inputs (parametrized):
   `sample_configs/orchestrator_minimal.yaml` and `orchestrator_full.yaml`.
-  Expected outputs: each loads without error, yields a non-empty list of
-  string outgroup labels, and carries the current `alpha_perm` and
-  `permutation_ci_method` defaults. Purpose: the shipped samples cannot drift
-  out of step with the validator and leave users copying a rejected config.
-- `test_full_sample_config_covers_every_runtime_key` — Inputs:
-  `orchestrator_full.yaml` read both as raw YAML and through the loader.
-  Expected outputs: every key the normalizer produces is documented in the
-  sample, after allowing for the three renamed path keys and the two
-  prefix-flattened nested blocks. Purpose: a new config key cannot be added
-  without the sample gaining it too.
-- `test_missing_required_field_raises` — Inputs: a namespace missing the species
-  tree. Expected outputs: `ConfigError`. Purpose: required-field validation.
-- `test_preflight_data_check_resolves_from_config_file` — Inputs
-  (parametrized): a JSON config setting `preflight_data_check` to `true`,
-  `false`, or omitting it. Expected outputs: `True`, `False`, and `False`
-  respectively. Purpose: the flag is settable from a config file and defaults
-  to off.
+  Expected outputs: each loads without error and yields a non-empty list of
+  string outgroup labels. Purpose: the shipped samples cannot drift out of step
+  with the validator and leave users copying a rejected config.
+- `test_full_sample_config_names_every_runtime_key_at_its_default` — Inputs:
+  `orchestrator_full.yaml` read both as raw YAML and through the loader, plus a
+  required-keys-only file. Expected outputs: every key the normalizer produces
+  is named in the sample (after allowing for the three renamed path keys and
+  the two prefix-flattened blocks), and the sample resolves to the same values
+  as the required-keys-only file outside the input paths. Purpose: a new key
+  cannot be added without the sample gaining it, and the value the sample shows
+  for each key is the one the code would use anyway.
+- `test_parser_flags_resolve_into_their_config_values` — Inputs: the CLI flag
+  strings parsed by `build_argument_parser`, then resolved. Expected outputs:
+  each flag's value reaches its config key, `--no-overwrite` gives
+  `overwrite is False`, `--preflight-data-check` gives `True`, and
+  `--preflight-triplet-cap 0` gives `0`. Purpose: every other config test
+  builds a namespace directly, so this is the only place the flag names are
+  pinned; resolving covers the override path in the same pass.
+
 ### tests/test_config_trunk.py
 
 The shared configuration trunk in `ghostparser.config`.
+
+Marked `config` throughout.
 
 - `test_resolve_path_handles_absolute_relative_and_home` — Inputs: an absolute
   path, a relative path resolved from a chdir'd cwd, and a `~/` path. Expected
@@ -721,6 +769,8 @@ The shared configuration trunk in `ghostparser.config`.
 ### tests/orchestrator/test_orchestrator_consolidation.py
 
 Consolidation outputs, count aggregation, and plot rendering.
+
+The count/average helpers are `core`; everything that calls `generate_introgression_maps` is `output`, and the four of those that check computed values through the written TSVs are `core` as well.
 
 - `test_generate_introgression_maps_creates_expected_outputs` — Inputs: synthetic
   triplet results and a species tree. Expected outputs: the combined PNG and all
@@ -765,6 +815,8 @@ Consolidation outputs, count aggregation, and plot rendering.
 ### tests/test_ml_labels_and_metrics.py
 
 The ML label contract, evaluation metrics, distributions, and CV-fold policy.
+
+All `core`.
 
 - `test_bit_labels_stay_in_step_with_the_bit_count` — Inputs: the module
   constants. Expected outputs: `len(BIT_LABELS) == BIT_COUNT`, all distinct.
@@ -831,11 +883,15 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 
 ### tests/test_ml_config.py
 
-- `test_ml_config_fills_defaults_for_omitted_keys` — Inputs (parametrized over
-  5 keys): a config carrying only `input_path` and `output_dir`. Expected
-  outputs: `target_column` `class`, `overwrite` `True`, `min_samples_split` `2`,
-  `min_samples_leaf` `1`, `max_features` `None`. Purpose: the documented
-  defaults are what an otherwise empty config resolves to.
+Trainer config resolution. Marked `config` throughout; no individual default is
+pinned.
+
+- `test_shipped_trainer_sample_configs_resolve` — Inputs (parametrized):
+  `sample_configs/random_forest_minimal.yaml` and `multi_knn_minimal.yaml`.
+  Expected outputs: each loads without error, with an `input_path` ending in
+  `summary_statistics.tsv` and a non-empty `target_column`. Purpose: the
+  shipped trainer samples cannot drift out of step with the validator and leave
+  users copying a rejected config.
 - `test_ml_config_explicit_values_win_over_defaults` — Inputs (parametrized over
   4 payloads): `overwrite: false`, an explicit `target_column`, and two
   hyperparameters given under the nested `model` block. Expected outputs: each
@@ -860,6 +916,8 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 
 ### tests/test_ml_utils.py
 
+All `core`.
+
 - `test_rows_to_matrix_uses_numeric_features_and_excludes_target_column` —
   Inputs: rows with numeric features plus the target column. Expected outputs: a
   numeric matrix excluding the target.
@@ -879,6 +937,8 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 
 ### tests/test_ml_random_forest.py
 
+Marked `integration` and `output`.
+
 - `test_train_random_forest_smoke` — Inputs: `summary_statistics_tsv`. Expected
   outputs: training completes; the returned metrics name the objective and carry
   both metric tiers, the dataset summary and the 64-class confusion matrix; the
@@ -888,6 +948,8 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
   output-file and metrics-field contract.
 
 ### tests/test_ml_multi_knn.py
+
+The smoke test is `integration` and `output`; the neighbour-capping test is `core`.
 
 - `test_multi_knn_train_smoke` — Inputs: `summary_statistics_tsv`. Expected
   outputs: training completes; the returned metrics carry both metric tiers and
@@ -903,22 +965,28 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
 
 ### tests/test_ml_hyper_tune.py
 
+The loader tests are marked `config`; the `tune_hyperparameters` runs are
+`integration` (and `output` where they assert on written artifacts); the
+marginal/influence math is `core`; the report-guidance and run-logger routing
+tests are `output`.
+
 - `test_load_hyper_tune_config_accepts_hyperparameter_tuning_section` — Inputs: a
   tuning config with `use_wandb: false`. Expected outputs: the section loads and
   `use_wandb` resolves to `False`.
-- `test_load_hyper_tune_config_fills_model_defaults` — Inputs (parametrized):
-  a tuning block omitting model parameters, over `use_wandb` absent/false/true
-  and `wandb_detailed_payloads` absent or `true`. Expected outputs: trainer
-  defaults are filled in, an absent `use_wandb` resolves to `False`, and both
-  flags otherwise follow what was written. Purpose: defaults and explicit values
-  both resolve out of the nested `hyperparameter_tuning` block, and W&B logging
-  is opt-in rather than reached for by a config that never mentions it.
-- `test_load_hyper_tune_config_rejects_invalid_wandb_choice` — Inputs
-  (parametrized): a tuning block with `use_wandb` set to the string `"yes"`, and
-  one with `wandb_detailed_payloads: true` alongside `use_wandb: false`. Expected
-  outputs: `ConfigError` in each case. Purpose: `use_wandb` may be omitted but
-  not mistyped, and it gates the detailed-payload flag rather than letting it be
-  silently ignored.
+- `test_load_hyper_tune_config_rejects_malformed_configs` — Inputs
+  (parametrized, 5 rows): no `hyperparameter_tuning` section at all;
+  `use_wandb: "yes"`; `wandb_detailed_payloads: true` beside `use_wandb: false`;
+  an `evaluation` block at the top level; and `search_space.max_features:
+  [sqrt, auto]`. Expected outputs: `ConfigError` naming, respectively,
+  `hyperparameter_tuning`, `must be a boolean`, `wandb_detailed_payloads
+  requires`, `evaluation`, and `search_space.max_features` together with
+  `'auto'`. Purpose: one case per structural rule — the section is required
+  because nothing about a search can be inferred; `use_wandb` may be omitted
+  but not mistyped, and gates the detailed payloads rather than letting them
+  be silently ignored; an `evaluation` block is refused rather than ignored,
+  since accepting it would let a user believe their settings applied to every
+  candidate; and a bad candidate is named against its `search_space` key
+  before any fit.
 - `test_shipped_tuning_sample_configs_resolve` — Inputs (parametrized):
   `sample_configs/hyperparameter_tuning_random_forest.yaml` and
   `sample_configs/hyperparameter_tuning_multi_knn.json`. Expected outputs: both
@@ -926,10 +994,6 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
   `wandb_detailed_payloads` as `False`, and use only search-space keys their
   model supports. Purpose: the shipped samples have not drifted out of step with
   the validator in either config format.
-- `test_load_hyper_tune_config_rejects_evaluation_section` — Inputs: a tuning
-  config containing `evaluation`. Expected outputs: `ConfigError`.
-- `test_load_hyper_tune_config_requires_hyperparameter_tuning_section` — Inputs:
-  a config without the section. Expected outputs: `ConfigError`.
 - `test_tune_hyperparameters_defaults_to_wandb_off` — Inputs: a tuning namespace
   with the `use_wandb` attribute deleted. Expected outputs: the search runs,
   `results.use_wandb` is `False`, no `wandb/` directory is written, and
@@ -1006,11 +1070,6 @@ The ML label contract, evaluation metrics, distributions, and CV-fold policy.
   scalar. Purpose: search-space candidates reach the estimator one at a time,
   so they pass the same per-value rules as the `model` block, and the container
   shape a user wrote (list or scalar) has to survive them.
-- `test_load_hyper_tune_config_rejects_invalid_search_space_value` — Inputs:
-  `search_space.max_features: ["sqrt", "auto"]`. Expected outputs: `ConfigError`
-  naming `hyperparameter_tuning.search_space.max_features` and `'auto'`.
-  Purpose: one bad candidate among valid ones is caught before the search
-  starts, rather than partway through as the grid reaches it.
 
 ## Parity Tests (`@pytest.mark.parity`)
 

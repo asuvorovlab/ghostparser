@@ -1009,36 +1009,39 @@ rather than propagating.
 
 ## tests/orchestrator/test_orchestrator_config.py
 
-### `test_cli_defaults_resolve`
+No test here pins an individual default. Two invariants stand in for all of
+them, and the remaining tests cover precedence, parsing, validation, and the
+shipped samples.
 
-**Input:** an `argparse.Namespace` with the three required paths set and every
-optional argument `None`.
+### `test_cli_and_config_file_share_one_set_of_defaults`
 
-**Derivation:** each key falls back to its constant in
-`ghostparser/orchestrator/config.py`: `alpha_dct`/`alpha_ks` `0.05`,
-`p_value_correction` `"bfn"`, `alpha_perm` `0.05`,
-`permutation_min_resamples` `2500`, `permutation_max_resamples` `25000`,
-`permutation_ci_method` `"wilson"`,
-`overwrite` `True`,
-`discordant_test` `"chi-square"`, `tree_height_calculation_strategy` `"AVG"`,
-`min_support_value` `0.5`, `bootstrap_iterations` `100`, `seed`
-`None`, `preflight_triplet_cap` `15000` (`DEFAULT_PREFLIGHT_TRIPLET_CAP`), and
-the boolean feature flags `False` — including `preflight_data_check`, whose
-default `DEFAULT_PREFLIGHT_DATA_CHECK` is `False` so that an ordinary run is
-never turned into a check-only run by accident.
+**Inputs:** `build_argument_parser().parse_args(["-st", "species.tree", "-gt",
+"genes.tree", "-og", "OUT"])`, and a YAML file carrying only those three keys.
 
-### `test_config_only_keys_read_from_config_file`
+**Derivation:** `resolve_config` on a CLI namespace and `load_orchestrator_config`
+on a file both end in `normalize_orchestrator_payload`, which fills every absent
+key from the constants in `ghostparser/orchestrator/config.py`. With the same
+three inputs and nothing else, the two resolved dicts are therefore equal in
+every key — including the resolved paths, since both resolve the same relative
+strings against the same working directory. The comparison is whole-dict
+equality, so a key that resolved differently on the two paths, or a default
+that one path filled and the other did not, fails without the test naming
+either. It was checked before being written that the two dicts are in fact
+equal today.
 
-**Input:** a JSON file with `discordant_test: "z-test"`,
-`tree_height_calculation_strategy: "SIS"`, `min_support_value: 0.9`,
-`generate_summary_stats: true`, `alpha_dct: 0.02`, and
-`bootstrap_options: {iterations: 25, seed: 7, debug_mode: true,
-summary_only: true}`.
+### `test_config_only_keys_and_nested_blocks_flatten_from_a_file`
 
-**Derivation:** these keys have no CLI flag, so the file is the only way to set
-them. The nested block is flattened onto `bootstrap_iterations = 25`,
-`seed = 7`, `bootstrap_debug_mode = True`,
-`bootstrap_summary_only = True`.
+**Input:** a YAML file with `discordant_test: z-test`,
+`tree_height_calculation_strategy: SIS`, `min_support_value: 0.9`,
+`generate_summary_stats: true`, `alpha_dct: 0.02`, `seed: 7`, and
+`bootstrap_options: {iterations: 25, debug_mode: true, summary_only: true}`.
+
+**Derivation:** the first four keys have no CLI flag, so the file is the only
+way to set them, and each is read back as written. The nested block is
+flattened onto `bootstrap_iterations = 25`, `bootstrap_debug_mode = True`,
+`bootstrap_summary_only = True`. The nine values are compared as one dict
+against the nine written, so any one of them resolving to something else fails
+naming the key.
 
 ### `test_config_file_wins_over_cli`
 
@@ -1047,9 +1050,10 @@ plus conflicting CLI flags `alpha_dct=0.5` and `alpha_perm=0.5`.
 
 **Derivation:** in config-file mode the file supplies everything, so
 `alpha_dct` is `0.03` (not `0.5`). The decisive check is `alpha_perm`: the file
-omits it, so it must fall back to the orchestrator default `0.05` — if the CLI
-were consulted it would be `0.5`. The resolved species path must come from the
-file.
+omits it, so it takes the default — whatever that is — and must not be the CLI's
+`0.5`. The assertion is `!= 0.5` rather than `== 0.05` so the test does not
+pin the default; it pins only that the CLI value was ignored rather than
+merged. The resolved species path must come from the file.
 
 ### `test_outgroup_accepts_single_comma_separated_and_list_forms`
 
@@ -1074,60 +1078,69 @@ blank after stripping, and `42` because it is neither a string nor a
 list/tuple/set and so contributes no entries. An empty result raises
 `ConfigError` naming `outgroup` rather than silently producing an unrooted run.
 
+### `test_invalid_values_are_rejected_by_field_name`
+
+**Inputs:** the required-keys file with one key overridden per row.
+
+| Override | Validator reached | Why it fails | Message must contain |
+| --- | --- | --- | --- |
+| `species_tree_path: null` | `_validate_required_path` | `None` is treated as absent. | `species_tree_path` |
+| `p_value_correction: true` | `_validate_choice` | YAML 1.1 turns a bare `yes` into `True`; the boolean-to-choice mapping covers `False` → `no` but `True` matches no choice. Written as `true` here since the payload is dumped with `yaml.safe_dump`. | `must be one of` |
+| `pipeline_mode: fast` | `_validate_choice` | Not in `PIPELINE_MODE_CHOICES` (`efficient`/`detailed`). | `pipeline_mode` |
+| `seed: "abc"` | `_validate_optional_int` | Accepts `None` or an `int`; also rejects `bool`, since `isinstance(True, int)` holds and `seed: true` is a mistake rather than a seed of 1. | `seed` |
+| `preflight_triplet_cap: -1` | `_validate_non_negative_int` | Accepts `int >= 0`; `0` is the documented "no cap", so `-1` is the nearest value with no meaning. | `preflight_triplet_cap` |
+
+The `p_value_correction` row is the guard that keeps the boolean mapping from
+laundering an invalid value into a valid one.
+
 ### `test_shipped_sample_configs_resolve`
 
 **Inputs:** the two orchestrator sample configs under `sample_configs/`.
 
 **Derivation:** these go through the same `load_orchestrator_config` a user
 invokes with `-c`, so anything the validator would reject surfaces here. The
-asserted values are what the samples state literally — a non-empty outgroup list
+asserted value is what the samples state literally — a non-empty outgroup list
 (`["OutGroup"]` for the minimal sample, `["Out1", "Out2"]` for the full one,
-written there as a YAML list to exercise that form), `alpha_perm` `0.05`, and
-`ci_method` `wilson`. The placeholder tree paths need not exist:
-`_validate_required_path` only checks that the field is a non-empty string
-before resolving it.
+written there as a YAML list to exercise that form). The placeholder tree paths
+need not exist: `_validate_required_path` only checks that the field is a
+non-empty string before resolving it.
 
-### `test_full_sample_config_covers_every_runtime_key`
+### `test_full_sample_config_names_every_runtime_key_at_its_default`
 
 **Inputs:** `orchestrator_full.yaml` parsed twice — once as raw YAML for the set
 of documented keys, once through `load_orchestrator_config` for the set of
-runtime keys.
+runtime keys — plus a required-keys-only file loaded the same way.
 
-**Derivation:** the normalizer renames three inputs (`species_tree_path` →
-`species_tree`, `gene_trees_path` → `gene_trees`, `output_folder` → `output`)
-and flattens the two nested blocks with a prefix
+**Derivation:** two checks. First, coverage: the normalizer renames three inputs
+(`species_tree_path` → `species_tree`, `gene_trees_path` → `gene_trees`,
+`output_folder` → `output`) and flattens the two nested blocks with a prefix
 (`permutation_options.ci_method` → `permutation_ci_method`). After undoing both
 transformations the runtime key set must be a subset of the documented one, so
-the difference is empty. This fails the moment a config key is added without the
-sample gaining it.
+the difference is empty. This fails the moment a config key is added without
+the sample gaining it. Second, values: outside the input keys (the three
+renamed paths and `outgroup`), the sample must resolve to exactly what the
+required-keys-only file resolves to. Coverage alone would pass if the sample
+omitted a key (it would take the default and compare equal), and equality alone
+would pass if the sample listed a key at a non-default value it then also
+omitted elsewhere — together they pin that every key is both present and at its
+default. It was checked that the sample satisfies this today.
 
-### Validation tests
+### `test_p_value_correction_accepts_yaml_bare_word_no`
 
-- `test_missing_required_field_raises` — `species_tree_path=None` fails
-  required-path validation → `ConfigError`.
-- `test_parser_flags_resolve_into_their_config_values` — parsing
-  `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2 --p-value-correction
-  fdr_bh --alpha-perm 0.02 --no-overwrite --preflight-data-check
-  --preflight-triplet-cap 0` must yield those exact values with
-  `config_file is None`; `0` is chosen for the cap because it is the one value
-  `_validate_non_negative_int` accepts that differs from the default and is
-  also the documented "no cap" spelling.
-- `test_pipeline_mode_rejects_an_unknown_value` — `pipeline_mode: fast` is
-  resolved by `_validate_choice` against `PIPELINE_MODE_CHOICES`
-  (`efficient`/`detailed`), which raises `ConfigError` naming the field.
-- `test_preflight_data_check_resolves_from_config_file` — the key has no CLI
-  flag, so a config file is the only way to set it: `true` and `false` come back
-  as given, and omitting it yields `False`. The assertion is `is`, not `==`, so
-  a truthy non-boolean would fail.
-- `test_p_value_correction_accepts_yaml_bare_word_no` — YAML 1.1 resolves the
-  bare word `no` to boolean `False`, so the normalizer maps `False` back to the
-  string `"no"` before the choice check. Writing `no` unquoted is the natural
-  spelling for "no correction", which is why the mapping exists.
-- `test_p_value_correction_rejects_a_value_with_no_matching_choice` — the same
-  YAML rule turns bare `yes` into `True`, but `True` has no corresponding
-  choice, so it must still fail with `must be one of` and the received value
-  named. This is the guard that keeps the boolean mapping from laundering an
-  invalid value into a valid one.
+YAML 1.1 resolves the bare word `no` (and `No`, `NO`) to boolean `False`, so the
+normalizer maps `False` back to the string `"no"` before the choice check;
+quoted `"no"` and `bfn` arrive as strings and pass straight through. Writing
+`no` unquoted is the natural spelling for "no correction", which is why the
+mapping exists.
+
+### `test_parser_flags_resolve_into_their_config_values`
+
+Parsing `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2
+--p-value-correction fdr_bh --alpha-perm 0.02 --no-overwrite
+--preflight-data-check --preflight-triplet-cap 0` must yield those exact values
+with `config_file is None`; `0` is chosen for the cap because it is the one
+value `_validate_non_negative_int` accepts that differs from the default and is
+also the documented "no cap" spelling.
 
 ## tests/test_config_trunk.py
 
@@ -1486,10 +1499,11 @@ the flag is an added column rather than a replacement for the strength value.
 
 `tests/orchestrator/test_orchestrator_consolidation.py`, `tests/test_ml_config.py`,
 `tests/test_ml_utils.py`, `tests/test_ml_random_forest.py`,
-`tests/test_ml_multi_knn.py`, and `tests/test_ml_hyper_tune.py` assert either
-structural outcomes (files written, columns present, errors raised) or documented
-config defaults, and their inputs are the fixtures described in
-[TESTS.md](TESTS.md). The two derivations worth stating explicitly:
+`tests/test_ml_multi_knn.py`, and `tests/test_ml_hyper_tune.py` assert
+structural outcomes -- files written, columns present, errors raised, a shipped
+sample loading -- and their inputs are the fixtures described in
+[TESTS.md](TESTS.md). No test pins a config default; the samples and CONFIG.md
+state those. The derivations worth stating explicitly:
 
 - **Introgression map averaging** — a directed pair's denominator is every
   triplet in which both taxa co-occur, which for `n` ingroup taxa is `n - 2`
@@ -1875,21 +1889,3 @@ whole-tree sweep then asserts the weaker but essential property -- that
 `resolved` and "yields an observation" coincide on every triplet -- so a future
 edit to one function that is not mirrored in the other fails here rather than
 silently changing what preflight reports.
-
-### `test_seed_rejects_a_non_integer`
-
-**Inputs:** a config payload with `seed: "abc"`.
-
-**Derivation:** `_validate_optional_int` accepts `None` or an `int` and raises
-`ConfigError` naming the field otherwise. It rejects `bool` explicitly, since
-`isinstance(True, int)` is true in Python and `seed: true` is a mistake rather
-than a seed of 1.
-
-### `test_preflight_triplet_cap_rejects_a_negative_value`
-
-**Inputs:** a config payload with `preflight_triplet_cap: -1`.
-
-**Derivation:** the key resolves through `_validate_non_negative_int`, which
-accepts an `int >= 0` and raises `ConfigError` naming the field otherwise. `0`
-is the documented "no cap" value and every positive integer is a cap, so `-1`
-is the nearest value with no meaning.

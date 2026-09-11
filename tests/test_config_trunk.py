@@ -22,6 +22,8 @@ from ghostparser.config import (
     prepare_output_directory,
 )
 
+pytestmark = pytest.mark.config
+
 
 def test_resolve_path_handles_absolute_relative_and_home(tmp_path, monkeypatch):
     """Absolute paths pass through; relative resolve from cwd; ``~`` expands."""

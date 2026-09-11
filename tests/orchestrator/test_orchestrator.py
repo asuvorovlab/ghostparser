@@ -16,6 +16,8 @@ from scipy import stats
 from ghostparser.orchestrator.config import resolve_config
 from ghostparser.orchestrator.runner import run_orchestrator
 
+pytestmark = pytest.mark.integration
+
 _SEED = 20240724
 _ITERATIONS = 40
 
@@ -208,6 +210,7 @@ def test_run_orchestrator_matches_derived_expectation(
             assert result.bootstrap_stat_ci_low <= result.bootstrap_stat_ci_high
 
 
+@pytest.mark.output
 def test_run_orchestrator_writes_results_tsv(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
@@ -240,6 +243,7 @@ def test_run_orchestrator_writes_results_tsv(
     assert len(lines) - 1 == len(results)
 
 
+@pytest.mark.output
 def test_no_bootstrap_omits_the_bootstrap_columns(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
@@ -298,6 +302,7 @@ def test_no_bootstrap_skips_the_bootstrap_itself(
         assert result.classification == "no_introgression"
 
 
+@pytest.mark.output
 def test_species_rename_map_reaches_every_output(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
@@ -357,6 +362,7 @@ def test_species_rename_map_reaches_every_output(
     assert "Homo" in matrix and "Pan" in matrix
 
 
+@pytest.mark.output
 def test_consolidation_preserves_run_outputs(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
@@ -382,6 +388,7 @@ def test_consolidation_preserves_run_outputs(
     assert any((output_folder / "consolidation").iterdir())
 
 
+@pytest.mark.output
 def test_generate_summary_stats_writes_tsv(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
@@ -411,6 +418,7 @@ def test_generate_summary_stats_writes_tsv(
     assert any(result.topology_metric_statistics for result in results)
 
 
+@pytest.mark.output
 def test_bootstrap_debug_mode_writes_debug_columns(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):

@@ -16,6 +16,7 @@ def _write(tmp_path, name, text):
     return path
 
 
+@pytest.mark.config
 def test_rename_map_reads_a_two_column_tsv(tmp_path):
     """A TSV maps its first column onto its second, skipping blanks and comments."""
     path = _write(
@@ -29,6 +30,7 @@ def test_rename_map_reads_a_two_column_tsv(tmp_path):
     }
 
 
+@pytest.mark.config
 def test_rename_map_reads_a_yaml_mapping(tmp_path):
     """A YAML mapping is accepted in place of a TSV."""
     path = _write(tmp_path, "names.yaml", "T1: Homo sapiens\nT2: Pan troglodytes\n")
@@ -38,6 +40,7 @@ def test_rename_map_reads_a_yaml_mapping(tmp_path):
     }
 
 
+@pytest.mark.config
 @pytest.mark.parametrize(
     "name,text,message",
     [
@@ -56,6 +59,7 @@ def test_rename_map_rejects_malformed_files(tmp_path, name, text, message):
         load_species_rename_map(str(path))
 
 
+@pytest.mark.config
 def test_rename_map_rejects_a_missing_file(tmp_path):
     """A missing map is reported by path."""
     with pytest.raises(FileNotFoundError, match="Species rename map not found"):

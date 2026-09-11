@@ -2,9 +2,13 @@ import argparse
 import csv
 import json
 
+import pytest
+
 from ghostparser.ml.multi_knn import _build_model, train_multi_knn
 
 
+@pytest.mark.integration
+@pytest.mark.output
 def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
     """Training runs end to end and writes every artifact it promises.
 

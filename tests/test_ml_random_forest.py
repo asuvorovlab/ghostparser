@@ -2,7 +2,11 @@ import argparse
 import csv
 import json
 
+import pytest
+
 from ghostparser.ml.random_forest import train_random_forest
+
+pytestmark = [pytest.mark.integration, pytest.mark.output]
 
 
 def test_train_random_forest_smoke(summary_statistics_tsv, tmp_path):

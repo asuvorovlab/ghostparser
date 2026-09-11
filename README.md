@@ -593,7 +593,14 @@ Run all tests:
 pytest
 ```
 
-See [TESTS.md](tests/TESTS.md) for detailed test documentation and test map.
+Every test carries a category marker, so a change to one part of the code can be
+checked with the tests that cover it: `pytest -m core` for the statistics and
+decisions, `-m config` for config loading and validation, `-m output` for the
+files and columns written, `-m integration` for the entry points run end to end,
+`-m parity` for the cached geometry against the DendroPy reference. Markers
+combine (`-m "core and not integration"`).
+
+See [TESTS.md](tests/TESTS.md) for the criteria, the test map, and per-test documentation.
 
 ---
 

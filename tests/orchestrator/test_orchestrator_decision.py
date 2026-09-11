@@ -514,6 +514,7 @@ def test_studentized_interval_brackets_the_observed_statistic():
     assert degenerate.bootstrap_stat_ci_high is None
 
 
+@pytest.mark.output
 @pytest.mark.parametrize(
     "method, expected",
     [

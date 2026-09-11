@@ -195,6 +195,7 @@ def test_shape_is_measured_once_and_not_per_bootstrap_iteration():
     assert few.shape_statistics["con_modes_p"] == many.shape_statistics["con_modes_p"]
 
 
+@pytest.mark.output
 @pytest.mark.parametrize("enabled", [False, True])
 def test_summary_statistics_tsv_never_carries_shape_columns(enabled, tmp_path):
     """The summary TSV holds no shape diagnostics, measured or not.
@@ -225,6 +226,7 @@ def test_summary_statistics_tsv_never_carries_shape_columns(enabled, tmp_path):
         assert result.shape_statistics is not None
 
 
+@pytest.mark.output
 @pytest.mark.parametrize("enabled", [False, True])
 def test_results_tsv_carries_shape_columns_only_when_enabled(enabled, tmp_path):
     """The fifteen shape columns follow the setting and never shift the row.

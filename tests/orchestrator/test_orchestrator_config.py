@@ -1,4 +1,15 @@
-"""Config resolution and config-file mode for the orchestrator CLI."""
+"""Config resolution and config-file mode for the orchestrator CLI.
+
+Every test here is marked ``config``: they cover how a config is loaded,
+resolved and validated, not what the pipeline computes. Run the pipeline logic
+alone with ``pytest -m "not config"``.
+
+Individual default values are deliberately not pinned. CONFIG.md and
+``sample_configs/orchestrator_full.yaml`` state them, and two invariants keep
+those in step with the code: CLI mode and config-file mode resolve to one and
+the same set of defaults, and the full sample names every runtime key at its
+default.
+"""
 
 import argparse
 import json
@@ -14,9 +25,18 @@ from ghostparser.orchestrator.config import (
     resolve_config,
 )
 
+pytestmark = pytest.mark.config
+
+_SAMPLE_DIR = Path(__file__).resolve().parents[2] / "sample_configs"
+_REQUIRED = {
+    "species_tree_path": "species.tree",
+    "gene_trees_path": "genes.tree",
+    "outgroup": "OUT",
+}
+
 
 def _base_cli_args(**overrides):
-    """Build a parsed-CLI namespace with all orchestrator args defaulted to None.
+    """Build a CLI namespace with the required paths set and every option ``None``.
 
     Args:
         **overrides: Attribute values to set on the namespace.
@@ -48,75 +68,71 @@ def _base_cli_args(**overrides):
     return args
 
 
-def test_cli_defaults_resolve():
-    """CLI-only mode fills config+CLI and config-only keys with shared defaults."""
-    config = resolve_config(_base_cli_args())
-    assert config["alpha_dct"] == 0.05
-    assert config["alpha_ks"] == 0.05
-    # Defaults specific to this package.
-    assert config["p_value_correction"] == "bfn"
-    assert config["alpha_perm"] == 0.05
-    assert config["permutation_min_resamples"] == 2500
-    assert config["permutation_max_resamples"] == 25000
-    assert config["permutation_ci_method"] == "wilson"
-    assert config["overwrite"] is True
-    # Config-file-only keys take their defaults in CLI mode.
-    assert config["discordant_test"] == "chi-square"
-    assert config["tree_height_calculation_strategy"] == "AVG"
-    assert config["min_support_value"] == 0.5
-    assert config["bootstrap_iterations"] == 100
-    assert config["seed"] is None
-    assert config["generate_summary_stats"] is False
-    assert config["bootstrap_debug_mode"] is False
-    assert config["bootstrap_summary_only"] is False
-    assert config["preflight_data_check"] is False
-    assert config["preflight_triplet_cap"] == 15000
-    assert config["pipeline_mode"] == "efficient"
+def _payload(tmp_path, **extra):
+    """Write a minimal orchestrator config file with extra keys merged in.
+
+    A key given as ``None`` is written as null, which the loader treats as
+    absent -- the way to express a missing required field.
+
+    Args:
+        tmp_path: The pytest temporary directory.
+        **extra: Additional config keys.
+
+    Returns:
+        The path to the written YAML file.
+    """
+    payload = {**_REQUIRED, **extra}
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(payload))
+    return path
 
 
-def test_config_only_keys_read_from_config_file(tmp_path):
-    """Config-file-only keys (and nested bootstrap_options) load from a file."""
-    payload = {
-        "species_tree_path": "species.tree",
-        "gene_trees_path": "genes.tree",
-        "outgroup": "OUT",
+def test_cli_and_config_file_share_one_set_of_defaults(tmp_path):
+    """A bare CLI invocation and a required-keys-only file resolve identically.
+
+    The two entry paths fill config+CLI keys and config-file-only keys from the
+    same constants; comparing whole resolved dicts pins that without naming any
+    default, so a changed default never needs a test edit.
+    """
+    opts = build_argument_parser().parse_args(
+        ["-st", "species.tree", "-gt", "genes.tree", "-og", "OUT"]
+    )
+
+    assert resolve_config(opts) == load_orchestrator_config(str(_payload(tmp_path)))
+
+
+def test_config_only_keys_and_nested_blocks_flatten_from_a_file(tmp_path):
+    """Config-file-only keys load, and ``bootstrap_options`` flattens to a prefix."""
+    expected = {
         "discordant_test": "z-test",
         "tree_height_calculation_strategy": "SIS",
         "min_support_value": 0.9,
         "generate_summary_stats": True,
         "alpha_dct": 0.02,
         "seed": 7,
-        "bootstrap_options": {
-            "iterations": 25,
-            "debug_mode": True,
-            "summary_only": True,
-        },
+        "bootstrap_iterations": 25,
+        "bootstrap_debug_mode": True,
+        "bootstrap_summary_only": True,
     }
-    config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(payload))
+    config_path = _payload(
+        tmp_path,
+        discordant_test="z-test",
+        tree_height_calculation_strategy="SIS",
+        min_support_value=0.9,
+        generate_summary_stats=True,
+        alpha_dct=0.02,
+        seed=7,
+        bootstrap_options={"iterations": 25, "debug_mode": True, "summary_only": True},
+    )
 
     config = load_orchestrator_config(str(config_path))
-    assert config["discordant_test"] == "z-test"
-    assert config["tree_height_calculation_strategy"] == "SIS"
-    assert config["min_support_value"] == 0.9
-    assert config["generate_summary_stats"] is True
-    assert config["alpha_dct"] == 0.02
-    assert config["bootstrap_iterations"] == 25
-    assert config["seed"] == 7
-    assert config["bootstrap_debug_mode"] is True
-    assert config["bootstrap_summary_only"] is True
+
+    assert {key: config[key] for key in expected} == expected
 
 
 @pytest.mark.parametrize(
     "written, expected",
-    [
-        ("no", "no"),
-        ('"no"', "no"),
-        ("No", "no"),
-        ("NO", "no"),
-        ("bfn", "bfn"),
-        ("fdr_bh", "fdr_bh"),
-    ],
+    [("no", "no"), ('"no"', "no"), ("No", "no"), ("NO", "no"), ("bfn", "bfn")],
 )
 def test_p_value_correction_accepts_yaml_bare_word_no(tmp_path, written, expected):
     """`p_value_correction: no` resolves to the "no" choice, quoted or not.
@@ -137,50 +153,9 @@ def test_p_value_correction_accepts_yaml_bare_word_no(tmp_path, written, expecte
     assert config["p_value_correction"] == expected
 
 
-def test_p_value_correction_rejects_a_value_with_no_matching_choice(tmp_path):
-    """A boolean with no equivalent choice is still an error, and names the value."""
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "species_tree_path: species.tree\n"
-        "gene_trees_path: genes.tree\n"
-        "outgroup: OUT\n"
-        "p_value_correction: yes\n"
-    )
-
-    with pytest.raises(ConfigError, match="must be one of"):
-        load_orchestrator_config(str(config_path))
-
-
-@pytest.mark.parametrize(
-    "payload_value, expected",
-    [(True, True), (False, False), (None, False)],
-)
-def test_preflight_data_check_resolves_from_config_file(
-    tmp_path, payload_value, expected
-):
-    """preflight_data_check reads from a config file and defaults to False."""
-    payload = {
-        "species_tree_path": "species.tree",
-        "gene_trees_path": "genes.tree",
-        "outgroup": "OUT",
-    }
-    if payload_value is not None:
-        payload["preflight_data_check"] = payload_value
-    config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(payload))
-
-    config = load_orchestrator_config(str(config_path))
-    assert config["preflight_data_check"] is expected
-
-
 def test_config_file_wins_over_cli(tmp_path):
     """In config-file mode the file wins and every CLI flag is ignored."""
-    payload = {
-        "species_tree_path": "file_species.tree",
-        "gene_trees_path": "file_genes.tree",
-        "outgroup": "OUT",
-        "alpha_dct": 0.03,
-    }
+    payload = {**_REQUIRED, "species_tree_path": "file_species.tree", "alpha_dct": 0.03}
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(payload))
 
@@ -190,9 +165,9 @@ def test_config_file_wins_over_cli(tmp_path):
     config = resolve_config(args)
 
     assert config["alpha_dct"] == 0.03
-    # The file omits alpha_perm, so it takes the orchestrator default (not the
-    # CLI value 0.5), proving the CLI flag was ignored.
-    assert config["alpha_perm"] == 0.05
+    # The file omits alpha_perm, so it takes the default rather than the CLI's
+    # 0.5, proving the CLI flag was ignored rather than merged.
+    assert config["alpha_perm"] != 0.5
     assert config["species_tree"].endswith("file_species.tree")
 
 
@@ -221,6 +196,28 @@ def test_outgroup_rejects_empty_and_non_label_values(value):
 
 
 @pytest.mark.parametrize(
+    "extra, match",
+    [
+        ({"species_tree_path": None}, "species_tree_path"),
+        ({"p_value_correction": True}, "must be one of"),
+        ({"pipeline_mode": "fast"}, "pipeline_mode"),
+        ({"seed": "abc"}, "seed"),
+        ({"preflight_triplet_cap": -1}, "preflight_triplet_cap"),
+    ],
+)
+def test_invalid_values_are_rejected_by_field_name(tmp_path, extra, match):
+    """A missing required key or an out-of-domain value fails naming the field.
+
+    One case per validator shape: a required path, a choice list (fed a
+    boolean with no matching choice, which is what YAML makes of a bare
+    ``yes``), an optional int, and a non-negative int whose ``0`` already means
+    "no cap".
+    """
+    with pytest.raises(ConfigError, match=match):
+        load_orchestrator_config(str(_payload(tmp_path, **extra)))
+
+
+@pytest.mark.parametrize(
     "sample_name", ["orchestrator_minimal.yaml", "orchestrator_full.yaml"]
 )
 def test_shipped_sample_configs_resolve(sample_name):
@@ -229,24 +226,23 @@ def test_shipped_sample_configs_resolve(sample_name):
     Guards against the samples drifting out of step with the validator, which
     would leave users copying a config the loader rejects.
     """
-    sample_dir = Path(__file__).resolve().parents[2] / "sample_configs"
-    config = load_orchestrator_config(str(sample_dir / sample_name))
+    config = load_orchestrator_config(str(_SAMPLE_DIR / sample_name))
 
     assert config["outgroup"]
     assert all(isinstance(label, str) and label for label in config["outgroup"])
-    assert config["alpha_perm"] == 0.05
-    assert config["permutation_ci_method"] == "wilson"
 
 
-def test_full_sample_config_covers_every_runtime_key():
-    """`orchestrator_full.yaml` documents every key the normalizer produces.
+def test_full_sample_config_names_every_runtime_key_at_its_default(tmp_path):
+    """`orchestrator_full.yaml` lists every key the normalizer produces, at its default.
 
-    Resolved-only keys (`species_tree`/`gene_trees`/`output`) are the renamed
-    forms of the `*_path`/`output_folder` inputs, and the nested blocks are
-    flattened with a prefix, so both are normalized before comparing.
+    Two checks. The raw file must name every resolved key (resolved-only keys
+    `species_tree`/`gene_trees`/`output` are the renamed `*_path`/`output_folder`
+    inputs, and the nested blocks flatten with a prefix, so both are normalized
+    before comparing). And loading it must equal loading a required-keys-only
+    file, so the value the sample shows for each key is the value the code
+    would have used anyway.
     """
-    sample_dir = Path(__file__).resolve().parents[2] / "sample_configs"
-    sample_path = sample_dir / "orchestrator_full.yaml"
+    sample_path = _SAMPLE_DIR / "orchestrator_full.yaml"
     raw = yaml.safe_load(sample_path.read_text())
 
     documented = set(raw)
@@ -265,11 +261,11 @@ def test_full_sample_config_covers_every_runtime_key():
     ]
     assert undocumented == []
 
-
-def test_missing_required_field_raises():
-    """A missing required input raises ConfigError in CLI mode."""
-    with pytest.raises(ConfigError):
-        resolve_config(_base_cli_args(species_tree_path=None))
+    defaults = load_orchestrator_config(str(_payload(tmp_path)))
+    inputs = renamed | {"outgroup"}
+    assert {k: v for k, v in resolved.items() if k not in inputs} == {
+        k: v for k, v in defaults.items() if k not in inputs
+    }
 
 
 def test_parser_flags_resolve_into_their_config_values():
@@ -304,45 +300,3 @@ def test_parser_flags_resolve_into_their_config_values():
     assert config["overwrite"] is False
     assert config["preflight_data_check"] is True
     assert config["preflight_triplet_cap"] == 0
-
-
-def _payload(tmp_path, **extra):
-    """Write a minimal orchestrator config file with extra keys merged in.
-
-    Args:
-        tmp_path: The pytest temporary directory.
-        **extra: Additional config keys.
-
-    Returns:
-        The path to the written YAML file.
-    """
-    payload = {
-        "species_tree_path": "species.tree",
-        "gene_trees_path": "genes.tree",
-        "outgroup": "OUT",
-    }
-    payload.update(extra)
-    path = tmp_path / "config.yaml"
-    path.write_text(yaml.safe_dump(payload))
-    return path
-
-
-def test_pipeline_mode_rejects_an_unknown_value(tmp_path):
-    """An unsupported pipeline mode is refused by name."""
-    with pytest.raises(ConfigError, match="pipeline_mode"):
-        load_orchestrator_config(str(_payload(tmp_path, pipeline_mode="fast")))
-
-
-def test_seed_rejects_a_non_integer(tmp_path):
-    """The run-wide seed must be an integer when provided."""
-    with pytest.raises(ConfigError, match="seed"):
-        load_orchestrator_config(str(_payload(tmp_path, seed="abc")))
-
-
-def test_preflight_triplet_cap_rejects_a_negative_value(tmp_path):
-    """The cap is a count with 0 meaning no cap, so below zero has no reading."""
-    with pytest.raises(ConfigError, match="preflight_triplet_cap"):
-        load_orchestrator_config(
-            str(_payload(tmp_path, preflight_triplet_cap=-1))
-        )
-

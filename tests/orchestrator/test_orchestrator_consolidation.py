@@ -16,6 +16,7 @@ def _consolidation_lines(consolidation_dir, filename):
     return (consolidation_dir / filename).read_text().splitlines()
 
 
+@pytest.mark.output
 def test_generate_introgression_maps_creates_expected_outputs(tmp_path):
     species_tree = tmp_path / "species.tree"
     species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
@@ -85,6 +86,7 @@ def test_generate_introgression_maps_creates_expected_outputs(tmp_path):
     assert (consolidation_dir / "introgression_matrix_sampled_non_sister.tsv").exists()
 
 
+@pytest.mark.output
 def test_generate_introgression_maps_appends_suffix_when_overwrite_disabled(tmp_path):
     species_tree = tmp_path / "species.tree"
     species_tree.write_text("(((A:1,B:1):1,C:1):1,D:1);\n")
@@ -132,6 +134,8 @@ def _ghost_abc():
     )
 
 
+@pytest.mark.core
+@pytest.mark.output
 @pytest.mark.parametrize(
     "tree, results, kwargs, absent, expected_count",
     [
@@ -192,6 +196,8 @@ def test_generate_introgression_maps_selects_the_requested_taxa(
         assert absent not in taxa_from_matrix
 
 
+@pytest.mark.core
+@pytest.mark.output
 def test_generate_introgression_maps_uses_raw_values_with_separate_scales(tmp_path):
     species_tree = tmp_path / "species.tree"
     species_tree.write_text("((A:1,B:1):1,(C:1,D:1):1);\n")
@@ -290,6 +296,8 @@ def test_collect_counts_counts_only_the_rows_that_produced_an_edge():
     assert ghost_counts.get("D", 0) == 0
 
 
+@pytest.mark.core
+@pytest.mark.output
 def test_collect_counts_correct_avg_in_generate_introgression_maps(tmp_path):
     """End-to-end: average bootstrap values in TSV use population-level denominators.
 
@@ -507,6 +515,8 @@ def _ghost_colour_scenario_results():
     ]
 
 
+@pytest.mark.core
+@pytest.mark.output
 def test_ghost_strength_tsv_records_sampled_introgression_flag(tmp_path):
     """The ghost sheet gains a has_sampled_introgression 1/0 column."""
     species_tree = tmp_path / "species.tree"

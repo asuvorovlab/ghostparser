@@ -65,6 +65,7 @@ def test_clean_inputs_pass_with_no_issues(clean_inputs, tmp_path):
     assert result.counters["gene_tree.rooted"] == 2
 
 
+@pytest.mark.output
 def test_report_is_written_only_when_an_output_dir_is_given(clean_inputs, tmp_path):
     """The report lands under the documented filename, or nowhere without a dir."""
     species, genes = clean_inputs
@@ -190,6 +191,8 @@ def test_multi_tree_species_file_raises(tmp_path):
         )
 
 
+@pytest.mark.integration
+@pytest.mark.output
 def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path):
     """The flag short-circuits the run: only the report is produced.
 
@@ -222,6 +225,7 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path):
     assert written == [PREFLIGHT_REPORT_FILENAME]
 
 
+@pytest.mark.integration
 def test_runner_returns_none_when_preflight_cannot_run(tmp_path):
     """An impossible check is reported without raising out of the runner."""
     species = tmp_path / "species.tree"
