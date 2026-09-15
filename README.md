@@ -1,7 +1,7 @@
 # Ghostparser
 
 <p align="center">
-   <img width="120" height="120" alt="GhostParser-Icon" src="https://github.com/user-attachments/assets/a8443495-0a49-44b9-9dd9-350ff5677ca5" />
+   <img width="120" height="120" alt="GhostParser icon" src="docs/assets/ghostparser_icon.svg" />
 </p>
 
 ## Overview
