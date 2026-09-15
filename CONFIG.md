@@ -104,31 +104,37 @@ output_folder: results
 Fuller YAML showing the config-file-only keys and the nested blocks:
 
 ```yaml
-species_tree_path: data/species.tree
-gene_trees_path: data/genes.tree
-outgroup: Out1,Out2
-output_folder: results
-processes: 0
-seed: 42
-alpha_dct: 0.05
-alpha_ks: 0.05
-alpha_perm: 0.05
-p_value_correction: bfn
-discordant_test: chi-square
-tree_height_calculation_strategy: AVG
-min_support_value: 0.5
-generate_summary_stats: true
-shape_diagnostics: false
-consolidation: true
-bootstrap: true
+species_tree_path: data/species.tree     # Newick species tree file path
+gene_trees_path: data/genes.tree         # one Newick gene tree per line
+outgroup: Out1,Out2                      # comma-separated labels, or a YAML list like ["Out1", "Out2"]
+output_folder: results                    # output directory for all run artifacts
+overwrite: true                           # true = reset and reuse output dir; false = append suffix
+triplet_filter: null                      # path to filter file or null (all triplets)
+species_rename_map: null                  # path to rename map or null
+processes: 0                              # 0 = all available CPU cores
+seed: null                                # null = generate a run seed at runtime
+alpha_dct: 0.05                           # DCT significance threshold
+alpha_ks: 0.05                            # KS significance threshold
+alpha_perm: 0.05                          # permutation significance threshold
+p_value_correction: bfn                   # no, bfn, holm, fdr_bh, fdr_by
+pipeline_mode: efficient                  # efficient = early-stop decision cascade; detailed = run all tests
+consolidation: true                       # true = write introgression maps and consolidation CSV/PNG outputs
+bootstrap: true                           # true = run bootstrap resampling
+preflight_data_check: false               # true = run only the structural preflight check and exit
+preflight_triplet_cap: 15000              # 0 = check all triplets
+discordant_test: chi-square               # chi-square or z
+tree_height_calculation_strategy: AVG     # AVG, A, B, C, SIS, INT
+min_support_value: 0.5                    # minimum support threshold for a topology to count
+generate_summary_stats: false             # true = also write summary_statistics.tsv
+shape_diagnostics: false                  # true = include shape-diagnostics columns
 bootstrap_options:
-  iterations: 100
-  debug_mode: false
-  summary_only: false
+  iterations: 100                         # bootstrap resamples per triplet
+  debug_mode: false                       # true = emit debug summaries during bootstrap
+  summary_only: false                     # true = keep only the summary output
 permutation_options:
-  min_resamples: 2500
-  max_resamples: 25000
-  ci_method: wilson
+  min_resamples: 2500                     # minimum permutation resamples to attempt
+  max_resamples: 25000                    # hard upper bound for permutation resamples
+  ci_method: wilson                       # CI method for the permutation interval
 ```
 
 ### Required Keys
@@ -351,6 +357,7 @@ Bootstrap iterations re-run the direction test at one fifth of `min_resamples` a
 ### Orchestrator CLI Example
 
 ```bash
+# required: -st/--species-tree-path, -gt/--gene-trees-path, -og/--outgroup
 python -m ghostparser.orchestrator \
   -st data/species.tree \
   -gt data/genes.tree \
@@ -360,7 +367,15 @@ python -m ghostparser.orchestrator \
   --alpha-dct 0.05 \
   --alpha-ks 0.05 \
   --alpha-perm 0.05 \
-  --p-value-correction bfn
+  --p-value-correction bfn \
+  --pipeline-mode efficient
+
+# optional CLI switches: -c/--config-file, --triplet-filter, --species-rename-map,
+# --seed, --no-overwrite, --no-consolidation, --no-bootstrap,
+# --preflight-data-check, --preflight-triplet-cap
+# default behaviors: config-file mode ignores other flags; no triplet filter means all triplets;
+# overwrite is enabled by default; consolidation and bootstrap are enabled by default;
+# preflight checks are disabled by default; 0 checks all triplets.
 ```
 
 ## Machine Learning (ghostparser.ml)
@@ -443,34 +458,35 @@ The loader expects a top-level layout like this:
 ```yaml
 input_path: ./results/summary_statistics.tsv
 output_dir: ./results/ml_out
-target_column: class
-test_size: 0.2
-cv_folds: 5
-rare_class_policy: warn_reduce_cv
-random_state: 42
-n_jobs: -1
+overwrite: true                       # true = clear the existing output directory before writing
+target_column: class                 # multi-label target bitstring column
+test_size: 0.2                       # fraction reserved for the hold-out split
+cv_folds: 5                          # integer >= 1 or null; null disables CV
+rare_class_policy: warn_reduce_cv    # warn_reduce_cv, warn_skip_cv, error
+random_state: null                   # null = use nondeterministic defaults
+n_jobs: -1                           # -1 = all available cores, null = no parallelism
 
 model:
-  n_estimators: 200
-  max_depth: 10
-  min_samples_split: 2
-  min_samples_leaf: 1
-  max_features: null   # null or ~, or omit the key; not the bare word None
-  class_weight: null
-  n_neighbors: 5
-  weights: uniform
-  algorithm: auto
-  leaf_size: 30
-  metric: minkowski
-  p: 2
+  n_estimators: 200                  # 200 trees by default
+  max_depth: 10                      # null = unlimited depth
+  min_samples_split: 2               # minimum samples required to split a node
+  min_samples_leaf: 1                # minimum samples required in a leaf node
+  max_features: null                 # null = use all features; allowed: sqrt, log2, int, float
+  class_weight: null                 # null, balanced, balanced_subsample, mapping, or list
+  n_neighbors: 5                     # KNN neighbors
+  weights: uniform                   # uniform or distance
+  algorithm: auto                    # auto, ball_tree, kd_tree, brute
+  leaf_size: 30                      # KNN leaf size
+  metric: minkowski                  # KNN distance metric
+  p: 2                               # Minkowski exponent
 
 evaluation:
-  metrics: all
-  report_class_distribution: true
-  report_confusion_matrix: true
-  report_feature_importance: true
-  save_label_map: true
-  save_predictions: true
+  metrics: all                       # all, primary, diagnostic, per_bit
+  report_class_distribution: true    # include the dataset summary block
+  report_confusion_matrix: true      # include confusion-matrix metrics
+  report_feature_importance: true     # include feature importance output
+  save_label_map: true               # store the label map in the metrics JSON
+  save_predictions: true             # save per-row predictions to TSV
 ```
 
 ### Model Parameters
@@ -546,14 +562,25 @@ Do not place runtime fields such as `input_path`, `output_dir`, `target_column`,
 Example:
 
 ```yaml
+input_path: ./results/summary_statistics.tsv
+output_dir: ./results/hyper_tune_out
+overwrite: true
+target_column: class
+test_size: 0.2
+cv_folds: 5
+rare_class_policy: warn_reduce_cv
+random_state: null
+n_jobs: -1
+
 hyperparameter_tuning:
-  model: random_forest
-  method: random
-  objective: exact_match_accuracy
-  top_k: 5
-  n_iter: 20
-  max_candidates: 5000
-  use_wandb: false
+  model: random_forest             # random_forest or multi_knn
+  method: grid                    # grid or random
+  objective: exact_match_accuracy  # exact_match_accuracy, hamming_loss, bitwise_accuracy, micro_f1, macro_f1, weighted_f1
+  top_k: 10                       # keep the top K candidates in the summary report
+  n_iter: 20                      # sampled candidates when method: random
+  max_candidates: 5000            # hard cap for full-grid evaluation
+  use_wandb: false                # true = log to Weights & Biases
+  wandb_detailed_payloads: false  # true = log extra per-candidate payloads when use_wandb: true
   search_space:
     n_estimators: [100, 200, 400]
     max_depth: [null, 10, 20]
@@ -585,6 +612,31 @@ Use `method: grid` to evaluate every combination in the search space. Use `metho
 While it runs, the tuner prints progress to the console: it announces the search method, reports the total candidate cases it will evaluate, estimates the total model fits implied by CV, and logs per-candidate timing updates.
 
 ### CLI examples
+
+The trainer CLIs accept only the options below. Omitted options use the shown
+defaults; `-c/--config-file` takes precedence over the other trainer options.
+
+```bash
+# Random forest and Multi-KNN trainers use the same four options.
+python -m ghostparser.ml.random_forest \
+  -i ./results/summary_statistics.tsv \
+  -o ./results/ml_out \
+  --no-overwrite
+python -m ghostparser.ml.multi_knn \
+  -i ./results/summary_statistics.tsv \
+  -o ./results/ml_out
+
+# optional CLI switches: -c/--config-file, -i/--input-path, -o/--output-dir,
+# --no-overwrite
+# default behaviors: config-file mode ignores other flags; input/output are required unless
+# supplied by config; overwrite is enabled by default.
+
+# The hyperparameter tuner accepts these two options:
+python -m ghostparser.ml.hyper_tune \
+  -c ./sample_configs/hyperparameter_tuning_random_forest.yaml
+# optional CLI switches: -c/--config-file, --no-overwrite
+# default behaviors: config-file mode is required; overwrite is enabled by default.
+```
 
 Run RandomForest via module entrypoint:
 
