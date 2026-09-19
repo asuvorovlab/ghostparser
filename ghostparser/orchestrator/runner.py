@@ -16,7 +16,7 @@ from .inference import (
     write_summary_statistics_tsv,
 )
 from .preflight import run_preflight_data_check
-from .stream import stream_triplet_results
+from .stream import available_cpu_count, resolve_worker_count, stream_triplet_results
 from .trees import (
     MetricsLogger,
     _build_species_triplet_metadata,
@@ -497,6 +497,15 @@ def run_orchestrator(config):
                 "bootstrap": config["bootstrap"],
             }
 
+            # The resolved count is what the run actually does with
+            # ``processes: 0``, and on a scheduler allocation it is the
+            # allocation, not the node.
+            worker_count = resolve_worker_count(len(triplets), config["processes"])
+            metrics.log(
+                f"Worker processes: {worker_count} "
+                f"(requested {config['processes'] or 'all'}; "
+                f"{available_cpu_count()} CPU(s) available to this process)"
+            )
             metrics.log("✓ Starting fused extraction + inference stage...")
             stream_start_wall, stream_start_cpu = _now_times()
             results, stream_worker_cpu = stream_triplet_results(

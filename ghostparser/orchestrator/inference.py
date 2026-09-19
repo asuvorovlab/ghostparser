@@ -139,7 +139,7 @@ SUMMARY_METRIC_LABELS = ("avg_tree_height", "internal_branch", "sister_distance"
 # group the DCT, KS, and permutation tests all operate on.
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DeferredBootstrapRecord:
     """One triplet's raw per-iteration bootstrap p-values, awaiting correction.
 
@@ -183,7 +183,10 @@ class _CorrectionPolicy:
     inline: bool
 
 
-@dataclass(frozen=True)
+# Slotted because a run holds one of these per triplet, in the parent and again
+# while the decision pass rebuilds them: the instance dict alone is ~1.9 KB of a
+# ~4 KB result, so at 645,000 triplets slots save over a gigabyte, twice.
+@dataclass(frozen=True, slots=True)
 class TripletPipelineResult:
     """Result of the GhostParser orchestrator for one rooted species triplet.
 

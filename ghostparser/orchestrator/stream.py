@@ -1,11 +1,13 @@
 """Fused extract-and-infer streaming engine for the orchestrator.
 
-Extracts a chunk of triplets' observations in one gene-tree parse pass and runs
-inference immediately, with no serialize-then-reparse round trip. Caches every
-gene tree's geometry once for the run, dispatches triplet chunks across workers,
-and applies the run-wide p-value correction.
+Extracts a batch of triplets' observations from the cached gene-tree geometries
+and runs inference immediately, with no serialize-then-reparse round trip and
+never more than a batch of observations in hand. Caches every gene tree's
+geometry once for the run, dispatches triplet chunks across workers, and
+applies the run-wide p-value correction.
 """
 
+import os
 import time
 from multiprocessing import cpu_count
 from typing import NamedTuple
@@ -23,6 +25,13 @@ from .triplet_geometry import (
     build_triplet_geometry,
     geometry_observation,
 )
+
+# How many triplets a worker holds observations for at once. One observation
+# is a tuple and a float, about 96 bytes, so one triplet's list is ~260 KB at
+# 2,700 gene trees and a whole 20,000-triplet chunk would be over 5 GB per
+# worker. Extracting a batch at a time keeps that buffer in the tens of MB
+# while the results, which are small, still accumulate for the chunk.
+_EXTRACTION_BATCH_SIZE = 128
 
 # Worker-global state shared read-only via fork/forkserver initializer.
 _RUN_GEOMETRY = None
@@ -67,18 +76,39 @@ def _chunk_list(items, chunk_size):
         yield items[i : i + chunk_size]
 
 
-def _calculate_worker_count(total_items, processes):
+def available_cpu_count():
+    """Count the CPUs this process is allowed to run on.
+
+    ``multiprocessing.cpu_count`` reports every core in the machine, which on a
+    shared cluster node can be many times what the scheduler allocated: a
+    128-core node running an 8-core job would start 128 workers, each with its
+    own copy of the per-chunk state, and time-slice them over 8 cores. The
+    affinity mask is what the allocation actually leaves the process.
+
+    Returns:
+        The usable CPU count, at least 1.
+    """
+    counter = getattr(os, "process_cpu_count", None)
+    if counter is not None:
+        return max(1, counter() or 1)
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, cpu_count())
+
+
+def resolve_worker_count(total_items, processes):
     """Resolve the worker count from the requested processes and item count.
 
     Args:
         total_items: Number of work items available.
-        processes: Requested worker count; ``0`` means all cores.
+        processes: Requested worker count; ``0`` means every CPU available to
+            this process.
 
     Returns:
         The clamped worker count (at least 1, at most ``total_items``).
     """
-    available_cpus = cpu_count()
-    worker_count = processes or available_cpus
+    worker_count = processes or available_cpu_count()
     return max(1, min(worker_count, total_items))
 
 
@@ -184,22 +214,23 @@ def _analyze_chunk(
     Returns:
         A list of ``TripletPipelineResult`` objects for the chunk.
     """
-    observations = _extract_chunk_observations(
-        triplet_chunk,
-        run_geometry,
-        strategy,
-        collect_summary_statistics,
-    )
     results = []
-    for triplet in triplet_chunk:
-        results.append(
-            analyze_triplet_from_observations(
-                triplet,
-                observations[triplet],
-                species_subtree=species_triplet_trees.get(triplet),
-                **analysis_kwargs,
-            )
+    for batch in _chunk_list(list(triplet_chunk), _EXTRACTION_BATCH_SIZE):
+        observations = _extract_chunk_observations(
+            batch,
+            run_geometry,
+            strategy,
+            collect_summary_statistics,
         )
+        for triplet in batch:
+            results.append(
+                analyze_triplet_from_observations(
+                    triplet,
+                    observations[triplet],
+                    species_subtree=species_triplet_trees.get(triplet),
+                    **analysis_kwargs,
+                )
+            )
     return results
 
 
@@ -311,7 +342,8 @@ def stream_triplet_results(
         triplets: List of triplets to analyze.
         species_triplet_trees: Mapping of triplet to its species subtree Newick.
         gene_trees: Gene-tree Newick strings.
-        processes: Requested worker count; ``0`` means all cores.
+        processes: Requested worker count; ``0`` means every CPU available to
+            this process.
         inference_kwargs: Keyword arguments for the per-triplet analysis (also
             the source of ``tree_height_calculation_strategy`` used at
             extraction and ``alpha_dct``/``alpha_ks`` used for correction).
@@ -333,7 +365,7 @@ def stream_triplet_results(
     inference_kwargs["p_value_correction"] = p_value_correction
     inference_kwargs["family_size"] = len(triplets)
 
-    worker_count = _calculate_worker_count(len(triplets), processes)
+    worker_count = resolve_worker_count(len(triplets), processes)
 
     # Cache every gene tree's geometry once for the whole run. Chunks reuse it,
     # so a tree is parsed once rather than once per chunk per worker.

@@ -930,8 +930,34 @@ worker runs the fused extract-then-infer loop for its chunk over the shared
 gene-tree list and the shared geometry cache. Triplet chunks are the only unit
 worth distributing, because a run's cost is per-triplet inference.
 
+`processes: 0` resolves to the CPUs the process may actually run on
+(`available_cpu_count`, from the affinity mask), not the machine's core count:
+on a shared cluster node the two can differ by an order of magnitude, and a
+worker per node core on an 8-CPU allocation would time-slice 128 processes over
+8 cores while each carries its own per-chunk state. `metrics.txt` reports the
+resolved count as `Worker processes`.
+
+Within a chunk, a worker extracts observations for `_EXTRACTION_BATCH_SIZE`
+(128) triplets at a time and analyzes them before extracting the next batch.
+One observation is a tuple and a float, about 96 bytes, so a triplet's list
+runs to ~260 KB at 2,700 gene trees; holding a whole 20,000-triplet chunk's
+worth would be over 5 GB per worker, while a batch is tens of MB. The results,
+which are small and slotted, still accumulate for the chunk and return to the
+parent in one payload.
+
 With one worker (or one triplet) the engine runs the fused loop serially in the
 parent process regardless of mode.
+
+Everything above happens on one machine. The workers are forked from the
+parent, share its geometry cache copy-on-write and return their results over
+pipes, none of which crosses a machine boundary. On a cluster, an allocation
+spanning several nodes therefore runs the orchestrator on the node the script
+started on and leaves the others idle: ask for the CPUs and memory on a single
+node. No multi-node execution is implemented. Memory is not divided among
+workers either -- an allocation's memory limit is a ceiling on the sum over
+the parent and every worker, and the peak is the parent's geometry cache plus
+the accumulated results (held twice during the decision pass) plus each
+worker's small private state.
 
 ## Internal design
 
@@ -1001,10 +1027,13 @@ derived from the run seed and the triplet, so any worker count agrees exactly.
 ### Memory rationale
 
 - No intermediate triplet-gene-trees file is written or reloaded.
-- Peak memory is roughly the shared gene-tree Newick list, plus one chunk of
-  transient subtrees, plus the accumulating list of small result objects.
+- Peak memory is roughly the geometry cache (one `array` LCA table per gene
+  tree, shared copy-on-write with the workers), plus one extraction batch of
+  observations per worker, plus the accumulating list of result objects.
 - Result objects must be accumulated because global p-value correction needs all
-  p-values in a single pass.
+  p-values in a single pass. `TripletPipelineResult` is a slotted dataclass for
+  that reason: the instance dict was ~1.9 KB of a ~4 KB result, and the
+  decision pass holds the measured and the decided lists at once.
 
 ### Consolidation interface contract
 

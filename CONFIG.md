@@ -111,7 +111,7 @@ output_folder: results                    # output directory for all run artifac
 overwrite: true                           # true = reset and reuse output dir; false = append suffix
 triplet_filter: null                      # path to filter file or null (all triplets)
 species_rename_map: null                  # path to rename map or null
-processes: 0                              # 0 = all available CPU cores
+processes: 0                              # 0 = every CPU available to the process
 seed: null                                # null = generate a run seed at runtime
 alpha_dct: 0.05                           # DCT significance threshold
 alpha_ks: 0.05                            # KS significance threshold
@@ -229,7 +229,9 @@ Settable either on the CLI or in a config file.
 
 - CLI: `--processes`
 - Default: `0`
-- Worker process count. `0` uses all available cores; `1` runs serially in the parent process.
+- Worker process count. `0` uses every CPU the process is allowed to run on — the scheduler's allocation on a cluster node (SLURM, a container's CPU set), not the node's full core count — and `1` runs serially in the parent process. The count actually used is reported in `metrics.txt` as `Worker processes`, with the CPUs the process could see.
+- A worker's memory is one batch of observations at a time (128 triplets, so a few tens of MB however many gene trees there are) plus its share of the read-only geometry cache, which is inherited copy-on-write rather than copied. Starting more workers than the allocation has CPUs gains nothing and multiplies that per-worker memory, which is why `0` resolves to the allocation.
+- The workers are processes on the machine the orchestrator was started on, and that is the only machine a run uses. On a cluster, an allocation spanning several nodes runs the orchestrator on one of them and leaves the rest idle; request the CPUs and memory on a single node instead. No multi-node execution is implemented.
 
 ##### `alpha_dct`
 

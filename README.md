@@ -282,8 +282,13 @@ Consolidation details:
 - `--processes`
 
    - Number of worker processes.
-   - Defaults to `0` (all cores). Use `--processes 1` to run serially in the
-     parent process, which is useful for debugging or constrained systems.
+   - Defaults to `0` (every CPU available to the process — on a cluster node,
+     the job's allocation rather than the whole node). Use `--processes 1` to
+     run serially in the parent process, which is useful for debugging or
+     constrained systems. `metrics.txt` reports the count actually used.
+   - Workers are processes on one machine. A cluster allocation that spans
+     several nodes runs the orchestrator on a single node and leaves the
+     others idle; no multi-node execution is implemented.
 
 ##### Output Files
 
@@ -420,7 +425,7 @@ Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
 
 **Execution Defaults:**
 
-- `processes`: `0` (all available CPU cores)
+- `processes`: `0` (every CPU available to the process)
 - `pipeline_mode`: `efficient`
 - `output_folder`: `./results`
 - `overwrite`: `true`
