@@ -157,16 +157,25 @@ returning the classification and the name of the test that settled it as one
 pair. That pair populates the `classification` and `decision_gate` columns, so
 the two are derived in a single pass and cannot drift apart.
 
-How much of that actually gets computed is set by `pipeline_mode`. Under
-`efficient` (the default) a gate that settles the call stops the work there, so
-the `perm_*` block is empty on those rows and carries
-`perm_note = direction_test_not_consulted`; under `detailed` all three gates run
-for every triplet and every column is populated. Both modes reach the same
-classification — see "Skipping a settled gate" for why.
+Nothing is classified while the triplets stream:
+`_run_triplet_pipeline_from_observations` returns measurements only, with the
+decided fields left empty. The classification is made once, in
+`_apply_triplet_result_p_value_correction`, after every triplet's p-values are
+in hand and corrected — see "The two run-wide correction families". That pass
+is the single decision point in the pipeline.
+
+How much of a triplet actually gets measured is set by `pipeline_mode`. Under
+`efficient` (the default) a gate that settles the call stops the work there,
+so the `perm_*` block is empty on those rows and carries
+`perm_note = direction_test_not_consulted`, and under `no`/`bfn` the
+tree-height columns are empty below a settled count gate; under `detailed` all
+three tests run for every triplet and every column is populated. Both modes
+reach the same classification under every correction method — see "The point
+estimate's short-circuit" for why.
 
 Either way, read `decision_gate` before reading `perm_decision`: only `PERM`
-means the direction result produced the classification. Under `detailed`, a row
-carrying `decision_gate = THT`, `perm_decision = ambiguous`, and
+means the direction result produced the classification. Under `detailed`, a
+row carrying `decision_gate = THT`, `perm_decision = ambiguous`, and
 `classification = inflow_introgression` is consistent — the direction test ran
 and was recorded, but the tree-height test had already settled the call.
 
@@ -587,31 +596,26 @@ reported `equivalent` or `inconclusive` and classified `ambiguous`.
 
 ### The two run-wide correction families
 
-The DCT and KS p-values are each corrected once across triplets, but they do not
-share a family.
+The DCT and KS p-values are each corrected once across triplets, as two
+separate families that both contain **every triplet**. Each family is simply
+that test's column of raw p-values, so a corrected value is a function of its
+own column and the method — the count test's outcome plays no part in how the
+tree-height p-values are corrected, and vice versa. The only place the two
+meet is the cascade, which reads the corrected flags in order and stops at the
+first gate that settles the call.
 
-Every triplet runs the discordant count test, so the **DCT family is every
-triplet**. The tree-height test only decides something for a triplet whose count
-gate cleared — below a failed gate the cascade has already answered
-`no_introgression` and never looks at it — so the **KS family is the triplets
-whose corrected DCT p-value cleared `alpha_dct`**. Enrolling the rest would pad
-the family with p-values nothing reads and push the corrected values of the
-triplets that do decide something towards non-significance.
-
-Two consequences follow.
-
-- Triplets outside the family report no `ks_p_value_corrected` and no
-  `ks_significant`. There is no family for them to be corrected against, and
-  their classification was settled a gate earlier.
-- **The family is the same set under either pipeline mode**, which is what makes
-  the two modes' results identical rather than merely similar. Correction can
-  only raise a p-value, so the corrected survivors are always a subset of the raw
-  survivors — and the efficient mode measures the tree-height test for every raw
-  survivor. Whatever the detailed mode measures on top of that is never enrolled.
-
-Because the family's size is only known once every triplet has been counted, no
-correction method can be applied to a KS p-value while the stream is still
-running. That is what forces the bootstrap to defer, below.
+The family size is the triplet count, which is known before the first triplet
+is measured; that is what lets the inline methods below vote as they go, and
+what lets the efficient mode leave a member unmeasured without touching the
+rest. Under `no` and `bfn` each member's corrected value follows from its own
+raw value and the count alone, so a triplet whose count gate failed can skip
+the tree-height test: it stays a member — `_correct_family` still corrects the
+measured members by the full triplet count, never by the number measured — and
+its own corrected value would have gone unread. Under `holm`, `fdr_bh` and
+`fdr_by` every member's value moves the others' ranks, so the tree-height test
+is measured for every triplet in both modes. Every triplet reports
+`dct_p_value_corrected` and `dct_significant`; `ks_p_value_corrected` and
+`ks_significant` are empty only on a triplet that never measured the test.
 
 ### Correction inside the bootstrap
 
@@ -624,35 +628,41 @@ support contradicts their own classification.
 
 The obstacle is that a correction is a property of a *family*, not of a single
 p-value, and the family here spans triplets: iteration `i` of triplet A belongs
-with iteration `i` of every other triplet. A streaming engine that finishes one
-triplet before starting the next does not have the rest of the family in hand.
+with iteration `i` of every other triplet — one column of the grid is one
+resampled run. A streaming engine that finishes one triplet before starting the
+next does not have the rest of the column in hand. Two tiers handle this:
 
-For the DCT that obstacle is surmountable under `no` and `bfn`, whose multiplier
-follows from the triplet count alone. For the KS test it is not, under any
-method: its family is the iteration's count-gate survivors, and how many those
-are is not known until every triplet has been resampled. **Every method therefore
-defers.** Each iteration parks its raw DCT and KS p-values and its direction code
-in a `DeferredBootstrapRecord`; `_resolve_deferred_bootstrap` then corrects
-iteration `i` across every triplet at once, classifies the whole grid, and tallies
-each triplet's votes.
+- **Inline** (`no`, `bfn`): the multiplier follows from the family size alone,
+  and that is the triplet count, known before the stream starts. Each iteration
+  classifies itself on the spot (`_inline_iteration_classification`) with
+  exactly the corrected value the run-wide pass would produce, and only the
+  tally leaves the loop. Nothing per iteration is stored, which is what keeps a
+  300,000-triplet run's memory flat.
+- **Deferred** (`holm`, `fdr_bh`, `fdr_by`): a rank-based multiplier depends on
+  every other member's value. Each iteration parks its raw DCT and KS p-values
+  and its direction code in a `DeferredBootstrapRecord` (about 17 bytes per
+  iteration per triplet); `_resolve_deferred_bootstrap` then corrects each
+  column across every triplet at once, classifies the whole grid, and tallies
+  each triplet's votes.
 
-An iteration measures its tree-height test on the same rule the point estimate
-uses — only where its own count gate cleared — so each per-iteration family is
-shaped like the run-wide family it is compared against.
-
-The inline shortcut survives in one narrow place: `_iteration_corrected` uses it
-to tighten the *short-circuit* test, so an iteration under `bfn` can skip more
-work than one under a rank-based method. It no longer decides any classification.
+The tree-height test is measured wherever the correction will read it. Under a
+rank-based method that is every iteration, because every member's value moves
+the others' ranks. Under an inline method a value below a failed count gate is
+never read — the family size is fixed — so the iteration leaves it unmeasured
+and votes `no_introgression` directly.
 
 ### Skipping a settled gate
 
 Once a raw gate has failed, the cascade's answer is already fixed: `p_raw > alpha`
 implies `p_adjusted > alpha` for every supported correction, so the corrected gate
-fails too and nothing below it can change the classification. The direction test
-below such a gate can therefore be skipped outright — and it is much the most
-expensive of the three. This licenses both short-circuits: a bootstrap
-iteration skipping its own direction test, and the point estimate skipping a
-triplet's under `pipeline_mode: efficient`.
+fails too and nothing below it can change the classification. The direction
+test below such a gate can therefore be skipped outright — and it is much the
+most expensive of the three. This licenses both short-circuits: a bootstrap
+iteration skipping its own direction test in either mode, and the point
+estimate skipping a triplet's under `pipeline_mode: efficient`. In both places
+`_gate_p_value` decides what the gate is judged on: under an inline method the
+exactly corrected value, under a rank-based method the raw one, which is the
+conservative side.
 
 The monotonicity it rests on holds for every supported method by construction:
 
@@ -673,8 +683,8 @@ is easy to lose: a procedure that *estimates* the number of true null hypotheses
 `n₀ <= n` and substitutes it for `n` has a multiplier `n₀/j` that can fall below
 1, so an adjusted p-value can land beneath its raw one. Adding such a method
 would silently break both short-circuits — every skipped test would become a
-test that might have changed the answer — so monotonicity is a precondition for
-anything entering `P_VALUE_CORRECTION_CHOICES`.
+test that might have changed the answer — so monotonicity is a precondition
+for anything entering `P_VALUE_CORRECTION_CHOICES`.
 `test_every_supported_correction_is_monotone` asserts it over the whole choice
 list rather than a fixed set of names, so a method that violates it fails
 immediately on being added.
@@ -689,28 +699,50 @@ correction method.
 ### The point estimate's short-circuit
 
 `pipeline_mode: efficient` (the default) applies the same argument to the point
-estimate: `_run_triplet_pipeline_from_observations` runs the direction test only
-when both earlier gates cleared. `detailed` runs it for every triplet.
+estimate: `_run_triplet_pipeline_from_observations` runs the direction test
+only when both earlier gates cleared, and under an inline correction runs the
+tree-height test only when the count gate cleared. `detailed` runs every test
+for every triplet.
 
-Two things make this safe to do triplet by triplet while the stream is still
-running, before the run-wide correction pass has seen the whole family:
+Skipping the direction test never changes a decision, under any correction
+method, for two reasons that have to hold together:
 
 - **Monotonicity**, above: a raw-failed gate cannot clear once corrected, so a
-  skipped triplet could never have reached gate 3.
-- **Permutation p-values are corrected within the test only**, across its pair of
-  one-tailed p-values, never across triplets. Omitting one triplet's direction
-  test therefore changes nothing for any other triplet — unlike the DCT and KS
-  p-values, whose families span the run.
+  skipped triplet could never have reached gate 3. The cascade reads
+  `perm_decision` only when *both* corrected gates are significant, and a
+  triplet the efficient mode skipped has at least one gate that already failed
+  on the value the correction can only raise. Its own classification, gate and
+  bootstrap votes are therefore fixed before the direction test would run.
+- **Permutation p-values are corrected within the test only**, across its pair
+  of one-tailed p-values, never across triplets (see "Why this correction is
+  within-triplet only" under gate 3). Omitting one triplet's direction test
+  therefore changes nothing for any *other* triplet: there is no run-wide
+  permutation family for it to have been a member of. That is what makes the
+  skip safe to take triplet by triplet while the stream is still running,
+  before the run-wide correction pass has seen the whole family.
+
+The DCT and KS p-values are different precisely on the second point — their
+families span the run — which is why the count test is never skipped and the
+tree-height test only under a correction whose family size alone corrects it.
+Under `no`/`bfn` the gate is judged on the exactly corrected value
+(`p × n_triplets`), so the point estimate skips exactly the tests the pass
+would find unread; under a rank-based method it is judged on the raw value, so
+it may run a direction test the pass then ignores, but never skips one it
+needs.
 
 `_apply_triplet_result_p_value_correction` replays the stored `perm_decision`
 after correction rather than recomputing it. A skipped test leaves that field
-`None`, while a guard or an empty group still records a string, so reaching gate 3
-without a decision is an invariant violation rather than an ambiguous call; the
-pass raises instead of silently classifying such a triplet `ambiguous`.
+`None`, while a guard or an empty group still records a string, so reaching gate
+3 without a decision is an invariant violation rather than an ambiguous call;
+the pass raises instead of silently classifying such a triplet `ambiguous`.
+`_correct_family` likewise raises if a rank-based family arrives with members
+missing.
 
 Skipped triplets report `perm_note = direction_test_not_consulted` and leave the
 rest of the `perm_*` block empty, which distinguishes a deliberate skip from a
-test that ran and hit a guard. `metrics.txt` counts them.
+test that ran and hit a guard. `metrics.txt` names the mode, spells out what it
+skips under the run's correction, and counts the skipped tree-height and
+direction tests alongside the triplets clearing each gate.
 
 ## Shape diagnostics
 
@@ -855,9 +887,9 @@ Written under the output folder:
 | `dct_statistic` / `dct_p_value` | DCT | SciPy chi-square or statsmodels z-test over `[n_dis1, n_dis2]`. An all-zero discordant split short-circuits to `(0.0, 1.0)`. |
 | `dct_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's DCT p-value. Omitted under `no`. |
 | `dct_significant` | Decision gate 1 | Corrected DCT p-value below `alpha_dct`. |
-| `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. Empty under the efficient mode when the count gate settled the triplet. |
-| `ks_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's KS p-value. Omitted under `no`. |
-| `ks_significant` | Decision gate 2 | Corrected KS p-value below `alpha_ks`. |
+| `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. Empty under the efficient mode with `no`/`bfn` when the count gate settled the triplet. |
+| `ks_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's KS p-value, by the triplet count. Omitted under `no`; empty where the test was not measured. |
+| `ks_significant` | Decision gate 2 | Corrected KS p-value below `alpha_ks`. Empty where the test was not measured. |
 | `perm_statistic` | Direction test | Observed Welch-studentized mean difference. Empty when a guard fired. |
 | `perm_p_greater` / `perm_p_less` | Direction test | Raw one-tailed p-values, add-one estimator. |
 | `perm_p_greater_<method>_corr` / `perm_p_less_<method>_corr` | Direction test | The one-tailed p-values corrected against each other, and the values compared to `alpha_perm`. Omitted under `no`. |

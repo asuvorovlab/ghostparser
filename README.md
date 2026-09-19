@@ -210,11 +210,16 @@ Consolidation details:
 - Consolidation is enabled by default; disable it with `--no-consolidation`.
 - Its artifacts go in a dedicated `consolidation/` subfolder so its own output-directory reset cannot remove the run's results.
 
+#### Where the Decisions Are Made
+
+- Nothing is classified while the triplets are being processed. Once every triplet is in, the count p-values are corrected together across all triplets, the tree-height p-values likewise, and only then does the cascade read the corrected flags to classify each triplet. The direction test's p-values are corrected inside the test itself (across its two one-tailed p-values) and never across triplets, so they are complete as soon as the test finishes. See [CONFIG.md](CONFIG.md#p_value_correction).
+- The `decision_gate` column names the test that settled the call. A test reported on the same row below that gate took no part in it.
+
 #### How Much Gets Computed
 
-- `--pipeline-mode efficient` (the default) stops measuring a triplet once the decision cascade is settled. Only the third gate consults the permutation direction test, so a triplet an earlier gate already decided skips it instead of computing a result nothing reads. It is the most expensive of the three tests, so this is where the time goes. See [CONFIG.md](CONFIG.md#pipeline_mode).
-- **This does not change any classification.** No supported correction can lower a p-value below its raw value, so a gate that failed raw cannot clear once corrected — the skipped test could not have been reached. `--pipeline-mode detailed` computes all three gates for every triplet and reaches the same conclusions; use it when you want the direction test's statistics everywhere for debugging.
-- Skipped triplets have an empty `perm_*` block and carry `perm_note: direction_test_not_consulted`, so a deliberate skip is distinguishable from a test that ran and hit a guard. A triplet the count gate settled also leaves the raw tree-height columns empty. `metrics.txt` reports how many triplets skipped, and how many cleared the count gate to form the tree-height correction family.
+- `--pipeline-mode efficient` (the default) stops measuring a triplet once the decision cascade is settled. Only the third gate consults the permutation direction test, so a triplet an earlier gate already decided skips it instead of computing a result nothing reads. It is much the most expensive of the three tests, so this is where the time goes. Under `no` and `bfn` the tree-height test below a settled count gate is skipped as well; under `holm`, `fdr_bh` and `fdr_by` it is measured for every triplet, because those corrections rank every triplet's value against the others'. See [CONFIG.md](CONFIG.md#pipeline_mode).
+- **This changes no classification, under any correction method.** Two things guarantee it. No supported correction can lower a p-value below its raw value, so a gate that failed raw cannot clear once corrected — the skipped test could never have been reached. And the direction test's p-values are corrected inside the test, never across triplets, so leaving one triplet's test unrun moves no other triplet's numbers; that is what makes it safe to skip triplet by triplet while the run is still streaming, before the run-wide correction has seen the whole family. `--pipeline-mode detailed` computes all three gates for every triplet and reaches the same conclusions; use it when you want the direction test's statistics everywhere for debugging.
+- Skipped triplets have an empty `perm_*` block and carry `perm_note: direction_test_not_consulted`, so a deliberate skip is distinguishable from a test that ran and hit a guard. Under `no`/`bfn` a triplet the count gate settled also leaves the tree-height columns empty. `metrics.txt` names the mode, says what it skips under the run's correction, and counts the skipped tests and the triplets clearing each gate.
 
 #### Direction Test Behavior
 
@@ -296,7 +301,7 @@ An orchestrator run generates these output files:
 6. **`consolidation/`** - Introgression map figure and TSV matrices
 
 Base TSV output includes `dis1_topology` and a topology-only `species_tree` value for each triplet.
-Base TSV output also includes a `decision_gate` column naming which test settled the classification (`DCT`, `THT`, or `PERM`). The permutation columns are filled in for every triplet, so `decision_gate` is what tells you whether `perm_decision` was actually consulted — only `PERM` means it was.
+Base TSV output also includes a `decision_gate` column naming which test settled the classification (`DCT`, `THT`, or `PERM`). Only `PERM` means `perm_decision` was actually consulted: under the default `pipeline_mode: efficient` the permutation columns are filled in only on those rows, and under `detailed` they are filled in for every triplet, so `decision_gate` is what tells you whether they took part.
 Base TSV output also includes an `inference` column with human-readable direction text using actual species names.
 
 When bootstrap is enabled, the TSV adds:
@@ -471,7 +476,7 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Config field ... must be a boolean when provided` / `Config field ... must be a numeric value`
    Boolean/float-style fields were provided with incompatible types.
 - `Config field ... must be one of: ...`
-   Choice-constrained fields (discordant test, summary statistic, tree-height strategy, p-value correction, pipeline mode) contain unsupported values.
+   Choice-constrained fields (discordant test, tree-height strategy, p-value correction, pipeline mode) contain unsupported values.
 - `Config field overwrite must be a boolean when provided` / `Config field no_overwrite must be a boolean when provided`
    The overwrite flags were given non-boolean values.
 - `Config field bootstrap_options.* ...`
