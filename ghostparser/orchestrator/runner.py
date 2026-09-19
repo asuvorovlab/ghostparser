@@ -7,8 +7,9 @@ from pathlib import Path
 
 import dendropy
 
-from .config import prepare_output_directory, resolve_config
+from .config import PIPELINE_MODE_EFFICIENT, prepare_output_directory, resolve_config
 from .consolidation import generate_introgression_maps
+from .correction import is_inline_correction
 from .inference import (
     PERM_NOTE_NOT_CONSULTED,
     write_pipeline_results,
@@ -70,6 +71,30 @@ def _log_stage_timing(metrics, wall_time, cpu_time):
     metrics.log(f"  Time taken (CPU): {cpu_time:.2f}s")
 
 
+def _describe_pipeline_mode(config):
+    """Spell out what the resolved pipeline mode skips under this run's correction.
+
+    Args:
+        config: The resolved orchestrator config.
+
+    Returns:
+        The mode name, followed for ``efficient`` by which tests it declines
+        and a reminder that the classifications are those of ``detailed``.
+    """
+    mode = config["pipeline_mode"]
+    if mode != PIPELINE_MODE_EFFICIENT:
+        return f"{mode} (every test is measured for every triplet)"
+    if is_inline_correction(config["p_value_correction"]):
+        skipped = "tree-height and direction tests below a settled gate"
+    else:
+        skipped = (
+            "direction test below a settled gate; the tree-height test is "
+            f"measured for every triplet because {config['p_value_correction']} "
+            "corrects it as a whole-run family"
+        )
+    return f"{mode} (skips the {skipped}; classifications are identical to detailed)"
+
+
 def _log_permutation_diagnostics(metrics, results):
     """Report permutation-test coverage and convergence.
 
@@ -91,6 +116,7 @@ def _log_permutation_diagnostics(metrics, results):
     skipped = [
         result for result in results if result.perm_note == PERM_NOTE_NOT_CONSULTED
     ]
+    ks_skipped = [result for result in results if result.ks_p_value is None]
     guarded = [
         result
         for result in results
@@ -110,23 +136,28 @@ def _log_permutation_diagnostics(metrics, results):
         if result.perm_null_skew is not None
     ]
 
-    # The tree-height correction family is the triplets the count gate let
-    # through, so its size is a run parameter worth reporting rather than
-    # inferring from the columns.
+    # How far the cascade let each triplet go, which is also what bounds how
+    # much of the direction test's cost the efficient mode can decline.
     dct_cleared = [result for result in results if result.dct_significant]
-    tht_family = [result for result in dct_cleared if result.ks_p_value is not None]
+    tht_cleared = [result for result in dct_cleared if result.ks_significant]
     metrics.log(
         f"  Triplets clearing the discordant count gate: {len(dct_cleared)} "
         f"of {len(results)}"
     )
     metrics.log(
-        f"  Tree-height test correction family: {len(tht_family)} triplet(s)"
+        f"  Triplets clearing the tree-height gate: {len(tht_cleared)} "
+        f"of {len(results)}"
     )
     metrics.log(f"  Permutation tests run: {len(ran)}")
     metrics.log(
         f"  Permutation resamples drawn: {sum(result.perm_n_resamples for result in ran)}"
     )
 
+    if ks_skipped:
+        metrics.log(
+            f"  Tree-height tests skipped as already settled: {len(ks_skipped)} "
+            f"of {len(results)} triplet(s)"
+        )
     if skipped:
         metrics.log(
             f"  Direction tests skipped as already settled: {len(skipped)} "
@@ -289,7 +320,7 @@ def run_orchestrator(config):
         metrics.log(f"Bootstrap debug mode: {config['bootstrap_debug_mode']}")
         metrics.log(f"Generate summary statistics TSV: {config['generate_summary_stats']}")
         metrics.log(f"Shape diagnostics: {config['shape_diagnostics']}")
-        metrics.log(f"Pipeline mode: {config['pipeline_mode']}")
+        metrics.log(f"Pipeline mode: {_describe_pipeline_mode(config)}")
         metrics.log(f"Consolidation enabled: {config['consolidation']}")
         metrics.log(f"Support threshold: {support_threshold}")
         metrics.log("")

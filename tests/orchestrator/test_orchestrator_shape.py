@@ -153,10 +153,10 @@ def _shape_result(seed=9, enabled=True):
         enabled: Whether to measure the shape diagnostics.
 
     Returns:
-        The resulting ``TripletPipelineResult``.
+        The decided ``TripletPipelineResult``.
     """
     rng = np.random.default_rng(seed)
-    return pinf.analyze_triplet_from_observations(
+    result = pinf.analyze_triplet_from_observations(
         _TRIPLET,
         _observations(
             rng.lognormal(0.0, 0.4, 60),
@@ -168,6 +168,10 @@ def _shape_result(seed=9, enabled=True):
         bootstrap_options={"iterations": 5},
         shape_diagnostics=enabled,
     )
+    # The writers take decided results, as they do from the runner.
+    return pinf._apply_triplet_result_p_value_correction(
+        [result], alpha_dct=0.05, alpha_ks=0.05, method="no"
+    )[0]
 
 
 def test_shape_is_measured_once_and_not_per_bootstrap_iteration():

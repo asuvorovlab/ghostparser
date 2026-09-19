@@ -64,14 +64,14 @@ def _analyze(observations, **kwargs):
     )
 
 
-def _corrected(observations, method, family_size=1, iterations=40, seed=3):
-    """Analyze one triplet and run the run-wide correction pass over it.
+def _corrected(observations, method, family_size=1, iterations=40, seed=3, **kwargs):
+    """Measure one triplet and run the run-wide decision pass over it.
 
     Both correction tiers finish in this pass: the inline methods have already
     tallied their bootstrap votes, the rank-based ones are resolved here. When
     ``family_size`` exceeds 1 the triplet is padded out to that many results,
-    each padding entry carrying a p-value of 1.0, so the point estimate is
-    corrected against the same family the bootstrap used.
+    each padding entry carrying a p-value of 1.0 on both tests, so the point
+    estimate is corrected against the same family the bootstrap used.
 
     Args:
         observations: The observation list.
@@ -79,6 +79,7 @@ def _corrected(observations, method, family_size=1, iterations=40, seed=3):
         family_size: Triplet count the correction should work against.
         iterations: Bootstrap iterations to run.
         seed: Base seed for deterministic resampling.
+        **kwargs: Forwarded to ``analyze_triplet_from_observations``.
 
     Returns:
         The corrected ``TripletPipelineResult`` for the real triplet.
@@ -91,22 +92,27 @@ def _corrected(observations, method, family_size=1, iterations=40, seed=3):
         p_value_correction=method,
         family_size=family_size,
         triplet_seed=seed,
+        **kwargs,
     )
-    # Padding stands in for triplets that never clear a gate. They need their own
-    # deferred records, not an empty one: every triplet in a real run carries a
-    # record, and the per-iteration family is sized from the records present, so
-    # dropping them would silently under-correct the bootstrap.
+    # Padding stands in for triplets that never clear a gate. Under a rank-based
+    # method they need their own deferred records, not an empty one: every
+    # triplet in a real run carries a record, and the per-iteration family is
+    # sized from the records present, so dropping them would silently
+    # under-correct the bootstrap. An inline method has already voted.
+    deferred = None
+    if result.bootstrap_deferred is not None:
+        deferred = pinf.DeferredBootstrapRecord(
+            dct_p_values=np.ones(iterations, dtype=np.float64),
+            ks_p_values=np.ones(iterations, dtype=np.float64),
+            directions=np.zeros(iterations, dtype=np.int8),
+        )
     padding = [
         replace(
             result,
             dct_p_value=1.0,
             ks_p_value=1.0,
             all_bootstrap=None,
-            bootstrap_deferred=pinf.DeferredBootstrapRecord(
-                dct_p_values=np.ones(iterations, dtype=np.float64),
-                ks_p_values=np.full(iterations, np.nan, dtype=np.float64),
-                directions=np.zeros(iterations, dtype=np.int8),
-            ),
+            bootstrap_deferred=deferred,
         )
         for _ in range(family_size - 1)
     ]
@@ -134,10 +140,9 @@ _NARROW = [0.5 + 0.02 * (1 if i % 2 else -1) for i in range(30)]
     [
         # 10 vs 10 -> chi-square statistic 0, p = 1.0, so the first gate stops.
         # KS is significant here too, so this row also shows the DCT gate
-        # stopping the cascade before a later gate can be consulted.
-        # The count gate fails, so the tree-height test joins no correction
-        # family and its significance is undefined however the raw value fell.
-        ([0.1] * 20, [0.9] * 10, [0.9] * 10, False, None, None, "DCT",
+        # stopping the cascade before a later gate can be consulted; the
+        # efficient mode never measures it, so its flag is undefined there.
+        ([0.1] * 20, [0.9] * 10, [0.9] * 10, False, True, None, "DCT",
          "no_introgression"),
         # 30 vs 2 -> chi-square 24.5, p ~ 7.4e-07. Identical con/dis1 heights
         # make the KS statistic 0 (p = 1.0), so gate 2 stops.
@@ -161,19 +166,25 @@ def test_decision_cascade_lands_on_each_classification(
 
     The gate asserts which test settled the call, so a case that reaches its
     classification by the wrong route fails rather than passing by coincidence.
-    Both modes must agree on the classification and the gate: the efficient mode
-    only declines to run a test whose result the cascade would have ignored, so
-    it reports ``perm_decision`` exactly on the rows the permutation gate
-    settled, while the detailed mode reports one everywhere.
+    Both modes must agree on the classification and the gate: the detailed mode
+    measures and reports every test on every row, while the efficient mode
+    declines a test whose result the cascade would have ignored -- it reports
+    ``perm_decision`` exactly on the rows the permutation gate settled, and
+    under the inline ``no`` correction leaves the tree-height flag undefined
+    below a settled count gate.
     """
-    result = _analyze(
-        _observations(con, dis1, dis2),
-        pipeline_mode=pipeline_mode,
+    result = _corrected(
+        _observations(con, dis1, dis2), "no", iterations=0, pipeline_mode=pipeline_mode
     )
     assert result.dct_significant is dct_significant
-    assert result.ks_significant is ks_significant
     assert result.classification == expected
     assert result.decision_gate == gate
+
+    if pipeline_mode == "detailed" or gate != "DCT":
+        assert result.ks_significant is ks_significant
+    else:
+        assert result.ks_p_value is None
+        assert result.ks_significant is None
 
     if pipeline_mode == "detailed" or gate == "PERM":
         assert result.perm_decision is not None
@@ -250,14 +261,12 @@ def test_summary_statistics_discordant_roles_follow_the_counts(
     The summary columns must name the same gene trees ``dis1_topology`` names and
     the three tests operate on, in either direction of the count.
     """
-    result = pinf.analyze_triplet(
+    observations = pinf._serialize_triplet_gene_trees(
         _TRIPLET,
         _subtrees([0.30] * 10, bc_heights, ac_heights),
-        species_subtree=_SPECIES_SUBTREE,
         collect_summary_statistics=True,
-        bootstrap_options={"iterations": 0},
-        triplet_seed=1,
     )
+    result = _analyze(observations)
 
     assert result.dis1_topology == expected_dis1_topology
     assert (result.n_dis1, result.n_dis2) == (9, 3)
@@ -401,11 +410,10 @@ def test_bootstrap_votes_answer_to_the_corrected_threshold():
 
 
 def test_deferred_bootstrap_record_is_cleared_after_correction():
-    """A rank-based method defers its votes and the correction pass resolves them.
+    """A rank-based method defers its votes and the decision pass resolves them.
 
-    A family size above one is what makes the deferral observable: the
-    tree-height family spans triplets, so a lone triplet is fully determined
-    where it is analyzed and comes back already resolved.
+    The stream leaves the votes parked whatever the family size, since every
+    rank in the per-iteration family depends on the other triplets' values.
     """
     observations = _observations([0.9] * 25, [0.2] * 3 + [0.35] * 22, [0.3] * 4)
     deferred = pinf.analyze_triplet_from_observations(
@@ -414,7 +422,6 @@ def test_deferred_bootstrap_record_is_cleared_after_correction():
         species_subtree=_SPECIES_SUBTREE,
         bootstrap_options={"iterations": 20},
         p_value_correction="holm",
-        family_size=2,
         triplet_seed=5,
     )
     assert deferred.all_bootstrap is None
@@ -554,7 +561,7 @@ def test_results_tsv_carries_corrected_columns_only_when_correcting(
         assert column in header
 
 
-# One observation set per cascade outcome, so a mode comparison spans triplets
+# One observation set per cascade outcome, so a whole-run family spans triplets
 # settled at each of the three gates rather than only the cheap ones.
 _CASCADE_FAMILY = [
     ([0.1] * 20, [0.9] * 10, [0.9] * 10),
@@ -564,10 +571,61 @@ _CASCADE_FAMILY = [
     (_WIDE, _NARROW, [0.5] * 2),
 ]
 
+
+@pytest.mark.parametrize("method", ["bfn", "holm", "fdr_bh"])
+def test_each_test_is_corrected_over_every_triplet(method):
+    """Each test's p-values form one family over all triplets, whatever the other test said.
+
+    A triplet the count gate settles still contributes its tree-height p-value
+    to the tree-height family and gets a corrected value back, so a corrected
+    column is the plain whole-run correction of its raw column. Blanking every
+    count p-value leaves the tree-height column untouched: the two corrections
+    read nothing of each other, and only the cascade order decides which one a
+    triplet's classification rests on. Runs in the detailed mode so every raw
+    value is there to correct by hand.
+    """
+    results = [
+        pinf.analyze_triplet_from_observations(
+            _TRIPLET,
+            _observations(*case),
+            species_subtree=_SPECIES_SUBTREE,
+            bootstrap_options={"iterations": 0},
+            p_value_correction=method,
+            family_size=len(_CASCADE_FAMILY),
+            triplet_seed=11,
+            pipeline_mode="detailed",
+        )
+        for case in _CASCADE_FAMILY
+    ]
+    decided = pinf._apply_triplet_result_p_value_correction(
+        results, alpha_dct=0.05, alpha_ks=0.05, method=method
+    )
+    assert {result.decision_gate for result in decided} == {"DCT", "THT", "PERM"}
+
+    for test in ("dct", "ks"):
+        raw = [getattr(result, f"{test}_p_value") for result in results]
+        expected = pinf._adjust_p_values(raw, method=method, alpha=0.05)
+        corrected = [getattr(result, f"{test}_p_value_corrected") for result in decided]
+        assert corrected == pytest.approx(expected)
+    assert all(result.ks_significant is not None for result in decided)
+    assert all(result.perm_decision is not None for result in decided)
+
+    blanked = pinf._apply_triplet_result_p_value_correction(
+        [replace(result, dct_p_value=1.0) for result in results],
+        alpha_dct=0.05,
+        alpha_ks=0.05,
+        method=method,
+    )
+    assert [result.ks_p_value_corrected for result in blanked] == [
+        result.ks_p_value_corrected for result in decided
+    ]
+    assert {result.classification for result in blanked} == {"no_introgression"}
+
+
 # Everything the cascade reads, which both modes must agree on exactly. The raw
-# ``ks_statistic``/``ks_p_value`` are deliberately absent: the efficient mode
-# does not measure them below a settled count gate, and they take no part in the
-# correction family there.
+# ``ks_statistic``/``ks_p_value`` are deliberately absent: under an inline
+# correction the efficient mode does not measure them below a settled count
+# gate, and nothing reads them there.
 _MODE_INVARIANT_FIELDS = (
     "n_con",
     "n_dis1",
@@ -577,8 +635,6 @@ _MODE_INVARIANT_FIELDS = (
     "dct_p_value",
     "dct_p_value_corrected",
     "dct_significant",
-    "ks_p_value_corrected",
-    "ks_significant",
     "classification",
     "decision_gate",
     "bootstrap_value",
@@ -586,22 +642,25 @@ _MODE_INVARIANT_FIELDS = (
 )
 
 
-@pytest.mark.parametrize("method", ["bfn", "holm"])
+@pytest.mark.parametrize("method", ["bfn", "holm", "fdr_bh"])
 def test_efficient_and_detailed_modes_agree_on_every_classification(method):
     """The efficient mode changes what is computed, never what is concluded.
 
-    Skipping the direction test is licensed by every correction being monotone,
-    so a gate that failed raw cannot clear once corrected. Both modes therefore
-    have to agree field for field on everything the cascade reads, across an
-    inline correction and a deferred one, with the bootstrap votes included --
-    those are judged against the corrected threshold, so a mode that shifted a
-    gate would move them too. The tree-height correction family is the triplets
-    the count gate cleared, which is a property of the results rather than of the
-    mode, so both runs correct it over the same members.
+    Skipping the direction test is licensed by every correction being monotone
+    and by the permutation p-values being corrected inside the test rather than
+    across triplets: a gate that failed raw cannot clear once corrected, and an
+    unrun test moves no other triplet's numbers. Both modes therefore have to
+    agree field for field on everything the cascade reads, across an inline
+    correction and two deferred ones, with the bootstrap votes included -- those
+    are judged against the corrected threshold, so a mode that shifted a gate
+    would move them too.
 
-    The only permitted differences are the ``perm_*`` block and a raw
-    ``ks_p_value`` below a settled count gate, both of which the efficient mode
-    declines to compute because nothing reads them.
+    Under a rank-based method the tree-height column must agree everywhere,
+    since every triplet is a member the efficient mode still measures. Under
+    ``bfn`` the efficient mode leaves it unmeasured below a settled count gate,
+    and the survivors must still be corrected by the triplet count rather than
+    by the number measured: a family shrunk to the survivors would lower their
+    corrected values and move classifications past the tree-height gate.
     """
     families = {}
     for mode in ("efficient", "detailed"):
@@ -622,13 +681,28 @@ def test_efficient_and_detailed_modes_agree_on_every_classification(method):
             results, alpha_dct=0.05, alpha_ks=0.05, method=method
         )
 
-    # The family has to exercise the permutation gate, or the comparison would
-    # only prove the two modes agree where neither of them resamples.
-    assert "PERM" in {result.decision_gate for result in families["efficient"]}
+    # The family has to exercise every gate, or the comparison would only prove
+    # the two modes agree where neither of them resamples.
+    assert {result.decision_gate for result in families["efficient"]} == {
+        "DCT", "THT", "PERM"
+    }
 
     for efficient, detailed in zip(families["efficient"], families["detailed"]):
         for field in _MODE_INVARIANT_FIELDS:
             assert getattr(efficient, field) == getattr(detailed, field), field
+
+        if efficient.ks_p_value is None:
+            assert method == "bfn" and efficient.decision_gate == "DCT"
+            assert efficient.ks_p_value_corrected is None
+            assert efficient.ks_significant is None
+        else:
+            assert efficient.ks_p_value == detailed.ks_p_value
+            assert efficient.ks_p_value_corrected == detailed.ks_p_value_corrected
+            assert efficient.ks_significant is detailed.ks_significant
+            if method == "bfn":
+                assert efficient.ks_p_value_corrected == pytest.approx(
+                    min(1.0, efficient.ks_p_value * len(_CASCADE_FAMILY))
+                )
 
         if efficient.decision_gate == "PERM":
             assert efficient.perm_decision == detailed.perm_decision
@@ -638,50 +712,3 @@ def test_efficient_and_detailed_modes_agree_on_every_classification(method):
             assert efficient.perm_statistic is None
             assert efficient.perm_note == pinf.PERM_NOTE_NOT_CONSULTED
             assert detailed.perm_decision is not None
-
-
-@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
-def test_tree_height_family_holds_only_the_count_gate_survivors(pipeline_mode):
-    """The tree-height correction family is the triplets that cleared gate one.
-
-    A triplet the count test already settled contributes nothing the cascade
-    reads, so enrolling its tree-height p-value would inflate the family and push
-    the corrected values of the triplets that do decide something towards
-    non-significance. The family is therefore the count-gate survivors, and it is
-    the same set in both pipeline modes: the detailed mode still measures the
-    others, and they still take no part in the correction.
-    """
-    # Two triplets the count gate settles (10 vs 10 gives chi-square p = 1.0),
-    # one it does not.
-    cases = [
-        ([0.1] * 20, [0.9] * 10, [0.9] * 10),
-        ([0.1] * 20, [0.9] * 10, [0.9] * 10),
-        (_HIGH, _LOW, [0.1] * 2),
-    ]
-    results = [
-        pinf.analyze_triplet_from_observations(
-            _TRIPLET,
-            _observations(*case),
-            species_subtree=_SPECIES_SUBTREE,
-            bootstrap_options={"iterations": 0},
-            p_value_correction="bfn",
-            family_size=len(cases),
-            triplet_seed=5,
-            pipeline_mode=pipeline_mode,
-        )
-        for case in cases
-    ]
-    corrected = pinf._apply_triplet_result_p_value_correction(
-        results, alpha_dct=0.05, alpha_ks=0.05, method="bfn"
-    )
-
-    for settled in corrected[:2]:
-        assert settled.dct_significant is False
-        assert settled.ks_p_value_corrected is None
-        assert settled.ks_significant is None
-        assert settled.classification == "no_introgression"
-
-    # One family member, so Bonferroni multiplies by 1 rather than by 3.
-    survivor = corrected[2]
-    assert survivor.dct_significant is True
-    assert survivor.ks_p_value_corrected == pytest.approx(survivor.ks_p_value)

@@ -95,9 +95,9 @@ _DIRECTION_LABELS = {
 }
 
 # Recorded in ``perm_note`` when the efficient pipeline mode skipped the
-# direction test because the cascade had already been settled by an earlier
-# gate. It marks an empty ``perm_*`` block as deliberate rather than as a test
-# that ran and failed, which is what the guard slugs in ``permutation`` mean.
+# direction test because an earlier gate had already settled the cascade. It
+# marks an empty ``perm_*`` block as deliberate rather than as a test that ran
+# and failed, which is what the guard slugs in ``permutation`` mean.
 PERM_NOTE_NOT_CONSULTED = "direction_test_not_consulted"
 
 _BOOTSTRAP_CLASSES = [
@@ -160,14 +160,22 @@ class DeferredBootstrapRecord:
 
 
 @dataclass(frozen=True)
-class _BootstrapPolicy:
-    """How bootstrap iterations apply the run's correction method.
+class _CorrectionPolicy:
+    """How far the run's correction lets a p-value be judged before the pass.
+
+    Shared by the point estimate and the bootstrap: both may want to know
+    whether a gate has failed while the stream is still running, before the
+    run-wide pass has the whole family in hand.
 
     Attributes:
         correction: The configured p-value correction method.
-        family_size: Triplet count, the size of each per-iteration family.
+        family_size: Triplet count, the size of the run-wide family and of each
+            per-iteration bootstrap family alike.
         inline: Whether the method can be applied to one p-value from the family
-            size alone, which lets an iteration tighten its short-circuit test.
+            size alone. When it can, a gate judged in the stream is the exactly
+            corrected one, a bootstrap iteration can vote on the spot instead of
+            parking its p-values, and a tree-height value below a failed count
+            gate may go unmeasured because nothing will read it.
     """
 
     correction: str
@@ -179,8 +187,14 @@ class _BootstrapPolicy:
 class TripletPipelineResult:
     """Result of the GhostParser orchestrator for one rooted species triplet.
 
-    Carries the topology counts, DCT/KS statistics, the final classification,
-    and the bootstrap aggregates for a single triplet.
+    The stream fills the measurements: topology counts, the DCT and KS statistics
+    with their raw p-values, the direction test, and the bootstrap votes. The
+    decided fields -- corrected p-values, significance flags, classification,
+    decision gate and ``bootstrap_value`` -- stay ``None`` until the run-wide
+    pass (:func:`_apply_triplet_result_p_value_correction`) sets them, since
+    every one of them depends on the whole run's p-values. Under the efficient
+    pipeline mode a test the cascade could not consult is left unmeasured, so
+    the KS pair and the ``perm_*`` block may be ``None`` on a measured result.
     """
 
     triplet: tuple[str, str, str]
@@ -192,13 +206,13 @@ class TripletPipelineResult:
     dis1_topology: str | None
     dct_statistic: float
     dct_p_value: float
-    dct_p_value_corrected: float
-    dct_significant: bool
-    ks_p_value: float | None
-    ks_p_value_corrected: float | None
     ks_statistic: float | None
-    ks_significant: bool | None
-    classification: Classification
+    ks_p_value: float | None
+    dct_p_value_corrected: float | None = None
+    dct_significant: bool | None = None
+    ks_p_value_corrected: float | None = None
+    ks_significant: bool | None = None
+    classification: Classification | None = None
     decision_gate: str | None = None
     perm_decision: str | None = None
     perm_statistic: float | None = None
@@ -734,7 +748,8 @@ def _classify_introgression(dct_significant, ks_significant, direction):
     Args:
         dct_significant: Whether the discordant count test is significant.
         ks_significant: Whether the tree-height (KS) test is significant.
-            ``None`` (no test ran) takes the same branch as non-significant.
+            ``None`` (no test ran) takes the same branch as non-significant,
+            though a triplet without one never gets past gate one.
         direction: The permutation decision; only ``greater`` and ``less`` name
             a direction.
 
@@ -759,7 +774,7 @@ def _permutation_result_fields(permutation_result, note=None):
 
     Args:
         permutation_result: A ``PermutationTestResult``, or ``None`` when the
-            permutation test was disabled or skipped.
+            test was skipped or a group was empty and it could not run.
         note: Slug recording why no test ran, reported in ``perm_note`` so an
             empty block is distinguishable from one a guard emptied. Ignored
             when ``permutation_result`` is present, which carries its own note.
@@ -1148,8 +1163,6 @@ def _build_shape_statistics(canonical_heights, role_topologies, rng):
 def _run_triplet_pipeline_from_observations(
     species_triplet,
     observations,
-    alpha_dct=DEFAULT_ALPHA_DCT,
-    alpha_ks=DEFAULT_ALPHA_KS,
     discordant_test=DEFAULT_DISCORDANT_TEST,
     permutation_kwargs=None,
     rng=None,
@@ -1157,15 +1170,23 @@ def _run_triplet_pipeline_from_observations(
     species_tree_newick=None,
     shape_diagnostics=False,
     shape_rng=None,
-    skip_settled_gates=False,
+    alpha_dct=DEFAULT_ALPHA_DCT,
+    alpha_ks=DEFAULT_ALPHA_KS,
+    gate_policy=None,
 ):
-    """Run the GhostParser Figure 6 pipeline from serialized observations.
+    """Measure the GhostParser Figure 6 tests from serialized observations.
+
+    Nothing here decides anything: the classification depends on p-values
+    corrected across the whole run, so the result's decided fields are left
+    ``None`` for the run-wide pass to fill. What is measured depends on
+    ``gate_policy``: without one every triplet gets all three tests; with one,
+    a test the cascade could no longer consult is skipped -- see "Skipping a
+    settled gate" in the orchestrator guide for why that changes nothing the
+    pass decides.
 
     Args:
         species_triplet: The ``(A, B, C)`` triplet.
         observations: List of ``(topology, tree_height)`` tuples.
-        alpha_dct: Significance threshold for the discordant count test.
-        alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
         permutation_kwargs: Keyword arguments forwarded to the permutation test.
         rng: A ``numpy.random.Generator`` for the permutation resampling.
@@ -1173,11 +1194,15 @@ def _run_triplet_pipeline_from_observations(
         species_tree_newick: Species subtree Newick stored on the result.
         shape_diagnostics: Whether to describe each height group's shape.
         shape_rng: A ``numpy.random.Generator`` for the modality bootstrap.
-        skip_settled_gates: When ``True``, run each test only where the cascade
-            can still consult it.
+        alpha_dct: Significance threshold for the discordant count test.
+        alpha_ks: Significance threshold for the KS test.
+        gate_policy: The run's :class:`_CorrectionPolicy`, under which a gate
+            can be judged before the run-wide pass; tests below a gate it shows
+            failed are skipped (the efficient pipeline mode). ``None`` measures
+            every test for every triplet (the detailed mode).
 
     Returns:
-        A ``TripletPipelineResult`` with uncorrected p-values.
+        A ``TripletPipelineResult`` carrying raw p-values and no classification.
     """
     heights = {topology: [] for topology in ALL_TOPOLOGIES}
     collect_summary_statistics = bool(observations) and observations[0][2] is not None
@@ -1224,23 +1249,32 @@ def _run_triplet_pipeline_from_observations(
         n_dis2,
         method=discordant_test,
     )
-    dct_significant = dct_p_value <= alpha_dct
+    # A gate judged here is judged the way a bootstrap iteration judges it: on
+    # the exactly corrected value under an inline method, on the raw value
+    # under a rank-based one. Either way a failure is final -- no supported
+    # correction can lower a p-value -- so the pass will find the gate failed
+    # too, and nothing measured below it could have been read.
+    dct_failed = gate_policy is not None and (
+        _gate_p_value(dct_p_value, gate_policy) > alpha_dct
+    )
 
-    # Gate one settles the cascade on its own when it fails, so the tree-height
-    # test below it decides nothing. The run-wide correction enrols only the
-    # triplets that cleared gate one in the tree-height family, so a value
-    # measured below a failed gate would be discarded anyway; the efficient mode
-    # declines to compute it. The detailed mode reports it, and it still takes no
-    # part in the family, which is what keeps the two modes' results identical.
+    # Below a failed count gate the tree-height value decides nothing, but it
+    # is still a member of the run-wide family. Under a rank-based method every
+    # member's value moves the others' ranks, so it must be measured; under an
+    # inline method the family size alone corrects each member, so leaving it
+    # unmeasured touches no other triplet.
     ks_statistic = None
     ks_p_value = None
-    ks_significant = None
-    if dct_significant or not skip_settled_gates:
+    if not (dct_failed and gate_policy.inline):
         ks_statistic, ks_p_value = run_two_sample_ks_test(
             canonical_heights[dis1_topology],
             canonical_heights[con_topology],
         )
-        ks_significant = ks_p_value <= alpha_ks
+    ks_failed = (
+        gate_policy is not None
+        and ks_p_value is not None
+        and _gate_p_value(ks_p_value, gate_policy) > alpha_ks
+    )
 
     con_heights = canonical_heights[con_topology]
     dis1_heights = canonical_heights[dis1_topology]
@@ -1253,16 +1287,16 @@ def _run_triplet_pipeline_from_observations(
             shape_rng,
         )
 
-    # Gates one and two settle the cascade by themselves whenever either is
-    # non-significant, and no supported correction can revive a failed raw gate,
-    # so the direction test cannot change the classification for those triplets.
-    # The efficient mode skips it there and marks the empty block in
-    # ``perm_note``; the detailed mode runs it for every triplet so the columns
-    # stay populated for debugging.
+    # The direction test is corrected inside itself, across its own pair of
+    # one-tailed p-values and never across triplets, so it is complete here and
+    # skipping it for this triplet changes nothing for any other. The cascade
+    # reads it only when both earlier gates clear; below a failed gate the
+    # efficient mode declines to run it and marks the empty block, while the
+    # detailed mode runs it for every triplet so the columns stay populated.
     direction = None
     permutation_result = None
     perm_note = None
-    if (dct_significant and ks_significant) or not skip_settled_gates:
+    if not (dct_failed or ks_failed):
         direction, permutation_result = _decide_direction(
             con_heights,
             dis1_heights,
@@ -1271,12 +1305,6 @@ def _run_triplet_pipeline_from_observations(
         )
     else:
         perm_note = PERM_NOTE_NOT_CONSULTED
-
-    classification, decision_gate = _classify_introgression(
-        dct_significant,
-        ks_significant,
-        direction,
-    )
 
     topology_metric_statistics = None
     if metric_buckets is not None:
@@ -1298,14 +1326,8 @@ def _run_triplet_pipeline_from_observations(
         dis1_topology="BC" if reported_dis1_topology == TOPOLOGY_BC else "AC",
         dct_statistic=dct_statistic,
         dct_p_value=dct_p_value,
-        dct_p_value_corrected=dct_p_value,
-        dct_significant=dct_significant,
-        ks_p_value=ks_p_value,
-        ks_p_value_corrected=ks_p_value,
         ks_statistic=ks_statistic,
-        ks_significant=ks_significant,
-        classification=classification,
-        decision_gate=decision_gate,
+        ks_p_value=ks_p_value,
         perm_decision=direction,
         shape_statistics=shape_statistics,
         analyzed_trees=analyzed_trees,
@@ -1314,18 +1336,18 @@ def _run_triplet_pipeline_from_observations(
     )
 
 
-def _bootstrap_policy(correction, family_size):
-    """Decide how bootstrap iterations handle correction for one run.
+def _correction_policy(correction, family_size):
+    """Describe how far one run's correction can be applied in the stream.
 
     Args:
         correction: The configured p-value correction method.
-        family_size: Number of triplets in the run, which is the size of each
-            per-iteration testing family.
+        family_size: Number of triplets in the run, which is the size of the
+            run-wide family and of each per-iteration bootstrap family.
 
     Returns:
-        A :class:`_BootstrapPolicy`.
+        A :class:`_CorrectionPolicy`.
     """
-    return _BootstrapPolicy(
+    return _CorrectionPolicy(
         correction=correction,
         family_size=max(1, int(family_size)),
         inline=is_inline_correction(correction),
@@ -1345,11 +1367,12 @@ def _iteration_outcome(
     policy,
     collect_metrics=False,
 ):
-    """Run one bootstrap iteration's cascade over its resampled heights.
+    """Run one bootstrap iteration's tests over its resampled heights.
 
-    Uses the same thresholds as the point estimate; only the direction test is
-    skipped, and only when an upstream gate has already failed under a
-    correction that cannot lower a p-value.
+    Measures what the run's correction will read. The direction test is skipped
+    once an upstream gate has failed, which no supported correction can undo;
+    the tree-height test is skipped below a failed count gate only under an
+    inline method, whose fixed family size means the value would go unread.
 
     Args:
         n_dis1: Discordant1 count in the resample.
@@ -1361,7 +1384,7 @@ def _iteration_outcome(
         discordant_test: ``chi-square`` or ``z-test``.
         permutation_kwargs: Keyword arguments forwarded to the permutation test.
         rng: A ``numpy.random.Generator`` for the permutation resampling.
-        policy: The run's :class:`_BootstrapPolicy`.
+        policy: The run's :class:`_CorrectionPolicy`.
         collect_metrics: When ``True``, compute every statistic even where the
             cascade no longer needs it, for bootstrap-debug output.
 
@@ -1373,19 +1396,19 @@ def _iteration_outcome(
     dct_statistic, dct_p_value = run_discordant_count_test(
         n_dis1, n_dis2, method=discordant_test
     )
-    dct_failed = _iteration_corrected(dct_p_value, policy) > alpha_dct
+    dct_failed = _gate_p_value(dct_p_value, policy) > alpha_dct
 
     ks_statistic = None
     ks_p_value = None
-    # An iteration measures the tree-height test on the same rule the point
-    # estimate uses, so its per-iteration family is shaped like the run-wide one
-    # it is compared against: only triplets that cleared the count gate.
-    if collect_metrics or not dct_failed:
+    # A rank-based method reads every member of the per-iteration family, so
+    # the deferred path always measures KS; an inline method reads a member only
+    # if its own count gate cleared.
+    if collect_metrics or not (policy.inline and dct_failed):
         ks_statistic, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
 
     ks_failed = (
         ks_p_value is not None
-        and _iteration_corrected(ks_p_value, policy) > alpha_ks
+        and _gate_p_value(ks_p_value, policy) > alpha_ks
     )
 
     direction = None
@@ -1410,17 +1433,18 @@ def _iteration_outcome(
     return dct_p_value, ks_p_value, direction, metrics
 
 
-def _iteration_corrected(p_value, policy):
-    """Correct one iteration p-value as far as the policy allows.
+def _gate_p_value(p_value, policy):
+    """Correct one p-value as far as the policy allows, for judging a gate.
 
     Args:
         p_value: The raw p-value.
-        policy: The run's :class:`_BootstrapPolicy`.
+        policy: The run's :class:`_CorrectionPolicy`.
 
-    Only the short-circuit test reads this. An inline method can tighten the
-    gate with the family size alone, which lets an iteration skip more work; a
-    rank-based one falls back to the raw p-value, which is the conservative
-    direction and so still safe to skip on.
+    An inline method is fully corrected from the family size alone, so the
+    value returned is the one the run-wide pass will judge, and a bootstrap
+    iteration's vote is cast on it. A rank-based one falls back to the raw
+    p-value, which only the short-circuit tests read: raw is the conservative
+    direction, so skipping on it stays safe.
 
     Returns:
         The corrected p-value on the inline path, else the raw one.
@@ -1428,6 +1452,34 @@ def _iteration_corrected(p_value, policy):
     if policy.inline:
         return _adjust_p_value_inline(p_value, policy.correction, policy.family_size)
     return p_value
+
+
+def _inline_iteration_classification(
+    dct_p_value, ks_p_value, direction, policy, alpha_dct, alpha_ks
+):
+    """Classify one iteration under an inline correction method.
+
+    Args:
+        dct_p_value: Raw DCT p-value.
+        ks_p_value: Raw KS p-value, or ``None`` when the count gate settled it.
+        direction: The permutation decision, or ``None`` when it was skipped.
+        policy: The run's :class:`_CorrectionPolicy`.
+        alpha_dct: Significance threshold for the discordant count test.
+        alpha_ks: Significance threshold for the KS test.
+
+    Returns:
+        The iteration classification string.
+    """
+    dct_significant = _gate_p_value(dct_p_value, policy) <= alpha_dct
+    ks_significant = ks_p_value is not None and (
+        _gate_p_value(ks_p_value, policy) <= alpha_ks
+    )
+    classification, _ = _classify_introgression(
+        dct_significant,
+        ks_significant,
+        direction or DECISION_INCONCLUSIVE,
+    )
+    return classification
 
 
 def _numeric_summary(values):
@@ -1513,7 +1565,6 @@ def _append_iteration_debug(debug, metrics):
 
 
 def _bootstrap_payload(
-    bootstrap_value,
     fractions,
     debug,
     summary_only,
@@ -1522,9 +1573,10 @@ def _bootstrap_payload(
 ):
     """Assemble the bootstrap payload with optional finalized debug metrics.
 
+    ``bootstrap_value`` is the fraction behind the reported classification,
+    which the run-wide pass decides, so it is not part of the payload.
+
     Args:
-        bootstrap_value: The top class fraction, or ``None`` when the votes are
-            still deferred.
         fractions: Per-class fractions, or ``None`` when still deferred.
         debug: The per-iteration debug accumulator, or ``None`` when disabled.
         summary_only: When ``True``, finalize debug metrics as compact summaries.
@@ -1534,12 +1586,11 @@ def _bootstrap_payload(
             studentized mean difference.
 
     Returns:
-        A dict with ``bootstrap_value``, ``all_bootstrap``, ``deferred``,
-        ``studentized_ci``, and the six ``bootstrap_*`` debug entries (each
-        ``None`` when ``debug`` is ``None``).
+        A dict with ``all_bootstrap``, ``deferred``, ``studentized_ci``, and
+        the six ``bootstrap_*`` debug entries (each ``None`` when ``debug`` is
+        ``None``).
     """
     payload = {
-        "bootstrap_value": bootstrap_value,
         "all_bootstrap": fractions,
         "deferred": deferred,
         "studentized_ci": studentized_ci,
@@ -1617,11 +1668,12 @@ def _run_bootstrap_iterations(
     """Resample observations and aggregate per-iteration classifications.
 
     Resampling is vectorized and assumes the concordant topology is ``((A,B),C)``
-    (always true on the orchestrator path). Every iteration parks its raw
-    p-values in a :class:`DeferredBootstrapRecord` for the run-wide pass to
-    correct: the tree-height family holds only the triplets that cleared the
-    count gate, and how many those are is not known until the stream ends, so no
-    method can classify an iteration while it runs.
+    (always true on the orchestrator path). Under an inline correction each
+    iteration's corrected p-values follow from the family size alone, so it
+    votes on the spot and only the tally is kept; under a rank-based one the
+    raw p-values are parked in a :class:`DeferredBootstrapRecord`, since every
+    triplet's value for the same iteration is needed before any can be
+    corrected.
 
     Args:
         observations: List of ``(topology, tree_height, metrics)`` tuples.
@@ -1634,7 +1686,7 @@ def _run_bootstrap_iterations(
         rng: A ``numpy.random.Generator`` used for resampling.
         permutation_rng: A separate generator for the permutation tests, so the
             resample sequence stays independent of how many permutations run.
-        policy: The run's :class:`_BootstrapPolicy`.
+        policy: The run's :class:`_CorrectionPolicy`.
         alpha_perm: Sets the level of the studentized-difference interval.
         debug_mode: When ``True``, collect per-iteration debug metrics.
         summary_only: When ``True`` (and debug), emit compact summaries instead
@@ -1646,10 +1698,11 @@ def _run_bootstrap_iterations(
     debug = {key: [] for key in _BOOTSTRAP_DEBUG_KEYS} if debug_mode else None
 
     if iterations <= 0:
-        return _bootstrap_payload(0.0, _bootstrap_fractions({}, 1), debug, summary_only)
+        return _bootstrap_payload(_bootstrap_fractions({}, 1), debug, summary_only)
 
+    class_counts = {}
     dct_p_values = np.ones(iterations, dtype=np.float64)
-    ks_p_values = np.full(iterations, np.nan, dtype=np.float64)
+    ks_p_values = np.ones(iterations, dtype=np.float64)
     directions = np.zeros(iterations, dtype=np.int8)
     studentized = np.full(iterations, np.nan, dtype=np.float64)
 
@@ -1702,18 +1755,30 @@ def _run_bootstrap_iterations(
 
         studentized[index] = studentized_mean_diff(con_heights, dis1_heights)
 
-        dct_p_values[index] = dct_p_value
-        if ks_p_value is not None:
+        if policy.inline:
+            classification = _inline_iteration_classification(
+                dct_p_value, ks_p_value, direction, policy, alpha_dct, alpha_ks
+            )
+            class_counts[classification] = class_counts.get(classification, 0) + 1
+        else:
+            dct_p_values[index] = dct_p_value
             ks_p_values[index] = ks_p_value
-        directions[index] = _DIRECTION_CODES.get(direction, _DIRECTION_SKIPPED)
+            directions[index] = _DIRECTION_CODES.get(direction, _DIRECTION_SKIPPED)
 
         if debug is not None:
             _append_iteration_debug(debug, metrics)
 
     studentized_ci = _studentized_percentile_interval(studentized, alpha_perm)
 
+    if policy.inline:
+        return _bootstrap_payload(
+            _bootstrap_fractions(class_counts, iterations),
+            debug,
+            summary_only,
+            studentized_ci=studentized_ci,
+        )
+
     return _bootstrap_payload(
-        None,
         None,
         debug,
         summary_only,
@@ -1743,9 +1808,9 @@ def _finalize_triplet_analysis(
     pipeline_mode=DEFAULT_PIPELINE_MODE,
     bootstrap=DEFAULT_BOOTSTRAP,
 ):
-    """Run the base pipeline and bootstrap for one triplet's observations.
+    """Measure one triplet's tests and run its bootstrap.
 
-    Shared core of the two public entry points.
+    Core of :func:`analyze_triplet_from_observations`.
 
     Args:
         triplet: The ``(A, B, C)`` triplet.
@@ -1766,8 +1831,8 @@ def _finalize_triplet_analysis(
         bootstrap: Whether to run the bootstrap iterations at all.
 
     Returns:
-        A ``TripletPipelineResult`` with uncorrected p-values and bootstrap
-        aggregates.
+        A ``TripletPipelineResult`` carrying raw p-values and bootstrap votes,
+        with the decided fields still ``None``.
     """
     # One configured seed drives the whole run, but each consumer gets its own
     # child stream. That keeps the bootstrap resample sequence identical whether
@@ -1777,13 +1842,11 @@ def _finalize_triplet_analysis(
         _build_triplet_seed_sequence(triplet_seed, triplet).spawn(4)
     )
 
+    policy = _correction_policy(p_value_correction, family_size)
     permutation_kwargs = dict(permutation_kwargs or {})
-    efficient = pipeline_mode == PIPELINE_MODE_EFFICIENT
     base_result = _run_triplet_pipeline_from_observations(
         triplet,
         observations,
-        alpha_dct=alpha_dct,
-        alpha_ks=alpha_ks,
         discordant_test=discordant_test,
         permutation_kwargs=permutation_kwargs,
         rng=np.random.default_rng(point_seed),
@@ -1791,7 +1854,9 @@ def _finalize_triplet_analysis(
         species_tree_newick=species_tree_topology,
         shape_diagnostics=shape_diagnostics,
         shape_rng=np.random.default_rng(shape_seed),
-        skip_settled_gates=efficient,
+        alpha_dct=alpha_dct,
+        alpha_ks=alpha_ks,
+        gate_policy=policy if pipeline_mode == PIPELINE_MODE_EFFICIENT else None,
     )
 
     # Switching the bootstrap off is an instruction about what to compute, so it
@@ -1832,7 +1897,7 @@ def _finalize_triplet_analysis(
         permutation_kwargs=bootstrap_permutation_kwargs,
         rng=np.random.default_rng(bootstrap_seed),
         permutation_rng=np.random.default_rng(bootstrap_perm_seed),
-        policy=_bootstrap_policy(p_value_correction, family_size),
+        policy=policy,
         alpha_perm=permutation_kwargs.get("alpha", DEFAULT_ALPHA_PERM),
         debug_mode=debug_mode,
         summary_only=summary_only,
@@ -1846,11 +1911,10 @@ def _finalize_triplet_analysis(
         )
 
     ci_low, ci_high = bootstrap_payload["studentized_ci"]
-    result = replace(
+    return replace(
         base_result,
         bootstrap_stat_ci_low=ci_low,
         bootstrap_stat_ci_high=ci_high,
-        bootstrap_value=bootstrap_payload["bootstrap_value"],
         all_bootstrap=bootstrap_payload["all_bootstrap"],
         bootstrap_deferred=bootstrap_payload["deferred"],
         bootstrap_dct_stats=bootstrap_payload["bootstrap_dct_stats"],
@@ -1861,17 +1925,6 @@ def _finalize_triplet_analysis(
         bootstrap_dis_summary=bootstrap_payload["bootstrap_dis_summary"],
         bootstrap_gene_tree_heights=bootstrap_gene_tree_heights,
     )
-
-    # Bootstrap votes are resolved by the run-wide pass, because the tree-height
-    # family spans triplets. A family of one is the exception: it is fully known
-    # here, so a caller analyzing a single triplet gets a finished result rather
-    # than a deferred record. The pass is idempotent, so a one-triplet run that
-    # reaches it again is unaffected.
-    if family_size == 1:
-        result = _apply_triplet_result_p_value_correction(
-            [result], alpha_dct=alpha_dct, alpha_ks=alpha_ks, method=p_value_correction
-        )[0]
-    return result
 
 
 def analyze_triplet_from_observations(
@@ -1891,12 +1944,13 @@ def analyze_triplet_from_observations(
     pipeline_mode=DEFAULT_PIPELINE_MODE,
     bootstrap=DEFAULT_BOOTSTRAP,
 ):
-    """Analyze one triplet from precomputed observations.
+    """Measure one triplet from precomputed observations.
 
     This is the orchestrator's per-triplet unit: observations are computed once
-    during extraction (see :func:`observation_from_subtree`), so no Newick
-    reparse happens here. The returned p-values are uncorrected; run-wide
-    correction is applied later.
+    during extraction, so no Newick reparse happens here. The result carries raw
+    p-values, the direction test and the bootstrap votes; the classification and
+    every corrected value depend on the whole run, so
+    :func:`_apply_triplet_result_p_value_correction` sets them afterwards.
 
     Args:
         triplet: The ``(A, B, C)`` triplet.
@@ -1912,7 +1966,7 @@ def analyze_triplet_from_observations(
         triplet_seed: Optional base seed for deterministic resampling.
         p_value_correction: The run's correction method.
         family_size: Number of triplets in the run, which sizes the bootstrap's
-            per-iteration testing families. Left at ``1`` this analyzes the
+            per-iteration testing families. Left at ``1`` this measures the
             triplet as a family of one.
         shape_diagnostics: Whether to describe each height group's shape.
         pipeline_mode: ``efficient`` skips tests the cascade cannot consult;
@@ -1920,95 +1974,11 @@ def analyze_triplet_from_observations(
         bootstrap: Whether to run the bootstrap iterations at all.
 
     Returns:
-        A ``TripletPipelineResult`` with uncorrected p-values. Under a
-        rank-based correction its bootstrap votes are still deferred, and
-        :func:`_apply_triplet_result_p_value_correction` fills them in.
+        A ``TripletPipelineResult`` with the decided fields still ``None``.
+        Under a rank-based correction the bootstrap votes are parked in
+        ``bootstrap_deferred`` as well.
     """
     species_tree_topology = _species_tree_topology_only_newick(species_subtree)
-    return _finalize_triplet_analysis(
-        triplet,
-        observations,
-        species_tree_topology,
-        alpha_dct=alpha_dct,
-        alpha_ks=alpha_ks,
-        discordant_test=discordant_test,
-        permutation_kwargs=permutation_kwargs,
-        bootstrap_options=bootstrap_options,
-        triplet_seed=triplet_seed,
-        p_value_correction=p_value_correction,
-        family_size=family_size,
-        shape_diagnostics=shape_diagnostics,
-        pipeline_mode=pipeline_mode,
-        bootstrap=bootstrap,
-    )
-
-
-def analyze_triplet(
-    triplet,
-    gene_subtrees,
-    species_subtree=None,
-    *,
-    alpha_dct=DEFAULT_ALPHA_DCT,
-    alpha_ks=DEFAULT_ALPHA_KS,
-    discordant_test=DEFAULT_DISCORDANT_TEST,
-    permutation_kwargs=None,
-    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
-    collect_summary_statistics=False,
-    bootstrap_options=None,
-    triplet_seed=None,
-    p_value_correction=DEFAULT_P_VALUE_CORRECTION,
-    family_size=1,
-    shape_diagnostics=False,
-    pipeline_mode=DEFAULT_PIPELINE_MODE,
-    bootstrap=DEFAULT_BOOTSTRAP,
-):
-    """Analyze one triplet end-to-end from gene-subtree Newick strings.
-
-    Serializes the gene subtrees into observations (reparsing each Newick), then
-    runs the base pipeline and bootstrap. The returned p-values are uncorrected;
-    run-wide correction is applied later.
-
-    A run reaches the same pipeline through
-    :func:`analyze_triplet_from_observations`, which takes observations the
-    stream already has; this Newick-taking entry point is the reference the tests
-    hold that one against.
-
-    Args:
-        triplet: The ``(A, B, C)`` triplet.
-        gene_subtrees: Iterable of the triplet's rooted gene-subtree Newicks.
-        species_subtree: The triplet's species subtree Newick (with branch
-            lengths); stored topology-only on the result.
-        alpha_dct: Significance threshold for the discordant count test.
-        alpha_ks: Significance threshold for the KS test.
-        discordant_test: ``chi-square`` or ``z-test``.
-        permutation_kwargs: Keyword arguments forwarded to the permutation test.
-        tree_height_calculation_strategy: Tree-height strategy to apply.
-        collect_summary_statistics: When ``True``, gather per-triplet
-            topology/metric summary statistics onto the result.
-        bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
-            ``summary_only`` are read.
-        triplet_seed: Optional base seed for deterministic resampling.
-        p_value_correction: The run's correction method.
-        family_size: Number of triplets in the run, which sizes the bootstrap's
-            per-iteration testing families. Left at ``1`` this analyzes the
-            triplet as a family of one.
-        shape_diagnostics: Whether to describe each height group's shape.
-        pipeline_mode: ``efficient`` skips tests the cascade cannot consult;
-            ``detailed`` runs every test for every triplet.
-        bootstrap: Whether to run the bootstrap iterations at all.
-
-    Returns:
-        A ``TripletPipelineResult`` with uncorrected p-values. Under a
-        rank-based correction its bootstrap votes are still deferred, and
-        :func:`_apply_triplet_result_p_value_correction` fills them in.
-    """
-    species_tree_topology = _species_tree_topology_only_newick(species_subtree)
-    observations = _serialize_triplet_gene_trees(
-        triplet,
-        gene_subtrees,
-        tree_height_calculation_strategy=tree_height_calculation_strategy,
-        collect_summary_statistics=collect_summary_statistics,
-    )
     return _finalize_triplet_analysis(
         triplet,
         observations,
@@ -2085,8 +2055,10 @@ def _resolve_deferred_bootstrap(results, alpha_dct, alpha_ks, method):
     directions = np.stack([record.directions for record in records])
     n_triplets, iterations = dct.shape
 
+    # Each column is one resampled run: every triplet's p-value for that
+    # iteration, corrected together exactly as the point estimate's are.
     dct_significant = np.empty(dct.shape, dtype=bool)
-    ks_significant = np.zeros(ks.shape, dtype=bool)
+    ks_significant = np.empty(ks.shape, dtype=bool)
     for column in range(iterations):
         dct_significant[:, column] = (
             np.asarray(
@@ -2094,16 +2066,10 @@ def _resolve_deferred_bootstrap(results, alpha_dct, alpha_ks, method):
             )
             <= alpha_dct
         )
-        # The tree-height family holds only the triplets this iteration's count
-        # gate let through, matching the run-wide pass. Its size therefore varies
-        # from iteration to iteration, which is why no method can correct it
-        # while the stream is still running.
-        present = np.isfinite(ks[:, column]) & dct_significant[:, column]
-        if present.any():
-            adjusted = _adjust_p_values(
-                ks[present, column], method=method, alpha=alpha_ks
-            )
-            ks_significant[present, column] = np.asarray(adjusted) <= alpha_ks
+        ks_significant[:, column] = (
+            np.asarray(_adjust_p_values(ks[:, column], method=method, alpha=alpha_ks))
+            <= alpha_ks
+        )
 
     codes = _classification_codes(dct_significant, ks_significant, directions)
 
@@ -2117,17 +2083,53 @@ def _resolve_deferred_bootstrap(results, alpha_dct, alpha_ks, method):
     return resolved
 
 
+def _correct_family(p_values, method, alpha, family_size):
+    """Correct one test's measured p-values as a family of ``family_size``.
+
+    The family is always the triplet count. Under an inline method each value
+    is corrected from that count alone, so members the efficient mode left
+    unmeasured cost the others nothing and may simply be absent from
+    ``p_values``. A rank-based method reads every member's value, so the stream
+    never leaves one of its members unmeasured and ``p_values`` must be the
+    whole family.
+
+    Args:
+        p_values: The measured raw p-values, in result order.
+        method: Correction method (or ``no``).
+        alpha: Significance threshold, forwarded to the rank-based methods.
+        family_size: Number of triplets in the run.
+
+    Returns:
+        The corrected p-values, in the order given.
+
+    Raises:
+        RuntimeError: If a rank-based family is missing members.
+    """
+    if is_inline_correction(method):
+        return [
+            _adjust_p_value_inline(p_value, method, family_size) for p_value in p_values
+        ]
+    if len(p_values) != family_size:
+        raise RuntimeError(
+            f"Correction {method} needs every triplet's p-value but only "
+            f"{len(p_values)} of {family_size} were measured. Rerun with "
+            "pipeline_mode: detailed and report this."
+        )
+    return _adjust_p_values(p_values, method=method, alpha=alpha)
+
+
 def _apply_triplet_result_p_value_correction(
     results,
     alpha_dct,
     alpha_ks,
     method=DEFAULT_P_VALUE_CORRECTION,
 ):
-    """Apply run-wide p-value correction to DCT and KS p-values.
+    """Correct the DCT and KS p-values across the run and classify every triplet.
 
-    Runs once across all triplets, recomputing each classification and bootstrap
-    value from the corrected significance, and resolves any deferred bootstrap
-    votes in the same pass.
+    The single decision point. Each test's raw p-values form one family over
+    all triplets; the corrected values set the two gate flags, the stored
+    direction settles the third gate, and the classification, its gate,
+    ``bootstrap_value`` and any deferred bootstrap votes follow.
 
     Args:
         results: List of ``TripletPipelineResult`` objects.
@@ -2136,7 +2138,11 @@ def _apply_triplet_result_p_value_correction(
         method: Correction method (or ``no``).
 
     Returns:
-        A new list of corrected ``TripletPipelineResult`` objects.
+        A new list of decided ``TripletPipelineResult`` objects.
+
+    Raises:
+        RuntimeError: If a triplet reaches the direction gate without a
+            direction, which the efficient mode's skip rule makes impossible.
     """
     if not results:
         return results
@@ -2145,60 +2151,45 @@ def _apply_triplet_result_p_value_correction(
         results, alpha_dct, alpha_ks, method
     )
 
-    dct_p_values = [result.dct_p_value for result in results]
-    adjusted_dct = _adjust_p_values(
-        dct_p_values,
-        method=method,
-        alpha=alpha_dct,
+    family_size = len(results)
+    adjusted_dct = _correct_family(
+        [result.dct_p_value for result in results], method, alpha_dct, family_size
     )
-    dct_significant_flags = [value <= alpha_dct for value in adjusted_dct]
-
-    # The tree-height test only decides anything for a triplet whose count gate
-    # cleared, so only those form its correction family. Enrolling the rest would
-    # inflate the family with p-values nothing reads and push the corrected
-    # values of the triplets that do matter towards non-significance. This is
-    # also what makes the two pipeline modes agree: correction can only raise a
-    # p-value, so the corrected survivors are a subset of the raw ones, and the
-    # efficient mode measured the tree-height test for every raw survivor.
+    # The tree-height family is every triplet too, whether or not each one
+    # measured the test: an unmeasured member is one the efficient mode found
+    # settled at gate one under an inline method, and its corrected value would
+    # have gone unread.
     ks_indices = [
-        idx
-        for idx, result in enumerate(results)
-        if result.ks_p_value is not None and dct_significant_flags[idx]
+        idx for idx, result in enumerate(results) if result.ks_p_value is not None
     ]
-    ks_p_values = [results[idx].ks_p_value for idx in ks_indices]
-    adjusted_ks_values = _adjust_p_values(
-        ks_p_values,
-        method=method,
-        alpha=alpha_ks,
+    adjusted_ks = dict(
+        zip(
+            ks_indices,
+            _correct_family(
+                [results[idx].ks_p_value for idx in ks_indices],
+                method,
+                alpha_ks,
+                family_size,
+            ),
+        )
     )
-    adjusted_ks_map = {
-        idx: adjusted_ks_values[pos] for pos, idx in enumerate(ks_indices)
-    }
 
     adjusted_results = []
     for idx, result in enumerate(results):
         dct_p_value_corrected = adjusted_dct[idx]
-        dct_significant = dct_significant_flags[idx]
-
-        if idx in adjusted_ks_map:
-            ks_p_value_corrected = adjusted_ks_map[idx]
+        dct_significant = dct_p_value_corrected <= alpha_dct
+        ks_p_value_corrected = adjusted_ks.get(idx)
+        ks_significant = None
+        if ks_p_value_corrected is not None:
             ks_significant = ks_p_value_corrected <= alpha_ks
-        else:
-            # Outside the family: either the test never ran, or the count gate
-            # settled the triplet and its raw value takes no part in the
-            # correction. Either way there is no corrected value to report.
-            ks_p_value_corrected = None
-            ks_significant = None
 
-        # The permutation p-values are corrected inside the test, across the
-        # one-tailed family, so they take no part in this run-wide pass. Its
-        # stored decision is replayed rather than recomputed, which is sound
-        # because no supported correction can lower a p-value: a triplet whose
-        # raw gate failed cannot clear the corrected one, so the efficient mode
-        # only ever skips a direction test the cascade could not have reached.
-        # A skipped test leaves ``perm_decision`` as ``None`` -- guards and empty
-        # groups still record a string -- so reaching gate three without one is
-        # an invariant violation rather than an ambiguous call, and says so.
+        # The permutation p-values are corrected inside the test, across its
+        # one-tailed pair, so they take no part in this pass; the stored
+        # decision is read as it stands. A skipped test leaves ``perm_decision``
+        # as ``None`` -- guards and empty groups still record a string -- so
+        # reaching gate three without one means a gate the stream judged
+        # settled was not, an invariant violation rather than an ambiguous
+        # call, and it says so instead of classifying the triplet ``ambiguous``.
         if dct_significant and ks_significant and result.perm_decision is None:
             raise RuntimeError(
                 f"Triplet {result.triplet} reached the direction gate with no "
@@ -2212,7 +2203,7 @@ def _apply_triplet_result_p_value_correction(
             result.perm_decision,
         )
         all_bootstrap = resolved_bootstrap.get(idx, result.all_bootstrap)
-        bootstrap_value = result.bootstrap_value
+        bootstrap_value = None
         if all_bootstrap is not None:
             bootstrap_value = float(all_bootstrap.get(classification, 0.0))
 

@@ -113,11 +113,13 @@ Worked example, index 5 — `((A:0.30,C:0.30):0.10,B:0.70);` (sisters A, C):
 
 ## tests/orchestrator/test_orchestrator_inference.py
 
-### `test_analyze_triplet_matches_derived_expectation`
+### `test_inference_matches_derived_expectation`
 
-**Inputs:** the 10 gene subtrees above, `alpha_dct = alpha_ks = 0.05`, and one of
-24 parameter combinations (6 strategies x permutation on/off x 2 discordant
-tests). Bootstrap runs with 40 iterations at seed `20240724`.
+**Inputs:** the 10 gene subtrees above serialized with the `AVG` strategy,
+`alpha_dct = alpha_ks = 0.05`, one of the 2 discordant tests, and one of the 2
+pipeline modes. Bootstrap runs with 40 iterations at seed `20240724`. The
+result is measured by `analyze_triplet_from_observations` and decided by
+`_apply_triplet_result_p_value_correction` under `no` as a family of one.
 
 **Expected-output derivation**, performed in `_expected_result`:
 
@@ -130,29 +132,24 @@ tests). Bootstrap runs with 40 iterations at seed `20240724`.
    `(3-2.5)^2/2.5 + (2-2.5)^2/2.5 = 0.1 + 0.1 = 0.2`, and with df 1,
    `p ~ 0.6547`. z-test: `proportions_ztest(count=[3,2], nobs=[5,5])`, giving
    `z ~ 0.6325`, `p ~ 0.5271`. Both p-values exceed 0.05, so
-   `dct_significant is False` and the classification is `no_introgression` for
-   **every** one of the 24 cases — the decision stops at gate 1.
-5. **KS** — `scipy.stats.ks_2samp(concordant_heights, dis1_heights)`. For `AVG`
-   the samples are `[0.2333, 0.2433, 0.3167, 0.2967, 0.2500]` and
-   `[0.3667, 0.4067, 0.5167]`; they are completely separated, so `D = 1.0` and
-   `p ~ 0.0357`. For strategy `C` they overlap
-   (`[0.30, 0.32, 0.40, 0.35, 0.31]` vs `[0.30, 0.32, 0.45]`), giving
-   `D = 1/3` and `p ~ 0.9643`. For `INT` the values are near-constant, giving
-   `D = 0.2`, `p = 1.0`.
-6. **Summaries** — the mean and median of each group are reported
-   unconditionally. For `AVG`: concordant mean
-   `(0.2333+0.2433+0.3167+0.2967+0.2500)/5 = 0.268`, discordant1 mean
-   `(0.3667+0.4067+0.5167)/3 = 0.43`; concordant median `0.2500`, discordant1
-   median `0.4067`.
-7. **Direction** — with the permutation test on, the pooled sample is
+   `dct_significant is False` — gate 1 settles the call.
+5. **KS** — under `detailed`, measured regardless:
+   `scipy.stats.ks_2samp(concordant_heights, dis1_heights)` on
+   `[0.2333, 0.2433, 0.3167, 0.2967, 0.2500]` and `[0.3667, 0.4067, 0.5167]`;
+   they are completely separated, so `D = 1.0` and `p ~ 0.0357`, giving
+   `ks_significant is True`. The cascade never reads it, which is what the row
+   demonstrates. Under `efficient` the correction is `no`, an inline method
+   whose family of one is fixed, so the test below the failed count gate is
+   never measured: `ks_statistic`, `ks_p_value` and `ks_significant` are all
+   `None`.
+6. **Direction** — under `detailed`, measured regardless: the pooled sample is
    `n_con + n_dis1 = 5 + 3 = 8` observations, admitting only
    `C(8, 3) = 56` distinct group assignments. That is far below the 2500
    `min_resamples` floor, so the `insufficient_permutation_support` guard fires
-   and the direction is `ambiguous` with zero resamples. With the permutation
-   test off, the median comparison decides: for `AVG`,
-   `0.2500 < 0.4067` → `less`.
-8. **Classification** — gate 1 fails regardless, so `no_introgression` in all 24
-   cases.
+   and `perm_decision` is `inconclusive` with zero resamples. Under `efficient`
+   the failed count gate settles the cascade first, so the test is skipped and
+   `perm_decision` is `None`.
+7. **Classification** — gate 1 fails, so `no_introgression` in every case.
 
 Also asserted: `triplet == ("A","B","C")`, `species_tree == "((A,B),C);"` (the
 species subtree serialized topology-only), and that the bootstrap class
@@ -167,28 +164,9 @@ topology and H(T) must equal `_expected_height(entry, strategy)` computed from
 the four geometry primitives — i.e. the strategy formulas above applied to the
 table, independent of the implementation.
 
-### `test_analyze_triplet_from_observations_matches_newick_path`
+### `test_empty_observations_decide_no_introgression`
 
-**Inputs:** the same triplet, once from `_serialize_triplet_gene_trees` output
-and once from raw Newick strings, both with `AVG`/`chi-square` and the
-permutation test enabled.
-
-**Derivation:** both must equal the `_expected_result("AVG", "chi-square", True)`
-expectation above. Because the observations and seed are identical, the NumPy
-bootstrap draws the same indices, so `bootstrap_value` and `all_bootstrap` must
-match exactly (not just approximately).
-
-### `test_bootstrap_is_deterministic_under_seed`
-
-**Inputs:** two identical calls, seed `20240724`, 40 iterations.
-
-**Derivation:** the per-triplet seed is derived deterministically from the run
-seed and the triplet, so a repeat call must reproduce the aggregates bit for
-bit.
-
-### `test_analyze_triplet_empty_observations`
-
-**Inputs:** an empty gene-subtree list.
+**Inputs:** an empty observation list, measured and decided as above.
 
 **Derivation:** with no observations there are no topology counts, so
 `analyzed_trees = 0` and `n_con = 0`; the DCT short-circuits on a zero total to
@@ -202,7 +180,9 @@ lets each test place the triplet on a chosen branch. Bootstrap is disabled
 
 ### `test_decision_cascade_lands_on_each_classification`
 
-**Inputs:** one crafted observation set per row.
+**Inputs:** one crafted observation set per row, measured with no bootstrap
+under each pipeline mode and decided under `no` correction as a family of one,
+so every corrected p-value equals its raw one.
 
 | id | con | dis1 | dis2 |
 | --- | --- | --- | --- |
@@ -216,8 +196,14 @@ lets each test place the triplet on a chosen branch. Bootstrap is disabled
 
 - **`no_introgression`.** `chisquare([10, 10])` has expected `[10, 10]`, so the
   statistic is exactly `0.0` and `p = 1.0 > 0.05`: gate 1 fails. The heights are
-  fully separated, so KS *is* significant — which is why this row also shows the
-  DCT gate stopping the cascade before a later gate can be consulted.
+  fully separated (20 at 0.1 against 10 at 0.9, `D = 1.0`), so KS *is*
+  significant and under `detailed` the row asserts `ks_significant is True` —
+  which is why this row also shows the DCT gate stopping the cascade before a
+  later gate can be consulted; the direction test runs as well and reports a
+  decision the classification never reads. Under `efficient` neither is
+  measured: `no` is an inline correction, so the failed count gate is final
+  and the row asserts `ks_p_value`, `ks_significant` and `perm_decision` all
+  `None` with `perm_note == "direction_test_not_consulted"`.
 - **`inflow`.** `chisquare([30, 2])` has expected `[16, 16]`, so the statistic is
   `(30-16)^2/16 + (2-16)^2/16 = 24.5`, and with df 1 `p ~ 7.4e-07 < 0.05`: gate 1
   passes. Every concordant and dis1 height is 0.5, so the two empirical CDFs
@@ -243,11 +229,18 @@ lets each test place the triplet on a chosen branch. Bootstrap is disabled
   differ in shape, not location.
 
 The `decision_gate` assertion is what makes each row specific: a case that
-reached the same classification by a different route would fail.
+reached the same classification by a different route would fail. Under
+`efficient`, `perm_decision` is asserted non-`None` only on the three `PERM`
+rows and `None` on the `inflow` row too, whose failed tree-height gate settles
+the cascade before the direction test.
 
 ### `test_permutation_guards_surface_on_the_triplet_result`
 
-**Inputs and derivation**, one row per guard:
+**Inputs and derivation**, one row per guard, measured under
+`pipeline_mode="detailed"` — the first row's 2-vs-2 discordant split gives
+`chisquare([2, 2])` a statistic of `0.0` and `p = 1.0`, so its count gate
+fails and the efficient mode would skip the direction test before the guard
+could fire:
 
 | con | dis1 | Guard | Why |
 | --- | --- | --- | --- |
@@ -851,10 +844,17 @@ the permutation test enabled).
   `0.6547 x 4 = 2.62 → 1.0`; `1.0 x 4 → 1.0`. Every corrected DCT p-value is
   `1.0`, far above `alpha_dct = 0.05`, so `dct_significant is False` and every
   triplet classifies as `no_introgression`.
-- **KS correction:** asserted as a relation rather than a literal —
-  `ks_p_value_corrected == min(1.0, ks_p_value x 4)`. (For (A,B,C) the raw KS
-  p-value is `~0.01667`, giving `~0.06667`; for the D triplets dis1 is empty so
-  the KS test short-circuits to `1.0` and stays `1.0`.)
+- **KS correction, `detailed` only:** asserted as a relation rather than a
+  literal — `ks_p_value_corrected == min(1.0, ks_p_value x 4)`. (For (A,B,C)
+  the raw KS p-value is `~0.01667`, giving `~0.06667`; for the D triplets dis1
+  is empty so the KS test short-circuits to `1.0` and stays `1.0`.)
+  `perm_decision` is populated on every row because the direction test ran.
+- **`efficient`:** the run's default correction is `bfn`, an inline method, so
+  the stream judges each count gate on the exactly corrected `p × 4 = 1.0`,
+  finds it failed, and measures nothing below it: `ks_p_value`,
+  `ks_p_value_corrected`, `ks_significant` and `perm_decision` are `None` and
+  `perm_note` is `direction_test_not_consulted`. Everything asserted above the
+  gate is identical between the modes.
 - `most_frequent_matches_concordant` is `True` everywhere, since `7 >= 3, 2` and
   `12 >= 0, 0`.
 - `analyzed_trees == 12` for every triplet, because all 12 gene trees contain
@@ -1086,7 +1086,7 @@ list/tuple/set and so contributes no entries. An empty result raises
 | --- | --- | --- | --- |
 | `species_tree_path: null` | `_validate_required_path` | `None` is treated as absent. | `species_tree_path` |
 | `p_value_correction: true` | `_validate_choice` | YAML 1.1 turns a bare `yes` into `True`; the boolean-to-choice mapping covers `False` → `no` but `True` matches no choice. Written as `true` here since the payload is dumped with `yaml.safe_dump`. | `must be one of` |
-| `pipeline_mode: fast` | `_validate_choice` | Not in `PIPELINE_MODE_CHOICES` (`efficient`/`detailed`). | `pipeline_mode` |
+| `pipeline_mode: "fast"` | `_validate_choice` | Not one of `efficient`/`detailed`. | `pipeline_mode` |
 | `seed: "abc"` | `_validate_optional_int` | Accepts `None` or an `int`; also rejects `bool`, since `isinstance(True, int)` holds and `seed: true` is a mistake rather than a seed of 1. | `seed` |
 | `preflight_triplet_cap: -1` | `_validate_non_negative_int` | Accepts `int >= 0`; `0` is the documented "no cap", so `-1` is the nearest value with no meaning. | `preflight_triplet_cap` |
 
@@ -1136,8 +1136,9 @@ mapping exists.
 ### `test_parser_flags_resolve_into_their_config_values`
 
 Parsing `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2
---p-value-correction fdr_bh --alpha-perm 0.02 --no-overwrite
---preflight-data-check --preflight-triplet-cap 0` must yield those exact values
+--p-value-correction fdr_bh --pipeline-mode detailed --alpha-perm 0.02
+--no-overwrite --preflight-data-check --preflight-triplet-cap 0` must yield
+those exact values
 with `config_file is None`; `0` is chosen for the cap because it is the one
 value `_validate_non_negative_int` accepts that differs from the default and is
 also the documented "no cap" spelling.
@@ -1560,38 +1561,58 @@ state those. The derivations worth stating explicitly:
   rather than floating-point noise, which is what lets the guidance block call it
   out as having no effect.
 
-### `test_efficient_and_detailed_modes_agree_on_every_classification`
+### `test_each_test_is_corrected_over_every_triplet`
 
 **Inputs:** the five crafted observation sets from the cascade table (one per
-outcome), analyzed in both pipeline modes with `family_size=5`, 30 bootstrap
-iterations and seed 11, then passed through
-`_apply_triplet_result_p_value_correction` under `bfn` and under `holm`.
+outcome), measured under `pipeline_mode="detailed"` with `family_size=5`, no
+bootstrap and seed 11, then passed through
+`_apply_triplet_result_p_value_correction` under each of `bfn`, `holm` and
+`fdr_bh`; then the same five results with every raw DCT p-value replaced by
+1.0, passed through the same method.
 
-**Derivation:** the efficient mode omits the tree-height test when the *raw*
-count gate failed, and the direction test when either raw gate failed. Every
-supported correction is monotone, so a raw-failed gate stays failed after
-correction and the omitted test could not have been reached — the cascade
-returns the same `(classification, decision_gate)` pair either way. Neither does
-the extra work the detailed mode does change a correction family: the
-tree-height family is the corrected count-gate survivors, a subset of the raw
-survivors the efficient mode already measured, so both runs correct the same
-members. The bootstrap votes are compared too, since they answer to the
-corrected thresholds and would move with any gate that shifted. `bfn` and `holm`
-cover a method whose multiplier is known up front and one that is rank-based.
+**Derivation:** the pass corrects the DCT column over all five results and the
+KS column over all five results, so each corrected column must equal
+`_adjust_p_values` applied directly to the raw column — which is asserted
+rather than any particular number, so the check holds for a rank-based method
+whose values depend on the whole family as much as for Bonferroni. Every row
+carries a `ks_significant` and a `perm_decision` because every test ran. The
+five cases were built to land on `DCT`, `THT` and `PERM` gates, so the family
+has members the count gate settled and members it did not; the tree-height
+column is corrected identically once every count p-value is 1.0, since the KS
+family reads nothing of the DCT column, and the cascade then calls every row
+`no_introgression` at the first gate.
 
-### `test_tree_height_family_holds_only_the_count_gate_survivors`
+### `test_efficient_and_detailed_modes_agree_on_every_classification`
 
-**Inputs:** three triplets under `bfn` with `family_size=3` — two copies of the
-20-vs-10-vs-10 set the count gate settles (chi-square on 10 vs 10 gives p = 1.0)
-and one `_HIGH`/`_LOW` set it does not — run in each pipeline mode.
+**Inputs:** the same five observation sets, measured with `family_size=5`, a
+30-iteration bootstrap and seed 11 under each pipeline mode, then passed through
+`_apply_triplet_result_p_value_correction` under each of `bfn`, `holm` and
+`fdr_bh`.
 
-**Derivation:** the tree-height family is the triplets whose corrected DCT
-p-value cleared alpha. The two settled triplets are outside it, so they have no
-corrected value and no significance to report, and the cascade has already
-called them `no_introgression`. The survivor is the family's only member, so
-Bonferroni multiplies by 1 and its corrected value equals its raw one. The mode
-does not enter the derivation, which is the point: the detailed mode measures the
-settled triplets' raw tree-height values but never enrols them.
+**Derivation:** the efficient mode skips a test only below a gate that has
+already failed on the value the correction can only raise — under `bfn` the
+exactly corrected `p × 5`, under `holm`/`fdr_bh` the raw value — and the
+permutation p-values are corrected inside each test rather than across
+triplets, so the skipped work could neither reach its own cascade nor move
+another triplet's numbers. Every field the cascade reads must therefore be
+equal between the modes, and the bootstrap votes with them, since each
+iteration is judged against the same corrected thresholds. The five cases land
+on `DCT`, `THT` and `PERM` gates, which is asserted so that the comparison
+exercises the permutation gate rather than only rows where neither mode
+resamples.
+
+What may differ is confined to what the efficient mode declined to measure.
+Under `holm` and `fdr_bh` the tree-height test is a rank-based family member
+and is measured on every row, so the raw and corrected KS columns must agree
+everywhere. Under `bfn` the `DCT`-gate row (the 10/10 split, `p = 1.0`) is
+left unmeasured and carries `None` in all three KS fields; the four measured
+survivors must still be corrected as `min(1, p × 5)` — the family is the
+triplet count, and a family shrunk to the four measured would give
+`min(1, p × 4)` and lower every survivor's corrected value. On `PERM` rows the
+permutation fields agree; on the `DCT` and `THT` rows the efficient result
+carries `None` for `perm_decision` and `perm_statistic` with
+`perm_note == "direction_test_not_consulted"`, while the detailed result still
+records a decision nothing read.
 
 ### `test_shifted_statistics_match_an_explicit_shift`
 
@@ -1640,7 +1661,9 @@ If any iteration ran they would be populated, so `None` on every triplet is the
 observable proof the loop was skipped rather than merely having its columns
 dropped. The classification comes from the point estimate, which the bootstrap
 does not feed, so it stays `no_introgression` as in
-`test_run_orchestrator_matches_derived_expectation`.
+`test_run_orchestrator_matches_derived_expectation`. The `detailed` row pins
+that the mode reinstates only work the cascade could have read, not work the
+user switched off.
 
 ## tests/orchestrator/test_orchestrator_triplet_geometry.py
 
@@ -1693,8 +1716,8 @@ as the fixture set can.
 
 **Derivation:** the third element of an observation carries the per-tree summary
 metrics, and a run only needs them under `generate_summary_stats`. Both paths
-must return `None` there rather than an empty dict, since `analyze_triplet`
-tests that slot for `None` to decide whether to aggregate.
+must return `None` there rather than an empty dict, since the per-triplet
+measurement tests that slot for `None` to decide whether to aggregate.
 
 ### `test_one_cache_serves_every_triplet_in_the_tree`
 

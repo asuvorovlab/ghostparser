@@ -158,15 +158,23 @@ def _assert_result_matches(orchestrator_result, reference_result, fields):
             assert orchestrator_value == reference_value, field
 
 
+@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
 def test_run_orchestrator_matches_derived_expectation(
-    orchestrator_species_tree, orchestrator_gene_trees, tmp_path
+    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, pipeline_mode
 ):
-    """run_orchestrator (serial) reproduces the hand-derived per-triplet expectation."""
+    """run_orchestrator (serial) reproduces the hand-derived per-triplet expectation.
+
+    Every triplet here stops at the count gate, so the two pipeline modes differ
+    only in what they measure below it: the detailed mode still reports the
+    tree-height and direction tests, the efficient mode leaves both empty and
+    says so in ``perm_note``. Everything the cascade reads is the same.
+    """
     config = _make_config(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         tmp_path / "out",
         processes=1,
+        pipeline_mode=pipeline_mode,
     )
     results = run_orchestrator(config)
 
@@ -192,13 +200,25 @@ def test_run_orchestrator_matches_derived_expectation(
         # Set by the run-wide correction pass, which recomputes the gate from the
         # corrected significance alongside the classification.
         assert result.decision_gate == "DCT"
-        # The count gate settles every triplet here, so under the default
-        # efficient mode the tree-height test below it is never measured, and it
-        # would take no part in the correction family in either mode.
-        assert result.ks_p_value is None
-        assert result.ks_p_value_corrected is None
-        assert result.ks_significant is None
         assert result.classification == "no_introgression"
+        if pipeline_mode == "detailed":
+            # The count gate settles every triplet, but the tree-height test is
+            # still measured and corrected across the same whole-run family,
+            # and the direction test is reported even though nothing read it.
+            assert 0.0 <= result.ks_p_value <= 1.0
+            assert result.ks_p_value_corrected == pytest.approx(
+                _bonferroni(result.ks_p_value)
+            )
+            assert result.ks_significant is (result.ks_p_value_corrected <= 0.05)
+            assert result.perm_decision is not None
+        else:
+            # Under the default bfn the family is fixed, so a value below a
+            # settled count gate would go unread and is never measured.
+            assert result.ks_p_value is None
+            assert result.ks_p_value_corrected is None
+            assert result.ks_significant is None
+            assert result.perm_decision is None
+            assert result.perm_note == "direction_test_not_consulted"
 
         assert 0.0 <= result.bootstrap_value <= 1.0
         assert sum(result.all_bootstrap.values()) == pytest.approx(1.0)

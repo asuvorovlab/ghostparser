@@ -25,11 +25,13 @@ species_rename_map: null        # two-column TSV or YAML: tree label -> output n
 
 # --- Execution -------------------------------------------------------------
 processes: 0
-seed: null                        # run-wide RNG seed; null draws a fresh one and reports it                      # 0 = all available cores
+seed: null                        # run-wide RNG seed; null draws a fresh one and reports it
 
 # --- Statistical tests -----------------------------------------------------
-# efficient stops measuring once the cascade is settled; detailed runs all three
-# gates for every triplet. Both reach the same classification.
+# efficient skips a test the decision cascade can no longer consult: the
+# direction test below a settled gate under every correction, and the
+# tree-height test below a settled count gate under no/bfn. detailed measures
+# all three gates for every triplet. Both reach the same classification.
 pipeline_mode: efficient          # efficient | detailed
 
 # Gate 1: discordant count test.
