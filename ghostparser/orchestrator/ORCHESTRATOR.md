@@ -655,11 +655,14 @@ next does not have the rest of the column in hand. Two tiers handle this:
   column across every triplet at once, classifies the whole grid, and tallies
   each triplet's votes.
 
-The tree-height test is measured wherever the correction will read it. Under a
-rank-based method that is every iteration, because every member's value moves
-the others' ranks. Under an inline method a value below a failed count gate is
-never read — the family size is fixed — so the iteration leaves it unmeasured
-and votes `no_introgression` directly.
+The tree-height test is measured wherever the correction will read it, and
+under `pipeline_mode: detailed` everywhere. Under a rank-based method that is
+every iteration in either mode, because every member's value moves the others'
+ranks. Under an inline method a value below a failed count gate is never read —
+the family size is fixed — so in the efficient mode the iteration leaves it
+unmeasured and votes `no_introgression` directly (`_CorrectionPolicy.skips_tht`),
+while the detailed mode measures it so that each iteration replicates the
+point estimate's procedure step for step. The vote is the same either way.
 
 ### Skipping a settled gate
 
@@ -712,7 +715,9 @@ correction method.
 estimate: `_run_triplet_pipeline_from_observations` runs the direction test
 only when both earlier gates cleared, and under an inline correction runs the
 tree-height test only when the count gate cleared. `detailed` runs every test
-for every triplet.
+for every triplet, and measures the tree-height test in every bootstrap
+iteration as well; the direction test below a failed gate is skipped in every
+bootstrap iteration under both modes.
 
 Skipping the direction test never changes a decision, under any correction
 method, for two reasons that have to hold together:

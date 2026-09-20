@@ -302,8 +302,22 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   rows and are `None` with `perm_note == "direction_test_not_consulted"` on
   the rest, where the detailed row still carries a decision. Purpose: the
   efficient mode changes what is computed and never what is concluded, across
-  an inline correction and two deferred ones, bootstrap votes included, and
-  the tree-height family stays the triplet count when members go unmeasured.
+  an inline correction and two deferred ones, bootstrap votes included — under
+  `bfn` the detailed bootstrap measures the tree-height test in every
+  iteration and the efficient one only where the count gate cleared — and the
+  tree-height family stays the triplet count when members go unmeasured.
+- `test_bootstrap_measures_the_tree_height_test_where_its_mode_says` — Inputs
+  (parametrized over the two modes): the 10/10-split observation set, a
+  20-iteration bootstrap at seed 11 under `bfn` as a family of five, with
+  `run_two_sample_ks_test` wrapped to count its calls. Expected outputs: under
+  `efficient` the point estimate carries no KS value and the call count equals
+  the number of iterations whose count gate cleared, read off `all_bootstrap`
+  as `20 × (1 − no_introgression)`; under `detailed` the point estimate
+  carries a KS value, the count is exactly 21 (point estimate plus every
+  iteration), and fewer than 20 iterations cleared the gate. Purpose: the mode
+  reaches the bootstrap — `efficient` leaves the tree-height test unmeasured
+  exactly where the count gate failed and nowhere else, `detailed` measures it
+  in every iteration so the bootstrap replicates the real procedure.
 - `test_inline_bonferroni_matches_the_family_correction` — Inputs (parametrized
   over family sizes 1, 7, 250): p=0.004 padded out to that family. Expected
   outputs: `_adjust_p_value_inline` equals the full `_adjust_p_values` pass on

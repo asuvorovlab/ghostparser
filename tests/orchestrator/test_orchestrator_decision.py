@@ -712,3 +712,51 @@ def test_efficient_and_detailed_modes_agree_on_every_classification(method):
             assert efficient.perm_statistic is None
             assert efficient.perm_note == pinf.PERM_NOTE_NOT_CONSULTED
             assert detailed.perm_decision is not None
+
+
+@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
+def test_bootstrap_measures_the_tree_height_test_where_its_mode_says(
+    monkeypatch, pipeline_mode
+):
+    """Each mode's bootstrap measures the tree-height test as its point estimate does.
+
+    Under ``bfn`` a count gate that failed on the exactly corrected value
+    classifies the iteration before the tree-height flag is read, so the
+    efficient mode leaves that test unmeasured there -- exactly as often as the
+    count gate fails, and never elsewhere -- while the detailed mode measures it
+    in the point estimate and in every iteration, replicating the procedure it
+    runs on the real data. The votes are the same either way (see
+    ``test_efficient_and_detailed_modes_agree_on_every_classification``); what
+    differs is only how much is computed to reach them.
+    """
+    calls = []
+    real_ks_test = pinf.run_two_sample_ks_test
+
+    def counting_ks_test(*args, **kwargs):
+        calls.append(None)
+        return real_ks_test(*args, **kwargs)
+
+    monkeypatch.setattr(pinf, "run_two_sample_ks_test", counting_ks_test)
+
+    iterations = 20
+    # 10 vs 10 discordant trees: the point estimate's count gate fails, and so
+    # do most resamples'.
+    result = pinf.analyze_triplet_from_observations(
+        _TRIPLET,
+        _observations(*_CASCADE_FAMILY[0]),
+        species_subtree=_SPECIES_SUBTREE,
+        bootstrap_options={"iterations": iterations},
+        p_value_correction="bfn",
+        family_size=len(_CASCADE_FAMILY),
+        triplet_seed=11,
+        pipeline_mode=pipeline_mode,
+    )
+
+    cleared = round(iterations * (1.0 - result.all_bootstrap.get("no_introgression", 0.0)))
+    if pipeline_mode == "efficient":
+        assert result.ks_p_value is None
+        assert len(calls) == cleared
+    else:
+        assert result.ks_p_value is not None
+        assert len(calls) == 1 + iterations
+        assert cleared < iterations

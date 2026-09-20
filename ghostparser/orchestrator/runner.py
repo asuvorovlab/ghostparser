@@ -85,7 +85,10 @@ def _describe_pipeline_mode(config):
     """
     mode = config["pipeline_mode"]
     if mode != PIPELINE_MODE_EFFICIENT:
-        return f"{mode} (every test is measured for every triplet)"
+        return (
+            f"{mode} (every test is measured for every triplet, and the "
+            "tree-height test in every bootstrap iteration)"
+        )
     if is_inline_correction(config["p_value_correction"]):
         skipped = "tree-height and direction tests below a settled gate"
     else:

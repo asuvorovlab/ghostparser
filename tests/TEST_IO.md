@@ -1633,6 +1633,33 @@ carries `None` for `perm_decision` and `perm_statistic` with
 `perm_note == "direction_test_not_consulted"`, while the detailed result still
 records a decision nothing read.
 
+Under `bfn` the two bootstraps also differ in what they measure: the detailed
+one runs the tree-height test in every iteration, the efficient one only in
+iterations whose count gate cleared. A failed count gate classifies the
+iteration `no_introgression` before the tree-height flag is read, so the
+`bootstrap_value` and `all_bootstrap` columns must still agree exactly.
+
+### `test_bootstrap_measures_the_tree_height_test_where_its_mode_says`
+
+**Inputs:** the 10/10-split observation set (`[0.1] * 20` concordant,
+`[0.9] * 10` in each discordant group), `family_size=5`, a 20-iteration
+bootstrap at seed 11 under `bfn`, once per pipeline mode, with
+`inference.run_two_sample_ks_test` replaced by a wrapper that counts its
+calls and delegates.
+
+**Derivation:** with 10 vs 10 discordant trees the chi-square p-value is 1.0,
+so the point estimate's count gate fails on `min(1, 1.0 × 5)`. Under
+`efficient` the policy's `skips_tht` is set (inline method, efficient mode),
+so the point estimate measures no KS (`ks_p_value is None`) and an iteration
+measures it only when its resampled count gate clears; a cleared count gate is
+also the only way an iteration votes anything but `no_introgression`, so the
+number of such iterations is `20 × (1 − all_bootstrap["no_introgression"])`
+and the call count must equal it. Under `detailed` `skips_tht` is off, so the
+point estimate carries a KS value and every iteration measures one: exactly
+`1 + 20` calls regardless of how the resampled gates fell. The assertion that
+fewer than 20 iterations cleared the gate confirms the two counts could not
+coincide by accident.
+
 ### `test_shifted_statistics_match_an_explicit_shift`
 
 **Inputs:** `x ~ Gamma(2.0, 1.0)` and `y ~ Gamma(2.5, 1.2)` at five `(nx, ny)`
