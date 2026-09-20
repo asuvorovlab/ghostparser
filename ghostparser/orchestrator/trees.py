@@ -4,6 +4,7 @@ and species-triplet normalization.
 
 import multiprocessing as mp
 import os
+import re
 from itertools import combinations
 
 from Bio import Phylo
@@ -175,6 +176,11 @@ def standardize_tree(tree):
 # the quote itself. A label holding any of them is written single-quoted.
 _NEWICK_QUOTED_CHARS = frozenset(" \t\r\n()[]{}':;,\"\\=")
 
+# A leaf label in the Newick this module writes: the token after ``(`` or ``,``
+# and before ``:``, ``,`` or ``)``, either bare or single-quoted with inner
+# quotes doubled. Branch lengths follow ``:`` and so never match.
+_NEWICK_LEAF_LABEL_RE = re.compile(r"(?<=[(,])(?:'(?:[^']|'')*'|[^(),:;]+)(?=[:,)])")
+
 
 def _newick_label(label):
     """Write a taxon label as a Newick token, quoting it only when required.
@@ -284,9 +290,7 @@ def write_clean_trees(trees, output_filepath, decimal_places=15):
             f.write(newick_str + "\n")
 
 
-def clean_and_save_trees(
-    input_filepath, output_filepath, min_avg_support=0.5, rename_map=None
-):
+def clean_and_save_trees(input_filepath, output_filepath, min_avg_support=0.5):
     """Read, support-filter, standardize, and save trees.
 
     Args:
@@ -294,16 +298,12 @@ def clean_and_save_trees(
         output_filepath: Path where cleaned trees are written.
         min_avg_support: Minimum average support threshold; trees below it are
             dropped.
-        rename_map: Optional display-name map applied to terminal labels before
-            anything else, so every later stage and output uses those names.
 
     Returns:
         A tuple ``(cleaned_trees, dropped_trees)`` where ``dropped_trees`` maps
         the 1-based input index to its average support value.
     """
     trees = read_tree_file(input_filepath)
-    for tree in trees:
-        rename_taxa_in_tree(tree, rename_map)
 
     dropped_trees = {}
     cleaned_trees = []
@@ -445,7 +445,7 @@ def _root_tree_on_any_outgroup(tree, outgroup_taxa):
 
 
 def clean_and_save_gene_trees(
-    input_filepath, output_filepath, outgroup_taxa, min_avg_support=0.5, rename_map=None
+    input_filepath, output_filepath, outgroup_taxa, min_avg_support=0.5
 ):
     """Read, support-filter, root on outgroup, standardize, and save gene trees.
 
@@ -455,8 +455,6 @@ def clean_and_save_gene_trees(
         outgroup_taxa: Iterable of outgroup taxon names used for rooting.
         min_avg_support: Minimum average support threshold; trees below it are
             dropped.
-        rename_map: Optional display-name map applied to terminal labels before
-            rooting, so ``outgroup_taxa`` must already be display names.
 
     Returns:
         A tuple ``(cleaned_trees, dropped_trees, rooted_count,
@@ -465,8 +463,6 @@ def clean_and_save_gene_trees(
         lacking an outgroup taxon.
     """
     trees = read_tree_file(input_filepath)
-    for tree in trees:
-        rename_taxa_in_tree(tree, rename_map)
 
     dropped_trees = {}
     cleaned_trees = []
@@ -494,6 +490,20 @@ def clean_and_save_gene_trees(
     return cleaned_trees, dropped_trees, rooted_count, missing_outgroup_indices
 
 
+# Characters the outputs put around a display name: a tab or line break ends a
+# TSV cell, a comma separates the names in the ``triplet`` column, and ``=``
+# and ``;`` structure ``abc_mapping``. A name holding one would corrupt the
+# column it lands in, so the map is refused up front.
+_DISPLAY_NAME_DELIMITERS = {
+    "\t": "a tab",
+    "\n": "a line break",
+    "\r": "a carriage return",
+    ",": "a comma",
+    ";": "a semicolon",
+    "=": "an equals sign",
+}
+
+
 def load_species_rename_map(filepath):
     """Read a display-name map keyed by the taxon labels used in the trees.
 
@@ -509,8 +519,9 @@ def load_species_rename_map(filepath):
 
     Raises:
         FileNotFoundError: If the file does not exist.
-        ValueError: If the file is malformed, or maps a label more than once,
-            or maps two labels onto the same display name.
+        ValueError: If the file is malformed, maps a label more than once,
+            maps two labels onto the same display name, or gives a display
+            name holding a character the outputs use as a delimiter.
     """
     path = str(filepath)
     try:
@@ -547,13 +558,22 @@ def load_species_rename_map(filepath):
     for original, display in pairs:
         if not original or not display:
             raise ValueError(f"Species rename map {path} has an empty label or name")
+        for char, what in _DISPLAY_NAME_DELIMITERS.items():
+            if char in display:
+                raise ValueError(
+                    f"Species rename map {path} names {original} {display!r}, which "
+                    f"holds {what}; a display name cannot contain a tab, line break, "
+                    "comma, semicolon or equals sign because the results TSV uses "
+                    "them as delimiters"
+                )
         if original in rename_map:
             raise ValueError(
                 f"Species rename map {path} maps {original} more than once"
             )
         if display in display_names:
-            # Two labels sharing a display name would collapse into duplicate
-            # tree labels, which the Newick parser rejects further downstream.
+            # Two labels sharing a display name would merge two taxa in every
+            # output -- one row for both in the consolidation matrices, an
+            # ``A=X;B=X`` triplet in the results -- with no trace of the map.
             raise ValueError(
                 f"Species rename map {path} maps both {display_names[display]} and "
                 f"{original} to {display}"
@@ -563,26 +583,33 @@ def load_species_rename_map(filepath):
     return rename_map
 
 
-def rename_taxa_in_tree(tree, rename_map):
-    """Rename a tree's terminal labels in place.
+def rename_newick_labels(newick, rename_map):
+    """Map the leaf labels inside a Newick string written by this module.
+
+    The run measures in the trees' own labels and the display names enter only
+    at the outputs, so the ``species_tree`` column is renamed as text rather
+    than by reparsing every triplet's subtree. Labels the display name forces
+    into quotes are quoted as :func:`_newick_label` writes them.
 
     Args:
-        tree: A ``Bio.Phylo`` tree object.
+        newick: A Newick string as :func:`format_newick_with_precision` or
+            :func:`_format_triplet_subtree_newick` produce it -- no comments
+            or whitespace, labels bare or single-quoted.
         rename_map: Mapping of tree label to display name. Labels absent from
-            the map keep their original name.
+            the map keep their name.
 
     Returns:
-        The number of terminals renamed.
+        The Newick string with its leaf labels mapped.
     """
-    if not rename_map:
-        return 0
-    renamed = 0
-    for terminal in tree.get_terminals():
-        display = rename_map.get(terminal.name)
-        if display is not None and display != terminal.name:
-            terminal.name = display
-            renamed += 1
-    return renamed
+    if not rename_map or not newick:
+        return newick
+
+    def substitute(match):
+        token = match.group(0)
+        label = token[1:-1].replace("''", "'") if token.startswith("'") else token
+        return _newick_label(rename_map.get(label, label))
+
+    return _NEWICK_LEAF_LABEL_RE.sub(substitute, newick)
 
 
 def rename_taxon_labels(labels, rename_map):

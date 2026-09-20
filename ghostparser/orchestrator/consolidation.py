@@ -108,33 +108,45 @@ def _extract_result_fields(result):
     )
 
 
-def _species_tree_taxa_order(species_tree_path, allowed_taxa=None):
-    """Return taxa in species-tree traversal order."""
+def _load_species_tree(species_tree_path, rename_map=None):
+    """Read the processed species tree and put the display names on its leaves.
+
+    Args:
+        species_tree_path: Path to the processed species tree, in the labels
+            the run measured in.
+        rename_map: Optional mapping of those labels to the display names the
+            results carry; applied to the taxon namespace in memory only.
+
+    Returns:
+        The DendroPy tree.
+    """
     tree = dendropy.Tree.get(
         path=str(species_tree_path), schema="newick", preserve_underscores=True
     )
-    if allowed_taxa:
-        tree.retain_taxa_with_labels(sorted({str(taxon) for taxon in allowed_taxa}))
+    if rename_map:
+        for taxon in tree.taxon_namespace:
+            taxon.label = rename_map.get(taxon.label, taxon.label)
+    return tree
+
+
+def _species_tree_taxa_order(tree, allowed_taxa=None):
+    """Return taxa in species-tree leaf order, restricted to ``allowed_taxa``.
+
+    Pruning keeps the surviving leaves in their relative order, so filtering
+    the traversal is the order the pruned tree would list.
+    """
+    allowed = None if not allowed_taxa else {str(taxon) for taxon in allowed_taxa}
     order = []
     seen = set()
     for leaf in tree.leaf_node_iter():
         if leaf.taxon is None or not leaf.taxon.label:
             continue
         label = str(leaf.taxon.label)
-        if label in seen:
+        if label in seen or (allowed is not None and label not in allowed):
             continue
         seen.add(label)
         order.append(label)
     return order
-
-
-def _load_species_tree(species_tree_path, allowed_taxa=None):
-    tree = dendropy.Tree.get(
-        path=str(species_tree_path), schema="newick", preserve_underscores=True
-    )
-    if allowed_taxa:
-        tree.retain_taxa_with_labels(sorted({str(taxon) for taxon in allowed_taxa}))
-    return tree
 
 
 def _map_event(a_taxon, b_taxon, c_taxon, classification, dis1_topology):
@@ -295,8 +307,9 @@ def _node_edge_length(node):
     return float(node.edge_length)
 
 
-def _species_tree_layout(species_tree_path, taxa_order, orientation):
-    tree = _load_species_tree(species_tree_path, taxa_order)
+def _species_tree_layout(tree, taxa_order, orientation):
+    if taxa_order:
+        tree.retain_taxa_with_labels(sorted(set(taxa_order)))
     leaf_positions = {taxon: idx for idx, taxon in enumerate(taxa_order)}
 
     root_dist = {}
@@ -349,10 +362,10 @@ def _species_tree_layout(species_tree_path, taxa_order, orientation):
 
 
 def _draw_species_tree_strip(
-    ax, species_tree_path, taxa_order, orientation, show_leaf_labels=True
+    ax, species_tree, taxa_order, orientation, show_leaf_labels=True
 ):
     tree, positions, max_depth, leaf_nodes = _species_tree_layout(
-        species_tree_path, taxa_order, orientation
+        species_tree, taxa_order, orientation
     )
     segments = []
     for node in tree.preorder_node_iter():
@@ -507,7 +520,7 @@ def _scaled_consolidation_text_sizes(n):
 
 def _plot_combined(
     path,
-    species_tree_path,
+    species_tree,
     taxa_order,
     matrix_avg,
     ghost_avg,
@@ -520,7 +533,8 @@ def _plot_combined(
 
     Args:
         path: Output image path.
-        species_tree_path: Processed species tree used for the top strip.
+        species_tree: Processed species tree (DendroPy) drawn as the top strip;
+            pruned in place to ``taxa_order``.
         taxa_order: Ordered taxa for both panels.
         matrix_avg: Target x source matrix of sampled-introgression averages.
         ghost_avg: Mapping of taxon to ghost strength; sets bar length.
@@ -648,7 +662,7 @@ def _plot_combined(
 
     # --- species tree strip (no leaf labels — label strip below handles them) ---
     _draw_species_tree_strip(
-        ax_tree, species_tree_path, taxa_order, "top", show_leaf_labels=False
+        ax_tree, species_tree, taxa_order, "top", show_leaf_labels=False
     )
 
     # --- source-taxon label strip ---
@@ -857,6 +871,7 @@ def generate_introgression_maps(
     output_dir,
     plot_taxa=None,
     outgroups=None,
+    rename_map=None,
     overwrite=True,
 ):
     """Generate non-ghost heatmap and ghost target-strength bar plot.
@@ -869,6 +884,10 @@ def generate_introgression_maps(
         outgroups: Optional iterable of taxon names to exclude from the plots
             (e.g. outgroup taxa used for rooting).  When ``None`` or empty no
             taxa are excluded.
+        rename_map: Optional mapping of the species tree file's labels to the
+            names ``results``, ``plot_taxa`` and ``outgroups`` use, for a run
+            whose outputs carry display names while its processed trees keep
+            the tree labels.
         overwrite: Whether to overwrite an existing output directory or write
             to an auto-suffixed sibling.
     """
@@ -879,7 +898,8 @@ def generate_introgression_maps(
     outgroup_set = set(outgroups) if outgroups else set()
 
     non_ghost_weights, ghost_weights, taxa_seen = _collect_weights(results)
-    species_order = _species_tree_taxa_order(species_tree_path, plot_taxa)
+    species_tree = _load_species_tree(species_tree_path, rename_map)
+    species_order = _species_tree_taxa_order(species_tree, plot_taxa)
     species_order = [t for t in species_order if t not in outgroup_set]
     taxa_order = _build_taxa_order(species_order, taxa_seen)
     taxa_order = [t for t in taxa_order if t not in outgroup_set]
@@ -958,7 +978,7 @@ def generate_introgression_maps(
 
     _plot_combined(
         combined_plot,
-        species_tree_path,
+        species_tree,
         taxa_order,
         avg_non_ghost_matrix,
         avg_ghost,

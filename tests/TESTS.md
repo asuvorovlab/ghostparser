@@ -153,12 +153,17 @@ Marked `integration` throughout -- every test drives `run_orchestrator` -- and `
   and at least one result has a populated `bootstrap_dct_stats`. Purpose: the
   bootstrap-debug output path.
 - `test_species_rename_map_reaches_every_output` — Inputs: the shared fixture
-  run with `species_rename_map` mapping `A -> Homo` and `B -> Pan`, with
-  consolidation on. Expected outputs: the triplet taxa are `{Homo, Pan, C, D}`,
-  the display names appear in the results TSV, the per-triplet species subtree,
-  both processed tree files, the consolidation taxa-order file and the inflow
-  /outflow matrix, and the combined plot is written. Purpose: renaming at read
-  time reaches every named output, and unmapped taxa are left alone.
+  run with `species_rename_map` mapping `A -> Homo sapiens` and `B -> Pan sp.`,
+  with consolidation on. Expected outputs: the triplet taxa are
+  `{Homo sapiens, Pan sp., C, D}`; the `(A,B,C)` species subtree is
+  `(('Homo sapiens','Pan sp.'),C);` and every `species_tree` column parses back
+  to its triplet's names; the display names appear in the results TSV, the
+  consolidation taxa-order file and the inflow/outflow matrix; the combined plot
+  is written; and both processed tree files still carry only the tree labels
+  `A`–`D`/`OUT`. Purpose: the map applied to the results reaches every named
+  output, names a bare Newick label cannot hold are quoted where the output is
+  Newick, unmapped taxa are left alone, and nothing the run reads back is
+  renamed.
 - `test_parallel_runs_match_serial` — Inputs (parametrized over 2 and 4
   workers): the same fixture run serially and in parallel with a fixed seed.
   Expected outputs: every compared field, bootstrap values included, is
@@ -624,9 +629,9 @@ All `core`.
 
 ### tests/orchestrator/test_orchestrator_rename_map.py
 
-Covers loading and validating a species rename map. The end-to-end effect on
-the outputs is covered by `test_species_rename_map_reaches_every_output` in
-`test_orchestrator.py`.
+Covers loading and validating a species rename map, and the two label helpers
+the outputs are renamed with. The end-to-end effect on the outputs is covered by
+`test_species_rename_map_reaches_every_output` in `test_orchestrator.py`.
 
 The four map-loading tests are `config`; the two renaming tests are `core`.
 
@@ -637,18 +642,29 @@ The four map-loading tests are `config`; the two renaming tests are `core`.
   Expected outputs: the same mapping. Purpose: format chosen by extension.
 - `test_rename_map_rejects_malformed_files` — Inputs (parametrized): a TSV row
   with three columns, one with a single column, a repeated label, two labels
-  sharing a display name in each of the TSV and YAML forms, and a YAML list
-  rather than a mapping. Expected outputs: `ValueError` naming the problem.
-  Purpose: malformed maps fail at load rather than silently renaming nothing.
+  sharing a display name in each of the TSV and YAML forms, a YAML list rather
+  than a mapping, and a display name holding a tab (YAML `"Homo\tsapiens"`),
+  a comma, a semicolon or an equals sign. Expected outputs: `ValueError`
+  naming the problem. Purpose: malformed maps, and names the results TSV could
+  not carry, fail at load rather than silently renaming nothing or corrupting a
+  column.
 - `test_rename_map_rejects_a_missing_file` — Inputs: a path that does not exist.
   Expected outputs: `FileNotFoundError` naming the path. Purpose: a mistyped
   path is reported as such.
-- `test_renaming_a_tree_touches_only_mapped_terminals` — Inputs: a three-taxon
-  tree and a map covering two of them. Expected outputs: two renames, the third
-  label unchanged. Purpose: partial maps are supported.
+- `test_renaming_newick_labels_maps_leaves_and_quotes_as_needed` — Inputs
+  (parametrized): four three-leaf Newick strings as the run writes them — sisters
+  first, odd taxon first with a root edge, labels that contain a map key as a
+  substring (`T10`, `XT1`), and an already-quoted label — with the map
+  `T1 -> Alpha`, `T2 -> Beta sp.`. Expected outputs: the exact renamed string,
+  with `'Beta sp.'` quoted and the substring labels untouched; parsed with
+  DendroPy, the leaves read as the mapped names in the input's order with the
+  input's edge lengths. Purpose: the `species_tree` column is renamed as text
+  by whole leaf token, never inside a branch length, and stays valid Newick.
 - `test_renaming_labels_leaves_unmapped_names_alone` — Inputs: label tuples with
-  a partial map and an empty map. Expected outputs: unmapped labels pass
-  through. Purpose: the helper used for the outgroup and triplet-filter entries.
+  a partial map and an empty map, and a Newick string with an empty map.
+  Expected outputs: unmapped labels pass through; the empty map returns the
+  Newick unchanged. Purpose: the helpers used on the results' `triplet` and on
+  consolidation's taxon lists, and the no-map case.
 
 ### tests/orchestrator/test_orchestrator_preflight.py
 
@@ -739,13 +755,15 @@ them.
   blank-only lists, and an integer. Expected outputs: `ConfigError` naming
   `outgroup`. Purpose: a value that yields no labels is an error rather than an
   empty outgroup list.
-- `test_invalid_values_are_rejected_by_field_name` — Inputs (parametrized, 5
+- `test_invalid_values_are_rejected_by_field_name` — Inputs (parametrized, 6
   rows): `species_tree_path: null`, `p_value_correction: true` (what YAML makes
-  of a bare `yes`), `pipeline_mode: "fast"`, `seed: "abc"`, and
-  `preflight_triplet_cap: -1`. Expected outputs: `ConfigError` whose message
-  names the field (or, for the boolean-typed choice, says `must be one of`).
-  Purpose: one case per validator shape — required path, choice list, optional
-  int, non-negative int — each failing by name rather than surfacing later.
+  of a bare `yes`), `pipeline_mode: "fast"`, `seed: "abc"`,
+  `preflight_triplet_cap: -1`, and `species_rename_map: absent.tsv`. Expected
+  outputs: `ConfigError` whose message names the field (or, for the
+  boolean-typed choice, says `must be one of`). Purpose: one case per validator
+  shape — required path, choice list, optional int, non-negative int, and a
+  path whose file is read when the config resolves — each failing by name
+  rather than surfacing later.
 - `test_shipped_sample_configs_resolve` — Inputs (parametrized):
   `sample_configs/orchestrator_minimal.yaml` and `orchestrator_full.yaml`.
   Expected outputs: each loads without error and yields a non-empty list of

@@ -3,6 +3,7 @@
 import os
 import time
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 import dendropy
@@ -31,6 +32,7 @@ from .trees import (
     generate_triplets,
     get_taxa_from_tree,
     read_tree_file,
+    rename_newick_labels,
     rename_taxon_labels,
     read_triplet_filter_file,
     write_clean_trees,
@@ -199,6 +201,34 @@ def _log_permutation_diagnostics(metrics, results):
         )
 
 
+def _rename_result_taxa(results, rename_map):
+    """Rebuild every result under its display names.
+
+    The run reads, roots, filters and measures in the trees' own labels; the
+    display names enter here, once the decision pass is done and before any
+    output is written. Only two fields name taxa: ``triplet`` and the
+    ``species_tree`` Newick, whose labels are quoted as the names require.
+
+    Args:
+        results: List of ``TripletPipelineResult`` objects.
+        rename_map: Mapping of tree label to display name.
+
+    Returns:
+        The same list when the map is empty, otherwise a new list of renamed
+        results in the same order.
+    """
+    if not rename_map:
+        return results
+    return [
+        replace(
+            result,
+            triplet=tuple(rename_taxon_labels(result.triplet, rename_map)),
+            species_tree=rename_newick_labels(result.species_tree, rename_map),
+        )
+        for result in results
+    ]
+
+
 def _run_preflight_only(config, output_dir):
     """Run the structural preflight check and stop before any analysis.
 
@@ -277,20 +307,17 @@ def run_orchestrator(config):
         metrics.log(f"Processing species tree: {config['species_tree']}")
         metrics.log(f"Processing gene trees: {config['gene_trees']}")
         outgroup_taxa = _parse_outgroup_arg(config["outgroup"])
-        # The rename runs on the trees as they are read, so every name after
-        # this point -- outgroup, triplets, outputs, plots -- is a display name.
+        # The whole run -- trees, outgroup, filter, log -- works in the trees'
+        # own labels; the map is applied to the results just before they are
+        # written, so no renamed label is ever read back out of a Newick. The
+        # config layer has already read and validated the file.
         rename_map = {}
         if config["species_rename_map"]:
-            try:
-                rename_map = load_species_rename_map(config["species_rename_map"])
-            except (FileNotFoundError, ValueError) as exc:
-                metrics.log(f"✗ Error reading species rename map: {exc}")
-                return None
+            rename_map = load_species_rename_map(config["species_rename_map"])
             metrics.log(
                 f"Species rename map: {config['species_rename_map']} "
                 f"({len(rename_map)} taxa)"
             )
-            outgroup_taxa = rename_taxon_labels(outgroup_taxa, rename_map)
         metrics.log(f"Outgroup: {', '.join(outgroup_taxa)}")
         metrics.log(f"Discordant count test: {config['discordant_test']}")
         metrics.log(
@@ -331,7 +358,6 @@ def run_orchestrator(config):
                 str(species_tree_path),
                 species_tree_clean,
                 min_avg_support=support_threshold,
-                rename_map=rename_map,
             )
             metrics.log(f"✓ Species tree cleaned and saved to: {species_tree_clean}")
             metrics.log(f"  Processed {len(species_trees)} tree(s)")
@@ -390,10 +416,6 @@ def run_orchestrator(config):
                             f"⚠ Warning: Skipping invalid triplet line {line_number} in {filter_path}: {raw}"
                         )
 
-                    raw_triplets = [
-                        tuple(rename_taxon_labels(triplet, rename_map))
-                        for triplet in raw_triplets
-                    ]
                     triplets, skipped_triplets = filter_triplets_by_taxa(
                         raw_triplets, set(ingroup_taxa)
                     )
@@ -446,7 +468,6 @@ def run_orchestrator(config):
                     gene_trees_clean,
                     outgroup_taxa,
                     min_avg_support=support_threshold,
-                    rename_map=rename_map,
                 )
             )
             metrics.log(f"\n✓ Gene trees cleaned and saved to: {gene_trees_clean}")
@@ -524,6 +545,8 @@ def run_orchestrator(config):
             # reported CPU total reflects all work, not just the parent process.
             stream_cpu_time += stream_worker_cpu
 
+            results = _rename_result_taxa(results, rename_map)
+
             final_tsv = str(output_dir / "orchestrator_triplet_results.tsv")
             write_pipeline_results(
                 results,
@@ -558,12 +581,20 @@ def run_orchestrator(config):
                 # output-directory reset (rmtree) never touches the run folder's
                 # results TSV, processed trees, or the still-open metrics.txt.
                 consolidation_dir = output_dir / "consolidation"
+                # The results now carry display names while the processed
+                # species tree on disk keeps the tree labels; the map lets
+                # consolidation line the two up.
                 map_artifacts = generate_introgression_maps(
                     results,
                     species_tree_path=species_tree_clean,
                     output_dir=str(consolidation_dir),
-                    plot_taxa=plot_taxa,
-                    outgroups=outgroup_taxa,
+                    plot_taxa=(
+                        None
+                        if plot_taxa is None
+                        else rename_taxon_labels(plot_taxa, rename_map)
+                    ),
+                    outgroups=rename_taxon_labels(outgroup_taxa, rename_map),
+                    rename_map=rename_map,
                     overwrite=config["overwrite"],
                 )
                 map_wall_time, map_cpu_time = _elapsed_times(

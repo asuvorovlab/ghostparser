@@ -126,11 +126,21 @@ tree, and a species tree containing none of the outgroups.
    `inference._apply_triplet_result_p_value_correction` applies the
    multiple-testing correction once across all triplets, because a global
    correction needs every p-value in a single pass.
-6. **Writing** — `inference.write_pipeline_results` emits
+6. **Display names** — every step so far works in the trees' own labels. With a
+   `species_rename_map`, `runner._rename_result_taxa` rebuilds each result
+   under its display names: `triplet` through `trees.rename_taxon_labels`, and
+   the `species_tree` Newick through `trees.rename_newick_labels`, which quotes
+   any name the format cannot carry bare. Nothing read back later — the
+   processed tree files, the outgroup, a triplet filter — ever holds a display
+   name, so the names are free to contain spaces, dots or quotes.
+7. **Writing** — `inference.write_pipeline_results` emits
    `orchestrator_triplet_results.tsv`; `inference.write_summary_statistics_tsv`
    emits `summary_statistics.tsv` when `generate_summary_stats` is set.
-7. **Consolidation** — `consolidation.generate_introgression_maps`
-   writes the map artifacts into a `consolidation/` subfolder.
+8. **Consolidation** — `consolidation.generate_introgression_maps`
+   writes the map artifacts into a `consolidation/` subfolder. It orders the
+   taxa by the processed species tree on disk, which is in tree labels, and
+   takes the same `rename_map` to put the display names on that tree in
+   memory so it lines up with the results.
 
 ## Per-triplet inference
 
@@ -866,9 +876,10 @@ Written under the output folder:
   observed counts, not fixed to a topology label, so a triplet where `AC|B`
   outnumbers `BC|A` has its `AC|B` gene trees under `discordant1_*`. The shape
   diagnostics are not repeated here — see below.
-- `processed_<species tree>` / `processed_<gene trees>` — cleaned, rooted trees.
-  A label a bare Newick token cannot hold (a space, a quote, a bracket) is
-  written single-quoted.
+- `processed_<species tree>` / `processed_<gene trees>` — cleaned, rooted trees,
+  in the input trees' own labels whatever `species_rename_map` says. A label a
+  bare Newick token cannot hold (a space, a quote, a bracket) is written
+  single-quoted.
 - `metrics.txt` — per-stage wall/CPU timing and run parameters.
 - `consolidation/` — the combined heatmap/bar-chart plot and TSV matrices from
   `consolidation.py`, unless `--no-consolidation` is given. Consolidation
@@ -1042,4 +1053,7 @@ derived from the run seed and the triplet, so any worker count agrees exactly.
 `generate_introgression_maps` reads only four fields from each result
 (`triplet`, `classification`, `dis1_topology`, `bootstrap_value`) via its
 duck-typed `_extract_result_fields`. `TripletPipelineResult` keeps those four
-fields; treat field parity on them as a maintenance constraint.
+fields; treat field parity on them as a maintenance constraint. The taxon
+names in `results`, `plot_taxa` and `outgroups` must agree with each other;
+`rename_map` maps the species tree file's labels onto them when they differ,
+which is the case for a run with a `species_rename_map`.

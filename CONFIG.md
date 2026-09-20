@@ -197,18 +197,17 @@ Settable either on the CLI or in a config file.
   T2: Pan troglodytes
   ```
 
-  The rename is applied to the species and gene trees as they are read, so every
-  later stage uses the display names: the results TSV, `summary_statistics.tsv`,
-  the processed tree files, and the consolidation matrices and plots. Taxa absent
-  from the map keep their tree labels, so a partial map is fine.
+  The display names appear in `orchestrator_triplet_results.tsv`,
+  `summary_statistics.tsv`, and the `consolidation/` TSV matrices and plot.
+  The outgroup, a triplet filter, the processed tree files and `metrics.txt`
+  use the labels as they appear in the input trees. Taxa absent from the map
+  keep their tree labels.
 
-  Because the rename happens first, the outgroup and any triplet-filter entries
-  are matched against the display names as well. Supply those in the tree's own
-  labels and they are mapped for you.
-
-  The map is rejected if it maps a label more than once, or maps two labels onto
-  the same display name — the latter would collapse two taxa into duplicate tree
-  labels, which the Newick parser refuses further downstream.
+  The file is read when the config resolves and rejected if it is missing or
+  malformed, maps a label more than once, maps two labels onto the same
+  display name, or gives a display name holding a tab, line break, comma,
+  semicolon or equals sign — the characters the results TSV uses as
+  delimiters.
 
 ##### `seed`
 

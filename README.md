@@ -274,10 +274,10 @@ Consolidation details:
 
    - Path to a two-column TSV or YAML mapping from the taxon labels used in the
      trees to the names that should appear in the outputs.
-   - Applied as the trees are read, so the results TSV, the processed trees, and
-     the consolidation matrices and plots all use the display names. Taxa absent
-     from the map keep their tree labels. See [CONFIG.md](CONFIG.md).
-   - Triplets containing taxa missing from the species tree are skipped with a warning.
+   - The display names appear in the results TSV, `summary_statistics.tsv`, and
+     the consolidation matrices and plot; the outgroup, a triplet filter and the
+     processed tree files use the tree labels. Taxa absent from the map keep
+     their tree labels. See [CONFIG.md](CONFIG.md).
 
 - `--processes`
 
@@ -451,6 +451,8 @@ This section summarizes user-facing errors and validation failures that GhostPar
    The run exits early when required input files are missing.
 - `✗ Error: Triplet filter file not found: ...`
    The path given to `--triplet-filter` does not exist.
+- `Config field species_rename_map: ...`
+   The rename map is read when the config resolves; a missing or malformed file, a label mapped twice, two labels sharing a display name, or a display name holding a tab, line break, comma, semicolon or equals sign is a config error.
 - `✗ Error processing species tree: ...`
    Species-tree cleaning/parsing failed (typically malformed Newick, missing taxa, or filtering issues).
 - `✗ Error generating triplets: ...`

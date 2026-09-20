@@ -1107,6 +1107,7 @@ list/tuple/set and so contributes no entries. An empty result raises
 | `pipeline_mode: "fast"` | `_validate_choice` | Not one of `efficient`/`detailed`. | `pipeline_mode` |
 | `seed: "abc"` | `_validate_optional_int` | Accepts `None` or an `int`; also rejects `bool`, since `isinstance(True, int)` holds and `seed: true` is a mistake rather than a seed of 1. | `seed` |
 | `preflight_triplet_cap: -1` | `_validate_non_negative_int` | Accepts `int >= 0`; `0` is the documented "no cap", so `-1` is the nearest value with no meaning. | `preflight_triplet_cap` |
+| `species_rename_map: absent.tsv` | `_validate_species_rename_map` | The path resolves, but the file is read on the spot (`load_species_rename_map`) and does not exist; its `FileNotFoundError` is re-raised as a config error. | `species_rename_map` |
 
 The `p_value_correction` row is the guard that keeps the boolean mapping from
 laundering an invalid value into a valid one.
@@ -1851,16 +1852,21 @@ before parsing, which is why the TSV's four lines produce two entries.
 ### `test_rename_map_rejects_malformed_files`
 
 **Inputs:** `T1\tA\textra` (three columns), `T1` (one column), `T1\tA` twice
-with different values, `T1\tA` and `T2\tA`, and a YAML list.
+with different values, `T1\tA` and `T2\tA`, a YAML list, and four display
+names holding a delimiter: `"Homo\tsapiens"` in YAML (whose double-quoted
+scalar turns `\t` into a tab), `Homo, sapiens`, `A;B` and `A=B` in TSV.
 
 **Derivation:** a rename map is a bijection from tree label to display name.
 Three columns and one column both fail the two-column requirement. A repeated
 label is ambiguous about which name wins. Two labels sharing a name is the case
 worth singling out, and is checked in both file formats: it would rename two
-distinct taxa to the same string, and since DendroPy raises
-`NewickReaderDuplicateTaxonError` on duplicate labels the run would fail later
-in the parser with nothing pointing back at the map. A YAML list carries no
-keys, so it cannot be a mapping.
+distinct taxa to the same string, so every output would merge them -- one row
+for both in the consolidation matrices, an `A=X;B=X` triplet in the results --
+with nothing pointing back at the map. A YAML list carries no keys, so it
+cannot be a mapping. A tab or line break ends a TSV cell, a comma separates
+the `triplet` column's names, and `=` and `;` structure `abc_mapping`, so a
+name holding one would corrupt the column it lands in; the tab has to come
+through YAML because a tab inside a TSV value is read as a third column.
 
 ### `test_rename_map_rejects_a_missing_file`
 
@@ -1870,46 +1876,71 @@ keys, so it cannot be a mapping.
 path is a different mistake from a malformed map and the message names the path
 so it can be corrected without opening anything.
 
-### `test_renaming_a_tree_touches_only_mapped_terminals`
+### `test_renaming_newick_labels_maps_leaves_and_quotes_as_needed`
 
-**Inputs:** `((T1:0.1,T2:0.2):0.3,T3:0.4);` with a map covering `T1` and `T2`
-only.
+**Inputs:** the map `{"T1": "Alpha", "T2": "Beta sp."}` over four Newick
+strings as the run writes them:
 
-**Derivation:** the rename is applied per terminal against the map, so the two
-mapped taxa become `Alpha` and `Beta` while `T3` keeps its label -- a partial
-map is the normal case, since a study usually renames only the taxa it reports
-on. The return value counts terminals actually renamed, so it must be `2`, not
-the map's size or the tree's terminal count; and the resulting label set
-`["Alpha", "Beta", "T3"]` confirms nothing was dropped or duplicated in the
-process.
+| Newick | Expected |
+| --- | --- |
+| `((T1:0.1,T2:0.2):0.3,T3:0.4);` | `((Alpha:0.1,'Beta sp.':0.2):0.3,T3:0.4);` |
+| `(T3:0.4,(T1:0.1,T2:0.2):0.3):0.5;` | `(T3:0.4,(Alpha:0.1,'Beta sp.':0.2):0.3):0.5;` |
+| `((T1:0.1,T10:0.2):0.3,XT1:0.4);` | `((Alpha:0.1,T10:0.2):0.3,XT1:0.4);` |
+| `(('O''Brien':0.1,T2:0.2):0.3,T3:0.4);` | `(('O''Brien':0.1,'Beta sp.':0.2):0.3,T3:0.4);` |
+
+**Derivation:** the `species_tree` column is renamed as text, so the renamer
+must find exactly the leaf labels: the token after `(` or `,` and before `:`,
+`,` or `)`. Branch lengths follow `:` and so are never candidates -- the `0.1`
+and `0.3` survive every row -- and a token is matched whole, so `T10` and `XT1`,
+which merely contain the key `T1`, are left alone (row 3). `T2 -> Beta sp.`
+puts a space and a dot into the label, which a bare token cannot hold, so it
+comes out `'Beta sp.'`; `T1 -> Alpha` needs no quotes and gets none. Row 2 puts
+the odd taxon first and adds a root edge, covering both child orders the shape
+writer produces. Row 4 starts from an already-quoted label: it is unquoted
+before the lookup (`O'Brien` is not in the map) and written quoted again, so a
+label the writer had to quote round-trips. Each output is then parsed with
+DendroPy and must give, leaf by leaf, the mapped name and the input's edge
+length -- the check that the string is still valid Newick and names the right
+taxa, independent of the exact spelling asserted above.
 
 ### `test_renaming_labels_leaves_unmapped_names_alone`
 
-**Inputs:** `("T1", "T3")` under `{"T1": "Alpha"}`, and `("T1",)` under `{}`.
+**Inputs:** `("T1", "T3")` under `{"T1": "Alpha"}`, `("T1",)` under `{}`, and
+`((T1:0.1,T2:0.2):0.3,T3:0.4);` under `{}`.
 
-**Derivation:** the label helper handles the outgroup and triplet-filter
-entries, which arrive as plain strings rather than tree nodes, and it has to
-agree with the tree helper or those keys would stop matching the renamed trees.
-An empty map is the no-rename case and must return the labels unchanged rather
-than an empty list.
+**Derivation:** the label helper renames the results' `triplet` tuples and the
+taxon lists consolidation is handed, which are plain strings; a label absent
+from the map passes through, since a study usually renames only the taxa it
+reports on. An empty map is the no-rename case for both helpers and must return
+the labels, or the Newick, unchanged rather than an empty list -- every run
+without a `species_rename_map` goes through that branch.
 
 ### `test_species_rename_map_reaches_every_output`
 
 **Inputs:** the shared 4-triplet orchestrator fixture (taxa `A`, `B`, `C`, `D`,
-outgroup `OUT`) with a TSV mapping `A -> Homo` and `B -> Pan`, consolidation
-enabled.
+outgroup `OUT`) with a TSV mapping `A -> Homo sapiens` and `B -> Pan sp.`,
+consolidation enabled.
 
-**Derivation:** the rename is applied inside `clean_and_save_trees` and
-`clean_and_save_gene_trees`, immediately after the Newick is read and before
-anything else runs. Everything downstream therefore sees only display names,
-which is why the assertions can span outputs written by unrelated code paths:
-the triplet tuples (`{Homo, Pan, C, D}` -- `C` and `D` are absent from the map
-and so unchanged), the `triplet` and `abc_mapping` columns of the results TSV,
-the `species_tree` column whose Newick is rebuilt from the renamed species tree,
-the two `processed_*.tree` files, and the consolidation artifacts. The
-consolidation check reads `introgression_taxa_order.tsv` because that file holds
-the taxon ordering used to label the heatmap axes and the bar chart, so it
-standing in display names is the evidence the plot labels do too.
+**Derivation:** the run works in the trees' own labels and
+`runner._rename_result_taxa` rebuilds the results under the display names after
+the decision pass, before anything is written. The display names hold a space
+and a dot on purpose: a bare Newick label cannot, so had they been written into
+the processed trees and reread, Bio.Phylo would read `sapiens` and `sp.` and
+DendroPy would refuse the file -- the failure this design avoids. Downstream of
+the rename every output sees only display names, which is why the assertions
+can span outputs written by unrelated code paths: the triplet tuples
+(`{Homo sapiens, Pan sp., C, D}` -- `C` and `D` are absent from the map and so
+unchanged); the `(A,B,C)` species subtree, topology-only in this fixture, which
+becomes `(('Homo sapiens','Pan sp.'),C);` with the two names quoted and `C`
+bare, and every `species_tree` column parsing back to exactly its triplet's
+names; the `triplet` and `abc_mapping` columns of the results TSV; and the
+consolidation artifacts. The two `processed_*.tree` files are the outputs the
+run reads back, so their leaves must be drawn from `{A, B, C, D, OUT}` and
+nothing else. The consolidation check reads `introgression_taxa_order.tsv`
+because that file holds the taxon ordering used to label the heatmap axes and
+the bar chart, so it standing in display names is the evidence the plot labels
+do too; consolidation gets there by reading the processed species tree in tree
+labels and mapping them in memory through the same map.
 
 ### `test_triplet_resolution_agrees_with_the_observation_guards`
 

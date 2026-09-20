@@ -203,6 +203,7 @@ def test_outgroup_rejects_empty_and_non_label_values(value):
         ({"pipeline_mode": "fast"}, "pipeline_mode"),
         ({"seed": "abc"}, "seed"),
         ({"preflight_triplet_cap": -1}, "preflight_triplet_cap"),
+        ({"species_rename_map": "absent.tsv"}, "species_rename_map"),
     ],
 )
 def test_invalid_values_are_rejected_by_field_name(tmp_path, extra, match):
@@ -210,8 +211,8 @@ def test_invalid_values_are_rejected_by_field_name(tmp_path, extra, match):
 
     One case per validator shape: a required path, a choice list (fed a
     boolean with no matching choice, which is what YAML makes of a bare
-    ``yes``), an optional int, and a non-negative int whose ``0`` already means
-    "no cap".
+    ``yes``), an optional int, a non-negative int whose ``0`` already means
+    "no cap", and a path whose file is read when the config resolves.
     """
     with pytest.raises(ConfigError, match=match):
         load_orchestrator_config(str(_payload(tmp_path, **extra)))

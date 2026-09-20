@@ -10,11 +10,13 @@ included, since it is deterministic per triplet under a fixed seed). See
 
 import argparse
 
+import dendropy
 import pytest
 from scipy import stats
 
 from ghostparser.orchestrator.config import resolve_config
 from ghostparser.orchestrator.runner import run_orchestrator
+from ghostparser.orchestrator.trees import read_tree_file
 
 pytestmark = pytest.mark.integration
 
@@ -326,14 +328,16 @@ def test_no_bootstrap_skips_the_bootstrap_itself(
 def test_species_rename_map_reaches_every_output(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
-    """Mapped taxa appear under their display names in every named output.
+    """Mapped taxa appear under their display names in every output, and nowhere else.
 
-    The rename is applied as the trees are read, so it has to reach the
-    in-memory results, the results TSV, the per-triplet species subtree, the
-    processed tree files, and the consolidation artifacts alike.
+    The run works in the trees' own labels and the map is applied to the
+    results just before they are written, so the display names -- chosen here
+    to hold spaces and a dot, which a bare Newick label cannot -- must reach
+    the returned results, the results TSV, the ``species_tree`` column and the
+    consolidation artifacts, while the processed trees keep the tree labels.
     """
     rename_path = tmp_path / "names.tsv"
-    rename_path.write_text("A\tHomo\nB\tPan\n")
+    rename_path.write_text("A\tHomo sapiens\nB\tPan sp.\n")
     output_folder = tmp_path / "out"
     config = _make_config(
         orchestrator_species_tree,
@@ -349,37 +353,40 @@ def test_species_rename_map_reaches_every_output(
 
     # Mapped taxa are renamed; unmapped ones (C, D) are untouched.
     seen = {taxon for result in results for taxon in result.triplet}
-    assert seen == {"Homo", "Pan", "C", "D"}
+    assert seen == {"Homo sapiens", "Pan sp.", "C", "D"}
 
-    # The per-triplet species subtree is rebuilt from the renamed tree.
-    assert any("Homo" in (result.species_tree or "") for result in results)
+    # The species subtree column is renamed as Newick: the names that need it
+    # are quoted, so the column still parses to the display names.
+    by_triplet = {result.triplet: result for result in results}
+    assert by_triplet[("Homo sapiens", "Pan sp.", "C")].species_tree == (
+        "(('Homo sapiens','Pan sp.'),C);"
+    )
+    for result in results:
+        parsed = dendropy.Tree.get(
+            data=result.species_tree, schema="newick", preserve_underscores=True
+        )
+        assert {leaf.taxon.label for leaf in parsed.leaf_node_iter()} == set(
+            result.triplet
+        )
 
     results_tsv = (output_folder / "orchestrator_triplet_results.tsv").read_text()
-    assert "Homo" in results_tsv and "Pan" in results_tsv
+    assert "Homo sapiens" in results_tsv and "Pan sp." in results_tsv
 
-    # The cleaned trees written alongside the results carry the display names,
-    # which is what consolidation reads back for its taxon ordering.
-    assert "Homo" in (output_folder / "processed_species.tree").read_text()
-    assert "Homo" in (output_folder / "processed_genes.tree").read_text()
+    # The processed trees are read back by the run itself, so they stay in the
+    # labels the input trees use.
+    for name in ("processed_species.tree", "processed_genes.tree"):
+        for tree in read_tree_file(str(output_folder / name)):
+            assert {t.name for t in tree.get_terminals()} <= {"A", "B", "C", "D", "OUT"}
 
     # The taxa-order file is what labels the heatmap axes and the bar chart, so
     # it standing in display names is the evidence the plots do too.
-    taxa_order = (
-        output_folder
-        / "consolidation"
-        / "consolidation_data"
-        / "introgression_taxa_order.tsv"
-    ).read_text()
-    assert "Homo" in taxa_order and "Pan" in taxa_order
+    consolidation_data = output_folder / "consolidation" / "consolidation_data"
+    taxa_order = (consolidation_data / "introgression_taxa_order.tsv").read_text()
+    assert "Homo sapiens" in taxa_order and "Pan sp." in taxa_order
     assert (output_folder / "consolidation" / "introgression_combined.png").exists()
 
-    matrix = (
-        output_folder
-        / "consolidation"
-        / "consolidation_data"
-        / "introgression_matrix_inflow_outflow.tsv"
-    ).read_text()
-    assert "Homo" in matrix and "Pan" in matrix
+    matrix = (consolidation_data / "introgression_matrix_inflow_outflow.tsv").read_text()
+    assert "Homo sapiens" in matrix and "Pan sp." in matrix
 
 
 @pytest.mark.output

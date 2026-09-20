@@ -16,6 +16,7 @@ from ..config import (
     _validate_required_path,
     prepare_output_directory,
 )
+from .trees import load_species_rename_map
 
 __all__ = ["ConfigError", "prepare_output_directory", "build_argument_parser",
            "resolve_config", "load_orchestrator_config", "normalize_orchestrator_payload"]
@@ -118,6 +119,33 @@ def _validate_optional_path(payload: dict, key: str) -> str | None:
             f"Config field {key} must be a non-empty string when provided"
         )
     return _resolve_path(value.strip())
+
+
+def _validate_species_rename_map(payload: dict) -> str | None:
+    """Resolve the optional rename-map path and read the file it names.
+
+    The file is read here, not at run time, so a map that is missing,
+    malformed, or gives a taxon a name the outputs cannot carry fails before
+    any tree is cleaned rather than after.
+
+    Args:
+        payload: The config/CLI payload.
+
+    Returns:
+        The resolved absolute path, or ``None`` when the field is absent.
+
+    Raises:
+        ConfigError: If the field is present but not a non-empty string, or
+            the file cannot be loaded as a rename map.
+    """
+    path = _validate_optional_path(payload, "species_rename_map")
+    if path is None:
+        return None
+    try:
+        load_species_rename_map(path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise ConfigError(f"Config field species_rename_map: {exc}") from exc
+    return path
 
 
 def _validate_non_negative_int(payload: dict, key: str, default: int) -> int:
@@ -621,7 +649,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "gene_trees": gene_trees,
         "outgroup": outgroup,
         "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
-        "species_rename_map": _validate_optional_path(payload, "species_rename_map"),
+        "species_rename_map": _validate_species_rename_map(payload),
         "output": output,
         "overwrite": _validate_overwrite_flag(payload),
         "processes": _validate_non_negative_int(
