@@ -110,6 +110,7 @@ outgroup: Out1,Out2                      # comma-separated labels, or a YAML lis
 output_folder: results                    # output directory for all run artifacts
 overwrite: true                           # true = reset and reuse output dir; false = append suffix
 triplet_filter: null                      # path to filter file or null (all triplets)
+species_filter: null                      # path to species list or null; not with triplet_filter
 species_rename_map: null                  # path to rename map or null
 processes: 0                              # 0 = every CPU available to the process
 seed: null                                # null = generate a run seed at runtime
@@ -177,7 +178,23 @@ Settable either on the CLI or in a config file.
 
 - CLI: `--triplet-filter`
 - Default: none (all triplets)
-- Path to a file of comma-separated taxa triplets, one per line. Only the listed triplets are analyzed.
+- Path to a file of comma-separated taxa triplets, one per line. Only the listed triplets are analyzed. A triplet naming a taxon that is not an ingroup taxon of the species tree is skipped with a warning in `metrics.txt`.
+- Cannot be set together with `species_filter`.
+
+##### `species_filter`
+
+- CLI: `--species-filter`
+- Default: none (all ingroup taxa)
+- Path to a file of taxon names, comma-separated with any number per line, spelled as they appear in the trees. Every triplet among the listed species is analyzed and no other: the file below runs the four triplets of `A`, `B`, `C` and `D`.
+
+  ```text
+  A, B
+  C
+  D
+  ```
+
+- A name that is not an ingroup taxon of the species tree — misspelled, absent, or an outgroup — is skipped with a warning in `metrics.txt`; a repeated name counts once. The run stops with an error if fewer than three names remain, since they cannot form a triplet.
+- Cannot be set together with `triplet_filter`; naming both is a config error.
 
 ##### `species_rename_map`
 
@@ -199,8 +216,8 @@ Settable either on the CLI or in a config file.
 
   The display names appear in `orchestrator_triplet_results.tsv`,
   `summary_statistics.tsv`, and the `consolidation/` TSV matrices and plot.
-  The outgroup, a triplet filter, the processed tree files and `metrics.txt`
-  use the labels as they appear in the input trees. Taxa absent from the map
+  The outgroup, a triplet or species filter, the processed tree files and
+  `metrics.txt` use the labels as they appear in the input trees. Taxa absent from the map
   keep their tree labels.
 
   The file is read when the config resolves and rejected if it is missing or
@@ -298,8 +315,8 @@ Settable either on the CLI or in a config file.
 - CLI: `--preflight-triplet-cap <n>`
 - Default: `15000`
 - Type: integer `>= 0`; `0` lifts the cap.
-- The most ingroup triplets the preflight data check walks. Above it the check takes the first `n` in generation order and reports `analysis.triplet_cap_applied` with the total it skipped, so the report says when it is partial. Parsing the gene trees and building their geometry is a fixed cost, so raising the cap costs less than proportionally: on 1,475 gene trees, 15,000 triplets take about 25 s against 11 s for 1,500.
-- Applies only to the check. A real run always processes every triplet, and the key is ignored unless `preflight_data_check` is set. A `triplet_filter` is never capped -- the check walks every triplet the filter names.
+- The most ingroup triplets the preflight data check walks. Above it the check takes the first `n` in generation order and reports `analysis.triplet_cap_applied` with the total it skipped, so the report says when it is partial. Parsing the gene trees and building their geometry is a fixed cost, so raising the cap costs less than proportionally.
+- Applies only to the check. A real run always processes every triplet, and the key is ignored unless `preflight_data_check` is set. A `triplet_filter` is never capped -- the check walks every triplet the filter names; the triplets generated from a `species_filter` are capped like the full ingroup's.
 
 ### Config-File-Only Keys
 
@@ -370,10 +387,10 @@ python -m ghostparser.orchestrator \
   --alpha-perm 0.05 \
   --p-value-correction bfn
 
-# optional CLI switches: -c/--config-file, --triplet-filter, --species-rename-map,
-# --seed, --no-overwrite, --no-consolidation, --no-bootstrap, --diagnostic,
-# --preflight-data-check, --preflight-triplet-cap
-# default behaviors: config-file mode ignores other flags; no triplet filter means all triplets;
+# optional CLI switches: -c/--config-file, --triplet-filter, --species-filter,
+# --species-rename-map, --seed, --no-overwrite, --no-consolidation, --no-bootstrap,
+# --diagnostic, --preflight-data-check, --preflight-triplet-cap
+# default behaviors: config-file mode ignores other flags; no filter means all triplets;
 # overwrite is enabled by default; consolidation and bootstrap are enabled by default;
 # preflight checks are disabled by default; 0 checks all triplets.
 ```

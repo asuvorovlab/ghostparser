@@ -79,6 +79,7 @@ _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "outgroup",
     "output_folder",
     "triplet_filter",
+    "species_filter",
     "species_rename_map",
     "seed",
     "no_overwrite",
@@ -116,6 +117,29 @@ def _validate_optional_path(payload: dict, key: str) -> str | None:
             f"Config field {key} must be a non-empty string when provided"
         )
     return _resolve_path(value.strip())
+
+
+def _validate_triplet_selection(payload: dict) -> tuple[str | None, str | None]:
+    """Resolve the triplet filter and the species filter, at most one of which may be set.
+
+    Args:
+        payload: The config/CLI payload.
+
+    Returns:
+        The resolved ``(triplet_filter, species_filter)`` paths, each ``None``
+        when absent.
+
+    Raises:
+        ConfigError: If either path is not a non-empty string, or both are set.
+    """
+    triplet_filter = _validate_optional_path(payload, "triplet_filter")
+    species_filter = _validate_optional_path(payload, "species_filter")
+    if triplet_filter is not None and species_filter is not None:
+        raise ConfigError(
+            "Config fields triplet_filter and species_filter cannot both be set; "
+            "name the triplets or the species, not both"
+        )
+    return triplet_filter, species_filter
 
 
 def _validate_species_rename_map(payload: dict) -> str | None:
@@ -509,6 +533,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Path to triplet filter file (comma-separated taxa per line)",
     )
     parser.add_argument(
+        "--species-filter",
+        default=None,
+        help="Path to a species filter file (comma-separated taxa, any number "
+        "per line); every triplet among the listed species is analyzed. "
+        "Cannot be combined with --triplet-filter",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -638,11 +669,13 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
 
     bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
     permutation_options = _validate_permutation_options(payload)
+    triplet_filter, species_filter = _validate_triplet_selection(payload)
     return {
         "species_tree": species_tree,
         "gene_trees": gene_trees,
         "outgroup": outgroup,
-        "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
+        "triplet_filter": triplet_filter,
+        "species_filter": species_filter,
         "species_rename_map": _validate_species_rename_map(payload),
         "output": output,
         "overwrite": _validate_overwrite_flag(payload),

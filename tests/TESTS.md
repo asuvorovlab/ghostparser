@@ -555,6 +555,11 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   triplets, identity ABC normalization, and the exact per-triplet species
   subtree Newick strings. Purpose: triplet enumeration and species-subtree
   construction.
+- `test_read_species_filter_file_collects_names_in_order` — Inputs: a file
+  reading ` A, B ` / a blank line / `C` / `B,,D` / a whitespace line / `A`.
+  Expected outputs: `["A", "B", "C", "D"]`. Purpose: the species filter's file
+  contract — names may share a line or take one each, surrounding whitespace
+  and empty entries are dropped, and a repeat keeps its first position.
 - `test_clean_and_save_gene_trees_roots_every_tree_on_the_outgroup` — Inputs:
   `orchestrator_gene_trees` with outgroup `OUT`. Expected outputs: all 12 trees
   survive, each ends in `OUT:0);`, and trees 0 and 3 match their expected
@@ -701,6 +706,12 @@ The checks themselves are `core`; `test_report_is_written_only_when_an_output_di
   outputs: one `triplet_filter.taxa_missing_in_species_tree`, one
   `triplet_filter.includes_outgroup`, and `triplets_checked == 1`. Purpose:
   filter entries are validated rather than silently dropped.
+- `test_species_filter_entries_are_validated` — Inputs: a species filter file
+  reading `A,B` / `C` / `NOPE` / `OUT` against the clean fixture. Expected
+  outputs: one `species_filter.taxa_missing_in_species_tree`, one
+  `species_filter.includes_outgroup`, and `triplets_checked == 1`. Purpose:
+  the check forms every triplet among the usable species it names — one from
+  three, out of the tree's four — and reports the names it could not use.
 - `test_impossible_checks_raise` — Inputs (parametrized): an empty outgroup
   list, and an outgroup absent from the species tree. Expected outputs:
   `ValueError` matching "No outgroup taxa were provided" and "Could not root
@@ -759,15 +770,17 @@ them.
   blank-only lists, and an integer. Expected outputs: `ConfigError` naming
   `outgroup`. Purpose: a value that yields no labels is an error rather than an
   empty outgroup list.
-- `test_invalid_values_are_rejected_by_field_name` — Inputs (parametrized, 6
+- `test_invalid_values_are_rejected_by_field_name` — Inputs (parametrized, 7
   rows): `species_tree_path: null`, `p_value_correction: true` (what YAML makes
   of a bare `yes`), `diagnostic: "yes"`, `seed: "abc"`,
-  `preflight_triplet_cap: -1`, and `species_rename_map: absent.tsv`. Expected
-  outputs: `ConfigError` whose message names the field (or, for the
-  boolean-typed choice, says `must be one of`). Purpose: one case per validator
-  shape — required path, choice list, optional bool, optional int,
-  non-negative int, and a path whose file is read when the config resolves —
-  each failing by name rather than surfacing later.
+  `preflight_triplet_cap: -1`, `species_rename_map: absent.tsv`, and
+  `triplet_filter` set beside `species_filter`. Expected outputs: `ConfigError`
+  whose message names the field (or, for the boolean-typed choice, says `must
+  be one of`; for the pair, `cannot both be set`). Purpose: one case per
+  validator shape — required path, choice list, optional bool, optional int,
+  non-negative int, a path whose file is read when the config resolves, and
+  two paths that exclude each other — each failing by name rather than
+  surfacing later.
 - `test_shipped_sample_configs_resolve` — Inputs (parametrized):
   `sample_configs/orchestrator_minimal.yaml` and `orchestrator_full.yaml`.
   Expected outputs: each loads without error and yields a non-empty list of
@@ -783,8 +796,10 @@ them.
   for each key is the one the code would use anyway.
 - `test_parser_flags_resolve_into_their_config_values` — Inputs: the CLI flag
   strings parsed by `build_argument_parser`, then resolved. Expected outputs:
-  each flag's value reaches its config key (`--diagnostic` giving `True` among
-  them), `--no-overwrite` gives `overwrite is False`, `--preflight-data-check`
+  each flag's value reaches its config key (`--diagnostic` giving `True` and
+  `--species-filter species.txt` a resolved path ending in `species.txt`, with
+  `triplet_filter` left `None`, among them), `--no-overwrite` gives
+  `overwrite is False`, `--preflight-data-check`
   gives `True`, and `--preflight-triplet-cap 0` gives `0`. Purpose: every other config test
   builds a namespace directly, so this is the only place the flag names are
   pinned; resolving covers the override path in the same pass.

@@ -155,6 +155,27 @@ def test_triplet_filter_entries_are_validated(clean_inputs, tmp_path):
     assert result.triplets_checked == 1
 
 
+def test_species_filter_entries_are_validated(clean_inputs, tmp_path):
+    """Filter names absent from the tree or in the outgroup are reported, not combined."""
+    species, genes = clean_inputs
+    species_filter = tmp_path / "species.txt"
+    species_filter.write_text("A,B\nC\nNOPE\nOUT\n")
+
+    result = run_preflight_data_check(
+        species_tree_path=str(species),
+        gene_trees_path=str(genes),
+        outgroups=["OUT"],
+        output_dir=str(tmp_path),
+        species_filter=str(species_filter),
+    )
+
+    categories = [issue.category for issue in result.issues]
+    assert categories.count("species_filter.taxa_missing_in_species_tree") == 1
+    assert categories.count("species_filter.includes_outgroup") == 1
+    # The three usable species form one triplet, out of the tree's four.
+    assert result.triplets_checked == 1
+
+
 @pytest.mark.parametrize(
     "outgroups, expected_message",
     [
@@ -211,6 +232,7 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path):
             "output": str(output_dir),
             "overwrite": True,
             "triplet_filter": None,
+            "species_filter": None,
             "preflight_data_check": True,
             "preflight_triplet_cap": 3,
         }
@@ -241,6 +263,7 @@ def test_runner_returns_none_when_preflight_cannot_run(tmp_path):
             "output": str(tmp_path / "results"),
             "overwrite": True,
             "triplet_filter": None,
+            "species_filter": None,
             "preflight_data_check": True,
             "preflight_triplet_cap": 15000,
         }

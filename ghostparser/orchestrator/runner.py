@@ -34,6 +34,7 @@ from .trees import (
     read_tree_file,
     rename_newick_labels,
     rename_taxon_labels,
+    read_species_filter_file,
     read_triplet_filter_file,
     write_clean_trees,
 )
@@ -249,6 +250,7 @@ def _run_preflight_only(config, output_dir):
             outgroups=outgroup_taxa,
             output_dir=output_dir,
             triplet_filter=config["triplet_filter"],
+            species_filter=config["species_filter"],
             max_triplets=config["preflight_triplet_cap"],
         )
     except ValueError as exc:
@@ -426,6 +428,43 @@ def run_orchestrator(config):
                             "⚠ Warning: Skipping triplet with missing taxa: "
                             f"{','.join(triplet)} (missing: {', '.join(missing)})"
                         )
+                elif config["species_filter"]:
+                    filter_path = Path(config["species_filter"])
+                    if not filter_path.exists():
+                        metrics.log(
+                            f"✗ Error: Species filter file not found: {config['species_filter']}"
+                        )
+                        return None
+
+                    requested_species = read_species_filter_file(str(filter_path))
+                    ingroup_set = set(ingroup_taxa)
+                    kept_species = [
+                        taxon for taxon in requested_species if taxon in ingroup_set
+                    ]
+                    for taxon in requested_species:
+                        if taxon in outgroup_taxa:
+                            metrics.log(
+                                f"⚠ Warning: Skipping species filter entry {taxon}: "
+                                "it is an outgroup taxon"
+                            )
+                        elif taxon not in ingroup_set:
+                            metrics.log(
+                                f"⚠ Warning: Skipping species filter entry {taxon}: "
+                                "not found in the species tree"
+                            )
+                    if len(kept_species) < 3:
+                        metrics.log(
+                            f"✗ Error: Species filter names {len(kept_species)} "
+                            "ingroup taxa; at least 3 are needed to form a triplet"
+                        )
+                        return None
+
+                    plot_taxa = sorted(kept_species)
+                    triplets = generate_triplets(plot_taxa, [])
+                    metrics.log(
+                        f"✓ Generated {len(triplets)} unique triplets among "
+                        f"{len(plot_taxa)} filtered species"
+                    )
                 else:
                     triplets = generate_triplets(sorted(ingroup_taxa), [])
                     metrics.log(f"✓ Generated {len(triplets)} unique triplets")

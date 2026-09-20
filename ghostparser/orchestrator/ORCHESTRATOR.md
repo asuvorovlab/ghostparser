@@ -24,6 +24,11 @@ python -m ghostparser.orchestrator \
     -st species.tree -gt genes.tree -og OutGroup \
     --triplet-filter triplets.txt --no-consolidation
 
+# every triplet among a filtered set of species
+python -m ghostparser.orchestrator \
+    -st species.tree -gt genes.tree -og OutGroup \
+    --species-filter species.txt
+
 # config-file mode (JSON or YAML); other CLI flags are ignored
 python -m ghostparser.orchestrator -c run_config.yaml
 
@@ -90,7 +95,8 @@ only when nothing was detected.
 Generated triplets are capped at `preflight_triplet_cap` (default 15,000; `0`
 lifts it), which the runner passes through as `max_triplets`; a bound cap is
 itself reported as `analysis.triplet_cap_applied`, so a partial check never
-reads as a complete one. Triplets named by a `triplet_filter` are not capped.
+reads as a complete one. Triplets named by a `triplet_filter` are not capped;
+those generated from a `species_filter` are, like the full ingroup's.
 
 Three conditions make the check itself impossible and raise `ValueError`
 instead: no outgroups given, a species-tree file that does not hold exactly one
@@ -105,8 +111,12 @@ tree, and a species tree containing none of the outgroups.
    `min_support_value`. `trees._root_tree_on_outgroup` roots on the outgroup
    MRCA and prunes the outgroup, returning the ingroup taxa.
 2. **Triplet setup** — `trees.generate_triplets` enumerates every ingroup
-   triplet (or `trees.read_triplet_filter_file` plus
-   `trees.filter_triplets_by_taxa` restricts them).
+   triplet, or `trees.read_triplet_filter_file` plus
+   `trees.filter_triplets_by_taxa` restricts the run to the triplets a filter
+   names, or `trees.read_species_filter_file` restricts the enumeration to the
+   ingroup species a filter names (names that are not ingroup taxa are skipped
+   with a warning; fewer than three left is an error). The two filters
+   exclude each other at config time.
    `trees._build_species_triplet_metadata` builds one
    `triplet_geometry.TripletGeometry` over the species tree, then reads each
    triplet out of it: `triplet_geometry.triplet_subtree_shape` gives the sister
@@ -131,8 +141,9 @@ tree, and a species tree containing none of the outgroups.
    under its display names: `triplet` through `trees.rename_taxon_labels`, and
    the `species_tree` Newick through `trees.rename_newick_labels`, which quotes
    any name the format cannot carry bare. Nothing read back later — the
-   processed tree files, the outgroup, a triplet filter — ever holds a display
-   name, so the names are free to contain spaces, dots or quotes.
+   processed tree files, the outgroup, a triplet or species filter — ever
+   holds a display name, so the names are free to contain spaces, dots or
+   quotes.
 7. **Writing** — `inference.write_pipeline_results` emits
    `orchestrator_triplet_results.tsv`; `inference.write_summary_statistics_tsv`
    emits `summary_statistics.tsv` when `generate_summary_stats` is set.

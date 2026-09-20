@@ -42,6 +42,7 @@
 - Replaced `bootstrap_options.seed`/`bootstrap_seed` with a run-wide `seed` key (`--seed`), which drives every random draw in a run. When unset, one seed is drawn for the run and reported, so any run can be reproduced from its metrics file.
 - Added `species_rename_map` (`--species-rename-map`), a two-column TSV or YAML map from tree labels to the names shown in the results TSV, `summary_statistics.tsv` and the consolidation outputs. The run itself works in the tree labels, so a display name may hold spaces, dots or quotes. The file is read when the config resolves; a missing or malformed file, a label mapped twice, two labels sharing a name, or a name holding a tab, line break, comma, semicolon or equals sign is a config error.
 - Newick writers single-quote a label holding whitespace or `()[]{}':;,"\=`, so an input tree with quoted labels round-trips through the processed tree files.
+- Added `species_filter` (`--species-filter`), a file of taxon names — comma-separated, any number per line — that restricts the run to every triplet among the named species. Names that are not ingroup taxa are skipped with a warning; fewer than three left stops the run. It excludes `triplet_filter`; setting both is a config error. The preflight check accepts it too and caps the triplets it generates like the full ingroup's.
 
 ### Hyperparameter tuning
 

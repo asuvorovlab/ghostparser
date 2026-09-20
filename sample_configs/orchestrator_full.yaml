@@ -21,6 +21,9 @@ output_folder: ./results
 overwrite: true
 # Restrict the run to specific triplets; one comma-separated triplet per line.
 triplet_filter: null
+# Or to every triplet among specific species; comma-separated names, any
+# number per line. Not combinable with triplet_filter.
+species_filter: null
 species_rename_map: null        # two-column TSV or YAML: tree label -> output name
 
 # --- Execution -------------------------------------------------------------

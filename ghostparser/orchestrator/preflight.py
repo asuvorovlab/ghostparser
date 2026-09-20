@@ -19,6 +19,7 @@ from .trees import (
     _root_tree_on_any_outgroup,
     format_newick_with_precision,
     read_tree_file,
+    read_species_filter_file,
     read_triplet_filter_file,
     standardize_tree,
 )
@@ -38,7 +39,12 @@ PREFLIGHT_REPORT_FILENAME = "preflight_data_check.txt"
 DEFAULT_MAX_GENE_TREES = 0  # 0 means "all"
 DEFAULT_REPORT_LIMIT = 25
 
-_SPECIES_CATEGORY_PREFIXES = ("species_tree.", "species_triplet.", "triplet_filter.")
+_SPECIES_CATEGORY_PREFIXES = (
+    "species_tree.",
+    "species_triplet.",
+    "triplet_filter.",
+    "species_filter.",
+)
 _GENE_CATEGORY_PREFIXES = ("gene_tree.", "triplet.")
 
 
@@ -111,6 +117,7 @@ def _load_target_triplets(
     species_labels_sorted,
     outgroups,
     triplet_filter,
+    species_filter,
     max_triplets,
     issues,
 ):
@@ -120,6 +127,7 @@ def _load_target_triplets(
         species_labels_sorted: Sorted species-tree leaf labels.
         outgroups: Set of outgroup taxon labels to exclude from the ingroup.
         triplet_filter: Optional path to a triplet-filter file.
+        species_filter: Optional path to a species-filter file.
         max_triplets: Cap on generated triplets; ``0`` means no cap.
         issues: Mutable list that detected issues are appended to.
 
@@ -145,7 +153,15 @@ def _load_target_triplets(
         return _load_filtered_triplets(
             triplet_filter, species_labels_sorted, outgroups, issues
         )
+    if species_filter:
+        ingroup = _load_filtered_species(
+            species_filter, species_labels_sorted, outgroups, issues
+        )
+        if len(ingroup) < 3:
+            return []
 
+    # Named triplets are never capped; generated ones are, so the check stays
+    # quick however many species there are to combine.
     all_triplets = list(combinations(ingroup, 3))
     if max_triplets > 0 and len(all_triplets) > max_triplets:
         issues.append(
@@ -211,6 +227,44 @@ def _load_filtered_triplets(triplet_filter, species_labels_sorted, outgroups, is
 
         unique.append(tuple(triplet))
     return unique
+
+
+def _load_filtered_species(species_filter, species_labels_sorted, outgroups, issues):
+    """Read a species-filter file and keep the sorted ingroup species it names."""
+    species_label_set = set(species_labels_sorted)
+    kept = []
+    for taxon in read_species_filter_file(species_filter):
+        if taxon not in species_label_set:
+            issues.append(
+                Issue(
+                    category="species_filter.taxa_missing_in_species_tree",
+                    message=f"Species {taxon} is absent from the species tree",
+                )
+            )
+        elif taxon in outgroups:
+            issues.append(
+                Issue(
+                    category="species_filter.includes_outgroup",
+                    message=(
+                        f"Species {taxon} is an outgroup taxon; the filter "
+                        "should name ingroup taxa only"
+                    ),
+                )
+            )
+        else:
+            kept.append(taxon)
+
+    if len(kept) < 3:
+        issues.append(
+            Issue(
+                category="species_filter.insufficient_taxa",
+                message=(
+                    "Need at least 3 usable species to form a triplet; "
+                    f"the species filter names {len(kept)}"
+                ),
+            )
+        )
+    return sorted(kept)
 
 
 def _normalize_species_triplets(species_tree_d, triplets, issues):
@@ -546,6 +600,7 @@ def run_preflight_data_check(
     outgroups,
     output_dir=None,
     triplet_filter=None,
+    species_filter=None,
     max_triplets=DEFAULT_PREFLIGHT_TRIPLET_CAP,
     max_gene_trees=DEFAULT_MAX_GENE_TREES,
     report_limit=DEFAULT_REPORT_LIMIT,
@@ -559,6 +614,8 @@ def run_preflight_data_check(
         output_dir: Directory to write ``preflight_data_check.txt`` into. When
             ``None``, no file is written and only the text is returned.
         triplet_filter: Optional triplet-filter file restricting the triplets.
+        species_filter: Optional species-filter file; every triplet among the
+            species it names is checked.
         max_triplets: Cap on generated triplets; ``0`` means no cap.
         max_gene_trees: Cap on gene trees checked; ``0`` means all.
         report_limit: Maximum example lines per issue category.
@@ -594,6 +651,7 @@ def run_preflight_data_check(
         species_labels_sorted=species_labels_sorted,
         outgroups=set(outgroups),
         triplet_filter=triplet_filter,
+        species_filter=species_filter,
         max_triplets=max_triplets,
         issues=issues,
     )

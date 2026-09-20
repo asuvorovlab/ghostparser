@@ -794,6 +794,18 @@ rooted at the tree root itself and keep its `0.5` unchanged:
 | (A,C,D) | `((A:0.2,C:0.2):0.3,D:0.1):0.5;` | A absorbs `0.1 + 0.1 = 0.2` |
 | (B,C,D) | `((B:0.2,C:0.2):0.3,D:0.1):0.5;` | B absorbs `0.1 + 0.1 = 0.2` |
 
+### `test_read_species_filter_file_collects_names_in_order`
+
+**Input:** a file whose lines are ` A, B `, an empty line, `C`, `B,,D`, a line
+of spaces, and `A`.
+
+**Derivation:** each line is split on commas and every piece stripped, so the
+first line yields `A` and `B` (surrounding spaces gone), the empty and
+all-space lines yield nothing, `C` yields itself, `B,,D` yields `B`, an empty
+piece that is dropped, and `D`, and the last line yields `A`. Repeats keep
+their first position: `B` and `A` are already present, so the result is
+`["A", "B", "C", "D"]` in first-seen order.
+
 ### `test_clean_and_save_gene_trees_roots_every_tree_on_the_outgroup`
 
 **Input:** the 12 gene trees, outgroup `["OUT"]`, `min_avg_support=0.5`.
@@ -960,6 +972,19 @@ one `triplet_filter.includes_outgroup`. Both lines are dropped rather than
 checked, leaving only `A,B,C`, which normalizes successfully, so
 `triplets_checked == 1`.
 
+### `test_species_filter_entries_are_validated`
+
+**Inputs:** the clean pair plus a species filter file whose lines are `A,B`,
+`C`, `NOPE`, `OUT`.
+
+**Derivation:** the file yields `A`, `B`, `C`, `NOPE`, `OUT`. `NOPE` is not
+among the species-tree labels → one
+`species_filter.taxa_missing_in_species_tree`; `OUT` is a label but in the
+outgroup set → one `species_filter.includes_outgroup`. The three usable
+species `A`, `B`, `C` form `C(3, 3) = 1` triplet, against the `C(4, 3) = 4`
+the unfiltered tree would give, and it normalizes successfully, so
+`triplets_checked == 1`.
+
 ### `test_impossible_checks_raise`
 
 **Inputs (parametrized):** `outgroups=[]`, and `outgroups=["NOT_PRESENT"]`.
@@ -1087,6 +1112,7 @@ list/tuple/set and so contributes no entries. An empty result raises
 | `seed: "abc"` | `_validate_optional_int` | Accepts `None` or an `int`; also rejects `bool`, since `isinstance(True, int)` holds and `seed: true` is a mistake rather than a seed of 1. | `seed` |
 | `preflight_triplet_cap: -1` | `_validate_non_negative_int` | Accepts `int >= 0`; `0` is the documented "no cap", so `-1` is the nearest value with no meaning. | `preflight_triplet_cap` |
 | `species_rename_map: absent.tsv` | `_validate_species_rename_map` | The path resolves, but the file is read on the spot (`load_species_rename_map`) and does not exist; its `FileNotFoundError` is re-raised as a config error. | `species_rename_map` |
+| `triplet_filter: triplets.txt` beside `species_filter: species.txt` | `_validate_triplet_selection` | Each path resolves on its own (neither file is read here), but the two select triplets in ways that cannot be reconciled -- named triplets against every triplet among named species -- so both set is an error before any file is opened. | `cannot both be set` |
 
 The `p_value_correction` row is the guard that keeps the boolean mapping from
 laundering an invalid value into a valid one.
@@ -1134,12 +1160,14 @@ mapping exists.
 ### `test_parser_flags_resolve_into_their_config_values`
 
 Parsing `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2
---p-value-correction fdr_bh --diagnostic --alpha-perm 0.02
---no-overwrite --preflight-data-check --preflight-triplet-cap 0` must yield
-those exact values
-with `config_file is None`; `0` is chosen for the cap because it is the one
-value `_validate_non_negative_int` accepts that differs from the default and is
-also the documented "no cap" spelling.
+--p-value-correction fdr_bh --diagnostic --species-filter species.txt
+--alpha-perm 0.02 --no-overwrite --preflight-data-check
+--preflight-triplet-cap 0` must yield those exact values with
+`config_file is None`; `0` is chosen for the cap because it is the one value
+`_validate_non_negative_int` accepts that differs from the default and is also
+the documented "no cap" spelling. `--species-filter` goes through
+`_resolve_path`, so only the tail of the resolved path is pinned, and
+`triplet_filter` must stay `None` because the flag was not given.
 
 ## tests/test_config_trunk.py
 
@@ -1932,6 +1960,23 @@ from the map passes through, since a study usually renames only the taxa it
 reports on. An empty map is the no-rename case for both helpers and must return
 the labels, or the Newick, unchanged rather than an empty list -- every run
 without a `species_rename_map` goes through that branch.
+
+### `test_species_filter_runs_every_triplet_among_the_named_species`
+
+**Inputs:** the shared 4-triplet orchestrator fixture (ingroup `A`, `B`, `C`,
+`D` after pruning the outgroup `OUT`), serial, with a species filter file per
+row: one whose lines are `A, B`, `D`, an empty line, `OUT`, `NOPE`, `B`; and
+one reading `A,B,NOPE`.
+
+**Derivation:** the first file yields `A`, `B`, `D`, `OUT`, `NOPE` (the second
+`B` is a repeat). `OUT` is an outgroup taxon and `NOPE` is not in the tree, so
+neither is an ingroup taxon and both are skipped; `A`, `B`, `D` remain, and
+`C(3, 3) = 1` triplet, `(A, B, D)`, is generated in place of the fixture's
+four. Its counts are `12/0/0` with species subtree `((A,B),D);`, exactly as in
+`test_run_orchestrator_matches_derived_expectation`: the filter changes which
+triplets are set up, not the extraction or inference that follows. The second
+file leaves only `A` and `B`, which cannot form a triplet, so the runner
+returns `None` before any tree is measured.
 
 ### `test_species_rename_map_reaches_every_output`
 

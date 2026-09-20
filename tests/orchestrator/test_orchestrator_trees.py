@@ -133,6 +133,14 @@ def test_generate_triplets_and_species_subtrees(orchestrator_species_tree, tmp_p
     }
 
 
+def test_read_species_filter_file_collects_names_in_order(tmp_path):
+    """Names may share a line or take one each; blanks and repeats are dropped."""
+    path = tmp_path / "species.txt"
+    path.write_text(" A, B \n\nC\nB,,D\n  \nA\n")
+
+    assert ptrees.read_species_filter_file(str(path)) == ["A", "B", "C", "D"]
+
+
 def test_clean_and_save_gene_trees_roots_every_tree_on_the_outgroup(
     orchestrator_gene_trees, tmp_path
 ):

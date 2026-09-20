@@ -654,6 +654,28 @@ def read_triplet_filter_file(filepath):
     return triplets, invalid_lines
 
 
+def read_species_filter_file(filepath):
+    """Read a species filter file naming taxa, one or more comma-separated per line.
+
+    Args:
+        filepath: Path to the species filter file.
+
+    Returns:
+        The taxon names in file order, blank entries dropped and repeats
+        removed.
+    """
+    species = []
+    seen = set()
+    with open(filepath, "r") as f:
+        for line in f:
+            for part in line.split(","):
+                name = part.strip()
+                if name and name not in seen:
+                    seen.add(name)
+                    species.append(name)
+    return species
+
+
 def filter_triplets_by_taxa(triplets, taxa_set):
     """Keep triplets whose taxa are all contained in the set.
 

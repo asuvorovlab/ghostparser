@@ -51,6 +51,7 @@ def _base_cli_args(**overrides):
         outgroup="OUT",
         output_folder=None,
         triplet_filter=None,
+        species_filter=None,
         no_overwrite=None,
         processes=None,
         alpha_dct=None,
@@ -204,6 +205,10 @@ def test_outgroup_rejects_empty_and_non_label_values(value):
         ({"seed": "abc"}, "seed"),
         ({"preflight_triplet_cap": -1}, "preflight_triplet_cap"),
         ({"species_rename_map": "absent.tsv"}, "species_rename_map"),
+        (
+            {"triplet_filter": "triplets.txt", "species_filter": "species.txt"},
+            "cannot both be set",
+        ),
     ],
 )
 def test_invalid_values_are_rejected_by_field_name(tmp_path, extra, match):
@@ -211,8 +216,9 @@ def test_invalid_values_are_rejected_by_field_name(tmp_path, extra, match):
 
     One case per validator shape: a required path, a choice list (fed a
     boolean with no matching choice, which is what YAML makes of a bare
-    ``yes``), an optional int, a non-negative int whose ``0`` already means
-    "no cap", and a path whose file is read when the config resolves.
+    ``yes``), an optional bool, an optional int, a non-negative int whose
+    ``0`` already means "no cap", a path whose file is read when the config
+    resolves, and the two triplet-selection paths that exclude each other.
     """
     with pytest.raises(ConfigError, match=match):
         load_orchestrator_config(str(_payload(tmp_path, **extra)))
@@ -284,6 +290,7 @@ def test_parser_flags_resolve_into_their_config_values():
             "--alpha-ks", "0.2",
             "--p-value-correction", "fdr_bh",
             "--diagnostic",
+            "--species-filter", "species.txt",
             "--alpha-perm", "0.02",
             "--no-overwrite",
             "--preflight-data-check",
@@ -297,6 +304,8 @@ def test_parser_flags_resolve_into_their_config_values():
     assert config["alpha_ks"] == 0.2
     assert config["alpha_perm"] == 0.02
     assert config["diagnostic"] is True
+    assert config["species_filter"].endswith("species.txt")
+    assert config["triplet_filter"] is None
     assert config["p_value_correction"] == "fdr_bh"
     assert config["overwrite"] is False
     assert config["preflight_data_check"] is True

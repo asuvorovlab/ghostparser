@@ -57,6 +57,7 @@ def _make_config(
     bootstrap=True,
     diagnostic=None,
     species_rename_map=None,
+    species_filter=None,
 ):
     """Build a resolved orchestrator config for a run with a fixed bootstrap seed.
 
@@ -69,6 +70,7 @@ def _make_config(
         bootstrap: Whether to enable bootstrap resampling.
         diagnostic: Whether to measure every test, or ``None`` for the default.
         species_rename_map: Path to a rename map, or ``None``.
+        species_filter: Path to a species filter, or ``None``.
 
     Returns:
         The resolved config dict with a fixed bootstrap seed and iterations.
@@ -80,6 +82,7 @@ def _make_config(
         outgroup="OUT",
         output_folder=str(output_folder),
         triplet_filter=None,
+        species_filter=species_filter,
         species_rename_map=species_rename_map,
         no_overwrite=None,
         processes=processes,
@@ -322,6 +325,54 @@ def test_no_bootstrap_skips_the_bootstrap_itself(
         assert result.bootstrap_perm_stat_ci_high is None
         # The point estimate is unaffected by the bootstrap being off.
         assert result.classification == "no_introgression"
+
+
+@pytest.mark.parametrize(
+    "filter_text, expected_triplets",
+    [
+        # Names on their own lines and sharing one, a repeat, the outgroup and
+        # an unknown name: A, B and D survive, and C is left out of the run.
+        ("A, B\nD\n\nOUT\nNOPE\nB\n", {("A", "B", "D")}),
+        # Two usable species cannot form a triplet, so the run does not start.
+        ("A,B,NOPE\n", None),
+    ],
+    ids=["three_species", "too_few"],
+)
+def test_species_filter_runs_every_triplet_among_the_named_species(
+    orchestrator_species_tree,
+    orchestrator_gene_trees,
+    tmp_path,
+    filter_text,
+    expected_triplets,
+):
+    """A species filter runs exactly the triplets its usable species can form.
+
+    The names are matched against the pruned species tree's ingroup: the
+    outgroup and an unknown name are skipped rather than failing the run, a
+    repeated name counts once, and fewer than three survivors is a run that
+    cannot produce a triplet. The triplets that do run carry the same counts
+    as in the unfiltered run, since the filter changes which triplets are
+    measured and nothing about how.
+    """
+    species_filter = tmp_path / "species.txt"
+    species_filter.write_text(filter_text)
+    config = _make_config(
+        orchestrator_species_tree,
+        orchestrator_gene_trees,
+        tmp_path / "out",
+        processes=1,
+        species_filter=str(species_filter),
+    )
+    results = run_orchestrator(config)
+
+    if expected_triplets is None:
+        assert results is None
+        return
+    assert {result.triplet for result in results} == expected_triplets
+    for result in results:
+        n_con, n_dis1, n_dis2, species_topology = _EXPECTED_COUNTS[result.triplet]
+        assert (result.n_con, result.n_dis1, result.n_dis2) == (n_con, n_dis1, n_dis2)
+        assert result.species_tree == species_topology
 
 
 @pytest.mark.output

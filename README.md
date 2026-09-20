@@ -142,7 +142,7 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 #### How the Orchestrator Works
 
 1. The species tree is standardized, filtered on mean internal support, rooted on the outgroup MRCA, and pruned; gene trees are also cleaned and rooted on the outgroup similarly.
-2. Every ingroup triplet is enumerated (or restricted by `--triplet-filter`) and normalized to `(A, B, C)` with A and B the species-tree sisters.
+2. Every ingroup triplet is enumerated (or restricted to the triplets named by `--triplet-filter`, or to every triplet among the species named by `--species-filter`) and normalized to `(A, B, C)` with A and B the species-tree sisters.
 3. Every gene tree is measured once up front, and for each triplet the engine reads that triplet's rooted shape back out of those measurements: it classifies the topology as concordant or one of two discordant alternatives, and records a tree height H(T).
 4. A three-gate decision follows: the discordant count test, then the KS tree-height test, then a studentized permutation test on the concordant-versus-discordant1 mean heights. Each triplet lands on `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`.
 5. Multiple-testing correction is applied once across every triplet in the run.
@@ -164,7 +164,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 
 **Config + CLI:**
 
-- `--output-folder`, `--no-overwrite`, `--triplet-filter`, `--species-rename-map`
+- `--output-folder`, `--no-overwrite`, `--triplet-filter`, `--species-filter`, `--species-rename-map`
 - `--seed`
 
    - Base RNG seed for the whole run; every random draw derives from it.
@@ -205,7 +205,7 @@ Consolidation details:
 - The figure uses the `cividis` colormap throughout. The colorbar applies to the inflow/outflow heatmap. In the ghost bar chart, bar *length* encodes the ghost bootstrap value while colour encodes only whether that taxon also has sampled introgression, using the two extremes of the same colormap: yellow for ghost-only, dark blue for ghost plus sampled. A legend above the bars states the mapping.
 - Heatmap cells with no introgression edge are left unpainted, so a sparse matrix shows its real signal rather than a wall of colour. The gridlines and panel border still mark the row and column structure.
 - The species tree topology is stitched onto the plot axes so the source and target axes read like tree labels.
-- By default the plots use the processed species tree after outgroup pruning; with a triplet filter, the plotted tree can be pruned to the filtered taxa.
+- By default the plots use the processed species tree after outgroup pruning; with a triplet filter or a species filter, the plotted tree can be pruned to the filtered taxa.
 - Consolidation is enabled by default; disable it with `--no-consolidation`.
 - Its artifacts go in a dedicated `consolidation/` subfolder so its own output-directory reset cannot remove the run's results.
 
@@ -272,13 +272,23 @@ Consolidation details:
    - When provided, only those triplets are processed. Triplets naming a taxon
      missing from the species tree are skipped with a warning.
 
+- `--species-filter`
+
+   - Path to a species filter file: taxon names as they appear in the trees,
+     comma-separated, any number per line.
+   - When provided, every triplet among the listed species is processed and
+     no other. A name not found among the ingroup taxa — misspelled, absent
+     from the species tree, or an outgroup — is skipped with a warning, and
+     the run stops if fewer than three names remain.
+   - Cannot be combined with `--triplet-filter`; naming both is a config error.
+
 - `--species-rename-map`
 
    - Path to a two-column TSV or YAML mapping from the taxon labels used in the
      trees to the names that should appear in the outputs.
    - The display names appear in the results TSV, `summary_statistics.tsv`, and
-     the consolidation matrices and plot; the outgroup, a triplet filter and the
-     processed tree files use the tree labels. Taxa absent from the map keep
+     the consolidation matrices and plot; the outgroup, a triplet or species
+     filter and the processed tree files use the tree labels. Taxa absent from the map keep
      their tree labels. See [CONFIG.md](CONFIG.md).
 
 - `--processes`
@@ -360,6 +370,12 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup1
 
 ```bash
 python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup --triplet-filter triplets.txt
+```
+
+**With species filter** (every triplet among the listed species):
+
+```bash
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup --species-filter species.txt
 ```
 
 When multiple outgroups are provided, the species tree is rooted on their most recent common ancestor (MRCA) and the outgroup clade is pruned. Any additional taxa that fall inside the outgroup clade are excluded from triplet generation and logged as a warning (including the full list of excluded taxa) in the metrics file.
@@ -452,8 +468,12 @@ This section summarizes user-facing errors and validation failures that GhostPar
 
 - `Error: Species tree file not found: ...` / `Error: Gene trees file not found: ...`
    The run exits early when required input files are missing.
-- `✗ Error: Triplet filter file not found: ...`
-   The path given to `--triplet-filter` does not exist.
+- `✗ Error: Triplet filter file not found: ...` / `✗ Error: Species filter file not found: ...`
+   The path given to `--triplet-filter` or `--species-filter` does not exist.
+- `✗ Error: Species filter names N ingroup taxa; at least 3 are needed to form a triplet`
+   After skipping names not found among the ingroup taxa, the species filter leaves too few to combine.
+- `Config fields triplet_filter and species_filter cannot both be set`
+   The two filters are alternatives; name the triplets or the species.
 - `Config field species_rename_map: ...`
    The rename map is read when the config resolves; a missing or malformed file, a label mapped twice, two labels sharing a display name, or a display name holding a tab, line break, comma, semicolon or equals sign is a config error.
 - `✗ Error processing species tree: ...`
