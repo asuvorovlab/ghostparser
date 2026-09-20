@@ -867,6 +867,8 @@ Written under the output folder:
   outnumbers `BC|A` has its `AC|B` gene trees under `discordant1_*`. The shape
   diagnostics are not repeated here — see below.
 - `processed_<species tree>` / `processed_<gene trees>` — cleaned, rooted trees.
+  A label a bare Newick token cannot hold (a space, a quote, a bracket) is
+  written single-quoted.
 - `metrics.txt` — per-stage wall/CPU timing and run parameters.
 - `consolidation/` — the combined heatmap/bar-chart plot and TSV matrices from
   `consolidation.py`, unless `--no-consolidation` is given. Consolidation

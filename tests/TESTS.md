@@ -510,7 +510,8 @@ The statistics are `core`; the two TSV column-contract tests are `output`.
 
 Tree preprocessing, asserted against explicit Newick literals.
 
-All `core`.
+All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
+(`output`).
 
 - `test_clean_and_save_trees_preserves_a_well_supported_tree` — Inputs:
   `orchestrator_species_tree` with `min_avg_support=0.5`. Expected outputs: the
@@ -521,6 +522,14 @@ All `core`.
   one tree survives (mean 0.973 kept, mean 0.300 dropped) carrying the expected
   taxa, and support values are stripped from the output. Purpose: the mean
   support filter.
+- `test_clean_and_save_trees_quotes_labels_the_format_needs` — Inputs: a
+  four-leaf tree whose labels hold a space, a dot, a quote (`'O''Brien'`) and
+  an underscore, written quoted as the Newick standard requires. Expected
+  outputs: the cleaned file carries the three quoted labels quoted and the
+  underscore label bare, byte for byte; read back with both Bio.Phylo and
+  DendroPy, the leaves are `Homo sapiens`, `Pan sp.`, `O'Brien`, `Mus_musculus`.
+  Purpose: the processed trees are reread by the run, so the writer must quote
+  exactly the labels a bare token cannot hold and leave the rest as they were.
 - `test_root_tree_on_outgroup_prunes_and_reports_ingroup` — Inputs: the cleaned
   species tree and outgroup `OUT`. Expected outputs: `excluded == {"OUT"}`, no
   missing taxa, ingroup `[A, B, C, D]`, and the pruned Newick

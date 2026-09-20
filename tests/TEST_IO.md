@@ -740,6 +740,24 @@ survives, with leaf set `{TaxaC, TaxaD, TaxaF, TaxaG, OutGroup}`, and because
 cleaning strips support labels the substring `0.95` must not appear in the
 output.
 
+### `test_clean_and_save_trees_quotes_labels_the_format_needs`
+
+**Input:** `(('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);`,
+`min_avg_support=0.5`.
+
+**Derivation:** Newick reserves whitespace and `()[]{}':;,` for structure, and
+Bio.Phylo and DendroPy between them also trip on `"`, `\` and `=`, so a label
+holding any of those must be single-quoted, with an inner quote written twice.
+The three quoted input labels each hold such a character (a space, a space and
+a dot, a quote) and so must come out quoted again -- `'O''Brien'` with its
+doubled quote intact -- while `Mus_musculus` holds none and stays bare; with no
+support labels to strip and the lengths already short, the file is the input
+plus a newline, byte for byte. Read back, Bio.Phylo must give
+`Homo sapiens`, `Pan sp.`, `O'Brien`, `Mus_musculus`, and DendroPy under
+`preserve_underscores=True` the same four, or the run would be measuring
+different taxa from the ones it wrote. Unquoted, the same file reads as
+`sapiens`, `sp.`, `Brien` in Bio.Phylo and fails to parse in DendroPy.
+
 ### `test_root_tree_on_outgroup_prunes_and_reports_ingroup`
 
 **Input:** the cleaned species tree, outgroup `["OUT"]`.

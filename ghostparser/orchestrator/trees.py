@@ -170,6 +170,27 @@ def standardize_tree(tree):
     return tree
 
 
+# Characters a Newick reader takes for structure when they appear in a bare
+# label -- whitespace and the punctuation Bio.Phylo or DendroPy trips on -- plus
+# the quote itself. A label holding any of them is written single-quoted.
+_NEWICK_QUOTED_CHARS = frozenset(" \t\r\n()[]{}':;,\"\\=")
+
+
+def _newick_label(label):
+    """Write a taxon label as a Newick token, quoting it only when required.
+
+    Args:
+        label: The taxon label.
+
+    Returns:
+        The label as-is, or single-quoted with inner quotes doubled when it
+        holds a character the format would otherwise read as structure.
+    """
+    if _NEWICK_QUOTED_CHARS.isdisjoint(label):
+        return label
+    return "'" + label.replace("'", "''") + "'"
+
+
 def _format_newick_with_precision_biopython(tree, decimal_places=10):
     """Serialize a BioPython tree to Newick with fixed branch-length precision.
 
@@ -189,7 +210,7 @@ def _format_newick_with_precision_biopython(tree, decimal_places=10):
 
     def format_clade(clade):
         if clade.is_terminal():
-            result = clade.name or ""
+            result = _newick_label(clade.name) if clade.name else ""
         else:
             children = [format_clade(c) for c in clade.clades]
             result = "(" + ",".join(children) + ")"
@@ -221,7 +242,7 @@ def _format_newick_with_precision_dendropy(tree, decimal_places=10):
 
     def format_node(node):
         if node.is_leaf():
-            result = node.taxon.label if node.taxon else ""
+            result = _newick_label(node.taxon.label) if node.taxon else ""
         else:
             children = [format_node(child) for child in node.child_node_iter()]
             result = "(" + ",".join(children) + ")"
@@ -695,11 +716,11 @@ def _format_triplet_subtree_newick(shape, label_of, decimal_places=10):
     first_position, second_position = shape.sister_positions
     first_edge, second_edge = shape.sister_edges
     clade = (
-        f"({label_of[first_position]}:{branch(first_edge)},"
-        f"{label_of[second_position]}:{branch(second_edge)})"
+        f"({_newick_label(label_of[first_position])}:{branch(first_edge)},"
+        f"{_newick_label(label_of[second_position])}:{branch(second_edge)})"
         f":{branch(shape.internal_edge)}"
     )
-    odd = f"{label_of[shape.odd_position]}:{branch(shape.odd_edge)}"
+    odd = f"{_newick_label(label_of[shape.odd_position])}:{branch(shape.odd_edge)}"
     inner = f"{clade},{odd}" if shape.sister_clade_first else f"{odd},{clade}"
     root = "" if shape.root_edge is None else f":{branch(shape.root_edge)}"
     return f"({inner}){root};"

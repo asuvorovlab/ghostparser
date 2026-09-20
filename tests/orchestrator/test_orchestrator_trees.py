@@ -6,6 +6,7 @@ module.
 """
 
 import dendropy
+import pytest
 
 from ghostparser.orchestrator import trees as ptrees
 
@@ -43,6 +44,31 @@ def test_clean_and_save_trees_drops_low_average_support(low_support_tree_file, t
     assert labels == {"TaxaC", "TaxaD", "TaxaF", "TaxaG", "OutGroup"}
     # Support values are stripped from the cleaned output.
     assert "0.95" not in out_path.read_text()
+
+
+@pytest.mark.output
+def test_clean_and_save_trees_quotes_labels_the_format_needs(tmp_path):
+    """Labels a bare Newick token cannot hold are written quoted and read back intact.
+
+    The processed trees are read back by the run itself, so a label with a
+    space, a dot or a quote must survive the write in both parsers the run uses.
+    """
+    in_path = tmp_path / "quoted.tree"
+    in_path.write_text("(('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);\n")
+    out_path = tmp_path / "clean.tree"
+    ptrees.clean_and_save_trees(str(in_path), str(out_path), min_avg_support=0.5)
+
+    # Only the labels that need it are quoted; the underscore label stays bare.
+    assert out_path.read_text() == (
+        "(('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);\n"
+    )
+    expected = ["Homo sapiens", "Pan sp.", "O'Brien", "Mus_musculus"]
+    biopython = ptrees.read_tree_file(str(out_path))[0]
+    assert [t.name for t in biopython.get_terminals()] == expected
+    dendro = dendropy.Tree.get(
+        path=str(out_path), schema="newick", preserve_underscores=True
+    )
+    assert [leaf.taxon.label for leaf in dendro.leaf_node_iter()] == expected
 
 
 def test_root_tree_on_outgroup_prunes_and_reports_ingroup(
