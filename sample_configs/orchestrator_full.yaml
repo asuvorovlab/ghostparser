@@ -28,13 +28,14 @@ processes: 0
 seed: null                        # run-wide RNG seed; null draws a fresh one and reports it
 
 # --- Statistical tests -----------------------------------------------------
-# efficient skips a test the decision cascade can no longer consult: the
-# direction test below a settled gate under every correction, and the
-# tree-height test below a settled count gate under no/bfn, in the point
-# estimate and in the bootstrap iterations alike. detailed measures all three
-# gates for every triplet and the tree-height test in every bootstrap
-# iteration. Both reach the same classification and bootstrap values.
-pipeline_mode: efficient          # efficient | detailed
+# false measures only what the decision cascade reads: the direction test is
+# skipped below a settled gate under every correction, and the tree-height
+# test below a settled count gate under no/bfn (holm/fdr_bh/fdr_by rank every
+# triplet's value, so it is measured for every triplet). true measures all
+# three tests for every triplet, filling every ks_* and perm_* column. Both
+# reach the same classifications and bootstrap values; the bootstrap
+# iterations skip the same tests either way.
+diagnostic: false
 
 # Gate 1: discordant count test.
 discordant_test: chi-square       # chi-square | z-test

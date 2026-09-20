@@ -14,9 +14,10 @@
 
 ### Skipped and reused computation
 
-- Added `pipeline_mode` (`--pipeline-mode`, default `efficient`). `efficient` skips the direction test below a settled gate under every correction and, under `no`/`bfn`, the tree-height test below a settled count gate, in the point estimate and in the bootstrap iterations alike; `detailed` measures every test for every triplet and the tree-height test in every bootstrap iteration. Both modes skip a bootstrap iteration's direction test below a failed gate. Results, bootstrap values included, are identical in both modes: every supported correction is monotone, and permutation p-values are corrected within the test only. A skipped test leaves its columns empty, with `perm_note: direction_test_not_consulted` for the direction test; `metrics.txt` names the mode and counts the skips. The saving is modest, because the bootstrap's permutation tests dominate a run and are not skipped.
+- The point estimate no longer measures tests the decision cascade cannot read. The direction test is skipped below a settled gate under every correction; the tree-height test is skipped below a settled count gate under `no`/`bfn`, whose correction of a p-value depends on the triplet count alone, and is still measured for every triplet under `holm`/`fdr_bh`/`fdr_by`, which rank every triplet's value against the others'. The bootstrap iterations follow the same rule, so nothing the bootstrap reads is affected. Results, bootstrap values included, are unchanged: every supported correction is monotone, and permutation p-values are corrected within the test only. A skipped test leaves its columns empty, with `perm_note: direction_test_not_consulted` for the direction test; `metrics.txt` reports what the run skips under its correction and counts the skips. The saving is modest, because the bootstrap's permutation tests dominate a run and are not skipped.
+- Added `diagnostic` (`--diagnostic`, default `false`). `true` measures all three tests for every triplet in the point estimate, filling every `ks_*` and `perm_*` column, and changes no result. It does not reach the bootstrap, whose own switch remains `bootstrap_options.debug_mode`.
 - The TOST equivalence step reuses the direction test's own resamples instead of drawing two further permutation passes. `perm_p_tost` values are a different Monte Carlo realization of the same quantity.
-- Fixed `--no-bootstrap` running the bootstrap and only dropping its columns. It now skips the iterations, under `detailed` too.
+- Fixed `--no-bootstrap` running the bootstrap and only dropping its columns. It now skips the iterations, under `diagnostic: true` too.
 
 ### Parallelization
 
@@ -34,7 +35,7 @@
 
 - Renamed `perm_stat_ci_low`/`perm_stat_ci_high` to `bootstrap_perm_stat_ci_low`/`bootstrap_perm_stat_ci_high`: a bootstrap percentile interval on the permutation test's statistic, each bootstrap iteration contributing the studentized difference of its own resample. It is empty without a bootstrap.
 - Removed the shape-diagnostic columns from `summary_statistics.tsv`, where they are undefined for groups below their observation floors and left holes the trainers reject. They remain in the results TSV as `con_*`/`dis1_*`/`dis2_*`.
-- `metrics.txt` reports the seed as `Seed: <n> (configured|generated)`, the pipeline mode with what it skips, and the triplets clearing each gate.
+- `metrics.txt` reports the seed as `Seed: <n> (configured|generated)`, the `diagnostic` setting with what the run skips, and the triplets clearing each gate.
 
 ### Configuration keys
 
@@ -57,7 +58,7 @@
 
 - Every test carries a category marker -- `core`, `config`, `output`, `integration`, `parity` -- so `pytest -m` can run one part of the suite.
 - Default-value pins are replaced by two invariants (CLI and config-file modes resolve identically; `orchestrator_full.yaml` names every runtime key at its default), one-key rejection tests are folded into one parametrized case per loader, assertions on report wording and on artifacts nothing writes are dropped, and the bootstrap-budget divisor pin is replaced by property tests.
-- Added parity coverage for the cached geometry and tests for the rename map, the preflight pair accounting and the pipeline modes, each with its derivation in [tests/TEST_IO.md](tests/TEST_IO.md).
+- Added parity coverage for the cached geometry and tests for the rename map, the preflight pair accounting and the `diagnostic` setting, each with its derivation in [tests/TEST_IO.md](tests/TEST_IO.md).
 
 ## v0.1.2 - August 18, 2026
 

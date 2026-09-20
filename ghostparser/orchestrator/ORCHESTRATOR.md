@@ -174,18 +174,18 @@ decided fields left empty. The classification is made once, in
 in hand and corrected — see "The two run-wide correction families". That pass
 is the single decision point in the pipeline.
 
-How much of a triplet actually gets measured is set by `pipeline_mode`. Under
-`efficient` (the default) a gate that settles the call stops the work there,
-so the `perm_*` block is empty on those rows and carries
+How much of a triplet actually gets measured is set by `diagnostic`. Off (the
+default), a gate that settles the call stops the work there, so the `perm_*`
+block is empty on those rows and carries
 `perm_note = direction_test_not_consulted`, and under `no`/`bfn` the
-tree-height columns are empty below a settled count gate; under `detailed` all
-three tests run for every triplet and every column is populated. Both modes
-reach the same classification under every correction method — see "The point
-estimate's short-circuit" for why.
+tree-height columns are empty below a settled count gate; on, all three tests
+run for every triplet and every column is populated. The classification is
+the same either way under every correction method — see "The point estimate's
+short-circuit" for why.
 
 Either way, read `decision_gate` before reading `perm_decision`: only `PERM`
-means the direction result produced the classification. Under `detailed`, a
-row carrying `decision_gate = THT`, `perm_decision = ambiguous`, and
+means the direction result produced the classification. On a diagnostic run,
+a row carrying `decision_gate = THT`, `perm_decision = ambiguous`, and
 `classification = inflow_introgression` is consistent — the direction test ran
 and was recorded, but the tree-height test had already settled the call.
 
@@ -616,7 +616,7 @@ first gate that settles the call.
 
 The family size is the triplet count, which is known before the first triplet
 is measured; that is what lets the inline methods below vote as they go, and
-what lets the efficient mode leave a member unmeasured without touching the
+what lets a non-diagnostic run leave a member unmeasured without touching the
 rest. Under `no` and `bfn` each member's corrected value follows from its own
 raw value and the count alone, so a triplet whose count gate failed can skip
 the tree-height test: it stays a member — `_correct_family` still corrects the
@@ -656,13 +656,13 @@ next does not have the rest of the column in hand. Two tiers handle this:
   each triplet's votes.
 
 The tree-height test is measured wherever the correction will read it, and
-under `pipeline_mode: detailed` everywhere. Under a rank-based method that is
-every iteration in either mode, because every member's value moves the others'
+nowhere else — `diagnostic` reaches only the point estimate. Under a rank-based
+method that is every iteration, because every member's value moves the others'
 ranks. Under an inline method a value below a failed count gate is never read —
-the family size is fixed — so in the efficient mode the iteration leaves it
-unmeasured and votes `no_introgression` directly (`_CorrectionPolicy.skips_tht`),
-while the detailed mode measures it so that each iteration replicates the
-point estimate's procedure step for step. The vote is the same either way.
+the family size is fixed — so the iteration leaves it unmeasured and votes
+`no_introgression` directly (`_CorrectionPolicy.inline`). The bootstrap's own
+switch is `bootstrap_options.debug_mode`, which measures the count and
+tree-height tests in every iteration and writes them per iteration.
 
 ### Skipping a settled gate
 
@@ -671,8 +671,8 @@ implies `p_adjusted > alpha` for every supported correction, so the corrected ga
 fails too and nothing below it can change the classification. The direction
 test below such a gate can therefore be skipped outright — and it is much the
 most expensive of the three. This licenses both short-circuits: a bootstrap
-iteration skipping its own direction test in either mode, and the point
-estimate skipping a triplet's under `pipeline_mode: efficient`. In both places
+iteration skipping its own direction test, and a non-diagnostic point estimate
+skipping a triplet's. In both places
 `_gate_p_value` decides what the gate is judged on: under an inline method the
 exactly corrected value, under a rank-based method the raw one, which is the
 conservative side.
@@ -711,21 +711,21 @@ correction method.
 
 ### The point estimate's short-circuit
 
-`pipeline_mode: efficient` (the default) applies the same argument to the point
+With `diagnostic` off (the default) the same argument applies to the point
 estimate: `_run_triplet_pipeline_from_observations` runs the direction test
 only when both earlier gates cleared, and under an inline correction runs the
-tree-height test only when the count gate cleared. `detailed` runs every test
-for every triplet, and measures the tree-height test in every bootstrap
-iteration as well; the direction test below a failed gate is skipped in every
-bootstrap iteration under both modes.
+tree-height test only when the count gate cleared. `diagnostic: true` runs
+every test for every triplet. The bootstrap iterations take the lean path
+either way: `_finalize_triplet_analysis` hands the point estimate a
+`gate_policy` only when the run is not diagnostic, while `_iteration_outcome`
+always consults the policy.
 
-Expect `efficient` to be somewhat faster than `detailed`, not dramatically so.
-What it declines is the point estimate's direction test and, under `no`/`bfn`,
-the tree-height test in the point estimate and the bootstrap, while most of a
-run's time is the bootstrap's permutation tests: every iteration of a triplet
-that reaches gate 3 runs one in both modes. The wall time moves less than the
-CPU time, because the triplets that reach gate 3 set the length of the run
-either way.
+Expect the default to be somewhat faster than a diagnostic run, not
+dramatically so. What it declines is the point estimate's direction test and,
+under `no`/`bfn`, the point estimate's tree-height test, while most of a run's
+time is the bootstrap's permutation tests: every iteration of a triplet that
+reaches gate 3 runs one either way. The wall time moves less than the CPU
+time, because the triplets that reach gate 3 set the length of the run.
 
 Skipping the direction test never changes a decision, under any correction
 method, for two reasons that have to hold together:
@@ -733,8 +733,8 @@ method, for two reasons that have to hold together:
 - **Monotonicity**, above: a raw-failed gate cannot clear once corrected, so a
   skipped triplet could never have reached gate 3. The cascade reads
   `perm_decision` only when *both* corrected gates are significant, and a
-  triplet the efficient mode skipped has at least one gate that already failed
-  on the value the correction can only raise. Its own classification, gate and
+  skipped triplet has at least one gate that already failed on the value the
+  correction can only raise. Its own classification, gate and
   bootstrap votes are therefore fixed before the direction test would run.
 - **Permutation p-values are corrected within the test only**, across its pair
   of one-tailed p-values, never across triplets (see "Why this correction is
@@ -913,7 +913,7 @@ Written under the output folder:
 | `dct_statistic` / `dct_p_value` | DCT | SciPy chi-square or statsmodels z-test over `[n_dis1, n_dis2]`. An all-zero discordant split short-circuits to `(0.0, 1.0)`. |
 | `dct_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's DCT p-value. Omitted under `no`. |
 | `dct_significant` | Decision gate 1 | Corrected DCT p-value below `alpha_dct`. |
-| `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. Empty under the efficient mode with `no`/`bfn` when the count gate settled the triplet. |
+| `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. Empty under `no`/`bfn` when the count gate settled the triplet, unless the run is diagnostic. |
 | `ks_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's KS p-value, by the triplet count. Omitted under `no`; empty where the test was not measured. |
 | `ks_significant` | Decision gate 2 | Corrected KS p-value below `alpha_ks`. Empty where the test was not measured. |
 | `perm_statistic` | Direction test | Observed Welch-studentized mean difference. Empty when a guard fired. |
@@ -924,8 +924,8 @@ Written under the output folder:
 | `perm_n_resamples` | Direction test | Permutations drawn; `0` when a guard fired. Can exceed `max_resamples` by up to one batch, since the final batch is not trimmed. |
 | `perm_converged` | Direction test | True when the confidence interval excluded `alpha_perm` before the budget ran out. |
 | `perm_null_skew` | Direction test | Sample skewness of the permutation null: the third standardized moment of the `perm_n_resamples_skew` studentized statistics drawn while testing this triplet. It describes the *reference distribution the test built*, not the tree heights themselves. `0` is a symmetric null and the p-values behave like a textbook two-sample test; a large magnitude means a few extreme heights in the smaller group dominate the resampling, so the null breaks into clusters by how many of them land where, and the sign names the long tail. Reported for every test that resampled, including `equivalent` and `inconclusive` ones. Never consulted by any decision — see "Null skewness" above for the worked 700-vs-19 case. |
-| `perm_note` | Direction test | Guard slug, `max_resamples_reached`, or `direction_test_not_consulted` when the efficient mode skipped a test an earlier gate had settled; empty on a clean run that resampled. |
-| `perm_decision` | Decision gate 3 | `greater`, `less`, `equivalent`, or `inconclusive` for concordant relative to discordant1. Consulted only when `decision_gate` is `PERM`, and populated only there under the default `pipeline_mode: efficient`; `detailed` populates it for every triplet. |
+| `perm_note` | Direction test | Guard slug, `max_resamples_reached`, or `direction_test_not_consulted` when a non-diagnostic run skipped a test an earlier gate had settled; empty on a clean run that resampled. |
+| `perm_decision` | Decision gate 3 | `greater`, `less`, `equivalent`, or `inconclusive` for concordant relative to discordant1. Consulted only when `decision_gate` is `PERM`, and populated only there unless the run is diagnostic, which populates it for every triplet. |
 | `decision_gate` | Decision logic | Which test settled the classification: `DCT`, `THT`, or `PERM`. |
 | `classification` | Decision logic | `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`. |
 | `inference` | Reporting | Human-readable direction naming the actual species. |

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import dendropy
 
-from .config import PIPELINE_MODE_EFFICIENT, prepare_output_directory, resolve_config
+from .config import prepare_output_directory, resolve_config
 from .consolidation import generate_introgression_maps
 from .correction import is_inline_correction
 from .inference import (
@@ -73,22 +73,18 @@ def _log_stage_timing(metrics, wall_time, cpu_time):
     metrics.log(f"  Time taken (CPU): {cpu_time:.2f}s")
 
 
-def _describe_pipeline_mode(config):
-    """Spell out what the resolved pipeline mode skips under this run's correction.
+def _describe_diagnostic(config):
+    """Spell out what the point estimate skips under this run's correction.
 
     Args:
         config: The resolved orchestrator config.
 
     Returns:
-        The mode name, followed for ``efficient`` by which tests it declines
-        and a reminder that the classifications are those of ``detailed``.
+        The ``diagnostic`` setting, followed when it is off by which tests the
+        point estimate declines and a reminder that the results are unchanged.
     """
-    mode = config["pipeline_mode"]
-    if mode != PIPELINE_MODE_EFFICIENT:
-        return (
-            f"{mode} (every test is measured for every triplet, and the "
-            "tree-height test in every bootstrap iteration)"
-        )
+    if config["diagnostic"]:
+        return "True (every test is measured for every triplet)"
     if is_inline_correction(config["p_value_correction"]):
         skipped = "tree-height and direction tests below a settled gate"
     else:
@@ -97,7 +93,7 @@ def _describe_pipeline_mode(config):
             f"measured for every triplet because {config['p_value_correction']} "
             "corrects it as a whole-run family"
         )
-    return f"{mode} (skips the {skipped}; classifications are identical to detailed)"
+    return f"False (skips the {skipped}; results are identical to a diagnostic run)"
 
 
 def _log_permutation_diagnostics(metrics, results):
@@ -116,7 +112,7 @@ def _log_permutation_diagnostics(metrics, results):
     # test actually resampled rather than merely having been attempted.
     ran = [result for result in results if result.perm_n_resamples]
     # A skipped test and a guarded one both leave the block empty, but they mean
-    # opposite things: the first is the efficient mode declining work the
+    # opposite things: the first is a non-diagnostic run declining work the
     # cascade could not consult, the second is a test that could not be run.
     skipped = [
         result for result in results if result.perm_note == PERM_NOTE_NOT_CONSULTED
@@ -142,7 +138,7 @@ def _log_permutation_diagnostics(metrics, results):
     ]
 
     # How far the cascade let each triplet go, which is also what bounds how
-    # much of the direction test's cost the efficient mode can decline.
+    # much of the direction test's cost a non-diagnostic run can decline.
     dct_cleared = [result for result in results if result.dct_significant]
     tht_cleared = [result for result in dct_cleared if result.ks_significant]
     metrics.log(
@@ -350,7 +346,7 @@ def run_orchestrator(config):
         metrics.log(f"Bootstrap debug mode: {config['bootstrap_debug_mode']}")
         metrics.log(f"Generate summary statistics TSV: {config['generate_summary_stats']}")
         metrics.log(f"Shape diagnostics: {config['shape_diagnostics']}")
-        metrics.log(f"Pipeline mode: {_describe_pipeline_mode(config)}")
+        metrics.log(f"Diagnostic: {_describe_diagnostic(config)}")
         metrics.log(f"Consolidation enabled: {config['consolidation']}")
         metrics.log(f"Support threshold: {support_threshold}")
         metrics.log("")
@@ -517,7 +513,7 @@ def run_orchestrator(config):
                 },
                 "triplet_seed": run_seed,
                 "shape_diagnostics": config["shape_diagnostics"],
-                "pipeline_mode": config["pipeline_mode"],
+                "diagnostic": config["diagnostic"],
                 "bootstrap": config["bootstrap"],
             }
 

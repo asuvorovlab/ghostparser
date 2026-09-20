@@ -117,7 +117,7 @@ alpha_dct: 0.05                           # DCT significance threshold
 alpha_ks: 0.05                            # KS significance threshold
 alpha_perm: 0.05                          # permutation significance threshold
 p_value_correction: bfn                   # no, bfn, holm, fdr_bh, fdr_by
-pipeline_mode: efficient                  # efficient = skip tests the cascade cannot consult; detailed = run all tests
+diagnostic: false                         # true = measure every test for every triplet
 consolidation: true                       # true = write introgression maps and consolidation CSV/PNG outputs
 bootstrap: true                           # true = run bootstrap resampling
 preflight_data_check: false               # true = run only the structural preflight check and exit
@@ -256,21 +256,21 @@ Settable either on the CLI or in a config file.
 - Default: `bfn`
 - Allowed: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`
 - Multiple-testing correction, applied in three places. Run-wide, once every triplet has been measured, it adjusts the DCT p-values as one family over all triplets and the KS p-values as another — every triplet is a member of both, whatever its other test said — and only then is any triplet classified. Inside each permutation test, it adjusts that test's pair of one-tailed p-values against each other — never across triplets, because a Monte Carlo p-value has a resolution floor that across-triplet correction would fall through. Inside the bootstrap, each iteration's DCT and KS p-values are corrected across triplets for that iteration index, so iterations answer to the same thresholds the reported classification does. Corrected p-values drive the significance decisions; the uncorrected values are retained in the output for reporting. Under `no` the results TSV carries the raw p-values and the significance flags only.
-- The choice affects run time and memory. `no` and `bfn` depend only on the family size, which is the triplet count, so each bootstrap iteration votes as it runs and only the tally is kept, and under [`pipeline_mode: efficient`](#pipeline_mode) a tree-height test below a settled count gate can be left unmeasured. The rank-based methods must hold every triplet's per-iteration p-values until the stream finishes, and measure the tree-height test for every triplet and in every bootstrap iteration, because every member's value moves the others' ranks.
-- Every supported method is monotone — none can adjust a p-value *below* its raw value — which is what lets a direction test be skipped once an earlier gate has failed, in the bootstrap under every mode and in the point estimate under `efficient`: the skipped result could never have been read.
+- The choice affects run time and memory. `no` and `bfn` depend only on the family size, which is the triplet count, so each bootstrap iteration votes as it runs and only the tally is kept, and a tree-height test below a settled count gate can be left unmeasured (see [`diagnostic`](#diagnostic)). The rank-based methods must hold every triplet's per-iteration p-values until the stream finishes, and measure the tree-height test for every triplet and in every bootstrap iteration, because every member's value moves the others' ranks.
+- Every supported method is monotone — none can adjust a p-value *below* its raw value — which is what lets a direction test be skipped once an earlier gate has failed, in every bootstrap iteration and in a non-diagnostic point estimate: the skipped result could never have been read.
 - In YAML, `p_value_correction: no` may be written with or without quotes. YAML resolves the bare word `no` to a boolean, and enumerated fields map booleans back to the choice they spell (`no`/`off`/`n`/`false`, `yes`/`on`/`y`/`true`), so both forms select the same value.
 
-##### `pipeline_mode`
+##### `diagnostic`
 
-- CLI: `--pipeline-mode`
-- Default: `efficient`
-- Allowed: `efficient`, `detailed`
-- `efficient` stops measuring a triplet once the decision cascade has settled it, rather than computing a result nothing reads. The permutation direction test is skipped for every triplet that one of the first two gates settled, under every correction method. The tree-height test is skipped below a settled count gate only under `no` and `bfn`; under `holm`, `fdr_bh` and `fdr_by` it is measured for every triplet, because those corrections rank every triplet's value against the others' and leaving one out would change the rest. `detailed` runs all three tests for every triplet.
-- The bootstrap follows the same rule. Under `efficient` with `no`/`bfn` an iteration whose count gate failed leaves its tree-height test unmeasured; under `detailed` every iteration measures it, so the bootstrap replicates the procedure the point estimate runs on the real data. An iteration's direction test is skipped below a failed gate in both modes.
-- **Both modes produce identical results under every correction method** — not merely the classifications but every value the cascade reads: `classification`, `decision_gate`, the `dct_*` columns, `ks_p_value_corrected`, `ks_significant`, and every bootstrap column match exactly. Two facts make that so. First, every supported correction is monotone, so a gate that failed on the raw p-value cannot clear on the corrected one, and the efficient mode only ever declines a test below a gate that has already failed — under `no`/`bfn` it judges the gate on the exactly corrected value (the family size is the triplet count, known before the run starts), under the rank-based methods on the raw value, which is the conservative side. Second, the permutation p-values are corrected inside each test, across its own pair of one-tailed p-values, never across triplets, so leaving one triplet's direction test unrun changes nothing for any other triplet. The tree-height test is different — its family spans the run — which is exactly why it is skipped only where the family size alone corrects it. The full argument is under "Skipping a settled gate" in the orchestrator guide.
-- What differs is which columns are populated, never their values. Triplets the efficient mode settled early leave the `perm_*` block empty and carry `perm_note: direction_test_not_consulted`, which distinguishes a deliberate skip from a test that ran and hit a guard; under `no`/`bfn` a triplet the count gate settled also leaves the raw `ks_statistic`/`ks_p_value` and the corrected `ks_*` columns empty. `metrics.txt` names the mode, says what it skips under the run's correction, and counts the skipped tests.
-- Expect `efficient` to be somewhat faster than `detailed`, not dramatically so. What it declines is the point estimate's direction test and, under `no`/`bfn`, the tree-height test, while most of a run's time is the bootstrap's permutation tests: every iteration of a triplet that reaches the third gate runs one, in both modes. The wall time moves less than the CPU time, because the triplets that reach the third gate set the length of the run either way.
-- Choose `detailed` when you want the direction test's statistics for every triplet regardless of whether they decided anything, which is a debugging need rather than an analysis one.
+- CLI: `--diagnostic` (sets `diagnostic: true`)
+- Default: `false`
+- Whether the point estimate measures every test for every triplet. With `false`, a triplet is measured only as far as the decision cascade reads: the discordant count test always; the tree-height test always under `holm`, `fdr_bh` and `fdr_by`, and only when the count gate cleared under `no` and `bfn`; the direction test only when both earlier gates cleared. With `true`, all three tests are measured for every triplet, so every `ks_*` and `perm_*` column is filled.
+- Why the tree-height rule depends on the correction: the tree-height p-values are corrected as one family of every triplet. `no` and `bfn` correct each member from the family size alone (`bfn` multiplies by the triplet count), so a member nothing reads — one below a failed count gate — can be left unmeasured without changing any other member's corrected value, and the members that are measured are still corrected by the triplet count, not by the number measured. `holm`, `fdr_bh` and `fdr_by` correct each member from its rank among all the others, so every member must be measured, and the tree-height test runs for every triplet whatever this key says. The direction test's p-values are corrected inside the test, across its own two one-tailed p-values and never across triplets, so it can be skipped triplet by triplet under every method.
+- **The results are identical either way, under every correction method** — not merely the classifications but every value the cascade reads: `classification`, `decision_gate`, the `dct_*` columns, `ks_p_value_corrected`, `ks_significant`, and every bootstrap column. Every supported correction is monotone, so a gate that failed on the raw p-value cannot clear on the corrected one, and a test is only ever declined below a gate that has already failed — judged on the exactly corrected value under `no`/`bfn` (the family size is the triplet count, known before the run starts), and on the raw value, the conservative side, under the rank-based methods. The full argument is under "Skipping a settled gate" in the orchestrator guide.
+- What differs is which columns are populated, never their values. With `false`, rows whose `decision_gate` is `DCT` or `THT` leave the `perm_*` block empty and carry `perm_note: direction_test_not_consulted`, which distinguishes a deliberate skip from a test that ran and hit a guard; under `no`/`bfn` the `DCT` rows also leave the raw `ks_statistic`/`ks_p_value` and the corrected `ks_*` columns empty. `metrics.txt` reports the setting, says what the run skips under its correction, and counts the skipped tests.
+- This key does not reach the bootstrap. Every iteration measures only what its vote reads, under the same rule: the direction test only when both gates cleared, and the tree-height test in every iteration under the rank-based methods but only where the count gate cleared under `no`/`bfn`. `bootstrap_options.debug_mode` is the bootstrap's own switch: it measures the count and tree-height tests in every iteration and writes them per iteration.
+- Expect `false` to be somewhat faster than `true`, not dramatically so. What it declines is the point estimate's direction test and, under `no`/`bfn`, the tree-height test, while most of a run's time is the bootstrap's permutation tests: every iteration of a triplet that reaches the third gate runs one either way. The wall time moves less than the CPU time, because the triplets that reach the third gate set the length of the run.
+- Set `true` when you want the direction test's statistics for every triplet regardless of whether they decided anything, which is a debugging need rather than an analysis one.
 
 ##### `consolidation`
 
@@ -283,7 +283,7 @@ Settable either on the CLI or in a config file.
 - CLI: `--no-bootstrap` (sets `bootstrap: false`)
 - Default: `true`
 - Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV. Setting it false skips the iterations entirely, so `bootstrap_perm_stat_ci_low`/`bootstrap_perm_stat_ci_high` are empty too — that interval is a bootstrap percentile interval, not a permutation output. Consolidation then weights every classified triplet as 1 where it would have used `bootstrap_value`, so the introgression maps still build; their cell values become plain counts over the same co-occurrence denominators.
-- This is an instruction about what to compute, so it holds under `pipeline_mode: detailed` as well: `detailed` declines to skip work the cascade cannot consult, which is not the same as reinstating work you switched off. The same is true of `generate_summary_stats` and `shape_diagnostics`.
+- This is an instruction about what to compute, so it holds under `diagnostic: true` as well: a diagnostic run measures the tests the cascade cannot consult, which is not the same as reinstating work you switched off. The same is true of `generate_summary_stats` and `shape_diagnostics`.
 
 ##### `preflight_data_check`
 
@@ -368,11 +368,10 @@ python -m ghostparser.orchestrator \
   --alpha-dct 0.05 \
   --alpha-ks 0.05 \
   --alpha-perm 0.05 \
-  --p-value-correction bfn \
-  --pipeline-mode efficient
+  --p-value-correction bfn
 
 # optional CLI switches: -c/--config-file, --triplet-filter, --species-rename-map,
-# --seed, --no-overwrite, --no-consolidation, --no-bootstrap,
+# --seed, --no-overwrite, --no-consolidation, --no-bootstrap, --diagnostic,
 # --preflight-data-check, --preflight-triplet-cap
 # default behaviors: config-file mode ignores other flags; no triplet filter means all triplets;
 # overwrite is enabled by default; consolidation and bootstrap are enabled by default;

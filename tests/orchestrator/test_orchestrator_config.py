@@ -57,7 +57,7 @@ def _base_cli_args(**overrides):
         alpha_ks=None,
         alpha_perm=None,
         p_value_correction=None,
-        pipeline_mode=None,
+        diagnostic=None,
         consolidation=None,
         bootstrap=None,
         preflight_data_check=None,
@@ -200,7 +200,7 @@ def test_outgroup_rejects_empty_and_non_label_values(value):
     [
         ({"species_tree_path": None}, "species_tree_path"),
         ({"p_value_correction": True}, "must be one of"),
-        ({"pipeline_mode": "fast"}, "pipeline_mode"),
+        ({"diagnostic": "yes"}, "diagnostic"),
         ({"seed": "abc"}, "seed"),
         ({"preflight_triplet_cap": -1}, "preflight_triplet_cap"),
         ({"species_rename_map": "absent.tsv"}, "species_rename_map"),
@@ -283,7 +283,7 @@ def test_parser_flags_resolve_into_their_config_values():
             "--alpha-dct", "0.01",
             "--alpha-ks", "0.2",
             "--p-value-correction", "fdr_bh",
-            "--pipeline-mode", "detailed",
+            "--diagnostic",
             "--alpha-perm", "0.02",
             "--no-overwrite",
             "--preflight-data-check",
@@ -296,7 +296,7 @@ def test_parser_flags_resolve_into_their_config_values():
     assert config["alpha_dct"] == 0.01
     assert config["alpha_ks"] == 0.2
     assert config["alpha_perm"] == 0.02
-    assert config["pipeline_mode"] == "detailed"
+    assert config["diagnostic"] is True
     assert config["p_value_correction"] == "fdr_bh"
     assert config["overwrite"] is False
     assert config["preflight_data_check"] is True

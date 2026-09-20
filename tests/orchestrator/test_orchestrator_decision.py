@@ -140,8 +140,8 @@ _NARROW = [0.5 + 0.02 * (1 if i % 2 else -1) for i in range(30)]
     [
         # 10 vs 10 -> chi-square statistic 0, p = 1.0, so the first gate stops.
         # KS is significant here too, so this row also shows the DCT gate
-        # stopping the cascade before a later gate can be consulted; the
-        # efficient mode never measures it, so its flag is undefined there.
+        # stopping the cascade before a later gate can be consulted; a
+        # non-diagnostic run never measures it, so its flag is undefined there.
         ([0.1] * 20, [0.9] * 10, [0.9] * 10, False, True, None, "DCT",
          "no_introgression"),
         # 30 vs 2 -> chi-square 24.5, p ~ 7.4e-07. Identical con/dis1 heights
@@ -157,36 +157,36 @@ _NARROW = [0.5 + 0.02 * (1 if i % 2 else -1) for i in range(30)]
     ],
     ids=["no_introgression", "inflow", "outflow", "ghost", "ambiguous"],
 )
-@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
+@pytest.mark.parametrize("diagnostic", [False, True])
 def test_decision_cascade_lands_on_each_classification(
     con, dis1, dis2, dct_significant, ks_significant, decisions, gate, expected,
-    pipeline_mode,
+    diagnostic,
 ):
     """Crafted observation sets drive the cascade onto each of its five outcomes.
 
     The gate asserts which test settled the call, so a case that reaches its
     classification by the wrong route fails rather than passing by coincidence.
-    Both modes must agree on the classification and the gate: the detailed mode
-    measures and reports every test on every row, while the efficient mode
-    declines a test whose result the cascade would have ignored -- it reports
-    ``perm_decision`` exactly on the rows the permutation gate settled, and
-    under the inline ``no`` correction leaves the tree-height flag undefined
-    below a settled count gate.
+    The ``diagnostic`` setting must not move the classification or the gate: a
+    diagnostic run measures and reports every test on every row, while the
+    default declines a test whose result the cascade would have ignored -- it
+    reports ``perm_decision`` exactly on the rows the permutation gate settled,
+    and under the inline ``no`` correction leaves the tree-height flag
+    undefined below a settled count gate.
     """
     result = _corrected(
-        _observations(con, dis1, dis2), "no", iterations=0, pipeline_mode=pipeline_mode
+        _observations(con, dis1, dis2), "no", iterations=0, diagnostic=diagnostic
     )
     assert result.dct_significant is dct_significant
     assert result.classification == expected
     assert result.decision_gate == gate
 
-    if pipeline_mode == "detailed" or gate != "DCT":
+    if diagnostic or gate != "DCT":
         assert result.ks_significant is ks_significant
     else:
         assert result.ks_p_value is None
         assert result.ks_significant is None
 
-    if pipeline_mode == "detailed" or gate == "PERM":
+    if diagnostic or gate == "PERM":
         assert result.perm_decision is not None
         if decisions is not None:
             assert result.perm_decision in decisions
@@ -207,13 +207,11 @@ def test_decision_cascade_lands_on_each_classification(
 def test_permutation_guards_surface_on_the_triplet_result(con, dis1, note):
     """A guarded direction test reports its reason instead of a direction.
 
-    Runs in the detailed mode so the test is reached regardless of what the
-    earlier gates decided; a guard is a property of the samples, not of the
-    cascade position.
+    Runs diagnostic so the test is reached regardless of what the earlier
+    gates decided; a guard is a property of the samples, not of the cascade
+    position.
     """
-    result = _analyze(
-        _observations(con, dis1, [0.1] * 2), pipeline_mode="detailed"
-    )
+    result = _analyze(_observations(con, dis1, [0.1] * 2), diagnostic=True)
     assert result.perm_note == note
     assert result.perm_n_resamples == 0
     assert result.perm_decision == "inconclusive"
@@ -581,8 +579,8 @@ def test_each_test_is_corrected_over_every_triplet(method):
     column is the plain whole-run correction of its raw column. Blanking every
     count p-value leaves the tree-height column untouched: the two corrections
     read nothing of each other, and only the cascade order decides which one a
-    triplet's classification rests on. Runs in the detailed mode so every raw
-    value is there to correct by hand.
+    triplet's classification rests on. Runs diagnostic so every raw value is
+    there to correct by hand.
     """
     results = [
         pinf.analyze_triplet_from_observations(
@@ -593,7 +591,7 @@ def test_each_test_is_corrected_over_every_triplet(method):
             p_value_correction=method,
             family_size=len(_CASCADE_FAMILY),
             triplet_seed=11,
-            pipeline_mode="detailed",
+            diagnostic=True,
         )
         for case in _CASCADE_FAMILY
     ]
@@ -622,11 +620,11 @@ def test_each_test_is_corrected_over_every_triplet(method):
     assert {result.classification for result in blanked} == {"no_introgression"}
 
 
-# Everything the cascade reads, which both modes must agree on exactly. The raw
-# ``ks_statistic``/``ks_p_value`` are deliberately absent: under an inline
-# correction the efficient mode does not measure them below a settled count
-# gate, and nothing reads them there.
-_MODE_INVARIANT_FIELDS = (
+# Everything the cascade reads, which the ``diagnostic`` setting must not move.
+# The raw ``ks_statistic``/``ks_p_value`` are deliberately absent: under an
+# inline correction a non-diagnostic run does not measure them below a settled
+# count gate, and nothing reads them there.
+_DIAGNOSTIC_INVARIANT_FIELDS = (
     "n_con",
     "n_dis1",
     "n_dis2",
@@ -643,27 +641,27 @@ _MODE_INVARIANT_FIELDS = (
 
 
 @pytest.mark.parametrize("method", ["bfn", "holm", "fdr_bh"])
-def test_efficient_and_detailed_modes_agree_on_every_classification(method):
-    """The efficient mode changes what is computed, never what is concluded.
+def test_diagnostic_changes_what_is_measured_and_nothing_concluded(method):
+    """Skipping the tests the cascade cannot consult changes no conclusion.
 
     Skipping the direction test is licensed by every correction being monotone
     and by the permutation p-values being corrected inside the test rather than
     across triplets: a gate that failed raw cannot clear once corrected, and an
-    unrun test moves no other triplet's numbers. Both modes therefore have to
-    agree field for field on everything the cascade reads, across an inline
-    correction and two deferred ones, with the bootstrap votes included -- those
-    are judged against the corrected threshold, so a mode that shifted a gate
-    would move them too.
+    unrun test moves no other triplet's numbers. A run with ``diagnostic`` off
+    therefore has to agree field for field with a diagnostic one on everything
+    the cascade reads, across an inline correction and two deferred ones, with
+    the bootstrap votes included -- those are judged against the corrected
+    threshold, so a skip that shifted a gate would move them too.
 
     Under a rank-based method the tree-height column must agree everywhere,
-    since every triplet is a member the efficient mode still measures. Under
-    ``bfn`` the efficient mode leaves it unmeasured below a settled count gate,
-    and the survivors must still be corrected by the triplet count rather than
-    by the number measured: a family shrunk to the survivors would lower their
+    since every triplet is a member the default still measures. Under ``bfn``
+    the default leaves it unmeasured below a settled count gate, and the
+    survivors must still be corrected by the triplet count rather than by the
+    number measured: a family shrunk to the survivors would lower their
     corrected values and move classifications past the tree-height gate.
     """
     families = {}
-    for mode in ("efficient", "detailed"):
+    for diagnostic in (False, True):
         results = [
             pinf.analyze_triplet_from_observations(
                 _TRIPLET,
@@ -673,61 +671,62 @@ def test_efficient_and_detailed_modes_agree_on_every_classification(method):
                 p_value_correction=method,
                 family_size=len(_CASCADE_FAMILY),
                 triplet_seed=11,
-                pipeline_mode=mode,
+                diagnostic=diagnostic,
             )
             for case in _CASCADE_FAMILY
         ]
-        families[mode] = pinf._apply_triplet_result_p_value_correction(
+        families[diagnostic] = pinf._apply_triplet_result_p_value_correction(
             results, alpha_dct=0.05, alpha_ks=0.05, method=method
         )
 
     # The family has to exercise every gate, or the comparison would only prove
-    # the two modes agree where neither of them resamples.
-    assert {result.decision_gate for result in families["efficient"]} == {
+    # the two runs agree where neither of them resamples.
+    assert {result.decision_gate for result in families[False]} == {
         "DCT", "THT", "PERM"
     }
 
-    for efficient, detailed in zip(families["efficient"], families["detailed"]):
-        for field in _MODE_INVARIANT_FIELDS:
-            assert getattr(efficient, field) == getattr(detailed, field), field
+    for lean, full in zip(families[False], families[True]):
+        for field in _DIAGNOSTIC_INVARIANT_FIELDS:
+            assert getattr(lean, field) == getattr(full, field), field
 
-        if efficient.ks_p_value is None:
-            assert method == "bfn" and efficient.decision_gate == "DCT"
-            assert efficient.ks_p_value_corrected is None
-            assert efficient.ks_significant is None
+        if lean.ks_p_value is None:
+            assert method == "bfn" and lean.decision_gate == "DCT"
+            assert lean.ks_p_value_corrected is None
+            assert lean.ks_significant is None
         else:
-            assert efficient.ks_p_value == detailed.ks_p_value
-            assert efficient.ks_p_value_corrected == detailed.ks_p_value_corrected
-            assert efficient.ks_significant is detailed.ks_significant
+            assert lean.ks_p_value == full.ks_p_value
+            assert lean.ks_p_value_corrected == full.ks_p_value_corrected
+            assert lean.ks_significant is full.ks_significant
             if method == "bfn":
-                assert efficient.ks_p_value_corrected == pytest.approx(
-                    min(1.0, efficient.ks_p_value * len(_CASCADE_FAMILY))
+                assert lean.ks_p_value_corrected == pytest.approx(
+                    min(1.0, lean.ks_p_value * len(_CASCADE_FAMILY))
                 )
 
-        if efficient.decision_gate == "PERM":
-            assert efficient.perm_decision == detailed.perm_decision
-            assert efficient.perm_note == detailed.perm_note
+        if lean.decision_gate == "PERM":
+            assert lean.perm_decision == full.perm_decision
+            assert lean.perm_note == full.perm_note
         else:
-            assert efficient.perm_decision is None
-            assert efficient.perm_statistic is None
-            assert efficient.perm_note == pinf.PERM_NOTE_NOT_CONSULTED
-            assert detailed.perm_decision is not None
+            assert lean.perm_decision is None
+            assert lean.perm_statistic is None
+            assert lean.perm_note == pinf.PERM_NOTE_NOT_CONSULTED
+            assert full.perm_decision is not None
 
 
-@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
-def test_bootstrap_measures_the_tree_height_test_where_its_mode_says(
-    monkeypatch, pipeline_mode
+@pytest.mark.parametrize("diagnostic", [False, True])
+@pytest.mark.parametrize("method", ["bfn", "holm"])
+def test_bootstrap_measures_the_tree_height_test_its_correction_reads(
+    monkeypatch, method, diagnostic
 ):
-    """Each mode's bootstrap measures the tree-height test as its point estimate does.
+    """The bootstrap measures the tree-height test exactly where its correction reads it.
 
     Under ``bfn`` a count gate that failed on the exactly corrected value
-    classifies the iteration before the tree-height flag is read, so the
-    efficient mode leaves that test unmeasured there -- exactly as often as the
-    count gate fails, and never elsewhere -- while the detailed mode measures it
-    in the point estimate and in every iteration, replicating the procedure it
-    runs on the real data. The votes are the same either way (see
-    ``test_efficient_and_detailed_modes_agree_on_every_classification``); what
-    differs is only how much is computed to reach them.
+    classifies the iteration before the tree-height flag is read, so the test
+    goes unmeasured there -- exactly as often as the count gate fails, and never
+    elsewhere. Under ``holm`` every iteration's value is a member of a family
+    corrected by rank, so it is measured in every iteration. ``diagnostic``
+    reaches only the point estimate: on, it adds the one measurement the point
+    estimate would otherwise decline under ``bfn``, and the bootstrap's count is
+    the same either way.
     """
     calls = []
     real_ks_test = pinf.run_two_sample_ks_test
@@ -746,17 +745,20 @@ def test_bootstrap_measures_the_tree_height_test_where_its_mode_says(
         _observations(*_CASCADE_FAMILY[0]),
         species_subtree=_SPECIES_SUBTREE,
         bootstrap_options={"iterations": iterations},
-        p_value_correction="bfn",
-        family_size=len(_CASCADE_FAMILY),
+        p_value_correction=method,
+        family_size=1,
         triplet_seed=11,
-        pipeline_mode=pipeline_mode,
+        diagnostic=diagnostic,
     )
+    decided = pinf._apply_triplet_result_p_value_correction(
+        [result], alpha_dct=0.05, alpha_ks=0.05, method=method
+    )[0]
+    cleared = round(iterations * (1.0 - decided.all_bootstrap.get("no_introgression", 0.0)))
+    assert cleared < iterations
 
-    cleared = round(iterations * (1.0 - result.all_bootstrap.get("no_introgression", 0.0)))
-    if pipeline_mode == "efficient":
-        assert result.ks_p_value is None
-        assert len(calls) == cleared
+    point_estimate = 1 if diagnostic or method == "holm" else 0
+    assert (result.ks_p_value is None) == (point_estimate == 0)
+    if method == "bfn":
+        assert len(calls) == point_estimate + cleared
     else:
-        assert result.ks_p_value is not None
-        assert len(calls) == 1 + iterations
-        assert cleared < iterations
+        assert len(calls) == point_estimate + iterations

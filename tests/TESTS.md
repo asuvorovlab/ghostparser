@@ -103,19 +103,19 @@ End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixt
 Marked `integration` throughout -- every test drives `run_orchestrator` -- and `output` where it asserts on files or columns (`writes_results_tsv`, `no_bootstrap_omits_the_bootstrap_columns`, `species_rename_map_reaches_every_output`, `consolidation_preserves_run_outputs`, `generate_summary_stats_writes_tsv`, `bootstrap_debug_mode_writes_debug_columns`).
 
 - `test_run_orchestrator_matches_derived_expectation` — Inputs (parametrized
-  over the 2 pipeline modes): `run_orchestrator` (serial, fixed bootstrap seed,
-  consolidation off). Expected outputs: all 4 triplets present with the
+  over `diagnostic` off and on): `run_orchestrator` (serial, fixed bootstrap
+  seed, consolidation off). Expected outputs: all 4 triplets present with the
   hand-derived topology counts (7/3/2 for `(A,B,C)`; 12/0/0 for each
   D-containing triplet), the SciPy chi-square DCT statistic and p-value, a
   Bonferroni-corrected DCT p-value (the raw value times the triplet count),
-  `decision_gate == "DCT"` and `no_introgression` for every triplet. Under
-  `detailed` the KS p-value is likewise corrected by the triplet count, the
-  `ks_significant` flag follows it and `perm_decision` is populated; under
-  `efficient` the raw and corrected KS columns, `ks_significant` and
-  `perm_decision` are all `None` and `perm_note` reads
-  `direction_test_not_consulted`. Purpose: end-to-end correctness against
-  values derived from the fixture rather than another module, and that the two
-  modes differ only in what they measure below a settled gate.
+  `decision_gate == "DCT"` and `no_introgression` for every triplet. With
+  `diagnostic` on the KS p-value is likewise corrected by the triplet count,
+  the `ks_significant` flag follows it and `perm_decision` is populated; off,
+  the raw and corrected KS columns, `ks_significant` and `perm_decision` are
+  all `None` and `perm_note` reads `direction_test_not_consulted`. Purpose:
+  end-to-end correctness against values derived from the fixture rather than
+  another module, and that the setting changes only what is measured below a
+  settled gate.
 - `test_run_orchestrator_writes_results_tsv` — Inputs: the same serial run.
   Expected outputs: `orchestrator_triplet_results.tsv` exists, its header starts
   with `triplet` and includes `classification`, `bootstrap_value`,
@@ -126,13 +126,13 @@ Marked `integration` throughout -- every test drives `run_orchestrator` -- and `
   absent from the header while `classification` remains, and all 4 triplets are
   still produced. Purpose: the bootstrap toggle only removes bootstrap output.
 - `test_no_bootstrap_skips_the_bootstrap_itself` — Inputs (parametrized over
-  the 2 pipeline modes): a run with `bootstrap=False`. Expected outputs: every
-  result has `bootstrap_value`, `all_bootstrap`, `bootstrap_perm_stat_ci_low` and
-  `bootstrap_perm_stat_ci_high` at `None`, and the classification is unchanged.
-  Purpose: the toggle stops the work rather than only the columns — the
-  studentized interval comes from the bootstrap loop, so its absence is the
-  observable proof no iterations ran — and `detailed` does not reinstate work
-  the user switched off.
+  `diagnostic` off and on): a run with `bootstrap=False`. Expected outputs:
+  every result has `bootstrap_value`, `all_bootstrap`,
+  `bootstrap_perm_stat_ci_low` and `bootstrap_perm_stat_ci_high` at `None`, and
+  the classification is unchanged. Purpose: the toggle stops the work rather
+  than only the columns — the studentized interval comes from the bootstrap
+  loop, so its absence is the observable proof no iterations ran — and a
+  diagnostic run does not reinstate work the user switched off.
 - `test_consolidation_preserves_run_outputs` — Inputs: a run with
   `consolidation=True`. Expected outputs: the results TSV, `metrics.txt`, and
   both processed tree files survive, and a non-empty `consolidation/` subfolder
@@ -178,19 +178,19 @@ from the tabulated tree geometry.
 All `core`.
 
 - `test_inference_matches_derived_expectation` — Inputs (parametrized over the
-  2 discordant tests and the 2 pipeline modes): the 10 gene subtrees serialized
+  2 discordant tests and `diagnostic` off and on): the 10 gene subtrees serialized
   with the `AVG` strategy, measured by `analyze_triplet_from_observations` and
   decided by the run-wide pass as a family of one under `no`. Expected outputs:
   the counts, DCT/KS statistics and p-values, both significance flags,
   `perm_decision`, and the classification all equal values derived in-test from
   `_LEAF_GEOMETRY` plus direct SciPy/statsmodels calls; bootstrap fractions sum
   to 1. The fixture's C(8, 3) = 56 possible group assignments fall below
-  `min_resamples`, so under `detailed` the support guard fires and the
-  direction is `inconclusive`; under `efficient` the expectation carries `None`
-  for the KS fields below a failed count gate and for `perm_decision` below
-  any failed gate. Purpose: the measurement and the decision reproduce their
-  definitions in both modes; the heights per strategy are pinned separately by
-  the geometry test below, so one strategy suffices here.
+  `min_resamples`, so with `diagnostic` on the support guard fires and the
+  direction is `inconclusive`; off, the expectation carries `None` for the KS
+  fields below a failed count gate and for `perm_decision` below any failed
+  gate. Purpose: the measurement and the decision reproduce their definitions
+  with the setting off and on; the heights per strategy are pinned separately
+  by the geometry test below, so one strategy suffices here.
 - `test_observation_heights_match_derived_geometry` — Inputs (parametrized over
   the 6 strategies): `_serialize_triplet_gene_trees`. Expected outputs: each
   observation's topology and H(T) match the hand-derived geometry for that
@@ -208,25 +208,25 @@ because the shared fixture never produces a significant DCT.
 All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcting`, which is `output`.
 
 - `test_decision_cascade_lands_on_each_classification` — Inputs (parametrized, 5
-  rows × 2 pipeline modes): crafted observation sets, one per outcome — an even
-  10/10 discordant split; a significant 30/2 split with identical con/dis1
-  heights; the same split with fully separated spread-out heights in either
-  direction; and a split whose groups share a mean but differ sharply in
-  spread, each measured and decided under `no` correction. Expected outputs:
-  the DCT significance flag, the classification and `decision_gate` in both
-  modes; the KS flag everywhere under `detailed` and off the `DCT` gate under
-  `efficient`, where the 10/10 row's raw KS p-value and flag are `None`;
-  `perm_decision` non-None everywhere under `detailed` and exactly on the
-  `PERM` rows under `efficient`, the other rows carrying
+  rows × `diagnostic` off and on): crafted observation sets, one per outcome —
+  an even 10/10 discordant split; a significant 30/2 split with identical
+  con/dis1 heights; the same split with fully separated spread-out heights in
+  either direction; and a split whose groups share a mean but differ sharply
+  in spread, each measured and decided under `no` correction. Expected
+  outputs: the DCT significance flag, the classification and `decision_gate`
+  with the setting off and on; the KS flag everywhere with `diagnostic` on and
+  off the `DCT` gate with it off, where the 10/10 row's raw KS p-value and
+  flag are `None`; `perm_decision` non-None everywhere with `diagnostic` on
+  and exactly on the `PERM` rows with it off, the other rows carrying
   `perm_note == "direction_test_not_consulted"`. Purpose: every branch of the
-  cascade is reached by its intended route in both modes, and the gate column
-  shows which test settled each call rather than letting a case pass by
-  coincidence.
+  cascade is reached by its intended route whatever the setting, and the gate
+  column shows which test settled each call rather than letting a case pass
+  by coincidence.
 - `test_permutation_guards_surface_on_the_triplet_result` — Inputs (parametrized,
   2 rows): 4 concordant against 2 discordant1 heights (C(6, 2) = 15 assignments),
   and internally constant groups with different means (`[0.9] * 10` versus
-  `[0.1] * 30`), measured under `pipeline_mode="detailed"` so the direction
-  test is reached whatever the earlier gates decided. Expected outputs: the
+  `[0.1] * 30`), measured with `diagnostic=True` so the direction test is
+  reached whatever the earlier gates decided. Expected outputs: the
   matching `perm_note`, zero resamples, and `perm_decision == "inconclusive"`.
   Purpose: a guarded direction test reports its reason on the triplet result
   instead of a direction.
@@ -276,8 +276,8 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   names, so adding a non-monotone method fails here immediately.
 - `test_each_test_is_corrected_over_every_triplet` — Inputs (parametrized over
   `bfn`, `holm`, `fdr_bh`): one observation set per cascade outcome, measured
-  under `pipeline_mode="detailed"` as a family of five and run through the
-  run-wide pass. Expected outputs: the five gates span `DCT`, `THT` and `PERM`;
+  with `diagnostic=True` as a family of five and run through the run-wide
+  pass. Expected outputs: the five gates span `DCT`, `THT` and `PERM`;
   the corrected DCT column and the corrected KS column each equal
   `_adjust_p_values` applied to the whole raw column; every row has a
   `ks_significant` and a `perm_decision`; setting every raw DCT p-value to 1.0
@@ -285,36 +285,35 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   classifies every row `no_introgression`. Purpose: each test's family is all
   triplets, the two corrections read nothing of each other, and the cascade
   order alone decides which one a classification rests on.
-- `test_efficient_and_detailed_modes_agree_on_every_classification` — Inputs
+- `test_diagnostic_changes_what_is_measured_and_nothing_concluded` — Inputs
   (parametrized over `bfn`, `holm`, `fdr_bh`): the same five observation sets,
-  measured with a 30-iteration bootstrap as a family of five under each
-  pipeline mode and run through the run-wide pass. Expected outputs: the
-  efficient family's gates span `DCT`, `THT` and `PERM`; the counts,
+  measured with a 30-iteration bootstrap as a family of five with `diagnostic`
+  off and again on, each run through the run-wide pass. Expected outputs: the
+  non-diagnostic family's gates span `DCT`, `THT` and `PERM`; the counts,
   `dis1_topology`, every `dct_*` field, `classification`, `decision_gate`,
   `bootstrap_value` and `all_bootstrap` are equal field for field between the
-  modes; the raw and corrected KS fields agree wherever the efficient mode
-  measured the test, and are `None` only on `bfn`'s `DCT`-gate rows, where
+  two runs; the raw and corrected KS fields agree wherever the non-diagnostic
+  run measured the test, and are `None` only on `bfn`'s `DCT`-gate rows, where
   under `bfn` the measured survivors' corrected value is `min(1, p × 5)` — the
   triplet count, not the number measured; the `perm_*` fields agree on `PERM`
   rows and are `None` with `perm_note == "direction_test_not_consulted"` on
-  the rest, where the detailed row still carries a decision. Purpose: the
-  efficient mode changes what is computed and never what is concluded, across
-  an inline correction and two deferred ones, bootstrap votes included — under
-  `bfn` the detailed bootstrap measures the tree-height test in every
-  iteration and the efficient one only where the count gate cleared — and the
+  the rest, where the diagnostic row still carries a decision. Purpose: the
+  setting changes what is computed and never what is concluded, across an
+  inline correction and two deferred ones, bootstrap votes included, and the
   tree-height family stays the triplet count when members go unmeasured.
-- `test_bootstrap_measures_the_tree_height_test_where_its_mode_says` — Inputs
-  (parametrized over the two modes): the 10/10-split observation set, a
-  20-iteration bootstrap at seed 11 under `bfn` as a family of five, with
-  `run_two_sample_ks_test` wrapped to count its calls. Expected outputs: under
-  `efficient` the point estimate carries no KS value and the call count equals
-  the number of iterations whose count gate cleared, read off `all_bootstrap`
-  as `20 × (1 − no_introgression)`; under `detailed` the point estimate
-  carries a KS value, the count is exactly 21 (point estimate plus every
-  iteration), and fewer than 20 iterations cleared the gate. Purpose: the mode
-  reaches the bootstrap — `efficient` leaves the tree-height test unmeasured
-  exactly where the count gate failed and nowhere else, `detailed` measures it
-  in every iteration so the bootstrap replicates the real procedure.
+- `test_bootstrap_measures_the_tree_height_test_its_correction_reads` — Inputs
+  (parametrized over `bfn`/`holm` × `diagnostic` off/on): the 10/10-split
+  observation set, a 20-iteration bootstrap at seed 11 as a family of one, with
+  `run_two_sample_ks_test` wrapped to count its calls, then decided by the
+  run-wide pass to read `all_bootstrap`. Expected outputs: fewer than 20
+  iterations cleared the count gate (read off `all_bootstrap` as
+  `20 × (1 − no_introgression)`); the point estimate carries a KS value except
+  under `bfn` with `diagnostic` off; under `bfn` the call count is that point
+  estimate (1 or 0) plus the number of iterations that cleared the gate, under
+  `holm` it is that point estimate plus every iteration. Purpose: the bootstrap
+  measures the tree-height test exactly where its correction reads it — below
+  a failed count gate only under a rank-based method — and `diagnostic`
+  reaches the point estimate alone, adding at most that one measurement.
 - `test_inline_bonferroni_matches_the_family_correction` — Inputs (parametrized
   over family sizes 1, 7, 250): p=0.004 padded out to that family. Expected
   outputs: `_adjust_p_value_inline` equals the full `_adjust_p_values` pass on
@@ -762,13 +761,13 @@ them.
   empty outgroup list.
 - `test_invalid_values_are_rejected_by_field_name` — Inputs (parametrized, 6
   rows): `species_tree_path: null`, `p_value_correction: true` (what YAML makes
-  of a bare `yes`), `pipeline_mode: "fast"`, `seed: "abc"`,
+  of a bare `yes`), `diagnostic: "yes"`, `seed: "abc"`,
   `preflight_triplet_cap: -1`, and `species_rename_map: absent.tsv`. Expected
   outputs: `ConfigError` whose message names the field (or, for the
   boolean-typed choice, says `must be one of`). Purpose: one case per validator
-  shape — required path, choice list, optional int, non-negative int, and a
-  path whose file is read when the config resolves — each failing by name
-  rather than surfacing later.
+  shape — required path, choice list, optional bool, optional int,
+  non-negative int, and a path whose file is read when the config resolves —
+  each failing by name rather than surfacing later.
 - `test_shipped_sample_configs_resolve` — Inputs (parametrized):
   `sample_configs/orchestrator_minimal.yaml` and `orchestrator_full.yaml`.
   Expected outputs: each loads without error and yields a non-empty list of
@@ -784,7 +783,7 @@ them.
   for each key is the one the code would use anyway.
 - `test_parser_flags_resolve_into_their_config_values` — Inputs: the CLI flag
   strings parsed by `build_argument_parser`, then resolved. Expected outputs:
-  each flag's value reaches its config key (`--pipeline-mode detailed` among
+  each flag's value reaches its config key (`--diagnostic` giving `True` among
   them), `--no-overwrite` gives `overwrite is False`, `--preflight-data-check`
   gives `True`, and `--preflight-triplet-cap 0` gives `0`. Purpose: every other config test
   builds a namespace directly, so this is the only place the flag names are

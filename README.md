@@ -172,8 +172,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 
 - `--processes`
 - `--alpha-dct`, `--alpha-ks`, `--alpha-perm`, `--p-value-correction`
-- `--pipeline-mode {efficient,detailed}`
-- `--no-consolidation`, `--no-bootstrap`
+- `--no-consolidation`, `--no-bootstrap`, `--diagnostic`
 - `--preflight-data-check`, `--preflight-triplet-cap`
 
 **Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, and the `bootstrap_options` block (`iterations`, `debug_mode`, `summary_only`).
@@ -217,10 +216,11 @@ Consolidation details:
 
 #### How Much Gets Computed
 
-- `--pipeline-mode efficient` (the default) stops measuring a triplet once the decision cascade is settled. Only the third gate consults the permutation direction test, so a triplet an earlier gate already decided skips it instead of computing a result nothing reads. Under `no` and `bfn` the tree-height test below a settled count gate is skipped as well; under `holm`, `fdr_bh` and `fdr_by` it is measured for every triplet, because those corrections rank every triplet's value against the others'. See [CONFIG.md](CONFIG.md#pipeline_mode).
-- Expect it to be somewhat faster than `detailed`, not dramatically so. What it declines is the point estimate's direction test and, under `no`/`bfn`, the tree-height test — in the point estimate and in the bootstrap iterations whose count gate failed, which `detailed` measures so its bootstrap replicates the real procedure. Most of a run's time is the bootstrap's permutation tests, and every iteration of a triplet that reaches the third gate runs one in both modes.
-- **This changes no classification, under any correction method.** Two things guarantee it. No supported correction can lower a p-value below its raw value, so a gate that failed raw cannot clear once corrected — the skipped test could never have been reached. And the direction test's p-values are corrected inside the test, never across triplets, so leaving one triplet's test unrun moves no other triplet's numbers; that is what makes it safe to skip triplet by triplet while the run is still streaming, before the run-wide correction has seen the whole family. `--pipeline-mode detailed` computes all three gates for every triplet and reaches the same conclusions; use it when you want the direction test's statistics everywhere for debugging.
-- Skipped triplets have an empty `perm_*` block and carry `perm_note: direction_test_not_consulted`, so a deliberate skip is distinguishable from a test that ran and hit a guard. Under `no`/`bfn` a triplet the count gate settled also leaves the tree-height columns empty. `metrics.txt` names the mode, says what it skips under the run's correction, and counts the skipped tests and the triplets clearing each gate.
+- By default a triplet is measured only as far as the decision cascade reads. Only the third gate consults the permutation direction test, so a triplet an earlier gate already decided skips it instead of computing a result nothing reads. The tree-height test is skipped below a settled count gate under `no` and `bfn`, whose correction of each p-value depends on nothing but the triplet count; under `holm`, `fdr_bh` and `fdr_by` it is measured for every triplet, because those corrections rank every triplet's value against the others' and need every one of them. See [CONFIG.md](CONFIG.md#diagnostic).
+- `--diagnostic` (`diagnostic: true`) measures all three tests for every triplet, so every `ks_*` and `perm_*` column is filled. Use it when you want the direction test's statistics everywhere for debugging. Expect the default to be somewhat faster, not dramatically so: most of a run's time is the bootstrap's permutation tests, and every iteration of a triplet that reaches the third gate runs one either way.
+- **This changes no classification, under any correction method.** Two things guarantee it. No supported correction can lower a p-value below its raw value, so a gate that failed raw cannot clear once corrected — the skipped test could never have been reached. And the direction test's p-values are corrected inside the test, never across triplets, so leaving one triplet's test unrun moves no other triplet's numbers; that is what makes it safe to skip triplet by triplet while the run is still streaming, before the run-wide correction has seen the whole family.
+- The bootstrap is not affected by `diagnostic`: every iteration measures only what its vote reads, under the same per-correction rule, and `bootstrap_options.debug_mode` is its own switch for measuring and writing the count and tree-height tests in every iteration.
+- Skipped triplets have an empty `perm_*` block and carry `perm_note: direction_test_not_consulted`, so a deliberate skip is distinguishable from a test that ran and hit a guard. Under `no`/`bfn` a triplet the count gate settled also leaves the tree-height columns empty. `metrics.txt` reports the setting, says what the run skips under its correction, and counts the skipped tests and the triplets clearing each gate.
 
 #### Direction Test Behavior
 
@@ -309,7 +309,7 @@ An orchestrator run generates these output files:
 6. **`consolidation/`** - Introgression map figure and TSV matrices
 
 Base TSV output includes `dis1_topology` and a topology-only `species_tree` value for each triplet.
-Base TSV output also includes a `decision_gate` column naming which test settled the classification (`DCT`, `THT`, or `PERM`). Only `PERM` means `perm_decision` was actually consulted: under the default `pipeline_mode: efficient` the permutation columns are filled in only on those rows, and under `detailed` they are filled in for every triplet, so `decision_gate` is what tells you whether they took part.
+Base TSV output also includes a `decision_gate` column naming which test settled the classification (`DCT`, `THT`, or `PERM`). Only `PERM` means `perm_decision` was actually consulted: by default the permutation columns are filled in only on those rows, and under `diagnostic: true` they are filled in for every triplet, so `decision_gate` is what tells you whether they took part.
 Base TSV output also includes an `inference` column with human-readable direction text using actual species names.
 
 When bootstrap is enabled, the TSV adds:
@@ -429,7 +429,7 @@ Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
 **Execution Defaults:**
 
 - `processes`: `0` (every CPU available to the process)
-- `pipeline_mode`: `efficient`
+- `diagnostic`: `false`
 - `output_folder`: `./results`
 - `overwrite`: `true`
 - `min_support_value`: `0.5`
@@ -486,7 +486,7 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Config field ... must be a boolean when provided` / `Config field ... must be a numeric value`
    Boolean/float-style fields were provided with incompatible types.
 - `Config field ... must be one of: ...`
-   Choice-constrained fields (discordant test, tree-height strategy, p-value correction, pipeline mode) contain unsupported values.
+   Choice-constrained fields (discordant test, tree-height strategy, p-value correction) contain unsupported values.
 - `Config field overwrite must be a boolean when provided` / `Config field no_overwrite must be a boolean when provided`
    The overwrite flags were given non-boolean values.
 - `Config field bootstrap_options.* ...`

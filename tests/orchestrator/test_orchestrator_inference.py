@@ -104,26 +104,25 @@ def _expected_dct(n_dis1, n_dis2, discordant_test):
     return float(statistic), float(p_value)
 
 
-def _expected_result(strategy, discordant_test, pipeline_mode="detailed", alpha=0.05):
+def _expected_result(strategy, discordant_test, diagnostic=True, alpha=0.05):
     """Derive every asserted inference field for the shared fixture.
 
     Groups the hand-derived heights by topology, ranks the two discordant
     topologies, runs the DCT and the con-vs-dis1 KS test through SciPy /
-    statsmodels, and applies the GhostParser decision logic. The efficient mode
-    stops measuring once the cascade is settled, so the expectation carries
-    ``None`` for whatever that mode never computes.
+    statsmodels, and applies the GhostParser decision logic. A non-diagnostic
+    run stops measuring once the cascade is settled, so the expectation carries
+    ``None`` for whatever it never computes.
 
     Args:
         strategy: The tree-height strategy.
         discordant_test: ``chi-square``/``z-test``.
-        pipeline_mode: ``efficient`` skips the tests the cascade cannot consult;
-            ``detailed`` measures all three.
+        diagnostic: ``True`` measures all three tests; ``False`` skips the
+            tests the cascade cannot consult.
         alpha: Significance threshold shared by both tests.
 
     Returns:
         A dict of the expected field values.
     """
-    efficient = pipeline_mode == "efficient"
     heights = {topology: [] for topology in _SISTER_TAXA}
     for entry in _LEAF_GEOMETRY:
         heights[entry[0]].append(_expected_height(entry, strategy))
@@ -146,11 +145,11 @@ def _expected_result(strategy, discordant_test, pipeline_mode="detailed", alpha=
     dct_significant = dct_p_value < alpha
 
     # A failed count gate settles the call on its own. The decision pass here
-    # runs under ``no``, an inline correction, so the efficient mode leaves the
-    # tree-height test below it unmeasured; the detailed mode measures and
+    # runs under ``no``, an inline correction, so a non-diagnostic run leaves
+    # the tree-height test below it unmeasured; a diagnostic run measures and
     # corrects it like any other member of the family.
     ks_statistic = ks_p_value = ks_significant = None
-    if dct_significant or not efficient:
+    if dct_significant or diagnostic:
         ks_result = stats.ks_2samp(
             heights[_CONCORDANT], heights[dis1], alternative="two-sided", method="auto"
         )
@@ -160,10 +159,10 @@ def _expected_result(strategy, discordant_test, pipeline_mode="detailed", alpha=
     # This fixture has 5 concordant and 3 discordant1 trees, so the pooled
     # sample admits only C(8, 3) = 56 distinct group assignments -- far fewer
     # than the 2500-resample minimum. The support guard fires and reports no
-    # conclusion without any resampling. The efficient mode does not even get
+    # conclusion without any resampling. A non-diagnostic run does not even get
     # that far unless both earlier gates cleared.
     direction = "inconclusive"
-    if efficient and not (dct_significant and ks_significant):
+    if not diagnostic and not (dct_significant and ks_significant):
         direction = None
 
     # GhostParser decision logic: DCT gate, then the tree-height test, then the
@@ -235,16 +234,17 @@ def _decided(observations, **kwargs):
     )[0]
 
 
-@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
+@pytest.mark.parametrize("diagnostic", [False, True])
 @pytest.mark.parametrize("discordant_test", ["chi-square", "z-test"])
-def test_inference_matches_derived_expectation(discordant_test, pipeline_mode):
+def test_inference_matches_derived_expectation(discordant_test, diagnostic):
     """The tests and the decision reproduce values derived from the definitions.
 
     Runs the shared 10-gene-subtree fixture through the reference serializer,
     the per-triplet measurement and the decision pass, and checks every
     asserted field against SciPy / statsmodels and the cascade written out by
-    hand, in both pipeline modes: the derived statistics are the same wherever
-    a mode measures them, and the efficient mode leaves the rest unmeasured.
+    hand, with ``diagnostic`` both off and on: the derived statistics are the
+    same wherever a run measures them, and a non-diagnostic run leaves the rest
+    unmeasured.
     The heights themselves are pinned per strategy by
     ``test_observation_heights_match_derived_geometry``, so one strategy is
     enough here.
@@ -253,11 +253,11 @@ def test_inference_matches_derived_expectation(discordant_test, pipeline_mode):
         _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy="AVG"
     )
     result = _decided(
-        observations, discordant_test=discordant_test, pipeline_mode=pipeline_mode
+        observations, discordant_test=discordant_test, diagnostic=diagnostic
     )
 
     _assert_matches_expected(
-        result, _expected_result("AVG", discordant_test, pipeline_mode)
+        result, _expected_result("AVG", discordant_test, diagnostic)
     )
     assert tuple(result.triplet) == _TRIPLET
     assert result.species_tree == "((A,B),C);"

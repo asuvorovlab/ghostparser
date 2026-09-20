@@ -32,15 +32,14 @@ from .config import (
     DEFAULT_BOOTSTRAP_DEBUG_MODE,
     DEFAULT_BOOTSTRAP_ITERATIONS,
     DEFAULT_BOOTSTRAP_SUMMARY_ONLY,
+    DEFAULT_DIAGNOSTIC,
     DEFAULT_DISCORDANT_TEST,
     DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_PERMUTATION_MAX_RESAMPLES,
     DEFAULT_PERMUTATION_MIN_RESAMPLES,
-    DEFAULT_PIPELINE_MODE,
     DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     DISCORDANT_TEST_CHOICES,
     P_VALUE_CORRECTION_CHOICES,
-    PIPELINE_MODE_EFFICIENT,
     TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
 )
 from .correction import (
@@ -72,7 +71,7 @@ SHAPE_GROUP_LABELS = ("con", "dis1", "dis2")
 # Which of the three tests produced a triplet's classification, named after the
 # test itself. ``DECISION_GATE_PERMUTATION`` is the only value for which the
 # permutation columns took part in the call; on the other two nothing consulted
-# the direction test, and under the efficient pipeline mode it did not run.
+# the direction test, and unless the run is diagnostic it did not run.
 DECISION_GATE_DCT = "DCT"
 DECISION_GATE_THT = "THT"
 DECISION_GATE_PERMUTATION = "PERM"
@@ -94,8 +93,8 @@ _DIRECTION_LABELS = {
     _DIRECTION_SKIPPED: DECISION_INCONCLUSIVE,
 }
 
-# Recorded in ``perm_note`` when the efficient pipeline mode skipped the
-# direction test because an earlier gate had already settled the cascade. It
+# Recorded in ``perm_note`` when a non-diagnostic run skipped the direction
+# test because an earlier gate had already settled the cascade. It
 # marks an empty ``perm_*`` block as deliberate rather than as a test that ran
 # and failed, which is what the guard slugs in ``permutation`` mean.
 PERM_NOTE_NOT_CONSULTED = "direction_test_not_consulted"
@@ -173,20 +172,17 @@ class _CorrectionPolicy:
             per-iteration bootstrap family alike.
         inline: Whether the method can be applied to one p-value from the family
             size alone. When it can, a gate judged in the stream is the exactly
-            corrected one, and a bootstrap iteration can vote on the spot
-            instead of parking its p-values.
-        skips_tht: Whether a tree-height test below a failed count gate goes
-            unmeasured, in the point estimate and in every bootstrap iteration
-            alike. Only under an inline method, whose fixed family size means
-            the value would go unread, and only in the ``efficient`` mode;
-            ``detailed`` measures it everywhere, so its bootstrap replicates the
-            point estimate's procedure step for step.
+            corrected one, a bootstrap iteration can vote on the spot instead of
+            parking its p-values, and a tree-height test below a failed count
+            gate can go unmeasured, since no other member's corrected value
+            depends on it and its own would go unread. A rank-based method reads
+            every member's value, so the tree-height test is measured for every
+            triplet and in every bootstrap iteration.
     """
 
     correction: str
     family_size: int
     inline: bool
-    skips_tht: bool
 
 
 # Slotted because a run holds one of these per triplet, in the parent and again
@@ -201,9 +197,9 @@ class TripletPipelineResult:
     decided fields -- corrected p-values, significance flags, classification,
     decision gate and ``bootstrap_value`` -- stay ``None`` until the run-wide
     pass (:func:`_apply_triplet_result_p_value_correction`) sets them, since
-    every one of them depends on the whole run's p-values. Under the efficient
-    pipeline mode a test the cascade could not consult is left unmeasured, so
-    the KS pair and the ``perm_*`` block may be ``None`` on a measured result.
+    every one of them depends on the whole run's p-values. Unless the run is
+    diagnostic, a test the cascade could not consult is left unmeasured, so the
+    KS pair and the ``perm_*`` block may be ``None`` on a measured result.
     """
 
     triplet: tuple[str, str, str]
@@ -1207,8 +1203,8 @@ def _run_triplet_pipeline_from_observations(
         alpha_ks: Significance threshold for the KS test.
         gate_policy: The run's :class:`_CorrectionPolicy`, under which a gate
             can be judged before the run-wide pass; tests below a gate it shows
-            failed are skipped (the efficient pipeline mode). ``None`` measures
-            every test for every triplet (the detailed mode).
+            failed are skipped. ``None`` measures every test for every triplet
+            (a diagnostic run).
 
     Returns:
         A ``TripletPipelineResult`` carrying raw p-values and no classification.
@@ -1274,7 +1270,7 @@ def _run_triplet_pipeline_from_observations(
     # unmeasured touches no other triplet.
     ks_statistic = None
     ks_p_value = None
-    if not (dct_failed and gate_policy.skips_tht):
+    if not (dct_failed and gate_policy.inline):
         ks_statistic, ks_p_value = run_two_sample_ks_test(
             canonical_heights[dis1_topology],
             canonical_heights[con_topology],
@@ -1299,9 +1295,9 @@ def _run_triplet_pipeline_from_observations(
     # The direction test is corrected inside itself, across its own pair of
     # one-tailed p-values and never across triplets, so it is complete here and
     # skipping it for this triplet changes nothing for any other. The cascade
-    # reads it only when both earlier gates clear; below a failed gate the
-    # efficient mode declines to run it and marks the empty block, while the
-    # detailed mode runs it for every triplet so the columns stay populated.
+    # reads it only when both earlier gates clear; below a failed gate it is
+    # declined and the empty block marked, unless the run is diagnostic and
+    # runs it for every triplet so the columns stay populated.
     direction = None
     permutation_result = None
     perm_note = None
@@ -1345,25 +1341,21 @@ def _run_triplet_pipeline_from_observations(
     )
 
 
-def _correction_policy(correction, family_size, pipeline_mode=DEFAULT_PIPELINE_MODE):
+def _correction_policy(correction, family_size):
     """Describe how far one run's correction can be applied in the stream.
 
     Args:
         correction: The configured p-value correction method.
         family_size: Number of triplets in the run, which is the size of the
             run-wide family and of each per-iteration bootstrap family.
-        pipeline_mode: The run's pipeline mode; only ``efficient`` lets a
-            tree-height test go unmeasured.
 
     Returns:
         A :class:`_CorrectionPolicy`.
     """
-    inline = is_inline_correction(correction)
     return _CorrectionPolicy(
         correction=correction,
         family_size=max(1, int(family_size)),
-        inline=inline,
-        skips_tht=inline and pipeline_mode == PIPELINE_MODE_EFFICIENT,
+        inline=is_inline_correction(correction),
     )
 
 
@@ -1382,13 +1374,13 @@ def _iteration_outcome(
 ):
     """Run one bootstrap iteration's tests over its resampled heights.
 
-    Measures what the run's correction will read. The direction test is skipped
-    once an upstream gate has failed, which no supported correction can undo;
-    the tree-height test is skipped below a failed count gate only where the
-    policy says so -- under an inline method in the efficient mode, whose fixed
-    family size means the value would go unread. Neither skip can move a vote:
-    a failed count gate classifies the iteration before either later test is
-    read.
+    Measures what the run's correction will read, and nothing more whatever the
+    run's ``diagnostic`` setting, which reaches only the point estimate. The
+    direction test is skipped once an upstream gate has failed, which no
+    supported correction can undo; the tree-height test is skipped below a
+    failed count gate only under an inline method, whose fixed family size
+    means the value would go unread. Neither skip can move a vote: a failed
+    count gate classifies the iteration before either later test is read.
 
     Args:
         n_dis1: Discordant1 count in the resample.
@@ -1418,8 +1410,8 @@ def _iteration_outcome(
     ks_p_value = None
     # A rank-based method reads every member of the per-iteration family, so
     # the deferred path always measures KS; an inline method reads a member only
-    # if its own count gate cleared, and the efficient mode declines the rest.
-    if collect_metrics or not (policy.skips_tht and dct_failed):
+    # if its own count gate cleared, so the rest go unmeasured.
+    if collect_metrics or not (policy.inline and dct_failed):
         ks_statistic, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
 
     ks_failed = (
@@ -1821,7 +1813,7 @@ def _finalize_triplet_analysis(
     p_value_correction,
     family_size,
     shape_diagnostics=False,
-    pipeline_mode=DEFAULT_PIPELINE_MODE,
+    diagnostic=DEFAULT_DIAGNOSTIC,
     bootstrap=DEFAULT_BOOTSTRAP,
 ):
     """Measure one triplet's tests and run its bootstrap.
@@ -1842,11 +1834,11 @@ def _finalize_triplet_analysis(
         p_value_correction: The run's correction method.
         family_size: Number of triplets in the run.
         shape_diagnostics: Whether to describe each height group's shape.
-        pipeline_mode: ``efficient`` skips tests the cascade cannot consult, in
-            the point estimate and in the bootstrap iterations alike;
-            ``detailed`` measures every test for every triplet and the
-            tree-height test in every bootstrap iteration. Both modes skip a
-            bootstrap iteration's direction test below a failed gate.
+        diagnostic: Whether the point estimate measures every test for every
+            triplet. Off, it skips the tests the cascade cannot consult: the
+            direction test below any failed gate, and under an inline
+            correction the tree-height test below a failed count gate. The
+            bootstrap iterations skip those tests either way.
         bootstrap: Whether to run the bootstrap iterations at all.
 
     Returns:
@@ -1861,7 +1853,7 @@ def _finalize_triplet_analysis(
         _build_triplet_seed_sequence(triplet_seed, triplet).spawn(4)
     )
 
-    policy = _correction_policy(p_value_correction, family_size, pipeline_mode)
+    policy = _correction_policy(p_value_correction, family_size)
     permutation_kwargs = dict(permutation_kwargs or {})
     base_result = _run_triplet_pipeline_from_observations(
         triplet,
@@ -1875,13 +1867,13 @@ def _finalize_triplet_analysis(
         shape_rng=np.random.default_rng(shape_seed),
         alpha_dct=alpha_dct,
         alpha_ks=alpha_ks,
-        gate_policy=policy if pipeline_mode == PIPELINE_MODE_EFFICIENT else None,
+        gate_policy=None if diagnostic else policy,
     )
 
     # Switching the bootstrap off is an instruction about what to compute, so it
-    # holds in both pipeline modes: ``detailed`` declines to skip work the
-    # cascade cannot consult, which is not the same as reinstating work the user
-    # turned off. The bootstrap-sourced fields keep their ``None`` defaults.
+    # holds on a diagnostic run too: measuring every test the cascade cannot
+    # consult is not the same as reinstating work the user turned off. The
+    # bootstrap-sourced fields keep their ``None`` defaults.
     if not bootstrap:
         return base_result
 
@@ -1960,7 +1952,7 @@ def analyze_triplet_from_observations(
     p_value_correction=DEFAULT_P_VALUE_CORRECTION,
     family_size=1,
     shape_diagnostics=False,
-    pipeline_mode=DEFAULT_PIPELINE_MODE,
+    diagnostic=DEFAULT_DIAGNOSTIC,
     bootstrap=DEFAULT_BOOTSTRAP,
 ):
     """Measure one triplet from precomputed observations.
@@ -1988,11 +1980,11 @@ def analyze_triplet_from_observations(
             per-iteration testing families. Left at ``1`` this measures the
             triplet as a family of one.
         shape_diagnostics: Whether to describe each height group's shape.
-        pipeline_mode: ``efficient`` skips tests the cascade cannot consult, in
-            the point estimate and in the bootstrap iterations alike;
-            ``detailed`` measures every test for every triplet and the
-            tree-height test in every bootstrap iteration. Both modes skip a
-            bootstrap iteration's direction test below a failed gate.
+        diagnostic: Whether the point estimate measures every test for every
+            triplet. Off, it skips the tests the cascade cannot consult: the
+            direction test below any failed gate, and under an inline
+            correction the tree-height test below a failed count gate. The
+            bootstrap iterations skip those tests either way.
         bootstrap: Whether to run the bootstrap iterations at all.
 
     Returns:
@@ -2014,7 +2006,7 @@ def analyze_triplet_from_observations(
         p_value_correction=p_value_correction,
         family_size=family_size,
         shape_diagnostics=shape_diagnostics,
-        pipeline_mode=pipeline_mode,
+        diagnostic=diagnostic,
         bootstrap=bootstrap,
     )
 
@@ -2109,7 +2101,7 @@ def _correct_family(p_values, method, alpha, family_size):
     """Correct one test's measured p-values as a family of ``family_size``.
 
     The family is always the triplet count. Under an inline method each value
-    is corrected from that count alone, so members the efficient mode left
+    is corrected from that count alone, so members a non-diagnostic run left
     unmeasured cost the others nothing and may simply be absent from
     ``p_values``. A rank-based method reads every member's value, so the stream
     never leaves one of its members unmeasured and ``p_values`` must be the
@@ -2135,7 +2127,7 @@ def _correct_family(p_values, method, alpha, family_size):
         raise RuntimeError(
             f"Correction {method} needs every triplet's p-value but only "
             f"{len(p_values)} of {family_size} were measured. Rerun with "
-            "pipeline_mode: detailed and report this."
+            "diagnostic: true and report this."
         )
     return _adjust_p_values(p_values, method=method, alpha=alpha)
 
@@ -2164,7 +2156,7 @@ def _apply_triplet_result_p_value_correction(
 
     Raises:
         RuntimeError: If a triplet reaches the direction gate without a
-            direction, which the efficient mode's skip rule makes impossible.
+            direction, which the skip rule makes impossible.
     """
     if not results:
         return results
@@ -2178,7 +2170,7 @@ def _apply_triplet_result_p_value_correction(
         [result.dct_p_value for result in results], method, alpha_dct, family_size
     )
     # The tree-height family is every triplet too, whether or not each one
-    # measured the test: an unmeasured member is one the efficient mode found
+    # measured the test: an unmeasured member is one a non-diagnostic run found
     # settled at gate one under an inline method, and its corrected value would
     # have gone unread.
     ks_indices = [
@@ -2215,9 +2207,8 @@ def _apply_triplet_result_p_value_correction(
         if dct_significant and ks_significant and result.perm_decision is None:
             raise RuntimeError(
                 f"Triplet {result.triplet} reached the direction gate with no "
-                "permutation decision. Correction moved a gate the efficient "
-                "pipeline mode assumed settled; rerun with pipeline_mode: "
-                "detailed and report this."
+                "permutation decision. Correction moved a gate the stream "
+                "assumed settled; rerun with diagnostic: true and report this."
             )
         classification, decision_gate = _classify_introgression(
             dct_significant,

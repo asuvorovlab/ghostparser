@@ -55,7 +55,7 @@ def _make_config(
     processes,
     consolidation=False,
     bootstrap=True,
-    pipeline_mode=None,
+    diagnostic=None,
     species_rename_map=None,
 ):
     """Build a resolved orchestrator config for a run with a fixed bootstrap seed.
@@ -67,7 +67,7 @@ def _make_config(
         processes: Worker process count.
         consolidation: Whether to enable consolidation.
         bootstrap: Whether to enable bootstrap resampling.
-        pipeline_mode: ``efficient``/``detailed``, or ``None`` for the default.
+        diagnostic: Whether to measure every test, or ``None`` for the default.
         species_rename_map: Path to a rename map, or ``None``.
 
     Returns:
@@ -87,7 +87,7 @@ def _make_config(
         alpha_ks=None,
         alpha_perm=None,
         p_value_correction=None,
-        pipeline_mode=pipeline_mode,
+        diagnostic=diagnostic,
         consolidation=consolidation,
         bootstrap=bootstrap,
     )
@@ -160,23 +160,23 @@ def _assert_result_matches(orchestrator_result, reference_result, fields):
             assert orchestrator_value == reference_value, field
 
 
-@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
+@pytest.mark.parametrize("diagnostic", [False, True])
 def test_run_orchestrator_matches_derived_expectation(
-    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, pipeline_mode
+    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, diagnostic
 ):
     """run_orchestrator (serial) reproduces the hand-derived per-triplet expectation.
 
-    Every triplet here stops at the count gate, so the two pipeline modes differ
-    only in what they measure below it: the detailed mode still reports the
-    tree-height and direction tests, the efficient mode leaves both empty and
-    says so in ``perm_note``. Everything the cascade reads is the same.
+    Every triplet here stops at the count gate, so the ``diagnostic`` setting
+    changes only what is measured below it: a diagnostic run still reports the
+    tree-height and direction tests, the default leaves both empty and says so
+    in ``perm_note``. Everything the cascade reads is the same.
     """
     config = _make_config(
         orchestrator_species_tree,
         orchestrator_gene_trees,
         tmp_path / "out",
         processes=1,
-        pipeline_mode=pipeline_mode,
+        diagnostic=diagnostic,
     )
     results = run_orchestrator(config)
 
@@ -203,7 +203,7 @@ def test_run_orchestrator_matches_derived_expectation(
         # corrected significance alongside the classification.
         assert result.decision_gate == "DCT"
         assert result.classification == "no_introgression"
-        if pipeline_mode == "detailed":
+        if diagnostic:
             # The count gate settles every triplet, but the tree-height test is
             # still measured and corrected across the same whole-run family,
             # and the direction test is reported even though nothing read it.
@@ -293,16 +293,16 @@ def test_no_bootstrap_omits_the_bootstrap_columns(
     assert len(results) == _N_TRIPLETS
 
 
-@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
+@pytest.mark.parametrize("diagnostic", [False, True])
 def test_no_bootstrap_skips_the_bootstrap_itself(
-    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, pipeline_mode
+    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, diagnostic
 ):
     """Disabling the bootstrap stops the work, not just the columns.
 
     The studentized interval is produced by the bootstrap loop, so its absence
-    is the observable proof no iterations ran. The detailed mode declines to
-    skip work the cascade cannot consult, which is not a licence to reinstate
-    work the user switched off, so the skip holds in both modes.
+    is the observable proof no iterations ran. A diagnostic run measures every
+    test the cascade cannot consult, which is not a licence to reinstate work
+    the user switched off, so the skip holds either way.
     """
     config = _make_config(
         orchestrator_species_tree,
@@ -310,7 +310,7 @@ def test_no_bootstrap_skips_the_bootstrap_itself(
         tmp_path / "out",
         processes=1,
         bootstrap=False,
-        pipeline_mode=pipeline_mode,
+        diagnostic=diagnostic,
     )
     results = run_orchestrator(config)
 
