@@ -815,27 +815,6 @@ calls this function; it is the reference the geometry parity tests measure the
 cached path against, so it needs a correctness check of its own rather than only
 being compared to.
 
-## tests/orchestrator/test_orchestrator_tree_parity.py
-
-**Inputs:** the three `triplet_comparison_cases`, each a
-`(newick, triplet)` pair:
-
-1. `((A:1.0,B:1.0):2.0,C:3.0,D:4.0);` with `(A,B,C)`
-2. `(((A:0.1,X:0.1):0.2,(B:0.1,Y:0.1):0.2):0.3,(C:0.1,Z:0.1):0.4);` with `(A,B,C)`
-3. `((A:0.5,B:0.5):0.5,(C:0.2,D:0.2):0.8);` with `(A,B,C)`
-
-**Derivation:** these are the suite's only tests whose expectation comes from a
-second implementation rather than a closed-form definition — that is the point.
-Patristic distance is well defined (`d(a,b) = d(a,root) + d(b,root) -
-2 x d(mrca,root)`), so DendroPy's `extract_triplet_subtree` and BioPython's
-`Clade.prune` must agree on every pairwise distance. `test_triplet_branch_lengths_match`
-checks agreement after a DendroPy → Newick → BioPython round trip (catching
-serialization precision loss); `test_triplet_collapse_consistency_dendropy_vs_biopython`
-compares the two collapse implementations directly to `abs=1e-12`.
-
-Worked check for case 1, pair `(A,B)`: both taxa hang off the `(A,B)` node at
-depth 2.0, so `d = 1.0 + 1.0 = 2.0`. Pair `(A,C)`: `d = (1.0 + 2.0) + 3.0 = 6.0`.
-
 ## tests/orchestrator/test_orchestrator.py
 
 All runs use the shared species tree and 12 gene trees, seed `20240724`, 40
@@ -1726,9 +1705,9 @@ cache therefore holds `parent = [-1,0,1,2,2,1,0,6,6]` and
 `edge_len = [0.0,1.0,2.0,1.0,1.0,3.0,2.0,2.0,2.0]`, and the pairwise LCA table
 records `PQ->2`, `PR=QR->1`, `ST->6`, and every P/Q/R-to-S/T pair `->0`.
 
-### `test_geometry_matches_subtree_extraction`
+### `test_geometry_matches_each_reference`
 
-**Inputs (parametrized over the six strategies x eleven trees):** the reference
+**Inputs (parametrized over the two references x six strategies x eleven trees):** the reference
 tree with a nested sister pair (`P,Q,R`), a pair spanning the root (`P,R,S`), a
 triplet drawn from both sides (`P,S,T`) and one whose odd taxon is listed first
 (`S,P,Q`); a five-taxon ladder read at two depths; a tree carrying three taxa
@@ -1739,16 +1718,26 @@ with a length missing from a single edge; one whose internal branch is exactly
 sister).
 
 **Derivation:** there is no closed form to compare against here -- the expected
-value *is* what extracting the subtree and measuring it produces, which is the
-point. `_dendropy_observation` copies the triplet's subtree out with
-`extract_triplet_subtree` and measures it with `observation_from_subtree`;
-`_geometry_observation` builds the cache and reads the same triplet out of it.
-The topology must be equal exactly, because both derive it from discrete
+value *is* what an independent implementation produces, which is the point,
+and there are two of them. `_dendropy_observation` copies the triplet's
+subtree out with `extract_triplet_subtree` and measures it with
+`observation_from_subtree`. `_biopython_observation` never prunes: on the
+`Bio.Phylo` tree it takes the common ancestor of all three leaves and of each
+pair, calls the one pair whose ancestor is a different node the sisters (all
+three coinciding is a polytomy, so `None`), and reads every distance as a
+`Bio.Phylo` path sum from the three-way ancestor -- the depth of each leaf, the
+depth of the sisters' ancestor as the internal branch, and the leaf-to-leaf
+distance of the sisters -- from which `AVG`/`A`/`B`/`C`/`SIS`/`INT` follow by
+definition. `_geometry_observation` builds the cache and reads the same triplet
+out of it.
+The topology must be equal exactly, because all three derive it from discrete
 structure rather than arithmetic: extraction from the copied subtree's sister
-clade, the cache from which two of the three pairwise LCAs coincide. Heights and
-summary metrics compare at `rel=1e-12`, about three orders of magnitude looser
-than the largest disagreement measured on real data (one unit in the last place,
-`AVG` only). The cases are chosen for what they break rather than for coverage:
+clade, BioPython from which pair's common ancestor is not the three-way one,
+the cache from which two of the three pairwise LCAs coincide. Heights and
+summary metrics compare at `rel=1e-12`, comfortably wider than the only
+disagreement three correct implementations can have -- floating-point rounding
+from summing the same edges in a different order. The cases are chosen for
+what they break rather than for coverage:
 the zero-length internal branch would be read as a polytomy by any
 depth-comparing rule, the missing lengths must count as `0.0` rather than
 propagate `None`, the pruned taxa must not enter any path sum, and the
@@ -1820,7 +1809,7 @@ edge itself, and `sister_distance = 1.0 + 1.0 - 2(0.0) = 2.0`.
 a length, matching `_distance_to_root`, which skips a `None` edge. Every walk
 therefore sums zeros and all four derived values are `0.0`.
 
-### `test_geometry_skips_exactly_what_extraction_skips`
+### `test_geometry_skips_exactly_what_each_reference_skips`
 
 **Inputs:** `(A:1.0,B:1.0,C:1.0);` and `((A:1.0,B:1.0):1.0,D:2.0);`, triplet
 `(A,B,C)`.
@@ -1828,15 +1817,16 @@ therefore sums zeros and all four derived values are `0.0`.
 **Derivation:** in the polytomy all three pairwise LCAs are the root, so the
 cached path sees three equal ids and returns `None`; the extraction path reaches
 `find_sister_pair`, finds no pair whose MRCA differs from the root, and raises
-`ValueError`, which `observation_from_subtree` converts to `None`. In the second
-tree `C` is absent, so `leaf_node[C] = -1` on one side and
-`set(triplet).issubset(tree_taxa)` fails on the other.
-
+`ValueError`, which `observation_from_subtree` converts to `None`; the BioPython
+path finds no pair whose common ancestor differs from the three-way one and
+returns `None` itself. In the second tree `C` is absent, so `leaf_node[C] = -1`
+in the cache, `set(triplet).issubset(tree_taxa)` fails in extraction, and the
+label is missing from BioPython's terminals.
 A duplicated taxon label is deliberately not covered: DendroPy raises
 `NewickReaderDuplicateTaxonError` while parsing, so neither path can be reached
 with one.
 
-### `test_geometry_matches_dendropy_across_a_nine_taxon_tree`
+### `test_geometry_matches_each_reference_across_a_nine_taxon_tree`
 
 **Inputs:** the nine-taxon tree
 
@@ -1846,10 +1836,10 @@ with one.
 
 and all `C(9,3) = 84` triplets, under each of the six tree-height strategies.
 
-**Derivation:** the expected values are whatever
-`extract_triplet_subtree` + `observation_from_subtree` produce, so the test is a
-differential one -- it asserts the two implementations agree rather than
-restating the arithmetic. The tree is shaped so the sweep covers the cases that
+**Derivation:** the expected values are whatever the reference produces --
+`extract_triplet_subtree` + `observation_from_subtree`, or
+`_biopython_observation` -- so the test is a differential one: it asserts the
+implementations agree rather than restating the arithmetic. The tree is shaped so the sweep covers the cases that
 distinguish them: `(T3,T4)` sit above a zero-length internal branch, `T1..T4`
 and `T5..T7` sit in sibling clades so many triplets have their sister pair on
 one side and the odd taxon on the other, `T7` hangs off a ladder at a different
@@ -1859,10 +1849,9 @@ binary tree is resolved, so all 84 must yield an observation on both paths;
 `compared == 84` pins that none were silently skipped.
 
 The tolerance is `rel=1e-12`, matching the parity tolerance used elsewhere in
-the suite. Measured on real data the two paths agree exactly for the `A`, `B`,
-`C`, `SIS` and `INT` strategies and to within one unit in the last place for
-`AVG`, so the tolerance is roughly three orders of magnitude looser than the
-observed difference.
+the suite. Every path sums the same edge lengths, in an order that can differ
+between implementations, so floating-point rounding is the only disagreement
+possible and the tolerance sits well above it.
 
 ## tests/orchestrator/test_orchestrator_rename_map.py
 

@@ -15,7 +15,7 @@ pytest -m core           # the statistics and decisions
 pytest -m config         # config loading, resolution and validation
 pytest -m output         # what gets written: files, columns, report fields
 pytest -m integration    # entry points driven end to end
-pytest -m parity         # cached geometry vs the DendroPy reference
+pytest -m parity         # our geometry vs DendroPy and vs BioPython
 
 # One file / one test
 pytest tests/orchestrator/test_orchestrator_inference.py
@@ -37,7 +37,7 @@ suite. The criteria are meant to be objective:
 | `config` | Exercises a loader, normalizer or validator; asserts on the resolved config dict or a `ConfigError`. | ~5 s |
 | `output` | Asserts on *what was written* -- files present, TSV columns, report fields, artifact routing, a figure saved -- not on the numbers in them. | ~15 s |
 | `integration` | Drives an entry point end to end: `run_orchestrator`, `train_random_forest`, `train_multi_knn`, `tune_hyperparameters`. | ~15 s |
-| `parity` | Cross-library agreement between the cached geometry and the DendroPy reference. | < 3 s |
+| `parity` | Cross-implementation agreement: the cached geometry against the DendroPy subtree extraction it replaced, and against an independent BioPython implementation. | < 3 s |
 
 `config`, `output` and `integration` are applied in the test files -- module-wide
 with `pytestmark` where a file is homogeneous, per test otherwise. `core` is
@@ -65,8 +65,10 @@ Expected values are **derived from definitions**, not captured from a reference
 implementation: topology counts are read off the input Newick strings by hand,
 tree heights are recomputed from root-to-tip distances, and test statistics are
 recomputed inline with SciPy/statsmodels. The one intentional exception is the
-`@pytest.mark.parity` pair, which exists specifically to check that DendroPy's
-triplet extraction agrees with an independent BioPython implementation.
+`@pytest.mark.parity` tests, which exist specifically to check one implementation
+against another: the cached geometry against the DendroPy subtree extraction
+it replaced, and against a BioPython implementation written from the
+definitions in the test module itself.
 
 ## Fixtures In Use
 
@@ -85,8 +87,6 @@ suite by `tests/conftest.py`. Orchestrator-specific fixtures live in
   support filtering at a 0.5 threshold.
 - `simple_species_tree` / `simple_gene_trees` — Inputs: a minimal species tree
   and three gene trees. Expected usage: small parser integration checks.
-- `triplet_comparison_cases` — Inputs: three `(newick, triplet)` pairs with
-  known branch lengths. Expected usage: the DendroPy-vs-BioPython parity tests.
 - `summary_statistics_tsv` / `summary_statistics_tsv_tuning` — Inputs: feature
   tables with a `class` bitstring column, `dis1_topology`, and `feature_1..4`.
   Expected usage: ML trainer and tuner tests.
@@ -570,41 +570,33 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   the geometry parity tests compare against — no run calls it, so its own
   correctness has to be pinned here.
 
-### tests/orchestrator/test_orchestrator_tree_parity.py
-
-The suite's only parity tests, both marked `@pytest.mark.parity`.
-
-Marked `parity` (and `core`).
-
-- `test_triplet_branch_lengths_match` — Inputs (parametrized over the pairs
-  `(A,B)`, `(A,C)`, `(B,C)`): each `triplet_comparison_cases` tree, extracted
-  with DendroPy then re-read through BioPython. Expected outputs: the pairwise
-  patristic distance is the same in both libraries. Purpose: the Newick round
-  trip preserves branch lengths across libraries.
-- `test_triplet_collapse_consistency_dendropy_vs_biopython` — Inputs: the same
-  cases collapsed by `extract_triplet_subtree` and by a BioPython pruning
-  reference. Expected outputs: all three pairwise distances agree to `1e-12`.
-  Purpose: DendroPy's triplet collapsing matches standard BioPython pruning.
-
 ### tests/orchestrator/test_orchestrator_triplet_geometry.py
 
 Covers `orchestrator/triplet_geometry.py`, which reads a triplet's geometry out
 of a cached tree instead of extracting its subtree — the path every run takes,
-for gene trees and the species tree alike. Most tests compare against
-`extract_triplet_subtree` + `observation_from_subtree`, the DendroPy reference
-behaviour.
+for gene trees and the species tree alike. The parity tests compare it against
+two references: `extract_triplet_subtree` + `observation_from_subtree`, the
+DendroPy extraction the cache replaced, and `_biopython_observation`, written
+in this module with `Bio.Phylo` alone -- the sister pair is the one pair whose
+common ancestor is not the common ancestor of all three, and every distance is
+a `Bio.Phylo` path sum from that three-way ancestor.
 
-All `core`.
+All `core`; the three that compare against the references
+(`test_geometry_matches_each_reference`,
+`test_geometry_skips_exactly_what_each_reference_skips` and
+`test_geometry_matches_each_reference_across_a_nine_taxon_tree`) are `parity`
+as well.
 
-- `test_geometry_matches_subtree_extraction` - Inputs (parametrized over the six
-  tree-height strategies and eleven `(newick, triplet)` cases covering nested
-  pairs, pairs spanning the root, pruned extra taxa, a ladder, absent and mixed
-  edge lengths, a zero-length internal branch, and near-degenerate lengths): the
-  same tree and triplet through `extract_triplet_subtree` +
-  `observation_from_subtree` and through `build_triplet_geometry` +
-  `geometry_observation`. Expected outputs: identical topology, and tree height
-  and all three summary metrics equal within `rel=1e-12`. Purpose: the cached
-  path is a drop-in for extraction across every strategy and tree shape.
+- `test_geometry_matches_each_reference` - Inputs (parametrized over the two
+  references, the six tree-height strategies and eleven `(newick, triplet)`
+  cases covering nested pairs, pairs spanning the root, pruned extra taxa, a
+  ladder, absent and mixed edge lengths, a zero-length internal branch, and
+  near-degenerate lengths): the same tree and triplet through the reference and
+  through `build_triplet_geometry` + `geometry_observation`. Expected outputs:
+  identical topology, and tree height and all three summary metrics equal
+  within `rel=1e-12`. Purpose: the cached path is a drop-in for extraction
+  across every strategy and tree shape, agreeing with two libraries that share
+  no code with it or with each other.
 - `test_geometry_omits_summary_metrics_when_not_collecting` - Inputs: one case
   with `collect_summary_statistics` false. Expected outputs: both paths leave
   the metrics slot `None`. Purpose: the observation contract is unchanged.
@@ -612,9 +604,10 @@ All `core`.
   distances are worked out by hand. Expected outputs: the stated topology,
   height, internal branch, and sister distance. Purpose: pins the arithmetic to
   a derivation rather than only to the other implementation.
-- `test_geometry_skips_exactly_what_extraction_skips` - Inputs (parametrized): a
-  root polytomy and a triplet with an absent taxon. Expected outputs: both paths
-  return `None`. Purpose: the skip decisions match, so observation counts do.
+- `test_geometry_skips_exactly_what_each_reference_skips` - Inputs (parametrized
+  over the two references): a root polytomy and a triplet with an absent taxon.
+  Expected outputs: the reference and the cached path both return `None`.
+  Purpose: the skip decisions match, so observation counts do.
 - `test_zero_length_internal_branch_still_resolves` - Inputs: `((A:1.0,B:1.0):0.0,C:1.0);`.
   Expected outputs: both paths resolve `((A,B),C)` with a zero internal branch.
   Purpose: the sister pair is chosen by LCA node identity, so a zero-length
@@ -633,13 +626,14 @@ All `core`.
   `resolved` exactly when `geometry_observation` returns an observation.
   Purpose: the diagnostic preflight uses restates the hot path's guards without
   sharing code, so this is what stops the two drifting apart.
-- `test_geometry_matches_dendropy_across_a_nine_taxon_tree` - Inputs
-  (parametrized over the six strategies): all 84 triplets of a nine-taxon tree
-  carrying an outgroup, nested clades, a ladder, uneven branch lengths and one
-  zero-length internal branch. Expected outputs: identical topology and skip
-  decision on every triplet, with heights and metrics equal within `rel=1e-12`.
-  Purpose: a whole-tree sweep rather than hand-picked shapes, so sister pairs on
-  either side of the root and across the zero-length branch are all covered.
+- `test_geometry_matches_each_reference_across_a_nine_taxon_tree` - Inputs
+  (parametrized over the two references and the six strategies): all 84
+  triplets of a nine-taxon tree carrying an outgroup, nested clades, a ladder,
+  uneven branch lengths and one zero-length internal branch. Expected outputs:
+  identical topology and skip decision on every triplet, with heights and
+  metrics equal within `rel=1e-12`. Purpose: a whole-tree sweep rather than
+  hand-picked shapes, so sister pairs on either side of the root and across the
+  zero-length branch are all covered, against each reference.
 
 ### tests/orchestrator/test_orchestrator_rename_map.py
 
@@ -1138,7 +1132,8 @@ tests are `output`.
 
 ## Parity Tests (`@pytest.mark.parity`)
 
-Run with `pytest -m parity`. Only the two DendroPy-vs-BioPython tests in
-`tests/orchestrator/test_orchestrator_tree_parity.py` carry this marker; every other
-test derives its expectations from definitions instead of comparing against a
-second implementation.
+Run with `pytest -m parity`. Only the three geometry tests in
+`tests/orchestrator/test_orchestrator_triplet_geometry.py` that compare the cached
+path against the DendroPy and BioPython references carry this marker; every
+other test derives its expectations from definitions instead of comparing
+against a second implementation.

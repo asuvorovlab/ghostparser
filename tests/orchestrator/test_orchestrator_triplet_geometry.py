@@ -1,9 +1,17 @@
-"""Triplet geometry read from a cached gene tree matches subtree extraction."""
+"""Triplet geometry read from a cached gene tree matches two independent references.
+
+The parity tests hold the cached-geometry path to agreement with the DendroPy
+subtree extraction it replaced and with a BioPython implementation written
+here from the definitions alone: root distances, pairwise distances and common
+ancestors as ``Bio.Phylo`` computes them on the unpruned tree.
+"""
 
 import itertools
+from io import StringIO
 
 import dendropy
 import pytest
+from Bio import Phylo
 
 from ghostparser.orchestrator.inference import observation_from_subtree
 from ghostparser.orchestrator.trees import extract_triplet_subtree
@@ -16,6 +24,7 @@ from ghostparser.orchestrator.triplet_geometry import (
     geometry_observation,
     triplet_resolution,
 )
+from ghostparser.triplet_utils import TOPOLOGY_AB, TOPOLOGY_AC, TOPOLOGY_BC
 
 _STRATEGIES = ("AVG", "A", "B", "C", "SIS", "INT")
 
@@ -41,11 +50,73 @@ def _parse(newick):
 
 
 def _dendropy_observation(newick, triplet, strategy, collect):
-    """Run the current extract-then-measure path."""
+    """Run the DendroPy extract-then-measure reference path."""
     subtree = extract_triplet_subtree(_parse(newick), triplet)
     if subtree is None:
         return None
     return observation_from_subtree(subtree, triplet, strategy, collect)
+
+
+def _biopython_observation(newick, triplet, strategy, collect):
+    """Measure a triplet with Bio.Phylo alone, straight from the definitions.
+
+    Nothing here touches the package's tree code. The sister pair is the one
+    pair of the three whose common ancestor is not the common ancestor of all
+    three; a triplet whose three pairs share one ancestor is a polytomy and
+    yields nothing, as does one with a taxon absent from the tree. Every
+    distance is a Bio.Phylo path sum from the triplet's own common ancestor,
+    which is the root of the subtree the other two paths would extract.
+    """
+    tree = Phylo.read(StringIO(newick), "newick")
+    leaf = {terminal.name: terminal for terminal in tree.get_terminals()}
+    if any(label not in leaf for label in triplet):
+        return None
+
+    a, b, c = triplet
+    ancestor = tree.common_ancestor(leaf[a], leaf[b], leaf[c])
+    pair_ancestor = {
+        frozenset((a, b)): tree.common_ancestor(leaf[a], leaf[b]),
+        frozenset((a, c)): tree.common_ancestor(leaf[a], leaf[c]),
+        frozenset((b, c)): tree.common_ancestor(leaf[b], leaf[c]),
+    }
+    below = [pair for pair, node in pair_ancestor.items() if node is not ancestor]
+    if len(below) != 1:
+        return None
+    sisters = below[0]
+    topology = {
+        frozenset((a, b)): TOPOLOGY_AB,
+        frozenset((a, c)): TOPOLOGY_AC,
+        frozenset((b, c)): TOPOLOGY_BC,
+    }[sisters]
+
+    depth = {label: ancestor.distance(leaf[label]) for label in triplet}
+    internal_branch = ancestor.distance(pair_ancestor[sisters])
+    left, right = tuple(sisters)
+    sister_distance = tree.distance(leaf[left], leaf[right])
+    avg_tree_height = sum(depth.values()) / 3.0
+
+    height = {
+        "AVG": avg_tree_height,
+        "A": depth[a],
+        "B": depth[b],
+        "C": depth[c],
+        "SIS": sister_distance,
+        "INT": internal_branch,
+    }[strategy]
+    metrics = None
+    if collect:
+        metrics = {
+            "avg_tree_height": avg_tree_height,
+            "internal_branch": internal_branch,
+            "sister_distance": sister_distance,
+        }
+    return (topology, height, metrics)
+
+
+_REFERENCES = {
+    "dendropy": _dendropy_observation,
+    "biopython": _biopython_observation,
+}
 
 
 def _geometry_observation(newick, triplet, strategy, collect):
@@ -56,14 +127,16 @@ def _geometry_observation(newick, triplet, strategy, collect):
     return geometry_observation(geometry, positions, strategy, collect)
 
 
+@pytest.mark.parity
+@pytest.mark.parametrize("reference", sorted(_REFERENCES))
 @pytest.mark.parametrize("strategy", _STRATEGIES)
 @pytest.mark.parametrize(
     "newick,triplet", [case[1:] for case in _PARITY_CASES],
     ids=[case[0] for case in _PARITY_CASES],
 )
-def test_geometry_matches_subtree_extraction(newick, triplet, strategy):
-    """Cached geometry reproduces the extracted subtree's observation."""
-    expected = _dendropy_observation(newick, triplet, strategy, True)
+def test_geometry_matches_each_reference(newick, triplet, strategy, reference):
+    """Cached geometry reproduces each reference implementation's observation."""
+    expected = _REFERENCES[reference](newick, triplet, strategy, True)
     actual = _geometry_observation(newick, triplet, strategy, True)
 
     assert expected is not None, "fixture should produce an observation"
@@ -104,6 +177,8 @@ def test_geometry_on_a_hand_derived_tree():
     assert metrics["sister_distance"] == pytest.approx(6.0)
 
 
+@pytest.mark.parity
+@pytest.mark.parametrize("reference", sorted(_REFERENCES))
 @pytest.mark.parametrize(
     "label,newick,triplet",
     [
@@ -111,9 +186,9 @@ def test_geometry_on_a_hand_derived_tree():
         ("absent_taxon", "((A:1.0,B:1.0):1.0,D:2.0);", ("A", "B", "C")),
     ],
 )
-def test_geometry_skips_exactly_what_extraction_skips(label, newick, triplet):
-    """Both paths decline the same unusable triplets."""
-    assert _dendropy_observation(newick, triplet, "AVG", True) is None
+def test_geometry_skips_exactly_what_each_reference_skips(label, newick, triplet, reference):
+    """The cached path and each reference decline the same unusable triplets."""
+    assert _REFERENCES[reference](newick, triplet, "AVG", True) is None
     assert _geometry_observation(newick, triplet, "AVG", True) is None
 
 
@@ -169,9 +244,11 @@ _LARGE_TREE = (
 )
 
 
+@pytest.mark.parity
+@pytest.mark.parametrize("reference", sorted(_REFERENCES))
 @pytest.mark.parametrize("strategy", _STRATEGIES)
-def test_geometry_matches_dendropy_across_a_nine_taxon_tree(strategy):
-    """Every triplet of a 9-taxon tree agrees with DendroPy extraction.
+def test_geometry_matches_each_reference_across_a_nine_taxon_tree(strategy, reference):
+    """Every triplet of a 9-taxon tree agrees with each reference implementation.
 
     Sweeps all 84 triplets rather than hand-picked shapes, so sister pairs on
     either side of the root, across the zero-length internal branch, and down
@@ -186,7 +263,7 @@ def test_geometry_matches_dendropy_across_a_nine_taxon_tree(strategy):
 
     compared = 0
     for triplet in triplets:
-        expected = _dendropy_observation(_LARGE_TREE, triplet, strategy, True)
+        expected = _REFERENCES[reference](_LARGE_TREE, triplet, strategy, True)
         actual = geometry_observation(
             geometry, tuple(taxon_index[label] for label in triplet), strategy, True
         )
