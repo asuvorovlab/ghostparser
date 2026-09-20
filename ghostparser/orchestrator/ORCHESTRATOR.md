@@ -672,8 +672,11 @@ method that is every iteration, because every member's value moves the others'
 ranks. Under an inline method a value below a failed count gate is never read —
 the family size is fixed — so the iteration leaves it unmeasured and votes
 `no_introgression` directly (`_CorrectionPolicy.inline`). The bootstrap's own
-switch is `bootstrap_options.debug_mode`, which measures the count and
-tree-height tests in every iteration and writes them per iteration.
+switch is `bootstrap_options.diagnostic`, which measures all three tests in
+every iteration and writes them per iteration. The direction tests it adds
+below a failed gate draw from a fifth child of the triplet's seed sequence, so
+the vote's own tests draw exactly what they would have without the record:
+`bootstrap_value` and the studentized interval do not move when it is on.
 
 ### Skipping a settled gate
 
@@ -942,7 +945,7 @@ Written under the output folder:
 | `inference` | Reporting | Human-readable direction naming the actual species. |
 | `bootstrap_value` / `all_bootstrap` | Bootstrap | Fraction of iterations agreeing with the final classification, plus the full class-fraction map. Iterations are judged against the same corrected thresholds as the point estimate. Present unless `--no-bootstrap`. |
 | `con_*` / `dis1_*` / `dis2_*` shape columns | Shape diagnostics | Mode count, Silverman modality p-value, skewness, excess kurtosis and generalized-Pareto tail index per height group. Present only with `shape_diagnostics`; see above for how to read each. |
-| `bootstrap_*` debug columns | Bootstrap debug | Per-iteration DCT/KS statistics, con/dis means, and gene-tree heights. Present only with `bootstrap_debug_mode`. |
+| `bootstrap_*` diagnostic columns | Bootstrap diagnostic | Per-iteration DCT and KS statistics and p-values, the direction test's studentized statistic, raw one-tailed p-values and decision, con/dis means, and the gene-tree heights. Present only with `bootstrap_diagnostic`; summaries instead of lists with `bootstrap_summary_only`. |
 
 This file reports the *tests*: the direction is read off `perm_p_greater` and
 `perm_p_less` after correction, so it carries no per-group mean or median

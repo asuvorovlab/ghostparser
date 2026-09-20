@@ -36,7 +36,7 @@ DEFAULT_PERMUTATION_MAX_RESAMPLES = 25000
 DEFAULT_PERMUTATION_CI_METHOD = "wilson"
 DEFAULT_BOOTSTRAP = True
 DEFAULT_BOOTSTRAP_ITERATIONS = 100
-DEFAULT_BOOTSTRAP_DEBUG_MODE = False
+DEFAULT_BOOTSTRAP_DIAGNOSTIC = False
 DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
 DEFAULT_GENERATE_SUMMARY_STATS = False
 DEFAULT_SHAPE_DIAGNOSTICS = False
@@ -70,7 +70,7 @@ PERMUTATION_CI_METHOD_CHOICES = (
 # CLI argument dest names that also map to config-file payload keys. These are
 # the config+CLI options; config-file-only keys (discordant_test,
 # tree_height_calculation_strategy, min_support_value, bootstrap_iterations,
-# generate_summary_stats, shape_diagnostics, bootstrap_debug_mode,
+# generate_summary_stats, shape_diagnostics, bootstrap_diagnostic,
 # bootstrap_summary_only, permutation_options) are intentionally absent so they
 # are read only from a config file and otherwise take their defaults.
 _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
@@ -324,7 +324,7 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
 
     Accepts the canonical ``bootstrap`` toggle plus either a nested
     ``bootstrap_options`` block or the flat ``bootstrap_iterations``/
-    ``bootstrap_debug_mode``/``bootstrap_summary_only`` keys. The RNG seed is a
+    ``bootstrap_diagnostic``/``bootstrap_summary_only`` keys. The RNG seed is a
     run-wide key, not a bootstrap option.
 
     Args:
@@ -332,7 +332,7 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
 
     Returns:
         A tuple ``(bootstrap, options)`` where ``options`` has
-        ``iterations``/``seed``/``debug_mode``/``summary_only``.
+        ``iterations``/``seed``/``diagnostic``/``summary_only``.
 
     Raises:
         ConfigError: If any value is malformed.
@@ -358,15 +358,15 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
             "Config field bootstrap_options.iterations must be an integer >= 1"
         )
 
-    debug_mode = payload.get(
-        "bootstrap_debug_mode",
-        raw_options.get("debug_mode", DEFAULT_BOOTSTRAP_DEBUG_MODE),
+    diagnostic = payload.get(
+        "bootstrap_diagnostic",
+        raw_options.get("diagnostic", DEFAULT_BOOTSTRAP_DIAGNOSTIC),
     )
-    if debug_mode is None:
-        debug_mode = DEFAULT_BOOTSTRAP_DEBUG_MODE
-    if not isinstance(debug_mode, bool):
+    if diagnostic is None:
+        diagnostic = DEFAULT_BOOTSTRAP_DIAGNOSTIC
+    if not isinstance(diagnostic, bool):
         raise ConfigError(
-            "Config field bootstrap_options.debug_mode must be a boolean when provided"
+            "Config field bootstrap_options.diagnostic must be a boolean when provided"
         )
 
     summary_only = payload.get(
@@ -382,7 +382,7 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
 
     return bootstrap, {
         "iterations": iterations,
-        "debug_mode": debug_mode,
+        "diagnostic": diagnostic,
         "summary_only": summary_only,
     }
 
@@ -729,7 +729,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "permutation_ci_method": permutation_options["ci_method"],
         "bootstrap": bootstrap,
         "bootstrap_iterations": bootstrap_options["iterations"],
-        "bootstrap_debug_mode": bootstrap_options["debug_mode"],
+        "bootstrap_diagnostic": bootstrap_options["diagnostic"],
         "bootstrap_summary_only": bootstrap_options["summary_only"],
     }
 

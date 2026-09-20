@@ -100,7 +100,7 @@ suite by `tests/conftest.py`. Orchestrator-specific fixtures live in
 
 End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixture.
 
-Marked `integration` throughout -- every test drives `run_orchestrator` -- and `output` where it asserts on files or columns (`writes_results_tsv`, `no_bootstrap_omits_the_bootstrap_columns`, `species_rename_map_reaches_every_output`, `consolidation_preserves_run_outputs`, `generate_summary_stats_writes_tsv`, `bootstrap_debug_mode_writes_debug_columns`).
+Marked `integration` throughout -- every test drives `run_orchestrator` -- and `output` where it asserts on files or columns (`writes_results_tsv`, `no_bootstrap_omits_the_bootstrap_columns`, `species_rename_map_reaches_every_output`, `consolidation_preserves_run_outputs`, `generate_summary_stats_writes_tsv`, `bootstrap_diagnostic_writes_its_columns`).
 
 - `test_run_orchestrator_matches_derived_expectation` — Inputs (parametrized
   over `diagnostic` off and on): `run_orchestrator` (serial, fixed bootstrap
@@ -143,12 +143,24 @@ Marked `integration` throughout -- every test drives `run_orchestrator` -- and `
   `concordant_avg_tree_height_mean` and `discordant2_sister_distance_max`), and
   at least one result carries populated `topology_metric_statistics`. Purpose:
   the summary-statistics feature and its column contract.
-- `test_bootstrap_debug_mode_writes_debug_columns` — Inputs: a run with
-  `bootstrap_debug_mode=True`. Expected outputs: the debug columns
+- `test_bootstrap_diagnostic_writes_its_columns` — Inputs: a run with
+  `bootstrap_diagnostic=True`. Expected outputs: the per-iteration columns
   (`bootstrap_dct_stats`, `bootstrap_dct_p_value`, `bootstrap_ks_stats`,
-  `bootstrap_ks_p_value`, `bootstrap_gene_tree_heights`) appear in the header
-  and at least one result has a populated `bootstrap_dct_stats`. Purpose: the
-  bootstrap-debug output path.
+  `bootstrap_ks_p_value`, `bootstrap_perm_stats`, `bootstrap_perm_p_greater`,
+  `bootstrap_perm_p_less`, `bootstrap_perm_decisions`,
+  `bootstrap_gene_tree_heights`) appear in the header and at least one result
+  has a populated `bootstrap_dct_stats` and `bootstrap_perm_decisions`.
+  Purpose: the bootstrap-diagnostic output path.
+- `test_species_filter_runs_every_triplet_among_the_named_species` — Inputs
+  (parametrized, 2 rows): the shared fixture run with a `species_filter` file
+  reading `A, B` / `D` / a blank line / `OUT` / `NOPE` / `B`, and one reading
+  `A,B,NOPE`. Expected outputs: the first run's results are exactly the one
+  triplet `(A, B, D)`, with the hand-derived counts and species subtree of the
+  unfiltered run; the second returns `None`. Purpose: the filter's names are
+  matched against the pruned ingroup — the outgroup and an unknown name are
+  skipped, a repeat counts once — every triplet among the survivors and no
+  other is run, unchanged in how it is measured, and fewer than three
+  survivors cannot start a run.
 - `test_species_rename_map_reaches_every_output` — Inputs: the shared fixture
   run with `species_rename_map` mapping `A -> Homo sapiens` and `B -> Pan sp.`,
   with consolidation on. Expected outputs: the triplet taxa are
@@ -314,6 +326,27 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   measures the tree-height test exactly where its correction reads it — below
   a failed count gate only under a rank-based method — and `diagnostic`
   reaches the point estimate alone, adding at most that one measurement.
+- `test_diagnostic_bootstrap_records_every_test_without_moving_a_vote` —
+  Inputs (parametrized, 2 rows): an observation set whose even 10/10
+  discordant split fails the count gate in most resamples (`_HIGH` concordant,
+  `_LOW[:10]` and `[0.5] * 10` discordant), and the fully separated outflow
+  set that clears every gate; each measured under `bfn` as a family of one
+  with a 30-iteration bootstrap at seed 11, once with
+  `bootstrap_options.diagnostic` off, once on, and once on with
+  `summary_only`. Expected outputs: `all_bootstrap` and the
+  `bootstrap_perm_stat_ci_*` bounds are equal with the record on and off, and
+  the lean run carries no record; the diagnostic run's six recorded lists
+  (DCT and KS p-values, permutation statistic, both one-tailed p-values,
+  decisions) each hold one entry per iteration, every statistic and p-value
+  is present, and every decision is `greater`/`less`/`inconclusive`;
+  replaying `_classify_introgression` over the recorded p-values (at
+  `alpha = 0.05`, the raw value being the corrected one as a family of one)
+  and decisions rebuilds `all_bootstrap` exactly; in summary form the
+  decision counts sum to 30 and match the list, and the p-value summary
+  counts 30 of 30. Purpose: a diagnostic bootstrap measures all three tests
+  in every iteration — the direction test included where the vote never
+  reads it — records the vote's own numbers where the vote did, and changes
+  no vote, because the extra direction tests draw from their own stream.
 - `test_inline_bonferroni_matches_the_family_correction` — Inputs (parametrized
   over family sizes 1, 7, 250): p=0.004 padded out to that family. Expected
   outputs: `_adjust_p_value_inline` equals the full `_adjust_p_values` pass on

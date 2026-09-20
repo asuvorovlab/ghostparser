@@ -175,7 +175,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 - `--no-consolidation`, `--no-bootstrap`, `--diagnostic`
 - `--preflight-data-check`, `--preflight-triplet-cap`
 
-**Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, and the `bootstrap_options` block (`iterations`, `debug_mode`, `summary_only`).
+**Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, and the `bootstrap_options` block (`iterations`, `diagnostic`, `summary_only`).
 
 The statistical tests always use the scipy/statsmodels backend. The full key reference is in the **[Configuration Guide](CONFIG.md#orchestrator-primary-module)**.
 
@@ -219,7 +219,7 @@ Consolidation details:
 - By default a triplet is measured only as far as the decision cascade reads. Only the third gate consults the permutation direction test, so a triplet an earlier gate already decided skips it instead of computing a result nothing reads. The tree-height test is skipped below a settled count gate under `no` and `bfn`, whose correction of each p-value depends on nothing but the triplet count; under `holm`, `fdr_bh` and `fdr_by` it is measured for every triplet, because those corrections rank every triplet's value against the others' and need every one of them. See [CONFIG.md](CONFIG.md#diagnostic).
 - `--diagnostic` (`diagnostic: true`) measures all three tests for every triplet, so every `ks_*` and `perm_*` column is filled. Use it when you want the direction test's statistics everywhere for debugging. Expect the default to be somewhat faster, not dramatically so: most of a run's time is the bootstrap's permutation tests, and every iteration of a triplet that reaches the third gate runs one either way.
 - **This changes no classification, under any correction method.** Two things guarantee it. No supported correction can lower a p-value below its raw value, so a gate that failed raw cannot clear once corrected — the skipped test could never have been reached. And the direction test's p-values are corrected inside the test, never across triplets, so leaving one triplet's test unrun moves no other triplet's numbers; that is what makes it safe to skip triplet by triplet while the run is still streaming, before the run-wide correction has seen the whole family.
-- The bootstrap is not affected by `diagnostic`: every iteration measures only what its vote reads, under the same per-correction rule, and `bootstrap_options.debug_mode` is its own switch for measuring and writing the count and tree-height tests in every iteration.
+- The bootstrap is not affected by `diagnostic`: every iteration measures only what its vote reads, under the same per-correction rule. `bootstrap_options.diagnostic` is its own switch: it measures all three tests in every iteration and writes them per iteration, without moving a single vote.
 - Skipped triplets have an empty `perm_*` block and carry `perm_note: direction_test_not_consulted`, so a deliberate skip is distinguishable from a test that ran and hit a guard. Under `no`/`bfn` a triplet the count gate settled also leaves the tree-height columns empty. `metrics.txt` reports the setting, says what the run skips under its correction, and counts the skipped tests and the triplets clearing each gate.
 
 #### Direction Test Behavior
@@ -235,7 +235,7 @@ Consolidation details:
 
 #### Bootstrap Behavior
 
-- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`, which skips the iterations rather than merely dropping their columns; the remaining controls (`iterations`, `debug_mode`, `summary_only`) are set through the config file's `bootstrap_options` block.
+- Bootstrap is enabled by default and can be disabled with `--no-bootstrap`, which skips the iterations rather than merely dropping their columns; the remaining controls (`iterations`, `diagnostic`, `summary_only`) are set through the config file's `bootstrap_options` block.
 - Bootstrap iterations re-run the direction test at one fifth of the configured resample budget.
 - Iterations are judged against the same *corrected* p-value thresholds as the reported classification, so `bootstrap_value` measures support for the decision actually made. With `no` or `bfn` the correction is applied as each iteration runs; the rank-based methods need every triplet's p-value for the same iteration, so those are corrected after the streaming pass.
 - Iterations with incomplete required metrics are counted as `ambiguous` and processing continues.
@@ -327,17 +327,16 @@ When bootstrap is enabled, the TSV adds:
 - `bootstrap_value`
 - `all_bootstrap`
 
-When bootstrap debug mode is enabled, the TSV also adds:
+When the bootstrap is diagnostic (`bootstrap_options.diagnostic: true`), every iteration measures all three tests and the TSV also adds, one entry per iteration:
 
-- `bootstrap_dct_stats`
-- `bootstrap_dct_p_value`
-- `bootstrap_ks_stats`
-- `bootstrap_ks_p_value`
-- `bootstrap_con_mean`
-- `bootstrap_dis_mean`
+- `bootstrap_dct_stats`, `bootstrap_dct_p_value`
+- `bootstrap_ks_stats`, `bootstrap_ks_p_value`
+- `bootstrap_perm_stats`, `bootstrap_perm_p_greater`, `bootstrap_perm_p_less` — the studentized statistic and the raw one-tailed p-values of the iteration's direction test
+- `bootstrap_perm_decisions` — `greater`, `less` or `inconclusive` per iteration
+- `bootstrap_con_mean`, `bootstrap_dis_mean`
 - `bootstrap_gene_tree_heights`
 
-Bootstrap payload columns are serialized as JSON strings by default.
+The columns are JSON strings. With `summary_only: true` each numeric column holds a `count`/`non_null_count`/`mean`/`median`/`min`/`max` summary and `bootstrap_perm_decisions` a count per decision. A diagnostic bootstrap runs a direction test in every iteration of every triplet, including the ones an earlier gate settled, so it costs substantially more than a plain run; use it on a filtered set of triplets or species.
 
 #### Example Usage
 
@@ -455,7 +454,7 @@ Orchestrator defaults are defined in `ghostparser/orchestrator/config.py`:
 - `bootstrap`: `true`
 - `bootstrap_options.iterations`: `100`
 - `seed`: unset (drawn per run and reported)
-- `bootstrap_options.debug_mode`: `false`
+- `bootstrap_options.diagnostic`: `false`
 - `bootstrap_options.summary_only`: `false`
 
 ---
@@ -510,7 +509,7 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Config field overwrite must be a boolean when provided` / `Config field no_overwrite must be a boolean when provided`
    The overwrite flags were given non-boolean values.
 - `Config field bootstrap_options.* ...`
-   Bootstrap options failed validation (`iterations >= 1`, boolean debug/summary flags).
+   Bootstrap options failed validation (`iterations >= 1`, boolean diagnostic/summary flags).
 
 ### Tree Preprocessing (`ghostparser.orchestrator.trees`)
 
@@ -547,7 +546,7 @@ This section summarizes user-facing errors and validation failures that GhostPar
 - `Unsupported summary statistic name: ...`
    An unsupported statistic was requested during summary-metric computation.
 - `Bootstrap payload is not JSON-serializable: ...`
-   Bootstrap debug output could not be converted to TSV-safe JSON.
+   Bootstrap diagnostic output could not be converted to TSV-safe JSON.
 
 ### ML Dataset and Feature Validation (`ghostparser.ml.ml_utils`)
 

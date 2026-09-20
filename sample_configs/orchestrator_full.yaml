@@ -70,7 +70,7 @@ min_support_value: 0.5
 bootstrap: true
 bootstrap_options:
   iterations: 100
-  debug_mode: false
+  diagnostic: false
   summary_only: false
 
 # --- Extra outputs ---------------------------------------------------------

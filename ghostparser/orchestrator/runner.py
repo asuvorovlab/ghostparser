@@ -345,7 +345,7 @@ def run_orchestrator(config):
         metrics.log(f"Seed: {run_seed} ({seed_origin})")
         metrics.log(f"Bootstrap enabled: {config['bootstrap']}")
         metrics.log(f"Bootstrap iterations: {config['bootstrap_iterations']}")
-        metrics.log(f"Bootstrap debug mode: {config['bootstrap_debug_mode']}")
+        metrics.log(f"Bootstrap diagnostic: {config['bootstrap_diagnostic']}")
         metrics.log(f"Generate summary statistics TSV: {config['generate_summary_stats']}")
         metrics.log(f"Shape diagnostics: {config['shape_diagnostics']}")
         metrics.log(f"Diagnostic: {_describe_diagnostic(config)}")
@@ -547,7 +547,7 @@ def run_orchestrator(config):
                 "collect_summary_statistics": config["generate_summary_stats"],
                 "bootstrap_options": {
                     "iterations": config["bootstrap_iterations"],
-                    "debug_mode": config["bootstrap_debug_mode"],
+                    "diagnostic": config["bootstrap_diagnostic"],
                     "summary_only": config["bootstrap_summary_only"],
                 },
                 "triplet_seed": run_seed,
@@ -592,7 +592,7 @@ def run_orchestrator(config):
                 dct_method=config["discordant_test"],
                 p_value_correction=config["p_value_correction"],
                 bootstrap=config["bootstrap"],
-                bootstrap_debug_mode=config["bootstrap_debug_mode"],
+                bootstrap_diagnostic=config["bootstrap_diagnostic"],
             )
             metrics.log("✓ Fused extraction + inference complete")
             metrics.log(f"  Output: {final_tsv}")

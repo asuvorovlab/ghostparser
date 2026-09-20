@@ -482,6 +482,102 @@ def test_every_supported_correction_is_monotone(method):
     assert all(a >= p - 1e-12 for a, p in zip(adjusted, p_values))
 
 
+@pytest.mark.parametrize(
+    "con, dis1, dis2",
+    [
+        # An even 10/10 discordant split fails the count gate in most
+        # resamples, so most of the direction tests are the record's own.
+        (_HIGH, _LOW[:10], [0.5] * 10),
+        # Every gate clears in most resamples, so most direction tests are the
+        # vote's own and the record must carry exactly those.
+        (_HIGH, _LOW, [0.1] * 2),
+    ],
+    ids=["settled_at_count_gate", "reaches_direction_gate"],
+)
+def test_diagnostic_bootstrap_records_every_test_without_moving_a_vote(con, dis1, dis2):
+    """A diagnostic bootstrap measures all three tests per iteration and changes no vote.
+
+    The record must be complete -- one entry per iteration for every test,
+    the direction test included even where a failed gate meant the vote never
+    read it -- and it must be the vote's own numbers: replaying the cascade
+    over the recorded p-values and decisions rebuilds ``all_bootstrap``
+    exactly. The extra direction tests draw from their own stream, so the
+    votes and the studentized interval are identical with the record on or
+    off. In summary form the decision counts sum to the iteration count.
+    """
+    iterations = 30
+    runs = {}
+    for diagnostic in (False, True):
+        result = pinf.analyze_triplet_from_observations(
+            _TRIPLET,
+            _observations(con, dis1, dis2),
+            species_subtree=_SPECIES_SUBTREE,
+            bootstrap_options={"iterations": iterations, "diagnostic": diagnostic},
+            p_value_correction="bfn",
+            family_size=1,
+            triplet_seed=11,
+        )
+        runs[diagnostic] = pinf._apply_triplet_result_p_value_correction(
+            [result], alpha_dct=0.05, alpha_ks=0.05, method="bfn"
+        )[0]
+    lean, full = runs[False], runs[True]
+
+    assert full.all_bootstrap == lean.all_bootstrap
+    assert full.bootstrap_perm_stat_ci_low == lean.bootstrap_perm_stat_ci_low
+    assert full.bootstrap_perm_stat_ci_high == lean.bootstrap_perm_stat_ci_high
+    assert lean.bootstrap_perm_decisions is None
+
+    record = {
+        "dct_p": full.bootstrap_dct_p_value,
+        "ks_p": full.bootstrap_ks_p_value,
+        "perm_stat": full.bootstrap_perm_stats,
+        "perm_p_greater": full.bootstrap_perm_p_greater,
+        "perm_p_less": full.bootstrap_perm_p_less,
+        "decision": full.bootstrap_perm_decisions,
+    }
+    for values in record.values():
+        assert len(values) == iterations
+    assert set(record["decision"]) <= {"greater", "less", "inconclusive"}
+    # Every iteration resampled with spread in both groups, so the direction
+    # test ran to a statistic and a p-value pair everywhere.
+    assert all(value is not None for value in record["perm_stat"])
+    assert all(value is not None for value in record["perm_p_greater"])
+
+    # Under bfn as a family of one, a gate is judged on the raw p-value; the
+    # cascade over the recorded values must rebuild the votes exactly.
+    tally = {}
+    for dct_p, ks_p, decision in zip(record["dct_p"], record["ks_p"], record["decision"]):
+        classification, _ = pinf._classify_introgression(
+            dct_p <= 0.05, ks_p <= 0.05, decision
+        )
+        tally[classification] = tally.get(classification, 0) + 1
+    rebuilt = {label: tally.get(label, 0) / iterations for label in full.all_bootstrap}
+    assert rebuilt == full.all_bootstrap
+
+    summarized = pinf.analyze_triplet_from_observations(
+        _TRIPLET,
+        _observations(con, dis1, dis2),
+        species_subtree=_SPECIES_SUBTREE,
+        bootstrap_options={
+            "iterations": iterations,
+            "diagnostic": True,
+            "summary_only": True,
+        },
+        p_value_correction="bfn",
+        family_size=1,
+        triplet_seed=11,
+    )
+    decisions = summarized.bootstrap_perm_decisions
+    assert decisions["count"] == iterations
+    assert (
+        decisions["greater"] + decisions["less"] + decisions["inconclusive"]
+        == iterations
+    )
+    assert decisions["greater"] == record["decision"].count("greater")
+    assert summarized.bootstrap_perm_p_greater["count"] == iterations
+    assert summarized.bootstrap_perm_p_greater["non_null_count"] == iterations
+
+
 @pytest.mark.parametrize("family_size", [1, 7, 250])
 def test_inline_bonferroni_matches_the_family_correction(family_size):
     """Correcting one p-value from the family size alone reproduces the full pass."""

@@ -112,7 +112,7 @@ def test_config_only_keys_and_nested_blocks_flatten_from_a_file(tmp_path):
         "alpha_dct": 0.02,
         "seed": 7,
         "bootstrap_iterations": 25,
-        "bootstrap_debug_mode": True,
+        "bootstrap_diagnostic": True,
         "bootstrap_summary_only": True,
     }
     config_path = _payload(
@@ -123,7 +123,7 @@ def test_config_only_keys_and_nested_blocks_flatten_from_a_file(tmp_path):
         generate_summary_stats=True,
         alpha_dct=0.02,
         seed=7,
-        bootstrap_options={"iterations": 25, "debug_mode": True, "summary_only": True},
+        bootstrap_options={"iterations": 25, "diagnostic": True, "summary_only": True},
     )
 
     config = load_orchestrator_config(str(config_path))

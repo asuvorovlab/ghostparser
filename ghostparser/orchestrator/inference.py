@@ -8,6 +8,7 @@ use the scipy/statsmodels backend.
 import hashlib
 import json
 import math
+from collections import Counter
 from dataclasses import dataclass, replace
 
 import dendropy
@@ -29,7 +30,7 @@ from .config import (
     DEFAULT_ALPHA_KS,
     DEFAULT_ALPHA_PERM,
     DEFAULT_BOOTSTRAP,
-    DEFAULT_BOOTSTRAP_DEBUG_MODE,
+    DEFAULT_BOOTSTRAP_DIAGNOSTIC,
     DEFAULT_BOOTSTRAP_ITERATIONS,
     DEFAULT_BOOTSTRAP_SUMMARY_ONLY,
     DEFAULT_DIAGNOSTIC,
@@ -107,13 +108,17 @@ _BOOTSTRAP_CLASSES = [
     "ambiguous",
 ]
 
-# Per-iteration bootstrap-debug accumulator keys, aligned with the metric tuple
-# returned by ``_iteration_full`` (excluding the leading classification).
-_BOOTSTRAP_DEBUG_KEYS = (
+# Per-iteration bootstrap-diagnostic accumulator keys, aligned with the metric
+# tuple ``_iteration_outcome`` returns when asked to collect one.
+_BOOTSTRAP_DIAGNOSTIC_KEYS = (
     "dct_stats",
     "dct_p_values",
     "ks_stats",
     "ks_p_values",
+    "perm_stats",
+    "perm_p_greater",
+    "perm_p_less",
+    "perm_decisions",
     "con_summaries",
     "dis_summaries",
 )
@@ -243,6 +248,10 @@ class TripletPipelineResult:
     bootstrap_dct_p_value: dict | list | None = None
     bootstrap_ks_stats: dict | list | None = None
     bootstrap_ks_p_value: dict | list | None = None
+    bootstrap_perm_stats: dict | list | None = None
+    bootstrap_perm_p_greater: dict | list | None = None
+    bootstrap_perm_p_less: dict | list | None = None
+    bootstrap_perm_decisions: dict | list | None = None
     bootstrap_con_summary: dict | list | None = None
     bootstrap_dis_summary: dict | list | None = None
     bootstrap_gene_tree_heights: list[float] | None = None
@@ -1370,17 +1379,22 @@ def _iteration_outcome(
     permutation_kwargs,
     rng,
     policy,
-    collect_metrics=False,
+    diagnostic=False,
+    diagnostic_rng=None,
 ):
     """Run one bootstrap iteration's tests over its resampled heights.
 
-    Measures what the run's correction will read, and nothing more whatever the
-    run's ``diagnostic`` setting, which reaches only the point estimate. The
-    direction test is skipped once an upstream gate has failed, which no
-    supported correction can undo; the tree-height test is skipped below a
-    failed count gate only under an inline method, whose fixed family size
-    means the value would go unread. Neither skip can move a vote: a failed
-    count gate classifies the iteration before either later test is read.
+    Measures what the run's correction will read, and nothing more unless the
+    bootstrap is diagnostic (the run-level ``diagnostic`` reaches only the
+    point estimate). The direction test is skipped once an upstream gate has
+    failed, which no supported correction can undo; the tree-height test is
+    skipped below a failed count gate only under an inline method, whose fixed
+    family size means the value would go unread. Neither skip can move a vote:
+    a failed count gate classifies the iteration before either later test is
+    read. A diagnostic bootstrap measures all three tests every iteration and
+    records them; the direction tests it adds below a failed gate draw from
+    ``diagnostic_rng``, so the vote's own draws are the same with or without
+    them.
 
     Args:
         n_dis1: Discordant1 count in the resample.
@@ -1393,9 +1407,10 @@ def _iteration_outcome(
         permutation_kwargs: Keyword arguments forwarded to the permutation test.
         rng: A ``numpy.random.Generator`` for the permutation resampling.
         policy: The run's :class:`_CorrectionPolicy`.
-        collect_metrics: When ``True``, compute every statistic even where the
-            cascade no longer needs it, for bootstrap-debug output.
-
+        diagnostic: When ``True``, compute every statistic even where the
+            cascade no longer needs it, for the bootstrap-diagnostic record.
+        diagnostic_rng: A ``numpy.random.Generator`` for the direction tests
+            only the record reads; required when ``diagnostic`` is ``True``.
 
     Returns:
         A ``(dct_p_value, ks_p_value, direction, metrics)`` tuple; each of the
@@ -1411,7 +1426,7 @@ def _iteration_outcome(
     # A rank-based method reads every member of the per-iteration family, so
     # the deferred path always measures KS; an inline method reads a member only
     # if its own count gate cleared, so the rest go unmeasured.
-    if collect_metrics or not (policy.inline and dct_failed):
+    if diagnostic or not (policy.inline and dct_failed):
         ks_statistic, ks_p_value = run_two_sample_ks_test(dis1_heights, con_heights)
 
     ks_failed = (
@@ -1419,22 +1434,39 @@ def _iteration_outcome(
         and _gate_p_value(ks_p_value, policy) > alpha_ks
     )
 
+    # ``direction`` is what the vote reads and stays ``None`` below a failed
+    # gate; ``recorded`` is what the diagnostic record keeps, which is the
+    # vote's own test where one ran and an extra one otherwise.
     direction = None
+    recorded = None
+    permutation_result = None
     if not dct_failed and not ks_failed:
-        direction, _ = _decide_direction(
+        direction, permutation_result = _decide_direction(
             con_heights,
             dis1_heights,
             permutation_kwargs=permutation_kwargs,
             rng=rng,
         )
+        recorded = direction
+    elif diagnostic:
+        recorded, permutation_result = _decide_direction(
+            con_heights,
+            dis1_heights,
+            permutation_kwargs=permutation_kwargs,
+            rng=diagnostic_rng,
+        )
 
     metrics = None
-    if collect_metrics:
+    if diagnostic:
         metrics = (
             dct_statistic,
             dct_p_value,
             ks_statistic,
             ks_p_value,
+            None if permutation_result is None else permutation_result.statistic,
+            None if permutation_result is None else permutation_result.p_greater,
+            None if permutation_result is None else permutation_result.p_less,
+            recorded,
             _mean(con_heights),
             _mean(dis1_heights),
         )
@@ -1521,6 +1553,24 @@ def _numeric_summary(values):
     }
 
 
+def _decision_summary(values):
+    """Count the direction decisions of a diagnostic bootstrap's iterations.
+
+    Args:
+        values: Iterable of decision labels.
+
+    Returns:
+        A dict with ``count`` and one entry per decision label, the three the
+        bootstrap can reach always present.
+    """
+    counts = Counter(values)
+    summary = {"count": len(values)}
+    for label in (DECISION_GREATER, DECISION_LESS, DECISION_INCONCLUSIVE):
+        summary[label] = counts.pop(label, 0)
+    summary.update(sorted(counts.items()))
+    return summary
+
+
 def _finalize_bootstrap_metric(values, summary_only):
     """Return a compact summary of a bootstrap metric, or the raw per-iteration list.
 
@@ -1534,15 +1584,17 @@ def _finalize_bootstrap_metric(values, summary_only):
         unchanged.
     """
     if summary_only:
+        if values and isinstance(values[0], str):
+            return _decision_summary(values)
         return _numeric_summary(values)
     return values
 
 
 def _serialize_bootstrap_value(value):
-    """Serialize a bootstrap-debug structure for TSV output as strict JSON.
+    """Serialize a bootstrap-diagnostic structure for TSV output as strict JSON.
 
     Args:
-        value: The bootstrap-debug payload (list or dict), or ``None``.
+        value: The bootstrap-diagnostic payload (list or dict), or ``None``.
 
     Returns:
         A compact JSON string, or an empty string when ``value`` is ``None``.
@@ -1560,34 +1612,35 @@ def _serialize_bootstrap_value(value):
         ) from exc
 
 
-def _append_iteration_debug(debug, metrics):
-    """Append one iteration's debug metrics to the accumulator lists.
+def _append_iteration_record(record, metrics):
+    """Append one iteration's diagnostic metrics to the accumulator lists.
 
     Args:
-        debug: Accumulator dict keyed by :data:`_BOOTSTRAP_DEBUG_KEYS`.
-        metrics: The six per-iteration metric values, in
-            :data:`_BOOTSTRAP_DEBUG_KEYS` order.
+        record: Accumulator dict keyed by :data:`_BOOTSTRAP_DIAGNOSTIC_KEYS`.
+        metrics: The per-iteration metric values, in
+            :data:`_BOOTSTRAP_DIAGNOSTIC_KEYS` order.
     """
-    for key, value in zip(_BOOTSTRAP_DEBUG_KEYS, metrics):
-        debug[key].append(value)
+    for key, value in zip(_BOOTSTRAP_DIAGNOSTIC_KEYS, metrics):
+        record[key].append(value)
 
 
 def _bootstrap_payload(
     fractions,
-    debug,
+    record,
     summary_only,
     deferred=None,
     studentized_ci=(None, None),
 ):
-    """Assemble the bootstrap payload with optional finalized debug metrics.
+    """Assemble the bootstrap payload with the optional finalized diagnostic record.
 
     ``bootstrap_value`` is the fraction behind the reported classification,
     which the run-wide pass decides, so it is not part of the payload.
 
     Args:
         fractions: Per-class fractions, or ``None`` when still deferred.
-        debug: The per-iteration debug accumulator, or ``None`` when disabled.
-        summary_only: When ``True``, finalize debug metrics as compact summaries.
+        record: The per-iteration diagnostic accumulator, or ``None`` when the
+            bootstrap is not diagnostic.
+        summary_only: When ``True``, finalize the record as compact summaries.
         deferred: A :class:`DeferredBootstrapRecord` when the votes cannot be
             tallied until every triplet's p-values are in hand.
         studentized_ci: The ``(low, high)`` percentile interval on the
@@ -1595,28 +1648,32 @@ def _bootstrap_payload(
 
     Returns:
         A dict with ``all_bootstrap``, ``deferred``, ``studentized_ci``, and
-        the six ``bootstrap_*`` debug entries (each ``None`` when ``debug`` is
-        ``None``).
+        the ``bootstrap_*`` diagnostic entries (each ``None`` when ``record``
+        is ``None``).
     """
     payload = {
         "all_bootstrap": fractions,
         "deferred": deferred,
         "studentized_ci": studentized_ci,
     }
-    debug_columns = (
+    diagnostic_columns = (
         "bootstrap_dct_stats",
         "bootstrap_dct_p_value",
         "bootstrap_ks_stats",
         "bootstrap_ks_p_value",
+        "bootstrap_perm_stats",
+        "bootstrap_perm_p_greater",
+        "bootstrap_perm_p_less",
+        "bootstrap_perm_decisions",
         "bootstrap_con_summary",
         "bootstrap_dis_summary",
     )
-    if debug is None:
-        for column in debug_columns:
+    if record is None:
+        for column in diagnostic_columns:
             payload[column] = None
     else:
-        for column, key in zip(debug_columns, _BOOTSTRAP_DEBUG_KEYS):
-            payload[column] = _finalize_bootstrap_metric(debug[key], summary_only)
+        for column, key in zip(diagnostic_columns, _BOOTSTRAP_DIAGNOSTIC_KEYS):
+            payload[column] = _finalize_bootstrap_metric(record[key], summary_only)
     return payload
 
 
@@ -1670,8 +1727,9 @@ def _run_bootstrap_iterations(
     permutation_rng,
     policy,
     alpha_perm,
-    debug_mode=False,
+    diagnostic=False,
     summary_only=False,
+    diagnostic_rng=None,
 ):
     """Resample observations and aggregate per-iteration classifications.
 
@@ -1696,17 +1754,21 @@ def _run_bootstrap_iterations(
             resample sequence stays independent of how many permutations run.
         policy: The run's :class:`_CorrectionPolicy`.
         alpha_perm: Sets the level of the studentized-difference interval.
-        debug_mode: When ``True``, collect per-iteration debug metrics.
-        summary_only: When ``True`` (and debug), emit compact summaries instead
-            of full per-iteration lists.
+        diagnostic: When ``True``, measure all three tests in every iteration
+            and keep the per-iteration record.
+        summary_only: When ``True`` (and diagnostic), emit compact summaries
+            instead of full per-iteration lists.
+        diagnostic_rng: A separate generator for the direction tests only the
+            diagnostic record reads, so the votes' draws do not move when the
+            record is kept.
 
     Returns:
         The payload dict built by :func:`_bootstrap_payload`.
     """
-    debug = {key: [] for key in _BOOTSTRAP_DEBUG_KEYS} if debug_mode else None
+    record = {key: [] for key in _BOOTSTRAP_DIAGNOSTIC_KEYS} if diagnostic else None
 
     if iterations <= 0:
-        return _bootstrap_payload(_bootstrap_fractions({}, 1), debug, summary_only)
+        return _bootstrap_payload(_bootstrap_fractions({}, 1), record, summary_only)
 
     class_counts = {}
     dct_p_values = np.ones(iterations, dtype=np.float64)
@@ -1758,7 +1820,8 @@ def _run_bootstrap_iterations(
             permutation_kwargs,
             permutation_rng,
             policy,
-            collect_metrics=debug_mode,
+            diagnostic=diagnostic,
+            diagnostic_rng=diagnostic_rng,
         )
 
         studentized[index] = studentized_mean_diff(con_heights, dis1_heights)
@@ -1773,22 +1836,22 @@ def _run_bootstrap_iterations(
             ks_p_values[index] = ks_p_value
             directions[index] = _DIRECTION_CODES.get(direction, _DIRECTION_SKIPPED)
 
-        if debug is not None:
-            _append_iteration_debug(debug, metrics)
+        if record is not None:
+            _append_iteration_record(record, metrics)
 
     studentized_ci = _studentized_percentile_interval(studentized, alpha_perm)
 
     if policy.inline:
         return _bootstrap_payload(
             _bootstrap_fractions(class_counts, iterations),
-            debug,
+            record,
             summary_only,
             studentized_ci=studentized_ci,
         )
 
     return _bootstrap_payload(
         None,
-        debug,
+        record,
         summary_only,
         deferred=DeferredBootstrapRecord(
             dct_p_values=dct_p_values,
@@ -1828,7 +1891,7 @@ def _finalize_triplet_analysis(
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
         permutation_kwargs: Keyword arguments forwarded to the permutation test.
-        bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
+        bootstrap_options: Optional dict; ``iterations``/``diagnostic``/
             ``summary_only`` are read.
         triplet_seed: Optional base seed for deterministic resampling.
         p_value_correction: The run's correction method.
@@ -1849,8 +1912,8 @@ def _finalize_triplet_analysis(
     # child stream. That keeps the bootstrap resample sequence identical whether
     # or not the permutation test runs, and independent of how many resamples
     # any single adaptive test happens to draw.
-    point_seed, bootstrap_seed, bootstrap_perm_seed, shape_seed = (
-        _build_triplet_seed_sequence(triplet_seed, triplet).spawn(4)
+    point_seed, bootstrap_seed, bootstrap_perm_seed, shape_seed, diagnostic_seed = (
+        _build_triplet_seed_sequence(triplet_seed, triplet).spawn(5)
     )
 
     policy = _correction_policy(p_value_correction, family_size)
@@ -1879,10 +1942,12 @@ def _finalize_triplet_analysis(
 
     options = dict(bootstrap_options or {})
     iterations = int(options.get("iterations", DEFAULT_BOOTSTRAP_ITERATIONS))
-    debug_mode = bool(options.get("debug_mode", DEFAULT_BOOTSTRAP_DEBUG_MODE))
+    diagnostic_bootstrap = bool(
+        options.get("diagnostic", DEFAULT_BOOTSTRAP_DIAGNOSTIC)
+    )
     summary_only = (
         bool(options.get("summary_only", DEFAULT_BOOTSTRAP_SUMMARY_ONLY))
-        if debug_mode
+        if diagnostic_bootstrap
         else False
     )
 
@@ -1910,12 +1975,13 @@ def _finalize_triplet_analysis(
         permutation_rng=np.random.default_rng(bootstrap_perm_seed),
         policy=policy,
         alpha_perm=permutation_kwargs.get("alpha", DEFAULT_ALPHA_PERM),
-        debug_mode=debug_mode,
+        diagnostic=diagnostic_bootstrap,
         summary_only=summary_only,
+        diagnostic_rng=np.random.default_rng(diagnostic_seed),
     )
 
     bootstrap_gene_tree_heights = None
-    if debug_mode:
+    if diagnostic_bootstrap:
         raw_heights = [tree_height for _, tree_height, _ in observations]
         bootstrap_gene_tree_heights = _finalize_bootstrap_metric(
             raw_heights, summary_only
@@ -1932,6 +1998,10 @@ def _finalize_triplet_analysis(
         bootstrap_dct_p_value=bootstrap_payload["bootstrap_dct_p_value"],
         bootstrap_ks_stats=bootstrap_payload["bootstrap_ks_stats"],
         bootstrap_ks_p_value=bootstrap_payload["bootstrap_ks_p_value"],
+        bootstrap_perm_stats=bootstrap_payload["bootstrap_perm_stats"],
+        bootstrap_perm_p_greater=bootstrap_payload["bootstrap_perm_p_greater"],
+        bootstrap_perm_p_less=bootstrap_payload["bootstrap_perm_p_less"],
+        bootstrap_perm_decisions=bootstrap_payload["bootstrap_perm_decisions"],
         bootstrap_con_summary=bootstrap_payload["bootstrap_con_summary"],
         bootstrap_dis_summary=bootstrap_payload["bootstrap_dis_summary"],
         bootstrap_gene_tree_heights=bootstrap_gene_tree_heights,
@@ -1972,7 +2042,7 @@ def analyze_triplet_from_observations(
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
         permutation_kwargs: Keyword arguments forwarded to the permutation test.
-        bootstrap_options: Optional dict; ``iterations``/``debug_mode``/
+        bootstrap_options: Optional dict; ``iterations``/``diagnostic``/
             ``summary_only`` are read.
         triplet_seed: Optional base seed for deterministic resampling.
         p_value_correction: The run's correction method.
@@ -2300,7 +2370,7 @@ def write_pipeline_results(
     dct_method=DEFAULT_DISCORDANT_TEST,
     p_value_correction=DEFAULT_P_VALUE_CORRECTION,
     bootstrap=DEFAULT_BOOTSTRAP,
-    bootstrap_debug_mode=DEFAULT_BOOTSTRAP_DEBUG_MODE,
+    bootstrap_diagnostic=DEFAULT_BOOTSTRAP_DIAGNOSTIC,
 ):
     """Write per-triplet results to a TSV file.
 
@@ -2311,7 +2381,7 @@ def write_pipeline_results(
         p_value_correction: Correction method; names the corrected columns, and
             omits them under ``no``.
         bootstrap: Whether to include the bootstrap columns.
-        bootstrap_debug_mode: Whether to also include the bootstrap-debug
+        bootstrap_diagnostic: Whether to also include the bootstrap-diagnostic
             columns (only meaningful when ``bootstrap`` is ``True``).
 
     Raises:
@@ -2398,13 +2468,17 @@ def write_pipeline_results(
                 "all_bootstrap",
             ]
         )
-        if bootstrap_debug_mode:
+        if bootstrap_diagnostic:
             header.extend(
                 [
                     "bootstrap_dct_stats",
                     "bootstrap_dct_p_value",
                     "bootstrap_ks_stats",
                     "bootstrap_ks_p_value",
+                    "bootstrap_perm_stats",
+                    "bootstrap_perm_p_greater",
+                    "bootstrap_perm_p_less",
+                    "bootstrap_perm_decisions",
                     "bootstrap_con_mean",
                     "bootstrap_dis_mean",
                     "bootstrap_gene_tree_heights",
@@ -2490,13 +2564,17 @@ def write_pipeline_results(
                         _format_all_bootstrap(result.all_bootstrap),
                     ]
                 )
-                if bootstrap_debug_mode:
+                if bootstrap_diagnostic:
                     row.extend(
                         [
                             _serialize_bootstrap_value(result.bootstrap_dct_stats),
                             _serialize_bootstrap_value(result.bootstrap_dct_p_value),
                             _serialize_bootstrap_value(result.bootstrap_ks_stats),
                             _serialize_bootstrap_value(result.bootstrap_ks_p_value),
+                            _serialize_bootstrap_value(result.bootstrap_perm_stats),
+                            _serialize_bootstrap_value(result.bootstrap_perm_p_greater),
+                            _serialize_bootstrap_value(result.bootstrap_perm_p_less),
+                            _serialize_bootstrap_value(result.bootstrap_perm_decisions),
                             _serialize_bootstrap_value(result.bootstrap_con_summary),
                             _serialize_bootstrap_value(result.bootstrap_dis_summary),
                             _serialize_bootstrap_value(

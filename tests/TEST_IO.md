@@ -881,9 +881,9 @@ the permutation test enabled).
   the contract: 7 statistics (mean, median, mode, variance, entropy, min, max)
   x 3 metrics (avg_tree_height, internal_branch, sister_distance) x 3 topology
   classes (concordant, discordant1, discordant2) = **63** metric columns.
-- `test_bootstrap_debug_mode_writes_debug_columns` — the five named debug
-  columns must appear and at least one result must have a populated
-  `bootstrap_dct_stats`.
+- `test_bootstrap_diagnostic_writes_its_columns` — the nine named
+  per-iteration columns must appear and at least one result must have a
+  populated `bootstrap_dct_stats` and `bootstrap_perm_decisions`.
 - `test_consolidation_preserves_run_outputs` — consolidation writes into
   `consolidation/`, so the run's own files (results TSV, `metrics.txt`, both
   processed trees) must all still exist afterwards.
@@ -1056,11 +1056,11 @@ equal today.
 **Input:** a YAML file with `discordant_test: z-test`,
 `tree_height_calculation_strategy: SIS`, `min_support_value: 0.9`,
 `generate_summary_stats: true`, `alpha_dct: 0.02`, `seed: 7`, and
-`bootstrap_options: {iterations: 25, debug_mode: true, summary_only: true}`.
+`bootstrap_options: {iterations: 25, diagnostic: true, summary_only: true}`.
 
 **Derivation:** the first four keys have no CLI flag, so the file is the only
 way to set them, and each is read back as written. The nested block is
-flattened onto `bootstrap_iterations = 25`, `bootstrap_debug_mode = True`,
+flattened onto `bootstrap_iterations = 25`, `bootstrap_diagnostic = True`,
 `bootstrap_summary_only = True`. The nine values are compared as one dict
 against the nine written, so any one of them resolving to something else fails
 naming the key.
@@ -1668,6 +1668,36 @@ is the point estimate's contribution plus the cleared count; under `holm`
 every iteration's value is a rank-based family member and is measured, so the
 total is the point estimate's contribution plus 20.
 
+### `test_diagnostic_bootstrap_records_every_test_without_moving_a_vote`
+
+**Inputs:** two observation sets — `(_HIGH, _LOW[:10], [0.5] * 10)`, ten
+concordant heights spread over 0.85–0.94 against 10 and 10 discordant trees,
+and the outflow set `(_HIGH, _LOW, [0.1] * 2)` — each measured with
+`family_size=1` under `bfn`, a 30-iteration bootstrap at seed 11, with
+`bootstrap_options.diagnostic` off, on, and on with `summary_only`, then
+decided as a family of one.
+
+**Derivation:** the first set's 10/10 split gives `chisquare([10, 10])` a
+p-value of 1.0, and a resample clears the count gate only when its split
+reaches 15/5 or wider (`p ≈ 0.025`), so most iterations fail at the first
+gate and their direction tests are ones only the record asked for. The second
+set clears every gate in most resamples, so most direction tests are the
+vote's own. In both, every group keeps its spread under resampling — the
+heights are distinct — so no guard fires and every iteration records a
+statistic and a p-value pair.
+
+The vote's direction tests draw from the bootstrap permutation stream; the
+record's extra tests draw from a fifth child of the triplet's seed sequence,
+so the vote stream is consumed identically with the record on or off and
+`all_bootstrap` and the studentized interval must be equal. As a family of
+one under `bfn`, `_gate_p_value` is `min(1, p × 1) = p`, so replaying
+`_classify_introgression(dct_p <= 0.05, ks_p <= 0.05, decision)` over the
+recorded iterations is the cascade the vote applied, and the tally it rebuilds
+must equal `all_bootstrap` exactly — which also proves the recorded decision
+in a gate-cleared iteration is the one the vote read. With `summary_only`,
+`_decision_summary` counts the labels, so `greater + less + inconclusive` is
+30 and `greater` matches the list's count; `_numeric_summary` on the
+`p_greater` list reports `count` 30 and `non_null_count` 30.
 
 ### `test_shifted_statistics_match_an_explicit_shift`
 

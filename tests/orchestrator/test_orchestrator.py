@@ -497,10 +497,10 @@ def test_generate_summary_stats_writes_tsv(
 
 
 @pytest.mark.output
-def test_bootstrap_debug_mode_writes_debug_columns(
+def test_bootstrap_diagnostic_writes_its_columns(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
-    """bootstrap_debug_mode adds the bootstrap-debug columns and populates them."""
+    """bootstrap_diagnostic adds the per-iteration columns and populates them."""
     output_folder = tmp_path / "out"
     config = _make_config(
         orchestrator_species_tree,
@@ -508,7 +508,7 @@ def test_bootstrap_debug_mode_writes_debug_columns(
         output_folder,
         processes=1,
     )
-    config["bootstrap_debug_mode"] = True
+    config["bootstrap_diagnostic"] = True
     results = run_orchestrator(config)
 
     tsv_path = output_folder / "orchestrator_triplet_results.tsv"
@@ -518,10 +518,15 @@ def test_bootstrap_debug_mode_writes_debug_columns(
         "bootstrap_dct_p_value",
         "bootstrap_ks_stats",
         "bootstrap_ks_p_value",
+        "bootstrap_perm_stats",
+        "bootstrap_perm_p_greater",
+        "bootstrap_perm_p_less",
+        "bootstrap_perm_decisions",
         "bootstrap_gene_tree_heights",
     ):
         assert column in header
     assert any(result.bootstrap_dct_stats is not None for result in results)
+    assert any(result.bootstrap_perm_decisions is not None for result in results)
 
 
 @pytest.mark.parametrize("processes", [2, 4])
