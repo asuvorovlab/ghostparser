@@ -217,7 +217,8 @@ Consolidation details:
 
 #### How Much Gets Computed
 
-- `--pipeline-mode efficient` (the default) stops measuring a triplet once the decision cascade is settled. Only the third gate consults the permutation direction test, so a triplet an earlier gate already decided skips it instead of computing a result nothing reads. It is much the most expensive of the three tests, so this is where the time goes. Under `no` and `bfn` the tree-height test below a settled count gate is skipped as well; under `holm`, `fdr_bh` and `fdr_by` it is measured for every triplet, because those corrections rank every triplet's value against the others'. See [CONFIG.md](CONFIG.md#pipeline_mode).
+- `--pipeline-mode efficient` (the default) stops measuring a triplet once the decision cascade is settled. Only the third gate consults the permutation direction test, so a triplet an earlier gate already decided skips it instead of computing a result nothing reads. Under `no` and `bfn` the tree-height test below a settled count gate is skipped as well; under `holm`, `fdr_bh` and `fdr_by` it is measured for every triplet, because those corrections rank every triplet's value against the others'. See [CONFIG.md](CONFIG.md#pipeline_mode).
+- Expect it to be somewhat faster than `detailed`, not dramatically so. What it declines is the point estimate's direction test and, under `no`/`bfn`, the tree-height test — in the point estimate and in the bootstrap iterations whose count gate failed, which `detailed` measures so its bootstrap replicates the real procedure. Most of a run's time is the bootstrap's permutation tests, and every iteration of a triplet that reaches the third gate runs one in both modes.
 - **This changes no classification, under any correction method.** Two things guarantee it. No supported correction can lower a p-value below its raw value, so a gate that failed raw cannot clear once corrected — the skipped test could never have been reached. And the direction test's p-values are corrected inside the test, never across triplets, so leaving one triplet's test unrun moves no other triplet's numbers; that is what makes it safe to skip triplet by triplet while the run is still streaming, before the run-wide correction has seen the whole family. `--pipeline-mode detailed` computes all three gates for every triplet and reaches the same conclusions; use it when you want the direction test's statistics everywhere for debugging.
 - Skipped triplets have an empty `perm_*` block and carry `perm_note: direction_test_not_consulted`, so a deliberate skip is distinguishable from a test that ran and hit a guard. Under `no`/`bfn` a triplet the count gate settled also leaves the tree-height columns empty. `metrics.txt` names the mode, says what it skips under the run's correction, and counts the skipped tests and the triplets clearing each gate.
 
@@ -268,7 +269,8 @@ Consolidation details:
 - `--triplet-filter`
 
    - Path to a triplet filter file (comma-separated taxa per line).
-   - When provided, only those triplets are processed.
+   - When provided, only those triplets are processed. Triplets naming a taxon
+     missing from the species tree are skipped with a warning.
 
 - `--species-rename-map`
 
@@ -282,11 +284,12 @@ Consolidation details:
 - `--processes`
 
    - Number of worker processes.
-   - Defaults to `0` (every CPU available to the process — on a cluster node,
-     the job's allocation rather than the whole node). Use `--processes 1` to
-     run serially in the parent process, which is useful for debugging or
-     constrained systems. `metrics.txt` reports the count actually used.
-   - Workers are processes on one machine. A cluster allocation that spans
+   - Defaults to `0`: every CPU the process is allowed to run on, which under a
+     container limit or a job scheduler can be fewer than the machine has. Use
+     `--processes 1` to run serially in the parent process, which is useful for
+     debugging or constrained systems. `metrics.txt` reports the count actually
+     used.
+   - Workers are processes on one machine. On a cluster, a job that spans
      several nodes runs the orchestrator on a single node and leaves the
      others idle; no multi-node execution is implemented.
 

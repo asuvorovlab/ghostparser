@@ -22,9 +22,6 @@ pytest tests/orchestrator/test_orchestrator_inference.py
 pytest tests/orchestrator/test_orchestrator_decision.py::test_classify_introgression_truth_table
 ```
 
-On the SLURM cluster, route the suite onto a compute node rather than running it
-on a login node.
-
 ## Categories
 
 Every test carries at least one of five markers, so a change to one part of the

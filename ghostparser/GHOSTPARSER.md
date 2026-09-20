@@ -106,7 +106,7 @@ Returns an `IntrogressionMapArtifacts` dataclass with `plot_path`, TSV paths, `t
 
 ### Bootstrap averaging denominators
 
-Average bootstrap support values are computed using population-level co-occurrence denominators:
+Average bootstrap support values are computed using population-level co-occurrence denominators. A run without a bootstrap (`bootstrap: false`) has no `bootstrap_value`, and every classified triplet then enters the sums below with a weight of 1:
 
 - **Sampled introgression** for a directed pair (source → target):
 
