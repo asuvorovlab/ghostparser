@@ -231,8 +231,8 @@ class TripletPipelineResult:
     perm_p_greater_corrected: float | None = None
     perm_p_less_corrected: float | None = None
     perm_p_tost: float | None = None
-    bootstrap_stat_ci_low: float | None = None
-    bootstrap_stat_ci_high: float | None = None
+    bootstrap_perm_stat_ci_low: float | None = None
+    bootstrap_perm_stat_ci_high: float | None = None
     perm_n_resamples: int | None = None
     perm_converged: bool | None = None
     perm_n_resamples_skew: int | None = None
@@ -283,8 +283,8 @@ class TripletPipelineResult:
             "perm_p_greater_corrected": self.perm_p_greater_corrected,
             "perm_p_less_corrected": self.perm_p_less_corrected,
             "perm_p_tost": self.perm_p_tost,
-            "bootstrap_stat_ci_low": self.bootstrap_stat_ci_low,
-            "bootstrap_stat_ci_high": self.bootstrap_stat_ci_high,
+            "bootstrap_perm_stat_ci_low": self.bootstrap_perm_stat_ci_low,
+            "bootstrap_perm_stat_ci_high": self.bootstrap_perm_stat_ci_high,
             "perm_n_resamples": self.perm_n_resamples,
             "perm_converged": self.perm_converged,
             "perm_n_resamples_skew": self.perm_n_resamples_skew,
@@ -1932,8 +1932,8 @@ def _finalize_triplet_analysis(
     ci_low, ci_high = bootstrap_payload["studentized_ci"]
     return replace(
         base_result,
-        bootstrap_stat_ci_low=ci_low,
-        bootstrap_stat_ci_high=ci_high,
+        bootstrap_perm_stat_ci_low=ci_low,
+        bootstrap_perm_stat_ci_high=ci_high,
         all_bootstrap=bootstrap_payload["all_bootstrap"],
         bootstrap_deferred=bootstrap_payload["deferred"],
         bootstrap_dct_stats=bootstrap_payload["bootstrap_dct_stats"],
@@ -2381,8 +2381,8 @@ def write_pipeline_results(
             else []
         ),
         "perm_p_tost",
-        "bootstrap_stat_ci_low",
-        "bootstrap_stat_ci_high",
+        "bootstrap_perm_stat_ci_low",
+        "bootstrap_perm_stat_ci_high",
         "perm_n_resamples",
         "perm_converged",
         "perm_null_skew",
@@ -2467,8 +2467,8 @@ def write_pipeline_results(
                     else []
                 ),
                 _format_optional_float(result.perm_p_tost),
-                _format_optional_float(result.bootstrap_stat_ci_low),
-                _format_optional_float(result.bootstrap_stat_ci_high),
+                _format_optional_float(result.bootstrap_perm_stat_ci_low),
+                _format_optional_float(result.bootstrap_perm_stat_ci_high),
                 "" if result.perm_n_resamples is None else str(result.perm_n_resamples),
                 "" if result.perm_converged is None else str(result.perm_converged),
                 _format_optional_float(result.perm_null_skew),

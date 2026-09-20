@@ -1701,7 +1701,7 @@ break if the step drew its own resamples at a different count.
 **Inputs:** the shared 4-triplet orchestrator fixture with `bootstrap=False`,
 under each pipeline mode.
 
-**Derivation:** `bootstrap_stat_ci_low`/`_high` are a percentile interval over
+**Derivation:** `bootstrap_perm_stat_ci_low`/`_high` are a percentile interval over
 the per-iteration studentized differences, computed inside the bootstrap loop.
 If any iteration ran they would be populated, so `None` on every triplet is the
 observable proof the loop was skipped rather than merely having its columns

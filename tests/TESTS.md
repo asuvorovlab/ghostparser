@@ -130,8 +130,8 @@ Marked `integration` throughout -- every test drives `run_orchestrator` -- and `
   still produced. Purpose: the bootstrap toggle only removes bootstrap output.
 - `test_no_bootstrap_skips_the_bootstrap_itself` — Inputs (parametrized over
   the 2 pipeline modes): a run with `bootstrap=False`. Expected outputs: every
-  result has `bootstrap_value`, `all_bootstrap`, `bootstrap_stat_ci_low` and
-  `bootstrap_stat_ci_high` at `None`, and the classification is unchanged.
+  result has `bootstrap_value`, `all_bootstrap`, `bootstrap_perm_stat_ci_low` and
+  `bootstrap_perm_stat_ci_high` at `None`, and the classification is unchanged.
   Purpose: the toggle stops the work rather than only the columns — the
   studentized interval comes from the bootstrap loop, so its absence is the
   observable proof no iterations ran — and `detailed` does not reinstate work

@@ -540,8 +540,8 @@ The equivalence step runs only in the point estimate, and only when no direction
 was found. Bootstrap iterations skip it: `equivalent` and `inconclusive` classify
 identically, so an iteration's vote can never depend on which of the two it is.
 
-**The interval on the studentized difference.** `bootstrap_stat_ci_low` and
-`bootstrap_stat_ci_high` bracket `perm_statistic` — the observed `T` — at the
+**The interval on the studentized difference.** `bootstrap_perm_stat_ci_low` and
+`bootstrap_perm_stat_ci_high` bracket `perm_statistic` — the observed `T` — at the
 `1 - 2 * alpha_perm` percentile level of its bootstrap distribution. Each
 bootstrap iteration recomputes `T` on its own resample of the gene trees, and
 the interval is the empirical percentile range of those values.
@@ -706,7 +706,7 @@ The family size is the triplet count regardless of any skipping, so the
 correction never depends on the optimization. Whichever tier applies, the
 resample stream is untouched: the bootstrap draws its resamples from a generator
 independent of the permutation tests', so a fixed `seed` reproduces the
-same resamples — and the same `bootstrap_stat_ci_*` interval — under every
+same resamples — and the same `bootstrap_perm_stat_ci_*` interval — under every
 correction method.
 
 ### The point estimate's short-circuit
@@ -912,7 +912,7 @@ Written under the output folder:
 | `perm_p_greater` / `perm_p_less` | Direction test | Raw one-tailed p-values, add-one estimator. |
 | `perm_p_greater_<method>_corr` / `perm_p_less_<method>_corr` | Direction test | The one-tailed p-values corrected against each other, and the values compared to `alpha_perm`. Omitted under `no`. |
 | `perm_p_tost` | Equivalence test | TOST (two one-sided tests) p-value: `max(p_lower, p_upper)` over the two shifted-null permutation tests, one per side of the equivalence margin. Below `alpha_perm` the two mean heights were shown to differ by less than half a pooled standard deviation, which is what makes `perm_decision` read `equivalent` rather than `inconclusive`. Populated only when neither direction was significant. |
-| `bootstrap_stat_ci_low` / `bootstrap_stat_ci_high` | Bootstrap | Percentile interval on the studentized difference at the `1 - 2 * alpha_perm` level. Empty without bootstrap, or when no iteration had two observations in both groups. |
+| `bootstrap_perm_stat_ci_low` / `bootstrap_perm_stat_ci_high` | Bootstrap | Percentile interval on the studentized difference at the `1 - 2 * alpha_perm` level. Empty without bootstrap, or when no iteration had two observations in both groups. |
 | `perm_n_resamples` | Direction test | Permutations drawn; `0` when a guard fired. Can exceed `max_resamples` by up to one batch, since the final batch is not trimmed. |
 | `perm_converged` | Direction test | True when the confidence interval excluded `alpha_perm` before the budget ran out. |
 | `perm_null_skew` | Direction test | Sample skewness of the permutation null: the third standardized moment of the `perm_n_resamples_skew` studentized statistics drawn while testing this triplet. It describes the *reference distribution the test built*, not the tree heights themselves. `0` is a symmetric null and the p-values behave like a textbook two-sample test; a large magnitude means a few extreme heights in the smaller group dominate the resampling, so the null breaks into clusters by how many of them land where, and the sign names the long tail. Reported for every test that resampled, including `equivalent` and `inconclusive` ones. Never consulted by any decision — see "Null skewness" above for the worked 700-vs-19 case. |

@@ -513,12 +513,12 @@ def test_studentized_interval_brackets_the_observed_statistic():
     result = _corrected(
         _observations(con_heights, dis1_heights, [0.3] * 5), "no", iterations=200
     )
-    assert result.bootstrap_stat_ci_low < result.bootstrap_stat_ci_high
-    assert result.bootstrap_stat_ci_low <= result.perm_statistic <= result.bootstrap_stat_ci_high
+    assert result.bootstrap_perm_stat_ci_low < result.bootstrap_perm_stat_ci_high
+    assert result.bootstrap_perm_stat_ci_low <= result.perm_statistic <= result.bootstrap_perm_stat_ci_high
 
     degenerate = _corrected(_observations([0.9] * 2, [0.2], [0.3]), "no", iterations=10)
-    assert degenerate.bootstrap_stat_ci_low is None
-    assert degenerate.bootstrap_stat_ci_high is None
+    assert degenerate.bootstrap_perm_stat_ci_low is None
+    assert degenerate.bootstrap_perm_stat_ci_high is None
 
 
 @pytest.mark.output

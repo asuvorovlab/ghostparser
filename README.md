@@ -229,7 +229,7 @@ Consolidation details:
 - Triplets whose samples are too small or too degenerate to support the test are reported as `inconclusive` with the reason in the `perm_note` column, rather than being given a direction the data cannot justify.
 - When neither direction is significant, TOST — two one-sided tests, the standard equivalence procedure — at a Cohen's *d* of 0.5 decides whether the mean heights were *shown* to be close (`perm_decision = equivalent`, with the p-value in `perm_p_tost`) or nothing was established (`inconclusive`). Both classify the triplet as `ambiguous`.
 - TOST rides on the direction test's own resamples rather than drawing its own. Its two nulls sit a margin either side of zero, which is a constant added to one group, and a shifted permutation's statistic follows from the unshifted power sums plus two extra reductions — so the equivalence step costs a fraction of a pass instead of two more, and both questions are answered at the same Monte Carlo resolution by construction.
-- `bootstrap_stat_ci_low` / `bootstrap_stat_ci_high` give a bootstrap-percentile interval on the studentized mean difference, so a direction can be read as an effect size rather than only as a threshold crossing. It comes from the bootstrap loop, so `--no-bootstrap` leaves it empty.
+- `bootstrap_perm_stat_ci_low` / `bootstrap_perm_stat_ci_high` give a bootstrap-percentile interval on the studentized mean difference, so a direction can be read as an effect size rather than only as a threshold crossing. It comes from the bootstrap loop, so `--no-bootstrap` leaves it empty.
 - See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#the-statistical-tests) for the method, its citations, and its known small-sample limitation.
 
 #### Bootstrap Behavior

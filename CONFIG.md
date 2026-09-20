@@ -283,7 +283,7 @@ Settable either on the CLI or in a config file.
 
 - CLI: `--no-bootstrap` (sets `bootstrap: false`)
 - Default: `true`
-- Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV. Setting it false skips the iterations entirely, so `bootstrap_stat_ci_low`/`bootstrap_stat_ci_high` are empty too — that interval is a bootstrap percentile interval, not a permutation output.
+- Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV. Setting it false skips the iterations entirely, so `bootstrap_perm_stat_ci_low`/`bootstrap_perm_stat_ci_high` are empty too — that interval is a bootstrap percentile interval, not a permutation output. Consolidation then weights every classified triplet as 1 where it would have used `bootstrap_value`, so the introgression maps still build; their cell values become plain counts over the same co-occurrence denominators.
 - This is an instruction about what to compute, so it holds under `pipeline_mode: detailed` as well: `detailed` declines to skip work the cascade cannot consult, which is not the same as reinstating work you switched off. The same is true of `generate_summary_stats` and `shape_diagnostics`.
 
 ##### `preflight_data_check`

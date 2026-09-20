@@ -227,9 +227,9 @@ def test_run_orchestrator_matches_derived_expectation(
         # The interval is reported only when some resample yielded two
         # observations in both groups; either way its two bounds agree on
         # whether they exist, and an existing pair is ordered.
-        assert (result.bootstrap_stat_ci_low is None) == (result.bootstrap_stat_ci_high is None)
-        if result.bootstrap_stat_ci_low is not None:
-            assert result.bootstrap_stat_ci_low <= result.bootstrap_stat_ci_high
+        assert (result.bootstrap_perm_stat_ci_low is None) == (result.bootstrap_perm_stat_ci_high is None)
+        if result.bootstrap_perm_stat_ci_low is not None:
+            assert result.bootstrap_perm_stat_ci_low <= result.bootstrap_perm_stat_ci_high
 
 
 @pytest.mark.output
@@ -260,8 +260,8 @@ def test_run_orchestrator_writes_results_tsv(
     assert "decision_gate" in header
     # The equivalence p-value and the interval on the studentized difference.
     assert "perm_p_tost" in header
-    assert "bootstrap_stat_ci_low" in header
-    assert "bootstrap_stat_ci_high" in header
+    assert "bootstrap_perm_stat_ci_low" in header
+    assert "bootstrap_perm_stat_ci_high" in header
     assert len(lines) - 1 == len(results)
 
 
@@ -318,8 +318,8 @@ def test_no_bootstrap_skips_the_bootstrap_itself(
     for result in results:
         assert result.bootstrap_value is None
         assert result.all_bootstrap is None
-        assert result.bootstrap_stat_ci_low is None
-        assert result.bootstrap_stat_ci_high is None
+        assert result.bootstrap_perm_stat_ci_low is None
+        assert result.bootstrap_perm_stat_ci_high is None
         # The point estimate is unaffected by the bootstrap being off.
         assert result.classification == "no_introgression"
 
