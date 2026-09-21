@@ -524,7 +524,10 @@ def run_orchestrator(config):
                 metrics.log(
                     f"  ⚠ In {cleaning.tangled_trees} tree(s) an outgroup was tangled "
                     "among the ingroup taxa, so it was pruned without being used "
-                    "for rooting; trees in which that happened to each: "
+                    "for rooting"
+                )
+                metrics.log(
+                    "    Trees in which each outgroup was tangled and pruned unused: "
                     + ", ".join(
                         f"{outgroup}: {count}"
                         for outgroup, count in cleaning.tangled.items()
