@@ -61,6 +61,10 @@
 - `model.max_features` defaults to `null` (every feature at each split) instead of `sqrt`. `model.max_features`, `model.class_weight` and their `search_space` candidates are validated in config, with messages naming the accepted forms.
 - Removed dead code (`inference.compute_tree_height_statistic`, `inference._build_triplet_np_rng`, `triplet_utils.rank_topologies_by_frequency`, `tuning_report._better`) and deduplicated the trainers' validators, confusion-matrix builder and CLI resolver into `ml/config.py` and `ml_utils`. No behavior change.
 
+### Helper scripts
+
+- Removed `scripts/profile_stats_methods.py`, which benchmarked a statistical backend the package no longer has. `scripts/run_orchestrator_parent_dir.py` requires the species tree, the gene-tree file name and the outgroups on its command line instead of carrying defaults for them.
+
 ### Tests and documentation
 
 - Every test carries a category marker -- `core`, `config`, `output`, `integration`, `parity` -- so `pytest -m` can run one part of the suite.

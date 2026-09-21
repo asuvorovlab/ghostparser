@@ -1,8 +1,7 @@
 """Run the GhostParser orchestrator over each subdirectory of a parent directory.
 
-This mirrors the folder-based orchestration pattern from the
-Slurm shell script,
-while executing all discovered subdirectories in a single Python process.
+Every immediate subdirectory is treated as one dataset holding a gene-tree file
+of the given name, and all of them are run from a single Python process.
 
 Each run is driven by a generated JSON config file rather than CLI flags,
 because ``generate_summary_stats`` is a config-file-only orchestrator setting.
@@ -16,11 +15,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-DEFAULT_SPECIES_TREE = (
-    "/projects/asuvorov/ghostparser_shared/simulations_64way/species.tree"
-)
-DEFAULT_OUTGROUPS = "O"
-DEFAULT_GENE_TREES_FILE = "trees_subst_1.tre"
+# The only path with a default, and a relative one: the results subdirectory
+# created inside each dataset folder. The species tree, the gene-tree file name
+# and the outgroups describe the data and are always given explicitly.
 DEFAULT_OUTPUT_SUBDIR = "bfn_correction_results"
 DEFAULT_P_VALUE_CORRECTION = "bfn"
 
@@ -45,21 +42,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--species-tree",
-        default=DEFAULT_SPECIES_TREE,
-        help=f"Species tree path (default: {DEFAULT_SPECIES_TREE}).",
+        required=True,
+        help="Species tree path shared by every subdirectory.",
     )
     parser.add_argument(
         "--outgroups",
-        default=DEFAULT_OUTGROUPS,
-        help=f"Outgroups value passed to the orchestrator (default: {DEFAULT_OUTGROUPS}).",
+        required=True,
+        help="Outgroup label(s) passed to the orchestrator, comma-separated for more than one.",
     )
     parser.add_argument(
         "--gene-trees-file",
-        default=DEFAULT_GENE_TREES_FILE,
-        help=(
-            "Gene tree filename expected in each subdirectory "
-            f"(default: {DEFAULT_GENE_TREES_FILE})."
-        ),
+        required=True,
+        help="Gene tree file name expected inside each subdirectory.",
     )
     parser.add_argument(
         "--output-subdir",
