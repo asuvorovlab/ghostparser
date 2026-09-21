@@ -404,43 +404,27 @@ def _describe_taxon_group(taxa):
     return f"{len(names)} {'taxon' if len(names) == 1 else 'taxa'}: {shown}"
 
 
-def _root_tree_on_outgroup(tree, outgroup_taxa):
-    """Root a tree where the outgroups branch off and prune them.
+def _outgroup_attachment(tree, present):
+    """Find the node where a set of outgroups parts from every other taxon.
 
-    Read unrooted, the tree must have one branch -- or, inside a polytomy,
-    one node -- where the outgroups part from every other taxon. The tree is
-    rooted there, whatever orientation the file wrote it in, and the outgroup
-    side is cut away.
+    Read unrooted, the outgroups root the tree when one branch -- or, inside
+    a polytomy, one node -- parts all of them from every other taxon, in
+    whatever orientation the file wrote it. Every outgroup-free subtree then
+    hangs off the same node, and rooting there puts every outgroup on one
+    side of it.
 
     Args:
-        tree: A ``Bio.Phylo`` tree object; rerooted in place.
-        outgroup_taxa: Iterable of outgroup taxon names.
+        tree: A ``Bio.Phylo`` tree object, in any orientation.
+        present: Non-empty set of outgroup names, all of them in the tree and
+            not every taxon of it.
 
     Returns:
-        A tuple ``(pruned_tree, excluded_taxa, missing_taxa, ingroup_taxa)``:
-        the rooted ingroup tree, the outgroup names found and pruned, the
-        outgroup names absent from the tree, and the ingroup names.
-
-    Raises:
-        OutgroupRootingError: If no outgroup is in the tree, if every taxon
-            is an outgroup, or if the outgroups branch off at more than one
-            point so the other taxa fall into groups with outgroups between
-            them; the message names those groups.
+        A tuple ``(host, groups)``: ``groups`` lists every outgroup-free
+        subtree as ``(host_clade, taxa)``, and ``host`` is their shared host
+        clade, or ``None`` when they hang off different nodes so that other
+        taxa sit between the outgroups.
     """
     tree_taxa = {terminal.name for terminal in tree.get_terminals()}
-    outgroup_set = set(outgroup_taxa)
-    missing = outgroup_set - tree_taxa
-    present = outgroup_set & tree_taxa
-    if not present:
-        raise OutgroupRootingError(
-            "Could not root the species tree: none of the outgroup taxa are in "
-            f"it (missing: {', '.join(sorted(missing))})"
-        )
-    ingroup_taxa = tree_taxa - present
-    if not ingroup_taxa:
-        raise OutgroupRootingError(
-            "Could not root the species tree: every taxon in it is an outgroup"
-        )
 
     # Outgroup leaves under each clade. A clade's branch lies on a path
     # between two outgroups exactly when it holds some but not all of them.
@@ -482,7 +466,49 @@ def _root_tree_on_outgroup(tree, outgroup_taxa):
                 )
 
     hosts = {id(host) for host, _ in groups}
-    if len(hosts) > 1:
+    return (groups[0][0] if len(hosts) == 1 else None), groups
+
+
+def _root_tree_on_outgroup(tree, outgroup_taxa):
+    """Root a tree where the outgroups branch off and prune them.
+
+    Read unrooted, the tree must have one branch -- or, inside a polytomy,
+    one node -- where the outgroups part from every other taxon. The tree is
+    rooted there, whatever orientation the file wrote it in, and the outgroup
+    side is cut away.
+
+    Args:
+        tree: A ``Bio.Phylo`` tree object; rerooted in place.
+        outgroup_taxa: Iterable of outgroup taxon names.
+
+    Returns:
+        A tuple ``(pruned_tree, excluded_taxa, missing_taxa, ingroup_taxa)``:
+        the rooted ingroup tree, the outgroup names found and pruned, the
+        outgroup names absent from the tree, and the ingroup names.
+
+    Raises:
+        OutgroupRootingError: If no outgroup is in the tree, if every taxon
+            is an outgroup, or if the outgroups branch off at more than one
+            point so the other taxa fall into groups with outgroups between
+            them; the message names those groups.
+    """
+    tree_taxa = {terminal.name for terminal in tree.get_terminals()}
+    outgroup_set = set(outgroup_taxa)
+    missing = outgroup_set - tree_taxa
+    present = outgroup_set & tree_taxa
+    if not present:
+        raise OutgroupRootingError(
+            "Could not root the species tree: none of the outgroup taxa are in "
+            f"it (missing: {', '.join(sorted(missing))})"
+        )
+    ingroup_taxa = tree_taxa - present
+    if not ingroup_taxa:
+        raise OutgroupRootingError(
+            "Could not root the species tree: every taxon in it is an outgroup"
+        )
+
+    host, groups = _outgroup_attachment(tree, present)
+    if host is None:
         separated = sorted(
             (tuple(sorted(taxa)) for _, taxa in groups),
             key=lambda group: (-len(group), group),
@@ -498,73 +524,85 @@ def _root_tree_on_outgroup(tree, outgroup_taxa):
             separated_groups=separated,
         )
 
-    tree.root_with_outgroup(groups[0][0])
+    tree.root_with_outgroup(host)
     pruned_root = _copy_clade_for_taxa(tree.root, ingroup_taxa)
     pruned_tree = Tree(root=pruned_root, rooted=True)
     return pruned_tree, present, missing, ingroup_taxa
 
 
-def _root_tree_on_any_outgroup(tree, outgroup_taxa):
-    """Root a tree on the first present outgroup taxon.
+@dataclass(frozen=True)
+class GeneTreeRooting:
+    """How one gene tree was rooted on its outgroups.
+
+    Attributes:
+        tree: The rooted tree with every outgroup pruned, or ``None`` when the
+            tree carries no outgroup or nothing but outgroups.
+        used: The outgroups the rooting used, in listed order: the largest set
+            of those present that parts from the other taxa at one point.
+        set_aside: The outgroups present but left out, in listed order,
+            because other taxa sit between them and the ones used; they are
+            pruned like the rest. When ``tree`` is ``None`` every outgroup
+            present is listed here.
+        missing: The outgroups absent from the tree.
+        tied: ``True`` when another set of the same size as ``used`` also
+            parted from the other taxa at one point, so the listed order
+            chose between them.
+    """
+
+    tree: object
+    used: tuple
+    set_aside: tuple
+    missing: frozenset
+    tied: bool
+
+
+def root_gene_tree(tree, outgroup_taxa):
+    """Root a gene tree where the largest set of its outgroups branches off.
+
+    Every outgroup the tree carries is tried together first. When other taxa
+    sit between them, the largest subset that parts from the other taxa at a
+    single point roots the tree instead -- a single gene often places a
+    distant outgroup somewhere inside the ingroup, and the outgroups that
+    still sit together outvote it. Among equally large subsets the one listed
+    earliest wins, so with two outgroups apart the first listed decides. All
+    outgroups are then pruned: no triplet contains one, and pruning a leaf
+    changes no other taxon's rooted shape or heights.
 
     Args:
-        tree: A ``Bio.Phylo`` tree object.
-        outgroup_taxa: Iterable of candidate outgroup taxon names.
+        tree: A ``Bio.Phylo`` tree object; rerooted in place.
+        outgroup_taxa: Ordered outgroup taxon names.
 
     Returns:
-        A tuple ``(rooted_tree, used_outgroup, missing_taxa)`` where
-        ``used_outgroup`` is ``None`` if no outgroup taxon is present.
+        A :class:`GeneTreeRooting`.
     """
     tree_taxa = {terminal.name for terminal in tree.get_terminals()}
-    outgroup_list = list(outgroup_taxa)
-    missing = set(outgroup_list) - tree_taxa
+    outgroup_list = list(dict.fromkeys(outgroup_taxa))
+    present = [outgroup for outgroup in outgroup_list if outgroup in tree_taxa]
+    missing = frozenset(outgroup_list) - tree_taxa
+    ingroup_taxa = tree_taxa - set(present)
+    if not present or not ingroup_taxa:
+        return GeneTreeRooting(None, (), tuple(present), missing, False)
 
-    for outgroup in outgroup_list:
-        if outgroup in tree_taxa:
-            terminal = next(t for t in tree.get_terminals() if t.name == outgroup)
-            tree.root_with_outgroup(terminal)
-            return tree, outgroup, missing
+    # itertools.combinations keeps the listed order, so the first subset that
+    # fits at a given size is the one listed earliest.
+    host = None
+    for size in range(len(present), 0, -1):
+        fitting = []
+        for subset in combinations(present, size):
+            candidate, _ = _outgroup_attachment(tree, set(subset))
+            if candidate is not None:
+                fitting.append((subset, candidate))
+        if fitting:
+            used, host = fitting[0]
+            tied = len(fitting) > 1
+            break
 
-    return tree, None, missing
-
-
-def _outgroups_sit_together(tree, outgroup_taxa):
-    """Say whether the outgroups in a tree all lie on one side of the other taxa.
-
-    Read unrooted, the tree then has a branch parting every outgroup it carries
-    from every other taxon, and rooting on any one of those outgroups gives
-    every triplet of the other taxa the same rooted shape and heights.
-
-    Args:
-        tree: A ``Bio.Phylo`` tree object, in any orientation.
-        outgroup_taxa: Iterable of outgroup taxon names.
-
-    Returns:
-        ``True`` when some clade holds exactly the outgroups present or exactly
-        the other taxa, which is the same branch seen from either side; also
-        ``True`` when the tree carries at most one outgroup.
-    """
-    outgroup_set = set(outgroup_taxa)
-    terminals = tree.get_terminals()
-    total_outgroups = sum(terminal.name in outgroup_set for terminal in terminals)
-    if total_outgroups <= 1:
-        return True
-    total_others = len(terminals) - total_outgroups
-
-    counts = {}
-    for clade in tree.find_clades(order="postorder"):
-        if clade.is_terminal():
-            is_outgroup = clade.name in outgroup_set
-            counts[clade] = (int(is_outgroup), int(not is_outgroup))
-        else:
-            outgroups = others = 0
-            for child in clade.clades:
-                outgroups += counts[child][0]
-                others += counts[child][1]
-            counts[clade] = (outgroups, others)
-        if counts[clade] in ((total_outgroups, 0), (0, total_others)):
-            return True
-    return False
+    tree.root_with_outgroup(host)
+    pruned_root = _copy_clade_for_taxa(tree.root, ingroup_taxa)
+    set_aside = tuple(outgroup for outgroup in present if outgroup not in used)
+    return GeneTreeRooting(
+        Tree(root=pruned_root, rooted=True), used, set_aside, missing, tied
+    )
 
 
 @dataclass(frozen=True)
@@ -572,39 +610,47 @@ class GeneTreeCleaning:
     """What cleaning a gene-tree file kept, dropped and rooted.
 
     Attributes:
-        trees: The cleaned, rooted ``Bio.Phylo`` trees, in input order.
+        trees: The cleaned, rooted ``Bio.Phylo`` trees, in input order, with
+            their outgroups pruned.
         dropped_trees: 1-based input index of each tree dropped for low
             support, mapped to its average support.
-        missing_outgroup_indices: 1-based input indices of the trees dropped
-            for carrying no outgroup taxon.
+        unrootable_indices: 1-based input indices of the trees dropped for
+            carrying no outgroup taxon, or nothing but outgroup taxa.
         rooted_on: Each outgroup label, in the order given, mapped to the
-            number of trees rooted on it -- the first listed outgroup a tree
-            carries.
-        outgroups_apart: Number of kept trees in which the outgroups present do
-            not all lie on one side of the other taxa, so that the choice of
-            rooting outgroup can change some triplets' rooted shape.
+            number of kept trees whose rooting used it.
+        set_aside: Each outgroup label, in the order given, mapped to the
+            number of kept trees that carried it but rooted without it,
+            because other taxa sat between it and the outgroups used.
+        outgroups_apart: Number of kept trees in which the outgroups present
+            did not all part from the other taxa at one point, so at least one
+            was set aside.
+        ties: Number of kept trees in which equally large outgroup sets fit
+            and the listed order chose between them.
     """
 
     trees: list
     dropped_trees: dict
-    missing_outgroup_indices: list
+    unrootable_indices: list
     rooted_on: dict
+    set_aside: dict
     outgroups_apart: int
+    ties: int
 
     @property
     def rooted_count(self):
         """Number of trees kept and rooted."""
-        return sum(self.rooted_on.values())
+        return len(self.trees)
 
 
 def clean_and_save_gene_trees(
     input_filepath, output_filepath, outgroup_taxa, min_avg_support=0.5
 ):
-    """Read, support-filter, root on outgroup, standardize, and save gene trees.
+    """Read, support-filter, root on the outgroups, standardize, and save gene trees.
 
-    Each tree is rooted on the first listed outgroup it carries; a tree
-    carrying none is dropped. Whether a tree's outgroups all lie on one side
-    of the other taxa is counted but changes nothing.
+    Each tree is rooted by :func:`root_gene_tree` -- where the largest set of
+    its outgroups branches off, with any outgroup that sits among the other
+    taxa left out -- and written without its outgroups. A tree carrying no
+    outgroup, or nothing but outgroups, is dropped.
 
     Args:
         input_filepath: Path to the input Newick file.
@@ -622,8 +668,10 @@ def clean_and_save_gene_trees(
     dropped_trees = {}
     cleaned_trees = []
     rooted_on = {outgroup: 0 for outgroup in outgroup_list}
+    set_aside = {outgroup: 0 for outgroup in outgroup_list}
     outgroups_apart = 0
-    missing_outgroup_indices = []
+    ties = 0
+    unrootable_indices = []
 
     for idx, tree in enumerate(trees, start=1):
         avg_support = calculate_average_support(tree)
@@ -631,16 +679,19 @@ def clean_and_save_gene_trees(
             dropped_trees[idx] = avg_support
             continue
 
-        rooted_tree, used_outgroup, _ = _root_tree_on_any_outgroup(tree, outgroup_list)
-        if used_outgroup is None:
-            missing_outgroup_indices.append(idx)
+        rooting = root_gene_tree(tree, outgroup_list)
+        if rooting.tree is None:
+            unrootable_indices.append(idx)
             continue
 
-        rooted_on[used_outgroup] += 1
-        if not _outgroups_sit_together(rooted_tree, outgroup_list):
-            outgroups_apart += 1
+        for outgroup in rooting.used:
+            rooted_on[outgroup] += 1
+        for outgroup in rooting.set_aside:
+            set_aside[outgroup] += 1
+        outgroups_apart += bool(rooting.set_aside)
+        ties += rooting.tied
 
-        standardized = standardize_tree(rooted_tree)
+        standardized = standardize_tree(rooting.tree)
         cleaned_trees.append(standardized)
 
     write_clean_trees(cleaned_trees, output_filepath)
@@ -648,9 +699,11 @@ def clean_and_save_gene_trees(
     return GeneTreeCleaning(
         trees=cleaned_trees,
         dropped_trees=dropped_trees,
-        missing_outgroup_indices=missing_outgroup_indices,
+        unrootable_indices=unrootable_indices,
         rooted_on=rooted_on,
+        set_aside=set_aside,
         outgroups_apart=outgroups_apart,
+        ties=ties,
     )
 
 

@@ -34,11 +34,11 @@ Ingroup taxa are therefore `A, B, C, D`, and the species topology is
 
 The same conftest writes 12 gene trees, all of the shape
 `((((X:l,Y:l):l,Z:l):l,D:l):l,OUT:l);`. Rooting on `OUT` folds `OUT`'s edge into
-the ingroup clade's edge and leaves `OUT` at length 0. For tree 0 the ingroup
-edge `0.10` plus `OUT`'s `0.50` gives `0.6`:
+the ingroup clade's edge, and pruning `OUT` leaves that clade as the root.
+For tree 0 the ingroup edge `0.10` plus `OUT`'s `0.50` gives `0.6`:
 
 ```
-((((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6,OUT:0);
+(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6;
 ```
 
 Reading the innermost sister pair off each tree gives, in input order:
@@ -802,36 +802,51 @@ piece that is dropped, and `D`, and the last line yields `A`. Repeats keep
 their first position: `B` and `A` are already present, so the result is
 `["A", "B", "C", "D"]` in first-seen order.
 
-### `test_clean_and_save_gene_trees_roots_each_tree_on_the_first_listed_outgroup`
+### `test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_off`
 
-**Inputs:** the 12 gene trees, outgroup `["OUT"]`, `min_avg_support=0.5`; then
-a gene-tree file of five trees, checked against `["OUT1", "OUT2"]`:
+**Inputs:** `orchestrator_gene_trees` (12 trees, outgroup `OUT`); then
+a gene-tree file of six trees, checked against `["OUT1", "OUT2", "OUT3"]`:
 
 1. `((((A,B),C),D),OUT1)` -- `OUT1` alone.
 2. `(((A,B),(C,OUT2)),OUT1)` -- `OUT1` at the root, `OUT2` sister to `C`.
-3. `((((A,B),C),(OUT1,OUT2)),D)` -- the outgroups are sisters.
+3. `((((A,B),(C,OUT1)),D),(OUT2,OUT3))` -- `OUT1` sister to `C`, `OUT2` and
+   `OUT3` sisters.
 4. `((((A,B),C),D),OUT2)` -- `OUT2` alone.
 5. `(((A,B),C),D)` -- no outgroup.
+6. `(OUT1,(OUT2,OUT3))` -- nothing but outgroups.
+
+Every branch of the six trees has length 1.
 
 **Derivation:** none of the 12 fixture trees carry support labels, so all 12
 survive, every one rooted on `OUT` (`rooted_on == {"OUT": 12}`) and every one
-carrying a single outgroup, which is trivially together
-(`outgroups_apart == 0`). Rerooting at the outgroup attachment point moves
-`OUT`'s edge into the ingroup clade's edge and zeroes `OUT`, so every line
-must end `OUT:0);`. Tree 0: `0.10 + 0.50 = 0.6` →
-`((((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6,OUT:0);`. Tree 3:
-`0.10 + 0.55 = 0.65` → `((((B:0.4,C:0.4):0.1,A:0.6):0.1,D:0.35):0.65,OUT:0);`.
+carrying a single outgroup, which is trivially together (`set_aside ==
+{"OUT": 0}`, `outgroups_apart == 0`, `ties == 0`). Rooting at the outgroup
+attachment point moves `OUT`'s edge into the ingroup clade's edge, and
+pruning `OUT` leaves that clade as the root, so no line carries `OUT`. Tree
+0: `0.10 + 0.50 = 0.6` → `(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6;`. Tree
+3: `0.10 + 0.55 = 0.65` → `(((B:0.4,C:0.4):0.1,A:0.6):0.1,D:0.35):0.65;`.
 
-For the five trees rooting takes the first listed outgroup present: trees 1-3
-carry `OUT1` and root on it, tree 4 carries only `OUT2`, tree 5 carries neither
-and is dropped as `missing_outgroup_indices == [5]`; hence `rooted_on ==
-{"OUT1": 3, "OUT2": 1}` and `rooted_count == 4`. The outgroups sit together
-when some clade holds exactly the outgroups present or exactly the other taxa:
-trees 1 and 4 carry one outgroup (trivially together), tree 3 has the clade
-`(OUT1,OUT2)`, but in tree 2 neither `{OUT1, OUT2}` nor `{A, B, C}` is a clade,
-so `outgroups_apart == 1`. No tree carries support values, so none is dropped
-for support. Rerooting on a terminal puts it at the root with a zero-length
-edge, so each written line ends in `<outgroup>:0);` for the outgroup used.
+For the six trees the rooting tries the outgroups present together and
+then, largest first, their subsets, taking a set that parts from the other
+taxa at one point; among sets of one size the earliest listed wins. Tree 1
+carries `OUT1` alone and tree 4 `OUT2` alone: one outgroup always fits, and
+its edge 1 folds into the ingroup edge 1, giving
+`(((A:1,B:1):1,C:1):1,D:1):2;` for both. Tree 2 carries `OUT1` and `OUT2`;
+neither `{OUT1, OUT2}` nor `{A, B, C}` is a clade, so the pair does not fit,
+both singletons do, and the listed order picks `OUT1` (`tied`), setting
+`OUT2` aside; pruning `OUT2` from `(C:1,OUT2:1):1` leaves `C` on an edge of
+`1 + 1 = 2`, so the written tree is `((A:1,B:1):1,C:2):2;`. Tree 3 carries
+all three; the triple does not fit (`OUT1` sits with `C`), of the pairs only
+`{OUT2, OUT3}` is a clade, so that pair roots the tree without a tie and
+`OUT1` is set aside. The rooting joins the ingroup to the pair's node,
+folding the pair's edge 1 into the ingroup's edge 1, and pruning `OUT1`
+lengthens `C`'s edge to 2: `(((A:1,B:1):1,C:2):1,D:1):2;`. Tree 5 carries no
+outgroup and tree 6 nothing else, so both are dropped, `unrootable_indices
+== [5, 6]`. Hence `rooted_count == 4`, `rooted_on == {"OUT1": 2, "OUT2": 2,
+"OUT3": 1}` (tree 3 counts for both `OUT2` and `OUT3`), `set_aside ==
+{"OUT1": 1, "OUT2": 1, "OUT3": 0}`, `outgroups_apart == 2` (trees 2 and 3)
+and `ties == 1` (tree 2). No tree carries support values, so none is dropped
+for support.
 
 ## tests/orchestrator/test_orchestrator.py
 
@@ -964,12 +979,13 @@ where its output goes.
 are not a clade as written; the only outgroup-free subtree is the ingroup
 clade `(((A,B),C),D)`, hanging off the node that joins `OUT2` to it, so the
 tree is rooted there, both outgroups are pruned and the ingroup is
-`A, B, C, D`, giving `C(4,3) = 4` triplets. Gene trees 1 and 2 carry `OUT1`
-and root on it; tree 3 carries only `OUT2` and roots on that, so
-`gene_tree.rooted == 3`, `rooted_on.OUT1 == 2` and `rooted_on.OUT2 == 1`. In
-tree 2 the non-outgroup taxa `A,B,C` do not form a clade -- `OUT2` is `C`'s
-sister -- so its outgroups sit apart (`outgroups_apart == 1`); in trees 1 and
-3 only one outgroup is present, which is trivially together. Tree 2 lacks
+`A, B, C, D`, giving `C(4,3) = 4` triplets. Gene tree 1 carries `OUT1` alone
+and tree 3 `OUT2` alone, so each roots on the one it has. In tree 2 the
+non-outgroup taxa `A,B,C` do not form a clade -- `OUT2` is `C`'s sister -- so
+the pair does not fit, each singleton does, and the listed order picks `OUT1`
+and sets `OUT2` aside: `gene_tree.rooted == 3`, `rooted_on.OUT1 == 2`,
+`rooted_on.OUT2 == 1`, `set_aside.OUT2 == 1`, `outgroups_apart == 1` and
+`rooting_tie == 1`. Tree 2 lacks
 `D`, so its three `D` triplets are skipped as absent
 (`triplet.taxa_absent_from_gene_tree == 3`); the other `4 + 1 + 4 = 9` pairs
 resolve (tree 2's `A,B,C` has `A,B` as sisters with `C` outside), so

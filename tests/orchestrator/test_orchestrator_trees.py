@@ -192,16 +192,17 @@ def test_read_species_filter_file_collects_names_in_order(tmp_path):
     assert ptrees.read_species_filter_file(str(path)) == ["A", "B", "C", "D"]
 
 
-def test_clean_and_save_gene_trees_roots_each_tree_on_the_first_listed_outgroup(
+def test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_off(
     orchestrator_gene_trees, tmp_path
 ):
-    """Each tree is rerooted on the first listed outgroup it carries, and the counts say so.
+    """Each tree is rooted on the largest set of its outgroups that sit together, and pruned of them.
 
-    Rerooting at the outgroup attachment point folds the outgroup's original
-    edge into the ingroup clade's edge and leaves the outgroup at length 0.
-    The outgroups' arrangement in a tree changes nothing about how it is
-    rooted; it is counted so a run can report how often the outgroups fail to
-    sit together in the data.
+    Rooting at the outgroup attachment point folds the outgroup's original
+    edge into the ingroup clade's edge; the outgroups are then cut away, so
+    the written tree is the rooted ingroup. An outgroup with other taxa
+    between it and the rest is set aside -- outvoted when the others still
+    sit together, or beaten by the listed order when the sets are equally
+    large -- and the counts say which and how often.
     """
     out_path = tmp_path / "clean_genes.tree"
     cleaning = ptrees.clean_and_save_gene_trees(
@@ -211,38 +212,52 @@ def test_clean_and_save_gene_trees_roots_each_tree_on_the_first_listed_outgroup(
 
     # All 12 fixture trees carry OUT and have no support labels, so all survive.
     assert len(cleaned) == 12
+    assert cleaning.rooted_count == 12
     assert cleaning.rooted_on == {"OUT": 12}
+    assert cleaning.set_aside == {"OUT": 0}
     assert cleaning.outgroups_apart == 0
-    # Tree 0: ingroup edge 0.10 + OUT 0.50 = 0.60.
-    assert cleaned[0] == "((((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6,OUT:0);"
+    assert cleaning.ties == 0
+    # Tree 0: ingroup edge 0.10 + OUT 0.50 = 0.60, and OUT is gone.
+    assert cleaned[0] == "(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6;"
     # Tree 3: ingroup edge 0.10 + OUT 0.55 = 0.65.
-    assert cleaned[3] == "((((B:0.4,C:0.4):0.1,A:0.6):0.1,D:0.35):0.65,OUT:0);"
-    for line in cleaned:
-        assert line.endswith("OUT:0);")
+    assert cleaned[3] == "(((B:0.4,C:0.4):0.1,A:0.6):0.1,D:0.35):0.65;"
+    assert all("OUT" not in line for line in cleaned)
 
     in_path = tmp_path / "genes.tree"
     in_path.write_text(
-        # OUT1 alone: rooted on OUT1, one outgroup is trivially together.
+        # OUT1 alone.
         "((((A:1,B:1):1,C:1):1,D:1):1,OUT1:1);\n"
-        # OUT2 nests among the ingroup: rooted on OUT1, outgroups apart.
+        # OUT2 nests among the ingroup: two outgroups apart is a tie, so the
+        # listed order roots on OUT1 and OUT2 is set aside and pruned.
         "(((A:1,B:1):1,(C:1,OUT2:1):1):1,OUT1:1);\n"
-        # OUT1 and OUT2 are sisters: rooted on OUT1, together.
-        "((((A:1,B:1):1,C:1):1,(OUT1:1,OUT2:1):1):1,D:1);\n"
-        # OUT1 absent: rooted on OUT2.
+        # OUT1 nests among the ingroup while OUT2 and OUT3 sit together: the
+        # pair outvotes it, whatever the listed order.
+        "((((A:1,B:1):1,(C:1,OUT1:1):1):1,D:1):1,(OUT2:1,OUT3:1):1);\n"
+        # OUT2 alone.
         "((((A:1,B:1):1,C:1):1,D:1):1,OUT2:1);\n"
         # No outgroup at all: dropped.
         "(((A:1,B:1):1,C:1):1,D:1);\n"
+        # Nothing but outgroups: dropped.
+        "(OUT1:1,(OUT2:1,OUT3:1):1);\n"
     )
     cleaning = ptrees.clean_and_save_gene_trees(
-        str(in_path), str(out_path), ["OUT1", "OUT2"], min_avg_support=0.5
+        str(in_path), str(out_path), ["OUT1", "OUT2", "OUT3"], min_avg_support=0.5
     )
 
-    assert cleaning.rooted_on == {"OUT1": 3, "OUT2": 1}
     assert cleaning.rooted_count == 4
-    assert cleaning.outgroups_apart == 1
-    assert cleaning.missing_outgroup_indices == [5]
+    assert cleaning.rooted_on == {"OUT1": 2, "OUT2": 2, "OUT3": 1}
+    assert cleaning.set_aside == {"OUT1": 1, "OUT2": 1, "OUT3": 0}
+    assert cleaning.outgroups_apart == 2
+    assert cleaning.ties == 1
+    assert cleaning.unrootable_indices == [5, 6]
     assert cleaning.dropped_trees == {}
-    cleaned = ptrees._read_gene_trees_file(str(out_path))
-    assert [line.rsplit(",", 1)[1] for line in cleaned] == [
-        "OUT1:0);", "OUT1:0);", "OUT1:0);", "OUT2:0);"
+    assert ptrees._read_gene_trees_file(str(out_path)) == [
+        "(((A:1,B:1):1,C:1):1,D:1):2;",
+        # OUT2 pruned from (C:1,OUT2:1):1 leaves C on a 2-long edge.
+        "((A:1,B:1):1,C:2):2;",
+        # OUT1 pruned from (C:1,OUT1:1):1 likewise; the rooting joins the
+        # ingroup to the (OUT2,OUT3) pair, folding the pair's edge 1 into
+        # the ingroup's edge 1.
+        "(((A:1,B:1):1,C:2):1,D:1):2;",
+        "(((A:1,B:1):1,C:1):1,D:1):2;",
     ]

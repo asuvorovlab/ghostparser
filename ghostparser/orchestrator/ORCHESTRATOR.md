@@ -94,16 +94,17 @@ defect -- a gene tree need not be complete, and the engine skips those pairs
 too -- so it is counted rather than reported as an issue. `PreflightResult.passed` is `True`
 only when nothing was detected.
 
-A `rooted_on` line counts the gene trees rooted on each outgroup, and an
+`rooted_on` and `set_aside` lines count, per outgroup, the gene trees whose
+rooting used it and the gene trees that carried it but rooted without it; an
 `outgroups_apart` line counts the rooted trees in which the outgroups present
-do not all lie on one side of the other taxa. Neither is a defect: a run keeps
-such a tree, rooted on the first listed outgroup it carries. The count is
-reported because in such a tree rooting on another of its outgroups would give
-some triplets a different rooted shape, so a high count means the outgroups are
-not a clade in the gene trees. The usual cause is a distant outgroup on a long
-branch that a single gene attaches inside the ingroup; listing it first roots
-those trees inside the ingroup, so the outgroup to list first is the one whose
-placement in the gene trees is most reliable.
+did not all lie on one side of the other taxa, so that one was set aside; and
+a `rooting_ties` line counts the trees in which equally large outgroup sets
+fit and the listed order decided. None is a defect: a run keeps such a tree,
+rooted where the largest set of its outgroups branches off. They are reported
+because an outgroup set aside is one a single gene placed among the other
+taxa -- usually a distant one on a long branch -- and because the tied trees
+are the ones whose rooting depends on the listed order, so the outgroup whose
+placement in the gene trees is most reliable belongs first.
 
 Generated triplets are capped at `preflight_triplet_cap` (default 15,000; `0`
 lifts it), which the runner passes through as `max_triplets`; a bound cap is
@@ -144,15 +145,18 @@ below).
    species-tree sisters, and the edges the triplet's induced subtree would
    carry, written out as the species subtree.
 3. **Gene-tree preprocessing** — `trees.clean_and_save_gene_trees` cleans each
-   gene tree and roots it on the first listed outgroup it carries; a gene tree
-   carrying none is dropped. When the outgroups present in a tree all lie on
-   one side of the other taxa, rooting on any of them gives every triplet the
-   same rooted shape and heights, so the listed order only matters in the
-   trees where they do not -- there the first listed outgroup decides where the
-   root goes, so it should be the one whose placement in the gene trees is
-   most reliable. `metrics.txt` reports how many trees rooted on each outgroup
-   and how many carry outgroups that sit apart; those trees are kept as they
-   are.
+   gene tree, roots it with `trees.root_gene_tree` and writes it without its
+   outgroups; a gene tree carrying no outgroup, or nothing but outgroups, is
+   dropped. The rooting is the species tree's: the outgroups present root the
+   tree together when they part from the other taxa at one point. When they
+   do not, the largest subset that does roots the tree and the rest are set
+   aside, so the outgroups that still sit together outvote one that a single
+   gene placed among the ingroup; among equally large subsets the one listed
+   earliest wins. Pruning the outgroups changes nothing downstream -- no
+   triplet contains one, and removing a leaf leaves every other taxon's
+   rooted shape and heights as they are. `metrics.txt` reports, per outgroup,
+   how many trees it rooted and how many set it aside, and how many trees the
+   listed order settled.
 4. **Fused extraction + inference** — `stream.stream_triplet_results` caches
    every gene tree's geometry once (`stream.build_run_geometry`), then walks the
    triplets, reads each one's observation out of that cache

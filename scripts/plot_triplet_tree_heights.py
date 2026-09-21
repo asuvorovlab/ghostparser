@@ -14,7 +14,7 @@ from Bio.Phylo._io import write as phylo_write
 import dendropy
 import numpy as np
 
-from ghostparser.orchestrator.trees import _root_tree_on_any_outgroup, _root_tree_on_outgroup
+from ghostparser.orchestrator.trees import _root_tree_on_outgroup, root_gene_tree
 
 
 TOPOLOGY_AB = "((A,B),C)"
@@ -266,7 +266,7 @@ def _read_and_root_species_tree(species_tree_path: Path, outgroup_taxa: list[str
 
 
 def _read_and_root_gene_trees(gene_trees_path: Path, outgroup_taxa: list[str]) -> tuple[list[dendropy.Tree], int]:
-    """Read gene trees and root each on first present outgroup; discard trees with no outgroup."""
+    """Read gene trees and root each where its outgroups branch off; discard trees with no outgroup."""
     trees: list[dendropy.Tree] = []
     discarded_missing_outgroup = 0
     with gene_trees_path.open("r", encoding="utf-8") as handle:
@@ -275,11 +275,11 @@ def _read_and_root_gene_trees(gene_trees_path: Path, outgroup_taxa: list[str]) -
             if not newick:
                 continue
             bio_tree = phylo_read(io.StringIO(newick), "newick")
-            rooted_tree, used_outgroup, _ = _root_tree_on_any_outgroup(bio_tree, outgroup_taxa)
-            if used_outgroup is None:
+            rooting = root_gene_tree(bio_tree, outgroup_taxa)
+            if rooting.tree is None:
                 discarded_missing_outgroup += 1
                 continue
-            trees.append(_biophylo_to_dendropy(rooted_tree))
+            trees.append(_biophylo_to_dendropy(rooting.tree))
     return trees, discarded_missing_outgroup
 
 

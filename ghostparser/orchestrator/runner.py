@@ -514,23 +514,33 @@ def run_orchestrator(config):
             metrics.log(f"\n✓ Gene trees cleaned and saved to: {gene_trees_clean}")
             metrics.log(f"  Processed {len(gene_trees)} tree(s)")
             metrics.log(
-                f"  Rooted {cleaning.rooted_count} tree(s), each on the first "
-                "listed outgroup it carries: "
+                f"  Rooted {cleaning.rooted_count} tree(s) where their outgroups "
+                "branch off and pruned the outgroups; trees rooted with each: "
                 + ", ".join(
                     f"{outgroup}: {count}" for outgroup, count in cleaning.rooted_on.items()
                 )
             )
             if cleaning.outgroups_apart:
                 metrics.log(
-                    f"  ⚠ In {cleaning.outgroups_apart} tree(s) the outgroups present "
-                    "do not all lie on one side of the other taxa, so rooting on "
-                    "another of them would change some triplets' shape; the first "
-                    "listed outgroup decides, so list first the one whose placement "
-                    "in the gene trees is most reliable"
+                    f"  ⚠ In {cleaning.outgroups_apart} tree(s) an outgroup sat among "
+                    "the other taxa, so the rooting left it out and used the "
+                    "largest set of outgroups that still sit together; trees "
+                    "that set each aside: "
+                    + ", ".join(
+                        f"{outgroup}: {count}"
+                        for outgroup, count in cleaning.set_aside.items()
+                    )
                 )
-            if cleaning.missing_outgroup_indices:
+            if cleaning.ties:
                 metrics.log(
-                    f"  Discarded {len(cleaning.missing_outgroup_indices)} gene tree(s) without outgroup taxa"
+                    f"  ⚠ In {cleaning.ties} tree(s) equally large outgroup sets "
+                    "fit and the listed order decided, so list first the outgroup "
+                    "whose placement in the gene trees is most reliable"
+                )
+            if cleaning.unrootable_indices:
+                metrics.log(
+                    f"  Discarded {len(cleaning.unrootable_indices)} gene tree(s) "
+                    "carrying no outgroup taxon, or nothing but outgroup taxa"
                 )
             if cleaning.dropped_trees:
                 metrics.log(

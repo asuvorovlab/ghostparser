@@ -580,20 +580,24 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   Expected outputs: `["A", "B", "C", "D"]`. Purpose: the species filter's file
   contract — names may share a line or take one each, surrounding whitespace
   and empty entries are dropped, and a repeat keeps its first position.
-- `test_clean_and_save_gene_trees_roots_each_tree_on_the_first_listed_outgroup`
-  — Inputs: `orchestrator_gene_trees` with outgroup `OUT`; then five gene
-  trees with outgroups `["OUT1", "OUT2"]`: `OUT1` alone; `OUT1` with `OUT2`
-  nested among the ingroup; `OUT1` and `OUT2` sisters; `OUT2` alone; no
-  outgroup. Expected outputs: all 12 fixture trees survive, each ends in
-  `OUT:0);`, trees 0 and 3 match their expected rerooted Newick (the ingroup
-  edge absorbs OUT's original edge length), `rooted_on == {"OUT": 12}` and
-  `outgroups_apart == 0`; for the five trees `rooted_on == {"OUT1": 3, "OUT2":
-  1}`, `rooted_count == 4`, `outgroups_apart == 1`, `missing_outgroup_indices
-  == [5]`, no support drops, and the four written trees ending in `OUT1:0);`,
-  `OUT1:0);`, `OUT1:0);`, `OUT2:0);`. Purpose: gene-tree rooting semantics —
-  each tree roots on the first listed outgroup it carries whatever the
-  outgroups' arrangement — and the counts report which outgroup rooted each
-  tree and how many trees carry outgroups that sit apart.
+- `test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_off`
+  — Inputs: `orchestrator_gene_trees` with outgroup `OUT`; then six gene
+  trees with outgroups `["OUT1", "OUT2", "OUT3"]`: `OUT1` alone; `OUT1` with
+  `OUT2` nested among the ingroup; `OUT1` nested among the ingroup with
+  `OUT2` and `OUT3` sisters; `OUT2` alone; no outgroup; nothing but
+  outgroups. Expected outputs: all 12 fixture trees survive with no `OUT`
+  leaf, trees 0 and 3 match their expected rerooted Newick (the ingroup edge
+  absorbs OUT's original edge length), `rooted_on == {"OUT": 12}`,
+  `set_aside == {"OUT": 0}`, `outgroups_apart == 0` and `ties == 0`; for the
+  six trees `rooted_count == 4`, `rooted_on == {"OUT1": 2, "OUT2": 2, "OUT3":
+  1}`, `set_aside == {"OUT1": 1, "OUT2": 1, "OUT3": 0}`, `outgroups_apart ==
+  2`, `ties == 1`, `unrootable_indices == [5, 6]`, no support drops, and the
+  four written trees as exact Newick. Purpose: gene-tree rooting semantics —
+  each tree roots where the largest set of its outgroups branches off, an
+  outgroup with other taxa between it and that set is set aside, a tie
+  between equally large sets goes to the listed order, every outgroup is
+  pruned — and the counts report which outgroup rooted or was set aside in
+  how many trees, and how many ties the order settled.
 
 ### tests/orchestrator/test_orchestrator_triplet_geometry.py
 
@@ -716,13 +720,14 @@ The checks themselves are `core`; `test_clean_inputs_pass_and_the_report_lands_w
   `OUT2` nested among the ingroup, one carrying `OUT2` only. Expected outputs:
   `passed is True`, `triplets_checked == 4`, three gene trees rooted with
   `gene_tree.rooted_on.OUT1 == 2`, `gene_tree.rooted_on.OUT2 == 1`,
-  `gene_tree.outgroups_apart == 1`, `triplet.resolved == 9` and
+  `gene_tree.set_aside.OUT2 == 1`, `gene_tree.outgroups_apart == 1`,
+  `gene_tree.rooting_tie == 1`, `triplet.resolved == 9` and
   `triplet.taxa_absent_from_gene_tree == 3`. Purpose: the
   check roots the species tree with the run's own rooting, so outgroups that
   are not a clade as written but branch off the ingroup at one node still give
-  the ingroup `A,B,C,D` and its four triplets; each gene tree roots on the
-  first listed outgroup it carries, and a tree whose outgroups sit apart is
-  counted rather than reported as a defect.
+  the ingroup `A,B,C,D` and its four triplets; each gene tree roots as the run
+  roots it, and a tree whose two outgroups sit apart is a tie the listed order
+  settles, counted rather than reported as a defect.
 - `test_detects_polytomy_and_missing_outgroup` — Inputs: gene tree 1 well
   formed, gene tree 2 a polytomy over A/B/C, gene tree 3 with no outgroup
   label. Expected outputs: exactly one `gene_tree.rooting_failed` and one
