@@ -20,6 +20,7 @@ from .preflight import run_preflight_data_check
 from .stream import available_cpu_count, resolve_worker_count, stream_triplet_results
 from .trees import (
     MetricsLogger,
+    OutgroupRootingError,
     _build_species_triplet_metadata,
     _parse_outgroup_arg,
     _read_gene_trees_file,
@@ -383,20 +384,23 @@ def run_orchestrator(config):
                 taxa = get_taxa_from_tree(species_trees[0])
                 metrics.log(f"\n✓ Found {len(taxa)} taxa in species tree")
 
-                pruned_tree, _excluded_taxa, missing_taxa, ingroup_taxa = (
-                    _root_tree_on_outgroup(species_trees[0], outgroup_taxa)
-                )
+                try:
+                    pruned_tree, excluded_taxa, missing_taxa, ingroup_taxa = (
+                        _root_tree_on_outgroup(species_trees[0], outgroup_taxa)
+                    )
+                except OutgroupRootingError as exc:
+                    metrics.log(f"✗ Error: {exc}")
+                    return None
 
                 if missing_taxa:
                     metrics.log(
                         f"⚠ Warning: Outgroup taxa not found in species tree: {', '.join(sorted(missing_taxa))}"
                     )
-
-                if pruned_tree is None or not ingroup_taxa:
-                    metrics.log(
-                        "⚠ Warning: Unable to root and prune species tree on outgroups"
-                    )
-                    return None
+                metrics.log(
+                    f"✓ Rooted species tree on {len(excluded_taxa)} outgroup "
+                    f"taxa and pruned them: {', '.join(sorted(excluded_taxa))}"
+                )
+                metrics.log(f"  {len(ingroup_taxa)} ingroup taxa remain")
 
                 species_trees = [pruned_tree]
                 write_clean_trees(species_trees, species_tree_clean)
@@ -500,24 +504,37 @@ def run_orchestrator(config):
 
         try:
             genes_start_wall, genes_start_cpu = _now_times()
-            gene_trees, dropped_genes, rooted_count, missing_root_indices = (
-                clean_and_save_gene_trees(
-                    str(gene_trees_path),
-                    gene_trees_clean,
-                    outgroup_taxa,
-                    min_avg_support=support_threshold,
-                )
+            cleaning = clean_and_save_gene_trees(
+                str(gene_trees_path),
+                gene_trees_clean,
+                outgroup_taxa,
+                min_avg_support=support_threshold,
             )
+            gene_trees = cleaning.trees
             metrics.log(f"\n✓ Gene trees cleaned and saved to: {gene_trees_clean}")
             metrics.log(f"  Processed {len(gene_trees)} tree(s)")
-            metrics.log(f"  Rooted {rooted_count} tree(s) on outgroup taxa")
-            if missing_root_indices:
-                metrics.log(
-                    f"  Discarded {len(missing_root_indices)} gene tree(s) without outgroup taxa"
+            metrics.log(
+                f"  Rooted {cleaning.rooted_count} tree(s), each on the first "
+                "listed outgroup it carries: "
+                + ", ".join(
+                    f"{outgroup}: {count}" for outgroup, count in cleaning.rooted_on.items()
                 )
-            if dropped_genes:
+            )
+            if cleaning.outgroups_apart:
                 metrics.log(
-                    f"  ⚠ Dropped {len(dropped_genes)} tree(s) with avg support < {support_threshold}"
+                    f"  ⚠ In {cleaning.outgroups_apart} tree(s) the outgroups present "
+                    "do not all lie on one side of the other taxa, so rooting on "
+                    "another of them would change some triplets' shape; the first "
+                    "listed outgroup decides, so list first the one whose placement "
+                    "in the gene trees is most reliable"
+                )
+            if cleaning.missing_outgroup_indices:
+                metrics.log(
+                    f"  Discarded {len(cleaning.missing_outgroup_indices)} gene tree(s) without outgroup taxa"
+                )
+            if cleaning.dropped_trees:
+                metrics.log(
+                    f"  ⚠ Dropped {len(cleaning.dropped_trees)} tree(s) with avg support < {support_threshold}"
                 )
             genes_wall_time, genes_cpu_time = _elapsed_times(
                 genes_start_wall, genes_start_cpu

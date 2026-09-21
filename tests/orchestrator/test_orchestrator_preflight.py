@@ -46,15 +46,23 @@ def dirty_inputs(tmp_path):
     return species, genes
 
 
-def test_clean_inputs_pass_with_no_issues(clean_inputs, tmp_path):
-    """Well-formed trees produce an empty issue list and a passing report."""
+@pytest.mark.output
+def test_clean_inputs_pass_and_the_report_lands_where_documented(clean_inputs, tmp_path):
+    """Well-formed trees give an empty issue list, and the report is written only on request.
+
+    With an output directory the report lands under the documented filename
+    and equals the returned text; without one nothing is written and the same
+    text comes back, so the check is usable without touching disk.
+    """
     species, genes = clean_inputs
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
 
     result = run_preflight_data_check(
         species_tree_path=str(species),
         gene_trees_path=str(genes),
         outgroups=["OUT"],
-        output_dir=str(tmp_path),
+        output_dir=str(output_dir),
     )
 
     assert result.passed is True
@@ -63,33 +71,57 @@ def test_clean_inputs_pass_with_no_issues(clean_inputs, tmp_path):
     assert result.triplets_checked == 4
     assert result.counters["gene_tree.total_checked"] == 2
     assert result.counters["gene_tree.rooted"] == 2
-
-
-@pytest.mark.output
-def test_report_is_written_only_when_an_output_dir_is_given(clean_inputs, tmp_path):
-    """The report lands under the documented filename, or nowhere without a dir."""
-    species, genes = clean_inputs
-    output_dir = tmp_path / "out"
-    output_dir.mkdir()
-
-    written_result = run_preflight_data_check(
-        species_tree_path=str(species),
-        gene_trees_path=str(genes),
-        outgroups=["OUT"],
-        output_dir=str(output_dir),
-    )
     written = output_dir / PREFLIGHT_REPORT_FILENAME
-    assert written_result.report_path == str(written)
-    assert written.read_text() == written_result.report_text
+    assert result.report_path == str(written)
+    assert written.read_text() == result.report_text
 
-    unwritten_result = run_preflight_data_check(
+    unwritten = run_preflight_data_check(
         species_tree_path=str(species),
         gene_trees_path=str(genes),
         outgroups=["OUT"],
         output_dir=None,
     )
-    assert unwritten_result.report_path is None
-    assert unwritten_result.report_text == written_result.report_text
+    assert unwritten.report_path is None
+    assert unwritten.report_text == result.report_text
+
+
+def test_species_tree_is_rooted_where_the_outgroups_branch_off(tmp_path):
+    """The check roots both trees as the run does, whatever the file's orientation.
+
+    OUT1 and OUT2 are not a clade as written -- they sit on either side of the
+    file's root -- but both branch off the ingroup at one node, so the ingroup
+    is A,B,C,D and 4 triplets are checked. Each gene tree roots on the first
+    listed outgroup it carries, and the counters say which and how often the
+    outgroups sat apart.
+    """
+    species = tmp_path / "species.tree"
+    genes = tmp_path / "genes.tre"
+    species.write_text("(OUT1:1,(OUT2:1,(((A:1,B:1):1,C:1):1,D:1):1):1);\n")
+    genes.write_text(
+        # OUT1 only; OUT1 with OUT2 nested among the ingroup; OUT2 only.
+        "((((A:1,B:1):1,C:1):1,D:1):1,OUT1:1);\n"
+        "(((A:1,B:1):1,(C:1,OUT2:1):1):1,OUT1:1);\n"
+        "((((A:1,C:1):1,B:1):1,D:1):1,OUT2:1);\n"
+    )
+
+    result = run_preflight_data_check(
+        species_tree_path=str(species),
+        gene_trees_path=str(genes),
+        outgroups=["OUT1", "OUT2"],
+        output_dir=str(tmp_path),
+    )
+
+    assert result.passed is True
+    assert result.triplets_checked == 4
+    assert result.counters["gene_tree.rooted"] == 3
+    # Each gene tree roots on the first listed outgroup it carries; the one
+    # whose outgroups sit apart is counted, not reported as a defect.
+    assert result.counters["gene_tree.rooted_on.OUT1"] == 2
+    assert result.counters["gene_tree.rooted_on.OUT2"] == 1
+    assert result.counters["gene_tree.outgroups_apart"] == 1
+    # Tree 2 lacks D, so its three D triplets are skipped, not failed.
+    assert result.counters["triplet.resolved"] == 9
+    assert result.counters["triplet.taxa_absent_from_gene_tree"] == 3
 
 
 def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path):
@@ -134,58 +166,59 @@ def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path):
     )
 
 
-def test_triplet_filter_entries_are_validated(clean_inputs, tmp_path):
-    """Filter lines naming unknown taxa or the outgroup are rejected, not run."""
+@pytest.mark.parametrize(
+    "kind, text",
+    [
+        # One valid line, one naming an unknown taxon, one naming the outgroup.
+        ("triplet_filter", "A,B,C\nA,B,NOPE\nA,B,OUT\n"),
+        # Three usable species, an unknown name and the outgroup.
+        ("species_filter", "A,B\nC\nNOPE\nOUT\n"),
+    ],
+)
+def test_filter_entries_are_validated(clean_inputs, tmp_path, kind, text):
+    """Filter entries naming unknown taxa or the outgroup are reported, not run.
+
+    Each is reported under its own category and the rest are checked: the one
+    valid triplet line, or the one triplet the three usable species form out
+    of the tree's four.
+    """
     species, genes = clean_inputs
-    triplet_filter = tmp_path / "triplets.txt"
-    triplet_filter.write_text("A,B,C\nA,B,NOPE\nA,B,OUT\n")
+    filter_path = tmp_path / f"{kind}.txt"
+    filter_path.write_text(text)
 
     result = run_preflight_data_check(
         species_tree_path=str(species),
         gene_trees_path=str(genes),
         outgroups=["OUT"],
         output_dir=str(tmp_path),
-        triplet_filter=str(triplet_filter),
+        **{kind: str(filter_path)},
     )
 
     categories = [issue.category for issue in result.issues]
-    assert categories.count("triplet_filter.taxa_missing_in_species_tree") == 1
-    assert categories.count("triplet_filter.includes_outgroup") == 1
-    # Only the one valid line survives to be checked.
-    assert result.triplets_checked == 1
-
-
-def test_species_filter_entries_are_validated(clean_inputs, tmp_path):
-    """Filter names absent from the tree or in the outgroup are reported, not combined."""
-    species, genes = clean_inputs
-    species_filter = tmp_path / "species.txt"
-    species_filter.write_text("A,B\nC\nNOPE\nOUT\n")
-
-    result = run_preflight_data_check(
-        species_tree_path=str(species),
-        gene_trees_path=str(genes),
-        outgroups=["OUT"],
-        output_dir=str(tmp_path),
-        species_filter=str(species_filter),
-    )
-
-    categories = [issue.category for issue in result.issues]
-    assert categories.count("species_filter.taxa_missing_in_species_tree") == 1
-    assert categories.count("species_filter.includes_outgroup") == 1
-    # The three usable species form one triplet, out of the tree's four.
+    assert categories.count(f"{kind}.taxa_missing_in_species_tree") == 1
+    assert categories.count(f"{kind}.includes_outgroup") == 1
     assert result.triplets_checked == 1
 
 
 @pytest.mark.parametrize(
-    "outgroups, expected_message",
+    "species_text, outgroups, expected_message",
     [
-        ([], "No outgroup taxa were provided"),
-        (["NOT_PRESENT"], "Could not root species tree"),
+        (_CLEAN_SPECIES, [], "No outgroup taxa were provided"),
+        (_CLEAN_SPECIES, ["NOT_PRESENT"], "none of the outgroup taxa"),
+        (_CLEAN_SPECIES, ["A", "B", "C", "D", "OUT"], "every taxon"),
+        # OUT and C branch off at different points: A,B and D end up on
+        # different sides of the outgroups, and the message names both groups.
+        (_CLEAN_SPECIES, ["OUT", "C"], "1 taxon: D"),
+        (_CLEAN_SPECIES + _CLEAN_SPECIES, ["OUT"], "exactly one tree"),
     ],
+    ids=["no_outgroups", "outgroup_absent", "all_outgroups", "outgroups_apart", "two_trees"],
 )
-def test_impossible_checks_raise(clean_inputs, tmp_path, outgroups, expected_message):
+def test_impossible_checks_raise(tmp_path, species_text, outgroups, expected_message):
     """Conditions that make the check itself impossible raise ValueError."""
-    species, genes = clean_inputs
+    species = tmp_path / "species.tree"
+    genes = tmp_path / "genes.tre"
+    species.write_text(species_text)
+    genes.write_text(_CLEAN_GENES)
 
     with pytest.raises(ValueError, match=expected_message):
         run_preflight_data_check(
@@ -196,30 +229,17 @@ def test_impossible_checks_raise(clean_inputs, tmp_path, outgroups, expected_mes
         )
 
 
-def test_multi_tree_species_file_raises(tmp_path):
-    """A species-tree file holding more than one tree is rejected."""
-    species = tmp_path / "species.tree"
-    genes = tmp_path / "genes.tre"
-    species.write_text(_CLEAN_SPECIES + _CLEAN_SPECIES)
-    genes.write_text(_CLEAN_GENES)
-
-    with pytest.raises(ValueError, match="exactly one tree"):
-        run_preflight_data_check(
-            species_tree_path=str(species),
-            gene_trees_path=str(genes),
-            outgroups=["OUT"],
-            output_dir=str(tmp_path),
-        )
-
-
 @pytest.mark.integration
 @pytest.mark.output
-def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path):
-    """The flag short-circuits the run: only the report is produced.
+@pytest.mark.parametrize("outgroup", ["OUT", "NOT_PRESENT"], ids=["runs", "cannot_run"])
+def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path, outgroup):
+    """The flag short-circuits the run: only the report is produced, or nothing.
 
     The cap is set below the four ingroup triplets so its effect is visible in
     the result, proving the config value reaches the check rather than the
-    module default.
+    module default. An impossible check -- an outgroup the species tree lacks
+    -- is reported without raising out of the runner, which returns ``None``
+    and writes no report.
     """
     species, genes = dirty_inputs
     output_dir = tmp_path / "results"
@@ -228,7 +248,7 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path):
         {
             "species_tree": str(species),
             "gene_trees": str(genes),
-            "outgroup": "OUT",
+            "outgroup": outgroup,
             "output": str(output_dir),
             "overwrite": True,
             "triplet_filter": None,
@@ -238,35 +258,13 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path):
         }
     )
 
+    if outgroup == "NOT_PRESENT":
+        assert result is None
+        assert list(output_dir.iterdir()) == []
+        return
     assert result.passed is False
     assert result.triplets_checked == 3
     assert any(
         issue.category == "analysis.triplet_cap_applied" for issue in result.issues
     )
-    written = sorted(path.name for path in output_dir.iterdir())
-    assert written == [PREFLIGHT_REPORT_FILENAME]
-
-
-@pytest.mark.integration
-def test_runner_returns_none_when_preflight_cannot_run(tmp_path):
-    """An impossible check is reported without raising out of the runner."""
-    species = tmp_path / "species.tree"
-    genes = tmp_path / "genes.tre"
-    species.write_text(_CLEAN_SPECIES)
-    genes.write_text(_CLEAN_GENES)
-
-    result = runner.run_orchestrator(
-        {
-            "species_tree": str(species),
-            "gene_trees": str(genes),
-            "outgroup": "NOT_PRESENT",
-            "output": str(tmp_path / "results"),
-            "overwrite": True,
-            "triplet_filter": None,
-            "species_filter": None,
-            "preflight_data_check": True,
-            "preflight_triplet_cap": 15000,
-        }
-    )
-
-    assert result is None
+    assert sorted(path.name for path in output_dir.iterdir()) == [PREFLIGHT_REPORT_FILENAME]

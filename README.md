@@ -141,11 +141,11 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 
 #### How the Orchestrator Works
 
-1. The species tree is standardized, filtered on mean internal support, rooted on the outgroup MRCA, and pruned; gene trees are also cleaned and rooted on the outgroup similarly.
+1. The species tree is standardized, filtered on mean internal support, rooted where the outgroups branch off, and pruned of them; gene trees are cleaned and each is rooted on the first listed outgroup it carries.
 2. Every ingroup triplet is enumerated (or restricted to the triplets named by `--triplet-filter`, or to every triplet among the species named by `--species-filter`) and normalized to `(A, B, C)` with A and B the species-tree sisters.
 3. Every gene tree is measured once up front, and for each triplet the engine reads that triplet's rooted shape back out of those measurements: it classifies the topology as concordant or one of two discordant alternatives, and records a tree height H(T).
-4. A three-gate decision follows: the discordant count test, then the KS tree-height test, then a studentized permutation test on the concordant-versus-discordant1 mean heights. Each triplet lands on `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`.
-5. Multiple-testing correction is applied once across every triplet in the run.
+4. Three tests are measured per triplet: the discordant count test, the KS tree-height test, and a studentized permutation test on the concordant-versus-discordant1 mean heights.
+5. Once every triplet is in, multiple-testing correction is applied across the whole run and a three-gate decision reads the corrected results in that order. Each triplet lands on `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`.
 6. Results are written, and consolidation renders the introgression maps.
 
 See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanism in detail.
@@ -175,7 +175,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 - `--no-consolidation`, `--no-bootstrap`, `--diagnostic`
 - `--preflight-data-check`, `--preflight-triplet-cap`
 
-**Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, and the `bootstrap_options` block (`iterations`, `diagnostic`, `summary_only`).
+**Config-file only:** `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, the `bootstrap_options` block (`iterations`, `diagnostic`, `summary_only`) and the `permutation_options` block (`min_resamples`, `max_resamples`, `ci_method`).
 
 The statistical tests always use the scipy/statsmodels backend. The full key reference is in the **[Configuration Guide](CONFIG.md#orchestrator-primary-module)**.
 
@@ -188,15 +188,15 @@ python -m ghostparser.orchestrator \
     -st species.tree -gt genes.tree -og OutGroup --preflight-data-check
 ```
 
-It writes `preflight_data_check.txt` into the output folder, listing every structural problem it found — gene trees missing the outgroup, polytomous triplets with no resolvable sister pair, triplet-filter lines naming unknown taxa — with counts per category, examples naming the offending gene tree and triplet, and a summary attributing the issues to the species tree or the gene trees. These are the failures that would otherwise surface as errors partway through a long run. The checks are structural only: passing means the data can be processed, not that the result will be biologically meaningful. By default the check walks at most 15,000 triplets and says so in the report when that cap binds; `--preflight-triplet-cap` (or `preflight_triplet_cap`) raises it, and `0` checks every triplet.
+It writes `preflight_data_check.txt` into the output folder, listing every structural problem it found — gene trees missing the outgroup, polytomous triplets with no resolvable sister pair, triplet-filter lines naming unknown taxa — with counts per category, examples naming the offending gene tree and triplet, and a summary attributing the issues to the species tree or the gene trees. It also counts how many gene trees rooted on each outgroup and how many carry outgroups that do not all lie on one side of the other taxa. These are the failures that would otherwise surface as errors partway through a long run. The checks are structural only: passing means the data can be processed, not that the result will be biologically meaningful. By default the check walks at most 15,000 triplets and says so in the report when that cap binds; `--preflight-triplet-cap` (or `preflight_triplet_cap`) raises it, and `0` checks every triplet.
 
 #### Primary Outputs
 
 1. `orchestrator_triplet_results.tsv` — per-triplet classification results
 2. `summary_statistics.tsv` — only when `generate_summary_stats` is set
-3. `processed_species.tree` / `processed_genes.tree` — cleaned, rooted trees
+3. `processed_<species tree file>` / `processed_<gene trees file>` — cleaned, rooted trees
 4. `metrics.txt` — per-stage wall/CPU timing and run parameters
-5. `consolidation/` — the combined figure and TSV matrices
+5. `consolidation/` — the combined figure, with the TSV matrices under `consolidation/consolidation_data/
 
 The output folder is reset at the start of a run under the default `overwrite: true`, so point it at a directory of its own — never at a directory holding your input trees, which would be deleted with it. `--no-overwrite` writes to an auto-suffixed sibling instead.
 
@@ -238,7 +238,7 @@ Consolidation details:
 - Bootstrap is enabled by default and can be disabled with `--no-bootstrap`, which skips the iterations rather than merely dropping their columns; the remaining controls (`iterations`, `diagnostic`, `summary_only`) are set through the config file's `bootstrap_options` block.
 - Bootstrap iterations re-run the direction test at one fifth of the configured resample budget.
 - Iterations are judged against the same *corrected* p-value thresholds as the reported classification, so `bootstrap_value` measures support for the decision actually made. With `no` or `bfn` the correction is applied as each iteration runs; the rank-based methods need every triplet's p-value for the same iteration, so those are corrected after the streaming pass.
-- Iterations with incomplete required metrics are counted as `ambiguous` and processing continues.
+- An iteration whose direction test hits a guard votes `ambiguous`, since the guard reports `inconclusive`.
 - `bootstrap_value` reports the bootstrap fraction for the final `classification` value after correction.
 - The run-wide `--seed` makes results reproducible and identical at any worker count, because each triplet derives its own stream from it. It seeds every random draw in the run, not just the bootstrap. When omitted, a seed is drawn and reported in `metrics.txt`, so any run can be reproduced from its own log.
 
@@ -307,8 +307,8 @@ Consolidation details:
 
 An orchestrator run generates these output files:
 
-1. **`processed_species.tree`** - Processed species tree with support values removed and outgroup rooting applied
-2. **`processed_genes.tree`** - Processed gene trees with support values removed and outgroup rooting applied
+1. **`processed_<species tree file>`** - Processed species tree, named after the input file, with support values removed and the outgroup rooting and pruning applied
+2. **`processed_<gene trees file>`** - Processed gene trees, named after the input file, with support values removed and outgroup rooting applied
 3. **`metrics.txt`** - Metrics log with warnings, timings, and counts
 4. **`orchestrator_triplet_results.tsv`** - Final triplet-level classification results (`no_introgression`, `outflow_introgression`, `inflow_introgression`, `ghost_introgression`, or `ambiguous`)
 5. **`summary_statistics.tsv`** - Optional per-triplet summary table, written only when `generate_summary_stats` is enabled. It carries no shape columns; those go to the results TSV alone. Its `discordant1_*` columns describe whichever discordant topology is more frequent (matching the `dis1_topology` column) and `discordant2_*` the other. It includes:
@@ -316,7 +316,7 @@ An orchestrator run generates these output files:
    - topology counts (`n_con`, `n_dis1`, `n_dis2`)
    - 63 topology/metric summary columns (7 statistics x 3 topology classes x 3 metric types)
    - final `classification` and `bootstrap_value` (when bootstrap is enabled)
-6. **`consolidation/`** - Introgression map figure and TSV matrices
+6. **`consolidation/`** - Introgression map figure, with the TSV matrices under `consolidation/consolidation_data/`
 
 Base TSV output includes `dis1_topology` and a topology-only `species_tree` value for each triplet.
 Base TSV output also includes a `decision_gate` column naming which test settled the classification (`DCT`, `THT`, or `PERM`). Only `PERM` means `perm_decision` was actually consulted: by default the permutation columns are filled in only on those rows, and under `diagnostic: true` they are filled in for every triplet, so `decision_gate` is what tells you whether they took part.
@@ -377,7 +377,7 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup --species-filter species.txt
 ```
 
-When multiple outgroups are provided, the species tree is rooted on their most recent common ancestor (MRCA) and the outgroup clade is pruned. Any additional taxa that fall inside the outgroup clade are excluded from triplet generation and logged as a warning (including the full list of excluded taxa) in the metrics file.
+The outgroups must branch off the species tree at a single point: read unrooted, one branch (or, inside a polytomy, one node) parts every outgroup from every other taxon, whatever orientation the file was written in. The tree is rooted there, the outgroups are pruned, and the remaining taxa are the ingroup. If other taxa sit between the outgroups -- so that rooting on the outgroups would leave those taxa on different sides of them -- the run stops and names the groups those taxa fall into, so that you can add the groups that are outgroups to `--outgroup`, or correct the species tree, and rerun. Each gene tree is rooted on the first listed outgroup it carries; a gene tree carrying none is dropped. When the outgroups present in a gene tree all lie on one side of the other taxa, rooting on any of them gives every triplet the same rooted shape, so the listed order only matters in the gene trees where they do not. `metrics.txt` reports how many gene trees were rooted on each outgroup and in how many the outgroups sit apart; those trees are kept as they are, and a high count means the outgroups are not a clade in the gene trees. In such a tree the outgroups disagree about where the ingroup's root is, and the first listed one decides, so list first the outgroup whose placement in the gene trees is most reliable: close enough to the ingroup to be placed well by a single gene, far enough to be outside it in every gene. A distant outgroup on a long branch is the usual cause of a high count -- a single gene often attaches it somewhere inside the ingroup, and rooting on it there moves the root into the ingroup and changes the shape of every triplet spanning the two. Listing it last keeps it as the fallback for trees carrying no other outgroup.
 
 **Output** (`orchestrator_triplet_results.tsv`, abbreviated):
 
@@ -477,6 +477,8 @@ This section summarizes user-facing errors and validation failures that GhostPar
    The rename map is read when the config resolves; a missing or malformed file, a label mapped twice, two labels sharing a display name, or a display name holding a tab, line break, comma, semicolon or equals sign is a config error.
 - `✗ Error processing species tree: ...`
    Species-tree cleaning/parsing failed (typically malformed Newick, missing taxa, or filtering issues).
+- `✗ Error: Could not root the species tree ...`
+   The outgroups do not root the species tree: none of them is in it, every taxon in it is an outgroup, or the outgroups branch off at more than one point. In the last case the message lists the groups the other taxa fall into, largest first, so the groups that are outgroups can be added to `--outgroup`.
 - `✗ Error generating triplets: ...`
    Triplet-generation setup failed (for example rooting/pruning/mapping failures).
 - `✗ Error processing gene trees: ...`
@@ -496,7 +498,7 @@ This section summarizes user-facing errors and validation failures that GhostPar
    Top-level config payload is not a mapping.
 - `Missing required config field: ...`
    A required field (for example the species or gene tree path) is absent or empty.
-- `Missing required config field: outgroup(s)`
+- `Missing required config field: outgroup`
    No usable outgroup taxa were provided.
 - `Config field ... must be a non-empty string when provided`
    Optional string/path fields were passed as empty or the wrong type.
@@ -529,7 +531,7 @@ This section summarizes user-facing errors and validation failures that GhostPar
 
 ### Triplet Inference (`ghostparser.orchestrator.inference`)
 
-- `Unsupported discordant test method: ...` / `Unsupported summary statistic: ...` / `Unsupported tree height calculation strategy: ...` / `Unsupported p-value correction method: ...`
+- `Unsupported discordant test method: ...` / `Unsupported tree height calculation strategy: ...` / `Unsupported p-value correction method: ...`
    A selected method is outside the supported choices; the message lists the valid ones.
 - `Invalid species topology: ...` / `Resolved topology roles require a valid species topology`
    Internal topology state is inconsistent with the supported canonical topologies.

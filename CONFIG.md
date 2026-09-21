@@ -119,22 +119,22 @@ alpha_ks: 0.05                            # KS significance threshold
 alpha_perm: 0.05                          # permutation significance threshold
 p_value_correction: bfn                   # no, bfn, holm, fdr_bh, fdr_by
 diagnostic: false                         # true = measure every test for every triplet
-consolidation: true                       # true = write introgression maps and consolidation CSV/PNG outputs
+consolidation: true                       # true = write the introgression map plot and TSV matrices
 bootstrap: true                           # true = run bootstrap resampling
 preflight_data_check: false               # true = run only the structural preflight check and exit
 preflight_triplet_cap: 15000              # 0 = check all triplets
-discordant_test: chi-square               # chi-square or z
+discordant_test: chi-square               # chi-square or z-test
 tree_height_calculation_strategy: AVG     # AVG, A, B, C, SIS, INT
-min_support_value: 0.5                    # minimum support threshold for a topology to count
+min_support_value: 0.5                    # drop trees whose mean internal support is below this
 generate_summary_stats: false             # true = also write summary_statistics.tsv
 shape_diagnostics: false                  # true = include shape-diagnostics columns
 bootstrap_options:
   iterations: 100                         # bootstrap resamples per triplet
   diagnostic: false                       # true = measure every test per iteration and write the record
-  summary_only: false                     # true = keep only the summary output
+  summary_only: false                     # true = per-iteration summaries instead of full lists
 permutation_options:
   min_resamples: 2500                     # minimum permutation resamples to attempt
-  max_resamples: 25000                    # hard upper bound for permutation resamples
+  max_resamples: 25000                    # resample budget; the batch that crosses it is drawn whole
   ci_method: wilson                       # CI method for the permutation interval
 ```
 
@@ -155,7 +155,7 @@ These must be supplied either on the CLI or in the config file.
 ##### `outgroup`
 
 - CLI: `-og, --outgroup`
-- Outgroup taxon identifier(s). One key covers both the single- and multiple-outgroup cases: give a single label (`OutGroup`), a comma-separated string (`Out1,Out2`), or a YAML/JSON list (`["Out1", "Out2"]`). List entries may themselves be comma-separated. The species tree is rooted and pruned on the outgroup MRCA; gene trees are rooted on the outgroup.
+- Outgroup taxon identifier(s). One key covers both the single- and multiple-outgroup cases: give a single label (`OutGroup`), a comma-separated string (`Out1,Out2`), or a YAML/JSON list (`["Out1", "Out2"]`). List entries may themselves be comma-separated. The species tree is rooted where the outgroups branch off and pruned of them; the outgroups must branch off at a single point, or the run stops and names the taxa between them (see [Example Usage](README.md#example-usage) in the README). Each gene tree is rooted on the first listed outgroup it carries, so list first the outgroup whose placement in the gene trees is most reliable -- usually the nearest one that is outside the ingroup in every gene, with a distant, long-branch outgroup last as the fallback; `metrics.txt` and the preflight report count how many gene trees rooted on each outgroup and how many carry outgroups that do not all lie on one side of the other taxa.
 
 ### Config + CLI Keys
 
@@ -265,7 +265,7 @@ Settable either on the CLI or in a config file.
 
 - CLI: `--alpha-perm`
 - Default: `0.05`
-- Significance threshold for the studentized permutation test (the third gate). Applied to each of the two one-tailed p-values after they are corrected against each other, and to the two-tailed cross-check.
+- Significance threshold for the studentized permutation test (the third gate). Applied to each of the two one-tailed p-values after they are corrected against each other, and to the TOST equivalence p-value when neither direction is significant.
 
 ##### `p_value_correction`
 
@@ -299,7 +299,7 @@ Settable either on the CLI or in a config file.
 
 - CLI: `--no-bootstrap` (sets `bootstrap: false`)
 - Default: `true`
-- Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV. Setting it false skips the iterations entirely, so `bootstrap_perm_stat_ci_low`/`bootstrap_perm_stat_ci_high` are empty too — that interval is a bootstrap percentile interval, not a permutation output. Consolidation then weights every classified triplet as 1 where it would have used `bootstrap_value`, so the introgression maps still build; their cell values become plain counts over the same co-occurrence denominators.
+- Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV. Setting it false skips the iterations entirely, so `bootstrap_perm_stat_ci_low`/`bootstrap_perm_stat_ci_high` are empty too — that interval is a bootstrap percentile interval, not a permutation output. Consolidation then weights every classified triplet as 1 where it would have used `bootstrap_value`, so the introgression maps still build: every supported edge and ghost target averages to `1`, and the `*_raw_sum.tsv` matrices carry the supporting triplet counts.
 - This is an instruction about what to compute, so it holds under `diagnostic: true` as well: a diagnostic run measures the tests the cascade cannot consult, which is not the same as reinstating work you switched off. The same is true of `generate_summary_stats` and `shape_diagnostics`.
 
 ##### `preflight_data_check`
@@ -326,7 +326,7 @@ These have no CLI flag. They take their default unless set in a config file.
 
 - Default: `chi-square`
 - Allowed: `chi-square`, `z-test`
-- The discordant count test: SciPy's Pearson chi-square, or a statsmodels two-proportion z-test.
+- The discordant count test: SciPy's Pearson chi-square, or a statsmodels two-proportion z-test comparing `n_dis1 / total` with `n_dis2 / total`. The two proportions are complements of one another, so the z-test's pooled variance is half the binomial variance of their difference and `z^2 = 2 * chi^2` on the same counts: the z-test rejects more readily than the chi-square does.
 
 ##### `tree_height_calculation_strategy`
 
@@ -350,7 +350,7 @@ These have no CLI flag. They take their default unless set in a config file.
 - Default: `false`
 - Appends fifteen columns describing the shape of each height group: a KDE mode count, a Silverman modality p-value, skewness, excess kurtosis, and a generalized-Pareto tail index. They are descriptive only and never affect a classification.
 - They land in the results TSV as `con_*`/`dis1_*`/`dis2_*`, and nowhere else. `summary_statistics.tsv` never carries them: it is a feature matrix, and these columns are undefined for groups below their observation floors, so including them would leave holes in it.
-- Off by default because the modality p-value is a smoothed bootstrap: it costs about 0.2s per group, so roughly 0.6s of extra CPU per triplet. On a large taxon set that dominates the run.
+- Off by default because the modality p-value is a smoothed bootstrap, run once per height group, whose cost across a large taxon set dominates everything else the run does.
 - Measured once per triplet from the observed heights. Bootstrap iterations do not recompute them.
 - Groups with fewer than 20 observations are left empty, as are the tail indices of groups whose upper decile holds fewer than 10 points. See "Shape diagnostics" in the [orchestrator guide](ghostparser/orchestrator/ORCHESTRATOR.md) for how to read each column.
 
@@ -672,6 +672,7 @@ python -m ghostparser.ml.multi_knn -i ./results/summary_statistics.tsv -o ./resu
 - `sample_configs/random_forest_minimal.yaml`
 - `sample_configs/multi_knn_minimal.yaml`
 - `sample_configs/hyperparameter_tuning_random_forest.yaml`
+- `sample_configs/hyperparameter_tuning_multi_knn.json`
 
 The ML sample configs illustrate the `input_path`, `output_dir`, `model`, `evaluation`, and `hyperparameter_tuning` sections that the ML loaders expect.
 
@@ -685,12 +686,14 @@ Orchestrator samples live alongside them:
 ## Consolidation Outputs
 
 Consolidation is a stage of the orchestrator, not a separate entry point, and is
-controlled by the [`consolidation`](#consolidation) key. It writes into a
-`consolidation/` subfolder of the run's output folder:
+controlled by the [`consolidation`](#consolidation) key. It writes the figure
+into a `consolidation/` subfolder of the run's output folder and the TSV
+matrices into `consolidation/consolidation_data/`:
 
 - `introgression_combined.png` — combined inflow/outflow heatmap and ghost target-strength bar chart.
-- `introgression_matrix_inflow_outflow.tsv` — target × source matrix of average bootstrap support values.
-- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support, plus a `has_sampled_introgression` flag (`1` when that taxon is also the target of a sampled introgression edge) that sets the bar colour.
+- `introgression_matrix_inflow_outflow.tsv` — target × source matrix of average bootstrap support over the triplets that produced each directed edge; `introgression_matrix_inflow_outflow_raw_sum.tsv` holds the summed support and `introgression_matrix_inflow_outflow_supporting_count.tsv` the number of supporting triplets.
+- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support over the triplets that named the taxon as a ghost target, plus a `has_sampled_introgression` flag (`1` when that taxon is also the target of a sampled introgression edge) that sets the bar colour; `introgression_ghost_target_strength_raw_sum.tsv` and `introgression_ghost_target_strength_supporting_count.tsv` hold the sum and the count.
+- `introgression_matrix_sampled_non_sister.tsv` — symmetric matrix counting, for every taxon pair, the triplets in which the two are not the species-tree sisters.
 - `introgression_taxa_order.tsv` — ordered taxa list matching the plot axes.
 
 Taxa named in [`outgroup`](#outgroup) are excluded from every plot and TSV here.

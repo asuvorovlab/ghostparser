@@ -16,7 +16,9 @@ import dendropy
 from ..triplet_utils import normalize_abc_from_sister_pair
 from .config import DEFAULT_PREFLIGHT_TRIPLET_CAP
 from .trees import (
+    _outgroups_sit_together,
     _root_tree_on_any_outgroup,
+    _root_tree_on_outgroup,
     format_newick_with_precision,
     read_tree_file,
     read_species_filter_file,
@@ -72,10 +74,12 @@ class PreflightResult:
         report_text: The full report as a single string.
         issues: Every issue detected, in discovery order.
         counters: Per-category tallies plus ``gene_tree.total_checked``,
-            ``gene_tree.rooted``, and the three that account for every
-            triplet/gene-tree pair seen: ``triplet.resolved``,
-            ``triplet.unresolved_rooted_sister_pair``, and
-            ``triplet.taxa_absent_from_gene_tree``.
+            ``gene_tree.rooted``, ``gene_tree.rooted_on.<outgroup>`` for each
+            outgroup, ``gene_tree.outgroups_apart`` (rooted trees whose
+            outgroups present do not all lie on one side of the other taxa),
+            and the three that account for every triplet/gene-tree pair seen:
+            ``triplet.resolved``, ``triplet.unresolved_rooted_sister_pair``,
+            and ``triplet.taxa_absent_from_gene_tree``.
         triplets_checked: Number of normalized species triplets analyzed.
         passed: ``True`` when no issues were detected.
     """
@@ -402,6 +406,12 @@ def _check_gene_tree_triplets(
             continue
 
         counters["gene_tree.rooted"] += 1
+        counters[f"gene_tree.rooted_on.{used_outgroup}"] += 1
+        # Not a defect: the run keeps such a tree and roots it on the first
+        # listed outgroup present. Counted so the report can say how often the
+        # outgroups fail to sit together in the data.
+        if not _outgroups_sit_together(rooted, outgroups):
+            counters["gene_tree.outgroups_apart"] += 1
 
         try:
             rooted_std = standardize_tree(rooted)
@@ -521,6 +531,15 @@ def _build_report(
         f"outgroups:          {','.join(outgroups)}",
         f"triplets_checked:   {triplets_checked}",
         f"gene_trees_checked: {counters.get('gene_tree.total_checked', 0)}",
+        # Each gene tree is rooted on the first listed outgroup it carries. The
+        # apart count says in how many of them the outgroups present do not all
+        # lie on one side of the other taxa; those trees are kept as they are.
+        "rooted_on:          "
+        + ", ".join(
+            f"{outgroup}: {counters.get(f'gene_tree.rooted_on.{outgroup}', 0)}"
+            for outgroup in outgroups
+        ),
+        f"outgroups_apart:    {counters.get('gene_tree.outgroups_apart', 0)}",
         # How each triplet/gene-tree pair this check looked at would fare in a
         # run: measurable, dropped as unresolved, or skipped because the gene
         # tree does not carry all three taxa. The three sum to the pairs seen.
@@ -582,6 +601,14 @@ def _build_report(
             "Guidance:",
             "- gene_tree.rooting_failed: outgroup labels are missing/mismatched "
             "in gene trees.",
+            "- outgroups_apart: gene trees in which the outgroups present do "
+            "not all lie on one side of the other taxa; the run keeps them, "
+            "rooted on the first listed outgroup each carries, but rooting on "
+            "another of their outgroups would give some triplets a different "
+            "shape. A high count means the outgroups are not a clade in the "
+            "gene trees, usually because a distant outgroup on a long branch "
+            "attaches inside the ingroup; list first the outgroup whose "
+            "placement in the gene trees is most reliable.",
             "- triplet.unresolved_rooted_sister_pair: often unresolved "
             "triplets/polytomies or ambiguous rooting; the engine drops these "
             "triplet/gene-tree pairs rather than classifying them.",
@@ -625,27 +652,28 @@ def run_preflight_data_check(
 
     Raises:
         ValueError: If no outgroups are given, the species-tree file does not
-            hold exactly one tree, or none of the outgroups are present in the
-            species tree — all conditions that make the check itself impossible.
+            hold exactly one tree, or the outgroups do not root the species
+            tree (an :class:`~ghostparser.orchestrator.trees.OutgroupRootingError`,
+            whose message names the taxa in the way) — all conditions that
+            make the check itself impossible.
     """
     if not outgroups:
         raise ValueError("No outgroup taxa were provided")
 
     issues: list[Issue] = []
 
-    species_tree_bio = _load_single_species_tree(species_tree_path)
-    rooted_species_tree, used_outgroup, missing_outgroups = _root_tree_on_any_outgroup(
+    # The species tree takes the run's own path -- standardize, then root on
+    # the outgroups and prune them -- so the ingroup and every triplet's
+    # rooted shape are the ones the run would see.
+    species_tree_bio = standardize_tree(_load_single_species_tree(species_tree_path))
+    species_labels_sorted = sorted(
+        terminal.name for terminal in species_tree_bio.get_terminals()
+    )
+    pruned_species_tree, _excluded, _missing, _ingroup = _root_tree_on_outgroup(
         species_tree_bio, outgroups
     )
-    if used_outgroup is None:
-        missing_str = ", ".join(sorted(missing_outgroups)) or "all"
-        raise ValueError(
-            "Could not root species tree: none of the provided outgroups were "
-            f"found (missing outgroups: {missing_str})"
-        )
 
-    species_tree_d = _to_dendropy_tree(standardize_tree(rooted_species_tree))
-    species_labels_sorted = sorted(_get_leaf_labels_dendropy(species_tree_d))
+    species_tree_d = _to_dendropy_tree(pruned_species_tree)
 
     target_triplets = _load_target_triplets(
         species_labels_sorted=species_labels_sorted,

@@ -13,31 +13,25 @@ from ghostparser.orchestrator import trees as ptrees
 _OUTGROUP = ["OUT"]
 
 
-def test_clean_and_save_trees_preserves_a_well_supported_tree(
-    orchestrator_species_tree, tmp_path
+def test_clean_and_save_trees_keeps_well_supported_trees_and_drops_the_rest(
+    orchestrator_species_tree, low_support_tree_file, tmp_path
 ):
-    """A support-free species tree passes the filter unchanged."""
+    """Trees at or above the mean-support threshold pass unchanged; the rest are dropped."""
     out_path = tmp_path / "clean_species.tree"
     ptrees.clean_and_save_trees(
         str(orchestrator_species_tree), str(out_path), min_avg_support=0.5
     )
-
     # No internal support labels -> nothing to filter; the topology and branch
     # lengths round-trip verbatim.
     assert out_path.read_text() == "(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2);\n"
     assert len(ptrees.read_tree_file(str(out_path))) == 1
 
-
-def test_clean_and_save_trees_drops_low_average_support(low_support_tree_file, tmp_path):
-    """Trees whose mean internal support is below the threshold are dropped."""
     out_path = tmp_path / "clean.tree"
     ptrees.clean_and_save_trees(
         str(low_support_tree_file), str(out_path), min_avg_support=0.5
     )
-
     # Tree 0 supports (0.95, 0.99, 0.98) -> mean 0.9733 >= 0.5, kept.
     # Tree 1 supports (0.30, 0.20, 0.40) -> mean 0.3000 <  0.5, dropped.
-    # read_tree_file returns BioPython Phylo trees.
     kept = ptrees.read_tree_file(str(out_path))
     assert len(kept) == 1
     labels = {terminal.name for terminal in kept[0].get_terminals()}
@@ -71,28 +65,85 @@ def test_clean_and_save_trees_quotes_labels_the_format_needs(tmp_path):
     assert [leaf.taxon.label for leaf in dendro.leaf_node_iter()] == expected
 
 
-def test_root_tree_on_outgroup_prunes_and_reports_ingroup(
-    orchestrator_species_tree, tmp_path
+@pytest.mark.parametrize(
+    "newick, outgroups, expected_pruned",
+    [
+        # A single outgroup: removing OUT dissolves the (D,OUT) node, so D
+        # keeps 0.1 and the ((A,B),C) clade absorbs 0.1 + 0.2.
+        (
+            "(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2);",
+            ["OUT"],
+            "(((A:0.1,B:0.1):0.1,C:0.2):0.3,D:0.1):0.5;",
+        ),
+        # OUT1 and OUT2 are not a clade as written -- they sit on either side
+        # of the file's root -- but both branch off the ingroup at the node
+        # joining OUT2 to it. Rooting there and pruning leaves the ingroup
+        # clade with its own 0.4 edge.
+        (
+            "(OUT1:0.3,(OUT2:0.2,(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.1):0.4):0.5);",
+            ["OUT1", "OUT2"],
+            "(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.1):0.4;",
+        ),
+        # A root polytomy: both outgroups and both ingroup clades meet at the
+        # same node, so that node is the ingroup's root and keeps both clades.
+        (
+            "(OUT1:0.3,OUT2:0.2,(A:0.1,B:0.1):0.4,(C:0.1,D:0.1):0.6);",
+            ["OUT1", "OUT2"],
+            "((A:0.1,B:0.1):0.4,(C:0.1,D:0.1):0.6);",
+        ),
+    ],
+    ids=["single_outgroup", "either_side_of_root", "root_polytomy"],
+)
+def test_root_tree_on_outgroup_roots_where_the_outgroups_branch_off(
+    newick, outgroups, expected_pruned, tmp_path
 ):
-    """Rooting on the outgroup removes it and folds its edge into the ingroup."""
-    out_path = tmp_path / "clean_species.tree"
-    ptrees.clean_and_save_trees(
-        str(orchestrator_species_tree), str(out_path), min_avg_support=0.5
-    )
-    species_tree = ptrees.read_tree_file(str(out_path))[0]
+    """The tree is rooted where the outgroups branch off and pruned of them.
+
+    The outgroups need not be a clade as written, only branch off at one
+    point; the removed edges fold into the ingroup's root edge.
+    """
+    path = tmp_path / "species.tree"
+    path.write_text(newick + "\n")
+    species_tree = ptrees.read_tree_file(str(path))[0]
 
     pruned, excluded, missing, ingroup = ptrees._root_tree_on_outgroup(
-        species_tree, _OUTGROUP
+        species_tree, outgroups
     )
 
-    assert excluded == {"OUT"}
+    assert excluded == set(outgroups)
     assert missing == set()
     assert sorted(ingroup) == ["A", "B", "C", "D"]
-    # Input ((( A,B ),C):0.1,(D:0.1,OUT:0.5):0.2). Removing OUT dissolves the
-    # (D,OUT) node, so D keeps 0.1 and the ((A,B),C) clade absorbs 0.1 + 0.2.
-    assert ptrees.format_newick_with_precision(pruned) == (
-        "(((A:0.1,B:0.1):0.1,C:0.2):0.3,D:0.1):0.5;"
-    )
+    assert ptrees.format_newick_with_precision(pruned) == expected_pruned
+
+
+@pytest.mark.parametrize(
+    "newick, expected_groups",
+    [
+        # X nests among the outgroups: OUT2 branches off between X and the
+        # rest, so the taxa fall into two groups.
+        (
+            "(((A:1,B:1):1,C:1):1,(D:1,(OUT1:1,(OUT2:1,X:1):1):1):1);",
+            (("A", "B", "C", "D"), ("X",)),
+        ),
+        # Each outgroup carries its own pocket of ingroup taxa.
+        (
+            "((OUT1:1,(A:1,B:1):1):1,(OUT2:1,(C:1,D:1):1):1);",
+            (("A", "B"), ("C", "D")),
+        ),
+    ],
+)
+def test_root_tree_on_outgroup_rejects_outgroups_that_branch_off_twice(
+    newick, expected_groups, tmp_path
+):
+    """Outgroups with other taxa between them raise, naming the separated groups."""
+    path = tmp_path / "species.tree"
+    path.write_text(newick + "\n")
+    species_tree = ptrees.read_tree_file(str(path))[0]
+
+    with pytest.raises(ptrees.OutgroupRootingError) as excinfo:
+        ptrees._root_tree_on_outgroup(species_tree, ["OUT1", "OUT2"])
+
+    assert excinfo.value.separated_groups == expected_groups
 
 
 def test_generate_triplets_and_species_subtrees(orchestrator_species_tree, tmp_path):
@@ -141,20 +192,27 @@ def test_read_species_filter_file_collects_names_in_order(tmp_path):
     assert ptrees.read_species_filter_file(str(path)) == ["A", "B", "C", "D"]
 
 
-def test_clean_and_save_gene_trees_roots_every_tree_on_the_outgroup(
+def test_clean_and_save_gene_trees_roots_each_tree_on_the_first_listed_outgroup(
     orchestrator_gene_trees, tmp_path
 ):
-    """Gene-tree cleaning reroots on the outgroup, zeroing its edge."""
+    """Each tree is rerooted on the first listed outgroup it carries, and the counts say so.
+
+    Rerooting at the outgroup attachment point folds the outgroup's original
+    edge into the ingroup clade's edge and leaves the outgroup at length 0.
+    The outgroups' arrangement in a tree changes nothing about how it is
+    rooted; it is counted so a run can report how often the outgroups fail to
+    sit together in the data.
+    """
     out_path = tmp_path / "clean_genes.tree"
-    ptrees.clean_and_save_gene_trees(
+    cleaning = ptrees.clean_and_save_gene_trees(
         str(orchestrator_gene_trees), str(out_path), _OUTGROUP, min_avg_support=0.5
     )
     cleaned = ptrees._read_gene_trees_file(str(out_path))
 
     # All 12 fixture trees carry OUT and have no support labels, so all survive.
     assert len(cleaned) == 12
-    # Rerooting at the outgroup attachment point: OUT's original edge is folded
-    # into the ingroup clade's edge and OUT itself is left at length 0.
+    assert cleaning.rooted_on == {"OUT": 12}
+    assert cleaning.outgroups_apart == 0
     # Tree 0: ingroup edge 0.10 + OUT 0.50 = 0.60.
     assert cleaned[0] == "((((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6,OUT:0);"
     # Tree 3: ingroup edge 0.10 + OUT 0.55 = 0.65.
@@ -162,21 +220,29 @@ def test_clean_and_save_gene_trees_roots_every_tree_on_the_outgroup(
     for line in cleaned:
         assert line.endswith("OUT:0);")
 
-
-def test_extract_triplet_subtree_selects_the_triplet_taxa(orchestrator_gene_trees, tmp_path):
-    """Subtree extraction keeps exactly the requested taxa with their distances."""
-    out_path = tmp_path / "clean_genes.tree"
-    ptrees.clean_and_save_gene_trees(
-        str(orchestrator_gene_trees), str(out_path), _OUTGROUP, min_avg_support=0.5
+    in_path = tmp_path / "genes.tree"
+    in_path.write_text(
+        # OUT1 alone: rooted on OUT1, one outgroup is trivially together.
+        "((((A:1,B:1):1,C:1):1,D:1):1,OUT1:1);\n"
+        # OUT2 nests among the ingroup: rooted on OUT1, outgroups apart.
+        "(((A:1,B:1):1,(C:1,OUT2:1):1):1,OUT1:1);\n"
+        # OUT1 and OUT2 are sisters: rooted on OUT1, together.
+        "((((A:1,B:1):1,C:1):1,(OUT1:1,OUT2:1):1):1,D:1);\n"
+        # OUT1 absent: rooted on OUT2.
+        "((((A:1,B:1):1,C:1):1,D:1):1,OUT2:1);\n"
+        # No outgroup at all: dropped.
+        "(((A:1,B:1):1,C:1):1,D:1);\n"
     )
-    first = ptrees._read_gene_trees_file(str(out_path))[0]
-    tree = dendropy.Tree.get(data=first, schema="newick", preserve_underscores=True)
+    cleaning = ptrees.clean_and_save_gene_trees(
+        str(in_path), str(out_path), ["OUT1", "OUT2"], min_avg_support=0.5
+    )
 
-    subtree = ptrees.extract_triplet_subtree(tree, ("A", "B", "C"))
-    assert subtree is not None
-    labels = {
-        leaf.taxon.label
-        for leaf in subtree.leaf_node_iter()
-        if leaf.taxon is not None
-    }
-    assert labels == {"A", "B", "C"}
+    assert cleaning.rooted_on == {"OUT1": 3, "OUT2": 1}
+    assert cleaning.rooted_count == 4
+    assert cleaning.outgroups_apart == 1
+    assert cleaning.missing_outgroup_indices == [5]
+    assert cleaning.dropped_trees == {}
+    cleaned = ptrees._read_gene_trees_file(str(out_path))
+    assert [line.rsplit(",", 1)[1] for line in cleaned] == [
+        "OUT1:0);", "OUT1:0);", "OUT1:0);", "OUT2:0);"
+    ]
