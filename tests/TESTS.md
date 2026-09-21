@@ -588,16 +588,16 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   outgroups. Expected outputs: all 12 fixture trees survive with no `OUT`
   leaf, trees 0 and 3 match their expected rerooted Newick (the ingroup edge
   absorbs OUT's original edge length), `rooted_on == {"OUT": 12}`,
-  `set_aside == {"OUT": 0}`, `outgroups_apart == 0` and `ties == 0`; for the
+  `tangled == {"OUT": 0}`, `tangled_trees == 0` and `order_decided == 0`; for the
   six trees `rooted_count == 4`, `rooted_on == {"OUT1": 2, "OUT2": 2, "OUT3":
-  1}`, `set_aside == {"OUT1": 1, "OUT2": 1, "OUT3": 0}`, `outgroups_apart ==
-  2`, `ties == 1`, `unrootable_indices == [5, 6]`, no support drops, and the
+  1}`, `tangled == {"OUT1": 1, "OUT2": 1, "OUT3": 0}`, `tangled_trees ==
+  2`, `order_decided == 1`, `unrootable_indices == [5, 6]`, no support drops, and the
   four written trees as exact Newick. Purpose: gene-tree rooting semantics —
   each tree roots where the largest set of its outgroups branches off, an
-  outgroup with other taxa between it and that set is set aside, a tie
-  between equally large sets goes to the listed order, every outgroup is
-  pruned — and the counts report which outgroup rooted or was set aside in
-  how many trees, and how many ties the order settled.
+  outgroup tangled among the ingroup taxa is pruned without being used, no
+  majority means the listed order chooses, every outgroup is pruned — and
+  the counts report, per outgroup, the trees rooted using it and the trees
+  in which it was tangled, and how many trees the order settled.
 
 ### tests/orchestrator/test_orchestrator_triplet_geometry.py
 
@@ -720,14 +720,14 @@ The checks themselves are `core`; `test_clean_inputs_pass_and_the_report_lands_w
   `OUT2` nested among the ingroup, one carrying `OUT2` only. Expected outputs:
   `passed is True`, `triplets_checked == 4`, three gene trees rooted with
   `gene_tree.rooted_on.OUT1 == 2`, `gene_tree.rooted_on.OUT2 == 1`,
-  `gene_tree.set_aside.OUT2 == 1`, `gene_tree.outgroups_apart == 1`,
-  `gene_tree.rooting_tie == 1`, `triplet.resolved == 9` and
+  `gene_tree.tangled.OUT2 == 1`, `gene_tree.tangled_trees == 1`,
+  `gene_tree.order_decided == 1`, `triplet.resolved == 9` and
   `triplet.taxa_absent_from_gene_tree == 3`. Purpose: the
   check roots the species tree with the run's own rooting, so outgroups that
   are not a clade as written but branch off the ingroup at one node still give
   the ingroup `A,B,C,D` and its four triplets; each gene tree roots as the run
-  roots it, and a tree whose two outgroups sit apart is a tie the listed order
-  settles, counted rather than reported as a defect.
+  roots it, and a tree whose two outgroups sit apart has no majority, so the
+  listed order settles it, counted rather than reported as a defect.
 - `test_detects_polytomy_and_missing_outgroup` — Inputs: gene tree 1 well
   formed, gene tree 2 a polytomy over A/B/C, gene tree 3 with no outgroup
   label. Expected outputs: exactly one `gene_tree.rooting_failed` and one

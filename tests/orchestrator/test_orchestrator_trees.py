@@ -199,10 +199,10 @@ def test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_of
 
     Rooting at the outgroup attachment point folds the outgroup's original
     edge into the ingroup clade's edge; the outgroups are then cut away, so
-    the written tree is the rooted ingroup. An outgroup with other taxa
-    between it and the rest is set aside -- outvoted when the others still
-    sit together, or beaten by the listed order when the sets are equally
-    large -- and the counts say which and how often.
+    the written tree is the rooted ingroup. An outgroup tangled among the
+    ingroup taxa is pruned without being used -- outvoted when the others
+    still sit together, or beaten by the listed order when no set holds a
+    majority -- and the counts say which and how often.
     """
     out_path = tmp_path / "clean_genes.tree"
     cleaning = ptrees.clean_and_save_gene_trees(
@@ -214,9 +214,9 @@ def test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_of
     assert len(cleaned) == 12
     assert cleaning.rooted_count == 12
     assert cleaning.rooted_on == {"OUT": 12}
-    assert cleaning.set_aside == {"OUT": 0}
-    assert cleaning.outgroups_apart == 0
-    assert cleaning.ties == 0
+    assert cleaning.tangled == {"OUT": 0}
+    assert cleaning.tangled_trees == 0
+    assert cleaning.order_decided == 0
     # Tree 0: ingroup edge 0.10 + OUT 0.50 = 0.60, and OUT is gone.
     assert cleaned[0] == "(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6;"
     # Tree 3: ingroup edge 0.10 + OUT 0.55 = 0.65.
@@ -228,7 +228,7 @@ def test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_of
         # OUT1 alone.
         "((((A:1,B:1):1,C:1):1,D:1):1,OUT1:1);\n"
         # OUT2 nests among the ingroup: two outgroups apart is a tie, so the
-        # listed order roots on OUT1 and OUT2 is set aside and pruned.
+        # listed order roots on OUT1 and OUT2 is pruned unused.
         "(((A:1,B:1):1,(C:1,OUT2:1):1):1,OUT1:1);\n"
         # OUT1 nests among the ingroup while OUT2 and OUT3 sit together: the
         # pair outvotes it, whatever the listed order.
@@ -246,9 +246,9 @@ def test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_of
 
     assert cleaning.rooted_count == 4
     assert cleaning.rooted_on == {"OUT1": 2, "OUT2": 2, "OUT3": 1}
-    assert cleaning.set_aside == {"OUT1": 1, "OUT2": 1, "OUT3": 0}
-    assert cleaning.outgroups_apart == 2
-    assert cleaning.ties == 1
+    assert cleaning.tangled == {"OUT1": 1, "OUT2": 1, "OUT3": 0}
+    assert cleaning.tangled_trees == 2
+    assert cleaning.order_decided == 1
     assert cleaning.unrootable_indices == [5, 6]
     assert cleaning.dropped_trees == {}
     assert ptrees._read_gene_trees_file(str(out_path)) == [

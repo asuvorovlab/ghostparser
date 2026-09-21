@@ -539,34 +539,35 @@ class GeneTreeRooting:
             tree carries no outgroup or nothing but outgroups.
         used: The outgroups the rooting used, in listed order: the largest set
             of those present that parts from the other taxa at one point.
-        set_aside: The outgroups present but left out, in listed order,
-            because other taxa sit between them and the ones used; they are
-            pruned like the rest. When ``tree`` is ``None`` every outgroup
-            present is listed here.
+        tangled: The outgroups present but not used, in listed order: they
+            sat among the ingroup taxa, with ingroup taxa between them and
+            the outgroups used, and were pruned without rooting on them. When
+            ``tree`` is ``None`` every outgroup present is listed here.
         missing: The outgroups absent from the tree.
-        tied: ``True`` when another set of the same size as ``used`` also
-            parted from the other taxa at one point, so the listed order
-            chose between them.
+        order_decided: ``True`` when no set of outgroups held a majority --
+            another set of the same size as ``used`` also parted from the
+            other taxa at one point -- so the listed order chose.
     """
 
     tree: object
     used: tuple
-    set_aside: tuple
+    tangled: tuple
     missing: frozenset
-    tied: bool
+    order_decided: bool
 
 
 def root_gene_tree(tree, outgroup_taxa):
     """Root a gene tree where the largest set of its outgroups branches off.
 
-    Every outgroup the tree carries is tried together first. When other taxa
-    sit between them, the largest subset that parts from the other taxa at a
-    single point roots the tree instead -- a single gene often places a
+    Every outgroup the tree carries is tried together first. When ingroup
+    taxa sit between them, the largest subset that parts from the other taxa
+    at a single point roots the tree instead -- a single gene often places a
     distant outgroup somewhere inside the ingroup, and the outgroups that
-    still sit together outvote it. Among equally large subsets the one listed
-    earliest wins, so with two outgroups apart the first listed decides. All
-    outgroups are then pruned: no triplet contains one, and pruning a leaf
-    changes no other taxon's rooted shape or heights.
+    still sit together outvote it; the tangled one is pruned without being
+    used. Among equally large subsets none holds a majority, and the one
+    listed earliest wins, so with two outgroups apart the first listed
+    decides. All outgroups are then pruned: no triplet contains one, and
+    pruning a leaf changes no other taxon's rooted shape or heights.
 
     Args:
         tree: A ``Bio.Phylo`` tree object; rerooted in place.
@@ -594,14 +595,14 @@ def root_gene_tree(tree, outgroup_taxa):
                 fitting.append((subset, candidate))
         if fitting:
             used, host = fitting[0]
-            tied = len(fitting) > 1
+            order_decided = len(fitting) > 1
             break
 
     tree.root_with_outgroup(host)
     pruned_root = _copy_clade_for_taxa(tree.root, ingroup_taxa)
-    set_aside = tuple(outgroup for outgroup in present if outgroup not in used)
+    tangled = tuple(outgroup for outgroup in present if outgroup not in used)
     return GeneTreeRooting(
-        Tree(root=pruned_root, rooted=True), used, set_aside, missing, tied
+        Tree(root=pruned_root, rooted=True), used, tangled, missing, order_decided
     )
 
 
@@ -618,23 +619,22 @@ class GeneTreeCleaning:
             carrying no outgroup taxon, or nothing but outgroup taxa.
         rooted_on: Each outgroup label, in the order given, mapped to the
             number of kept trees whose rooting used it.
-        set_aside: Each outgroup label, in the order given, mapped to the
-            number of kept trees that carried it but rooted without it,
-            because other taxa sat between it and the outgroups used.
-        outgroups_apart: Number of kept trees in which the outgroups present
-            did not all part from the other taxa at one point, so at least one
-            was set aside.
-        ties: Number of kept trees in which equally large outgroup sets fit
-            and the listed order chose between them.
+        tangled: Each outgroup label, in the order given, mapped to the
+            number of kept trees in which it sat among the ingroup taxa and
+            was pruned without being used for rooting.
+        tangled_trees: Number of kept trees with at least one tangled
+            outgroup.
+        order_decided: Number of kept trees in which no set of outgroups held
+            a majority, so the listed order chose which to root on.
     """
 
     trees: list
     dropped_trees: dict
     unrootable_indices: list
     rooted_on: dict
-    set_aside: dict
-    outgroups_apart: int
-    ties: int
+    tangled: dict
+    tangled_trees: int
+    order_decided: int
 
     @property
     def rooted_count(self):
@@ -648,8 +648,8 @@ def clean_and_save_gene_trees(
     """Read, support-filter, root on the outgroups, standardize, and save gene trees.
 
     Each tree is rooted by :func:`root_gene_tree` -- where the largest set of
-    its outgroups branches off, with any outgroup that sits among the other
-    taxa left out -- and written without its outgroups. A tree carrying no
+    its outgroups branches off, with any outgroup tangled among the ingroup
+    taxa pruned unused -- and written without its outgroups. A tree carrying no
     outgroup, or nothing but outgroups, is dropped.
 
     Args:
@@ -668,9 +668,9 @@ def clean_and_save_gene_trees(
     dropped_trees = {}
     cleaned_trees = []
     rooted_on = {outgroup: 0 for outgroup in outgroup_list}
-    set_aside = {outgroup: 0 for outgroup in outgroup_list}
-    outgroups_apart = 0
-    ties = 0
+    tangled = {outgroup: 0 for outgroup in outgroup_list}
+    tangled_trees = 0
+    order_decided = 0
     unrootable_indices = []
 
     for idx, tree in enumerate(trees, start=1):
@@ -686,10 +686,10 @@ def clean_and_save_gene_trees(
 
         for outgroup in rooting.used:
             rooted_on[outgroup] += 1
-        for outgroup in rooting.set_aside:
-            set_aside[outgroup] += 1
-        outgroups_apart += bool(rooting.set_aside)
-        ties += rooting.tied
+        for outgroup in rooting.tangled:
+            tangled[outgroup] += 1
+        tangled_trees += bool(rooting.tangled)
+        order_decided += rooting.order_decided
 
         standardized = standardize_tree(rooting.tree)
         cleaned_trees.append(standardized)
@@ -701,9 +701,9 @@ def clean_and_save_gene_trees(
         dropped_trees=dropped_trees,
         unrootable_indices=unrootable_indices,
         rooted_on=rooted_on,
-        set_aside=set_aside,
-        outgroups_apart=outgroups_apart,
-        ties=ties,
+        tangled=tangled,
+        tangled_trees=tangled_trees,
+        order_decided=order_decided,
     )
 
 

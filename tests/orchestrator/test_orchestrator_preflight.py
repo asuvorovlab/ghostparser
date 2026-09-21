@@ -92,8 +92,8 @@ def test_species_tree_is_rooted_where_the_outgroups_branch_off(tmp_path):
     file's root -- but both branch off the ingroup at one node, so the ingroup
     is A,B,C,D and 4 triplets are checked. Each gene tree roots where the
     largest set of its outgroups branches off, and the counters say which
-    outgroups were used, which were set aside, and when the listed order had
-    to decide.
+    outgroups were used, which were tangled and pruned unused, and when the
+    listed order had to decide.
     """
     species = tmp_path / "species.tree"
     genes = tmp_path / "genes.tre"
@@ -115,13 +115,14 @@ def test_species_tree_is_rooted_where_the_outgroups_branch_off(tmp_path):
     assert result.passed is True
     assert result.triplets_checked == 4
     assert result.counters["gene_tree.rooted"] == 3
-    # In tree 2 the two outgroups sit apart, a tie the listed order settles
-    # for OUT1; OUT2 is set aside, counted, not reported as a defect.
+    # In tree 2 the two outgroups sit apart with no majority, so the listed
+    # order picks OUT1; OUT2 is tangled and pruned unused -- counted, not
+    # reported as a defect.
     assert result.counters["gene_tree.rooted_on.OUT1"] == 2
     assert result.counters["gene_tree.rooted_on.OUT2"] == 1
-    assert result.counters["gene_tree.set_aside.OUT2"] == 1
-    assert result.counters["gene_tree.outgroups_apart"] == 1
-    assert result.counters["gene_tree.rooting_tie"] == 1
+    assert result.counters["gene_tree.tangled.OUT2"] == 1
+    assert result.counters["gene_tree.tangled_trees"] == 1
+    assert result.counters["gene_tree.order_decided"] == 1
     # Tree 2 lacks D, so its three D triplets are skipped, not failed.
     assert result.counters["triplet.resolved"] == 9
     assert result.counters["triplet.taxa_absent_from_gene_tree"] == 3
@@ -214,7 +215,7 @@ def test_filter_entries_are_validated(clean_inputs, tmp_path, kind, text):
         (_CLEAN_SPECIES, ["OUT", "C"], "1 taxon: D"),
         (_CLEAN_SPECIES + _CLEAN_SPECIES, ["OUT"], "exactly one tree"),
     ],
-    ids=["no_outgroups", "outgroup_absent", "all_outgroups", "outgroups_apart", "two_trees"],
+    ids=["no_outgroups", "outgroup_absent", "all_outgroups", "outgroups_tangled", "two_trees"],
 )
 def test_impossible_checks_raise(tmp_path, species_text, outgroups, expected_message):
     """Conditions that make the check itself impossible raise ValueError."""

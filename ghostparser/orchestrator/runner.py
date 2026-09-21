@@ -514,28 +514,27 @@ def run_orchestrator(config):
             metrics.log(f"\n✓ Gene trees cleaned and saved to: {gene_trees_clean}")
             metrics.log(f"  Processed {len(gene_trees)} tree(s)")
             metrics.log(
-                f"  Rooted {cleaning.rooted_count} tree(s) where their outgroups "
-                "branch off and pruned the outgroups; trees rooted with each: "
+                f"  Rooted {cleaning.rooted_count} tree(s) on their outgroups and "
+                "pruned the outgroups; trees rooted using each: "
                 + ", ".join(
                     f"{outgroup}: {count}" for outgroup, count in cleaning.rooted_on.items()
                 )
             )
-            if cleaning.outgroups_apart:
+            if cleaning.tangled_trees:
                 metrics.log(
-                    f"  ⚠ In {cleaning.outgroups_apart} tree(s) an outgroup sat among "
-                    "the other taxa, so the rooting left it out and used the "
-                    "largest set of outgroups that still sit together; trees "
-                    "that set each aside: "
+                    f"  ⚠ In {cleaning.tangled_trees} tree(s) an outgroup was tangled "
+                    "among the ingroup taxa, so it was pruned without being used "
+                    "for rooting; trees in which that happened to each: "
                     + ", ".join(
                         f"{outgroup}: {count}"
-                        for outgroup, count in cleaning.set_aside.items()
+                        for outgroup, count in cleaning.tangled.items()
                     )
                 )
-            if cleaning.ties:
+            if cleaning.order_decided:
                 metrics.log(
-                    f"  ⚠ In {cleaning.ties} tree(s) equally large outgroup sets "
-                    "fit and the listed order decided, so list first the outgroup "
-                    "whose placement in the gene trees is most reliable"
+                    f"  ⚠ In {cleaning.order_decided} of those the outgroups sat apart "
+                    "with no majority among them, so the listed order chose which "
+                    "to root on; list first the outgroup you trust most"
                 )
             if cleaning.unrootable_indices:
                 metrics.log(

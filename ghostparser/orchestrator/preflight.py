@@ -73,12 +73,12 @@ class PreflightResult:
         report_text: The full report as a single string.
         issues: Every issue detected, in discovery order.
         counters: Per-category tallies plus ``gene_tree.total_checked``,
-            ``gene_tree.rooted``, ``gene_tree.rooted_on.<outgroup>`` and
-            ``gene_tree.set_aside.<outgroup>`` for each outgroup,
-            ``gene_tree.outgroups_apart`` (rooted trees whose outgroups
-            present do not all lie on one side of the other taxa, so one was
-            set aside), ``gene_tree.rooting_tie`` (rooted trees where equally
-            large outgroup sets fit and the listed order decided),
+            ``gene_tree.rooted``, ``gene_tree.rooted_on.<outgroup>`` (trees
+            rooted using it) and ``gene_tree.tangled.<outgroup>`` (trees in
+            which it sat among the ingroup taxa and was pruned unused) for
+            each outgroup, ``gene_tree.tangled_trees`` (trees with at least
+            one tangled outgroup), ``gene_tree.order_decided`` (trees where no
+            outgroup set held a majority and the listed order chose),
             and the three that account for every triplet/gene-tree pair seen:
             ``triplet.resolved``, ``triplet.unresolved_rooted_sister_pair``,
             and ``triplet.taxa_absent_from_gene_tree``.
@@ -400,7 +400,7 @@ def _check_gene_tree_triplets(
                         f"Gene tree #{idx}: "
                         + (
                             "every taxon is an outgroup"
-                            if rooting.set_aside
+                            if rooting.tangled
                             else "none of the outgroups were present"
                         )
                         + f"; missing outgroups: {', '.join(sorted(rooting.missing)) or 'none'}; "
@@ -414,14 +414,14 @@ def _check_gene_tree_triplets(
         for outgroup in rooting.used:
             counters[f"gene_tree.rooted_on.{outgroup}"] += 1
         # Not a defect: the run keeps such a tree, rooted on the outgroups
-        # that still sit together, with the rest set aside. Counted so the
-        # report can say how often each outgroup sits among the other taxa.
-        for outgroup in rooting.set_aside:
-            counters[f"gene_tree.set_aside.{outgroup}"] += 1
-        if rooting.set_aside:
-            counters["gene_tree.outgroups_apart"] += 1
-        if rooting.tied:
-            counters["gene_tree.rooting_tie"] += 1
+        # that still sit together, and prunes the tangled one unused. Counted
+        # so the report can say how often each outgroup sits among the ingroup.
+        for outgroup in rooting.tangled:
+            counters[f"gene_tree.tangled.{outgroup}"] += 1
+        if rooting.tangled:
+            counters["gene_tree.tangled_trees"] += 1
+        if rooting.order_decided:
+            counters["gene_tree.order_decided"] += 1
 
         try:
             rooted_std = standardize_tree(rooting.tree)
@@ -542,20 +542,26 @@ def _build_report(
         f"triplets_checked:   {triplets_checked}",
         f"gene_trees_checked: {counters.get('gene_tree.total_checked', 0)}",
         # Each gene tree is rooted where the largest set of its outgroups
-        # branches off; an outgroup with other taxa between it and that set is
-        # set aside. The apart count says in how many trees that happened.
+        # branches off; an outgroup tangled among the ingroup taxa is pruned
+        # without being used. The counts say how often that happened.
         "rooted_on:          "
         + ", ".join(
             f"{outgroup}: {counters.get(f'gene_tree.rooted_on.{outgroup}', 0)}"
             for outgroup in outgroups
-        ),
-        "set_aside:          "
+        )
+        + "  (gene trees rooted using each outgroup)",
+        "tangled:            "
         + ", ".join(
-            f"{outgroup}: {counters.get(f'gene_tree.set_aside.{outgroup}', 0)}"
+            f"{outgroup}: {counters.get(f'gene_tree.tangled.{outgroup}', 0)}"
             for outgroup in outgroups
-        ),
-        f"outgroups_apart:    {counters.get('gene_tree.outgroups_apart', 0)}",
-        f"rooting_ties:       {counters.get('gene_tree.rooting_tie', 0)}",
+        )
+        + "  (gene trees in which the outgroup sat among the ingroup taxa and was "
+        "pruned without being used for rooting)",
+        f"tangled_trees:      {counters.get('gene_tree.tangled_trees', 0)}"
+        "  (gene trees with at least one tangled outgroup)",
+        f"order_decided:      {counters.get('gene_tree.order_decided', 0)}"
+        "  (of those, trees where no outgroup set held a majority, so the listed "
+        "order chose which to root on)",
         # How each triplet/gene-tree pair this check looked at would fare in a
         # run: measurable, dropped as unresolved, or skipped because the gene
         # tree does not carry all three taxa. The three sum to the pairs seen.
@@ -617,15 +623,13 @@ def _build_report(
             "Guidance:",
             "- gene_tree.rooting_failed: outgroup labels are missing/mismatched "
             "in gene trees, or a tree holds nothing but outgroups.",
-            "- outgroups_apart: gene trees in which the outgroups present do "
-            "not all lie on one side of the other taxa. The run keeps them, "
-            "rooted where the largest set of outgroups that still sit "
-            "together branches off, and sets the others aside; set_aside "
-            "counts that per outgroup. An outgroup set aside often is one a "
-            "single gene places inside the ingroup, usually a distant one on "
-            "a long branch. rooting_ties counts the trees in which equally "
-            "large sets fit and the listed order decided, so list first the "
-            "outgroup whose placement in the gene trees is most reliable.",
+            "- tangled: an outgroup that a gene tree places among the ingroup "
+            "taxa is pruned without being used for rooting; the run keeps the "
+            "tree, rooted on the largest set of its outgroups that still sit "
+            "together. A frequently tangled outgroup is usually a distant one "
+            "on a long branch, which single genes place unreliably. In the "
+            "order_decided trees no outgroup set held a majority and the "
+            "listed order chose, so list first the outgroup you trust most.",
             "- triplet.unresolved_rooted_sister_pair: often unresolved "
             "triplets/polytomies or ambiguous rooting; the engine drops these "
             "triplet/gene-tree pairs rather than classifying them.",

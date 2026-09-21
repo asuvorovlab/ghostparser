@@ -819,8 +819,8 @@ Every branch of the six trees has length 1.
 
 **Derivation:** none of the 12 fixture trees carry support labels, so all 12
 survive, every one rooted on `OUT` (`rooted_on == {"OUT": 12}`) and every one
-carrying a single outgroup, which is trivially together (`set_aside ==
-{"OUT": 0}`, `outgroups_apart == 0`, `ties == 0`). Rooting at the outgroup
+carrying a single outgroup, which is trivially together (`tangled ==
+{"OUT": 0}`, `tangled_trees == 0`, `order_decided == 0`). Rooting at the outgroup
 attachment point moves `OUT`'s edge into the ingroup clade's edge, and
 pruning `OUT` leaves that clade as the root, so no line carries `OUT`. Tree
 0: `0.10 + 0.50 = 0.6` → `(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6;`. Tree
@@ -833,19 +833,20 @@ carries `OUT1` alone and tree 4 `OUT2` alone: one outgroup always fits, and
 its edge 1 folds into the ingroup edge 1, giving
 `(((A:1,B:1):1,C:1):1,D:1):2;` for both. Tree 2 carries `OUT1` and `OUT2`;
 neither `{OUT1, OUT2}` nor `{A, B, C}` is a clade, so the pair does not fit,
-both singletons do, and the listed order picks `OUT1` (`tied`), setting
-`OUT2` aside; pruning `OUT2` from `(C:1,OUT2:1):1` leaves `C` on an edge of
-`1 + 1 = 2`, so the written tree is `((A:1,B:1):1,C:2):2;`. Tree 3 carries
-all three; the triple does not fit (`OUT1` sits with `C`), of the pairs only
-`{OUT2, OUT3}` is a clade, so that pair roots the tree without a tie and
-`OUT1` is set aside. The rooting joins the ingroup to the pair's node,
+both singletons do, and with no majority the listed order picks `OUT1`
+(`order_decided`); `OUT2` is tangled and pruned unused, and pruning it from
+`(C:1,OUT2:1):1` leaves `C` on an edge of `1 + 1 = 2`, so the written tree is
+`((A:1,B:1):1,C:2):2;`. Tree 3 carries all three; the triple does not fit
+(`OUT1` sits with `C`), of the pairs only `{OUT2, OUT3}` is a clade, so that
+pair holds the majority and roots the tree, and `OUT1` is tangled and pruned
+unused. The rooting joins the ingroup to the pair's node,
 folding the pair's edge 1 into the ingroup's edge 1, and pruning `OUT1`
 lengthens `C`'s edge to 2: `(((A:1,B:1):1,C:2):1,D:1):2;`. Tree 5 carries no
 outgroup and tree 6 nothing else, so both are dropped, `unrootable_indices
 == [5, 6]`. Hence `rooted_count == 4`, `rooted_on == {"OUT1": 2, "OUT2": 2,
-"OUT3": 1}` (tree 3 counts for both `OUT2` and `OUT3`), `set_aside ==
-{"OUT1": 1, "OUT2": 1, "OUT3": 0}`, `outgroups_apart == 2` (trees 2 and 3)
-and `ties == 1` (tree 2). No tree carries support values, so none is dropped
+"OUT3": 1}` (tree 3 counts for both `OUT2` and `OUT3`), `tangled ==
+{"OUT1": 1, "OUT2": 1, "OUT3": 0}`, `tangled_trees == 2` (trees 2 and 3)
+and `order_decided == 1` (tree 2). No tree carries support values, so none is dropped
 for support.
 
 ## tests/orchestrator/test_orchestrator.py
@@ -984,8 +985,8 @@ and tree 3 `OUT2` alone, so each roots on the one it has. In tree 2 the
 non-outgroup taxa `A,B,C` do not form a clade -- `OUT2` is `C`'s sister -- so
 the pair does not fit, each singleton does, and the listed order picks `OUT1`
 and sets `OUT2` aside: `gene_tree.rooted == 3`, `rooted_on.OUT1 == 2`,
-`rooted_on.OUT2 == 1`, `set_aside.OUT2 == 1`, `outgroups_apart == 1` and
-`rooting_tie == 1`. Tree 2 lacks
+`rooted_on.OUT2 == 1`, `tangled.OUT2 == 1`, `tangled_trees == 1` and
+`order_decided == 1`. Tree 2 lacks
 `D`, so its three `D` triplets are skipped as absent
 (`triplet.taxa_absent_from_gene_tree == 3`); the other `4 + 1 + 4 = 9` pairs
 resolve (tree 2's `A,B,C` has `A,B` as sisters with `C` outside), so
