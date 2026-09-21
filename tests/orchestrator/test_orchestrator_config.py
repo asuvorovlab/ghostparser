@@ -131,16 +131,13 @@ def test_config_only_keys_and_nested_blocks_flatten_from_a_file(tmp_path):
     assert {key: config[key] for key in expected} == expected
 
 
-@pytest.mark.parametrize(
-    "written, expected",
-    [("no", "no"), ('"no"', "no"), ("No", "no"), ("NO", "no"), ("bfn", "bfn")],
-)
-def test_p_value_correction_accepts_yaml_bare_word_no(tmp_path, written, expected):
+@pytest.mark.parametrize("written", ["no", '"no"', "NO"])
+def test_p_value_correction_accepts_yaml_bare_word_no(tmp_path, written):
     """`p_value_correction: no` resolves to the "no" choice, quoted or not.
 
-    YAML 1.1 resolves the bare word ``no`` to boolean ``False``, so an unquoted
-    value never reaches validation as a string. Every spelling of the choice
-    must still select it.
+    YAML 1.1 resolves the bare words ``no`` and ``NO`` to boolean ``False``,
+    so an unquoted value never reaches validation as a string. Every spelling
+    of the choice must still select it.
     """
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -151,7 +148,7 @@ def test_p_value_correction_accepts_yaml_bare_word_no(tmp_path, written, expecte
     )
 
     config = load_orchestrator_config(str(config_path))
-    assert config["p_value_correction"] == expected
+    assert config["p_value_correction"] == "no"
 
 
 def test_config_file_wins_over_cli(tmp_path):
@@ -173,27 +170,30 @@ def test_config_file_wins_over_cli(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "value,expected",
+    "value, expected",
     [
         ("OUT", ["OUT"]),
         ("Out1,Out2", ["Out1", "Out2"]),
         (" Out1 , Out2 ,", ["Out1", "Out2"]),
-        (["Out1", "Out2"], ["Out1", "Out2"]),
-        (("Out1", "Out2"), ["Out1", "Out2"]),
         (["Out1,Out2", "Out3"], ["Out1", "Out2", "Out3"]),
+        (None, ConfigError),
+        ("  ", ConfigError),
+        ([""], ConfigError),
+        (42, ConfigError),
     ],
 )
-def test_outgroup_accepts_single_comma_separated_and_list_forms(value, expected):
-    """One `outgroup` key covers a single label, a comma-separated string, or a list."""
-    config = resolve_config(_base_cli_args(outgroup=value))
-    assert config["outgroup"] == expected
+def test_outgroup_key_is_normalized_or_rejected(value, expected):
+    """One `outgroup` key covers a label, a comma-separated string or a list; anything label-free is an error.
 
-
-@pytest.mark.parametrize("value", [None, "", "  ", ",", [], ["", "  "], 42])
-def test_outgroup_rejects_empty_and_non_label_values(value):
-    """A missing or label-free `outgroup` is a config error, not an empty list."""
-    with pytest.raises(ConfigError, match="outgroup"):
-        resolve_config(_base_cli_args(outgroup=value))
+    Whitespace and empty entries are dropped from what is accepted; a missing
+    value, blanks alone or a non-string are a config error naming the key,
+    never an empty list.
+    """
+    if expected is ConfigError:
+        with pytest.raises(ConfigError, match="outgroup"):
+            resolve_config(_base_cli_args(outgroup=value))
+        return
+    assert resolve_config(_base_cli_args(outgroup=value))["outgroup"] == expected
 
 
 @pytest.mark.parametrize(

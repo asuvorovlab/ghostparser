@@ -3,7 +3,9 @@
 The parity tests hold the cached-geometry path to agreement with the DendroPy
 subtree extraction it replaced and with a BioPython implementation written
 here from the definitions alone: root distances, pairwise distances and common
-ancestors as ``Bio.Phylo`` computes them on the unpruned tree.
+ancestors as ``Bio.Phylo`` computes them on the unpruned tree. A hand-derived
+table pins absolute values, so the three implementations cannot agree on a
+shared mistake.
 """
 
 import itertools
@@ -43,6 +45,14 @@ _PARITY_CASES = [
     ("zero_internal", "((A:1.0,B:1.0):0.0,C:1.0);", ("A", "B", "C")),
     ("tiny_internal", "(((A:1e-12,B:1e-12):1e-13,C:1.0000000000001):2.5,D:3.0);", ("A", "B", "C")),
 ]
+
+# A 9-taxon tree with an outgroup, nested clades, a long ladder, uneven branch
+# lengths and one zero-length internal branch: 84 triplets over one topology.
+_LARGE_TREE = (
+    "((((T1:0.11,T2:0.19):0.23,(T3:0.07,T4:0.31):0.0):0.17,"
+    "((T5:0.29,T6:0.13):0.41,T7:0.53):0.09):0.37,(T8:0.61,OUT:0.71):0.43);"
+)
+_LARGE_LABELS = ("T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "OUT")
 
 
 def _parse(newick):
@@ -127,196 +137,145 @@ def _geometry_observation(newick, triplet, strategy, collect):
     return geometry_observation(geometry, positions, strategy, collect)
 
 
+def _assert_same_observation(actual, expected, context):
+    """Compare a cached-geometry observation with a reference one."""
+    assert actual[0] == expected[0], context
+    assert actual[1] == pytest.approx(expected[1], rel=1e-12, abs=1e-15), context
+    for metric, value in expected[2].items():
+        assert actual[2][metric] == pytest.approx(value, rel=1e-12, abs=1e-15), (
+            context,
+            metric,
+        )
+
+
 @pytest.mark.parity
-@pytest.mark.parametrize("reference", sorted(_REFERENCES))
-@pytest.mark.parametrize("strategy", _STRATEGIES)
 @pytest.mark.parametrize(
     "newick,triplet", [case[1:] for case in _PARITY_CASES],
     ids=[case[0] for case in _PARITY_CASES],
 )
-def test_geometry_matches_each_reference(newick, triplet, strategy, reference):
-    """Cached geometry reproduces each reference implementation's observation."""
-    expected = _REFERENCES[reference](newick, triplet, strategy, True)
-    actual = _geometry_observation(newick, triplet, strategy, True)
+def test_geometry_matches_each_reference(newick, triplet):
+    """Cached geometry reproduces both references under every height strategy."""
+    for reference, strategy in itertools.product(sorted(_REFERENCES), _STRATEGIES):
+        expected = _REFERENCES[reference](newick, triplet, strategy, True)
+        actual = _geometry_observation(newick, triplet, strategy, True)
 
-    assert expected is not None, "fixture should produce an observation"
-    assert actual is not None
-
-    assert actual[0] == expected[0]
-    assert actual[1] == pytest.approx(expected[1], rel=1e-12, abs=1e-15)
-    for metric, value in expected[2].items():
-        assert actual[2][metric] == pytest.approx(value, rel=1e-12, abs=1e-15)
-
-
-def test_geometry_omits_summary_metrics_when_not_collecting():
-    """The metrics slot stays empty unless summary statistics are requested."""
-    newick, triplet = _PARITY_CASES[0][1:]
-    assert _geometry_observation(newick, triplet, "AVG", False)[2] is None
-    assert _dendropy_observation(newick, triplet, "AVG", False)[2] is None
-
-
-def test_geometry_on_a_hand_derived_tree():
-    """Geometry values match a tree whose distances are computed by hand."""
-    newick = "(((P:1.0,Q:1.0):2.0,R:3.0):1.0,(S:2.0,T:2.0):2.0);"
-
-    # (P,Q) are sisters below node X. Subtree ((P:1,Q:1):2,R:3) puts every tip
-    # 3.0 from its root, the internal branch at 2.0, and P..Q at 1.0+1.0.
-    topology, height, metrics = _geometry_observation(newick, ("P", "Q", "R"), "AVG", True)
-    assert topology == "((A,B),C)"
-    assert height == pytest.approx(3.0)
-    assert metrics["avg_tree_height"] == pytest.approx(3.0)
-    assert metrics["internal_branch"] == pytest.approx(2.0)
-    assert metrics["sister_distance"] == pytest.approx(2.0)
-
-    # (P,R) are sisters below X while S sits across the root, so every tip is
-    # 4.0 down, the internal branch is X's own 1.0, and P..R is 1.0+2.0+3.0.
-    topology, height, metrics = _geometry_observation(newick, ("P", "R", "S"), "AVG", True)
-    assert topology == "((A,B),C)"
-    assert height == pytest.approx(4.0)
-    assert metrics["internal_branch"] == pytest.approx(1.0)
-    assert metrics["sister_distance"] == pytest.approx(6.0)
+        assert expected is not None, "fixture should produce an observation"
+        assert actual is not None
+        _assert_same_observation(actual, expected, (reference, strategy))
 
 
 @pytest.mark.parity
-@pytest.mark.parametrize("reference", sorted(_REFERENCES))
-@pytest.mark.parametrize(
-    "label,newick,triplet",
-    [
-        ("root_polytomy", "(A:1.0,B:1.0,C:1.0);", ("A", "B", "C")),
-        ("absent_taxon", "((A:1.0,B:1.0):1.0,D:2.0);", ("A", "B", "C")),
-    ],
-)
-def test_geometry_skips_exactly_what_each_reference_skips(label, newick, triplet, reference):
-    """The cached path and each reference decline the same unusable triplets."""
-    assert _REFERENCES[reference](newick, triplet, "AVG", True) is None
-    assert _geometry_observation(newick, triplet, "AVG", True) is None
-
-
-def test_zero_length_internal_branch_still_resolves():
-    """A zero-length internal branch is resolved, not treated as a polytomy.
-
-    Comparing LCA depths would tie here and drop the observation; comparing LCA
-    node identity keeps it, which is what the subtree path does.
-    """
-    newick = "((A:1.0,B:1.0):0.0,C:1.0);"
-    expected = _dendropy_observation(newick, ("A", "B", "C"), "INT", True)
-    actual = _geometry_observation(newick, ("A", "B", "C"), "INT", True)
-
-    assert expected is not None and actual is not None
-    assert actual[0] == expected[0] == "((A,B),C)"
-    assert actual[1] == pytest.approx(0.0)
-    assert actual[2]["sister_distance"] == pytest.approx(expected[2]["sister_distance"])
-
-
-def test_missing_edge_lengths_count_as_zero():
-    """Absent Newick lengths contribute nothing, as _distance_to_root assumes."""
-    topology, height, metrics = _geometry_observation(
-        "(((A,B),C),(D,E));", ("A", "B", "C"), "AVG", True
-    )
-    assert topology == "((A,B),C)"
-    assert height == pytest.approx(0.0)
-    assert metrics["internal_branch"] == pytest.approx(0.0)
-
-
-def test_one_cache_serves_every_triplet_in_the_tree():
-    """A single cache answers all triplets, which is what makes it worth building."""
-    newick = "(((P:1.0,Q:1.0):2.0,R:3.0):1.0,(S:2.0,T:2.0):2.0);"
-    labels = ("P", "Q", "R", "S", "T")
-    taxon_index = build_taxon_index([labels])
-    geometry = build_triplet_geometry(_parse(newick), taxon_index)
-
-    for triplet in itertools.combinations(labels, 3):
-        positions = tuple(taxon_index[label] for label in triplet)
-        actual = geometry_observation(geometry, positions, "AVG", True)
-        expected = _dendropy_observation(newick, triplet, "AVG", True)
-        assert (actual is None) == (expected is None)
-        if expected is None:
-            continue
-        assert actual[0] == expected[0]
-        assert actual[1] == pytest.approx(expected[1], rel=1e-12, abs=1e-15)
-
-
-# A 9-taxon tree with an outgroup, nested clades, a long ladder, uneven branch
-# lengths and one zero-length internal branch: 84 triplets over one topology.
-_LARGE_TREE = (
-    "((((T1:0.11,T2:0.19):0.23,(T3:0.07,T4:0.31):0.0):0.17,"
-    "((T5:0.29,T6:0.13):0.41,T7:0.53):0.09):0.37,(T8:0.61,OUT:0.71):0.43);"
-)
-
-
-@pytest.mark.parity
-@pytest.mark.parametrize("reference", sorted(_REFERENCES))
-@pytest.mark.parametrize("strategy", _STRATEGIES)
-def test_geometry_matches_each_reference_across_a_nine_taxon_tree(strategy, reference):
-    """Every triplet of a 9-taxon tree agrees with each reference implementation.
+def test_geometry_matches_each_reference_across_a_nine_taxon_tree():
+    """Every triplet of a 9-taxon tree agrees with each reference under each strategy.
 
     Sweeps all 84 triplets rather than hand-picked shapes, so sister pairs on
     either side of the root, across the zero-length internal branch, and down
-    the ladder are all exercised for each tree-height strategy.
+    the ladder are all exercised. One cache built over the whole tree answers
+    every triplet, and the diagnostic ``triplet_resolution`` must call each of
+    them resolved exactly where the observation path yields one.
     """
-    labels = ("T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "OUT")
-    triplets = list(itertools.combinations(labels, 3))
+    triplets = list(itertools.combinations(_LARGE_LABELS, 3))
     assert len(triplets) == 84
 
-    taxon_index = build_taxon_index([labels])
+    taxon_index = build_taxon_index([_LARGE_LABELS])
     geometry = build_triplet_geometry(_parse(_LARGE_TREE), taxon_index)
 
-    compared = 0
     for triplet in triplets:
-        expected = _REFERENCES[reference](_LARGE_TREE, triplet, strategy, True)
-        actual = geometry_observation(
-            geometry, tuple(taxon_index[label] for label in triplet), strategy, True
-        )
+        positions = tuple(taxon_index[label] for label in triplet)
+        assert triplet_resolution(geometry, positions) == TRIPLET_RESOLVED, triplet
+        for reference, strategy in itertools.product(sorted(_REFERENCES), _STRATEGIES):
+            expected = _REFERENCES[reference](_LARGE_TREE, triplet, strategy, True)
+            actual = geometry_observation(geometry, positions, strategy, True)
 
-        assert (actual is None) == (expected is None), triplet
-        if expected is None:
-            continue
-
-        assert actual[0] == expected[0], triplet
-        assert actual[1] == pytest.approx(expected[1], rel=1e-12, abs=1e-15), triplet
-        for metric, value in expected[2].items():
-            assert actual[2][metric] == pytest.approx(
-                value, rel=1e-12, abs=1e-15
-            ), (triplet, metric)
-        compared += 1
-
-    assert compared == len(triplets), "every triplet should yield an observation"
+            assert expected is not None, triplet
+            assert actual is not None, triplet
+            _assert_same_observation(actual, expected, (triplet, reference, strategy))
 
 
-def test_triplet_resolution_agrees_with_the_observation_guards():
-    """The diagnostic and the hot path decline exactly the same triplets.
+@pytest.mark.parametrize(
+    "newick, triplet, strategy, topology, height, metrics",
+    [
+        # (P,Q) are sisters below node X. Subtree ((P:1,Q:1):2,R:3) puts every
+        # tip 3.0 from its root, the internal branch at 2.0, and P..Q at 1+1.
+        (
+            "(((P:1.0,Q:1.0):2.0,R:3.0):1.0,(S:2.0,T:2.0):2.0);",
+            ("P", "Q", "R"),
+            "AVG",
+            TOPOLOGY_AB,
+            3.0,
+            {"avg_tree_height": 3.0, "internal_branch": 2.0, "sister_distance": 2.0},
+        ),
+        # (P,R) are sisters below X while S sits across the root, so every tip
+        # is 4.0 down, the internal branch is X's own 1.0, and P..R is 1+2+3.
+        (
+            "(((P:1.0,Q:1.0):2.0,R:3.0):1.0,(S:2.0,T:2.0):2.0);",
+            ("P", "R", "S"),
+            "AVG",
+            TOPOLOGY_AB,
+            4.0,
+            {"avg_tree_height": 4.0, "internal_branch": 1.0, "sister_distance": 6.0},
+        ),
+        # A zero-length internal branch is resolved from LCA identity, not from
+        # a depth comparison that would tie: INT is exactly 0 and A..B is 1+1.
+        (
+            "((A:1.0,B:1.0):0.0,C:1.0);",
+            ("A", "B", "C"),
+            "INT",
+            TOPOLOGY_AB,
+            0.0,
+            {"avg_tree_height": 1.0, "internal_branch": 0.0, "sister_distance": 2.0},
+        ),
+        # Absent Newick lengths contribute nothing, so every distance is 0.
+        (
+            "(((A,B),C),(D,E));",
+            ("A", "B", "C"),
+            "AVG",
+            TOPOLOGY_AB,
+            0.0,
+            {"avg_tree_height": 0.0, "internal_branch": 0.0, "sister_distance": 0.0},
+        ),
+    ],
+    ids=["nested_pair", "spans_root", "zero_internal", "no_lengths"],
+)
+def test_geometry_matches_hand_derived_values(
+    newick, triplet, strategy, topology, height, metrics
+):
+    """Geometry values match distances computed by hand from the Newick."""
+    observed_topology, observed_height, observed_metrics = _geometry_observation(
+        newick, triplet, strategy, True
+    )
+    assert observed_topology == topology
+    assert observed_height == pytest.approx(height)
+    assert observed_metrics == pytest.approx(metrics)
+    # The metrics slot stays empty unless summary statistics are requested.
+    assert _geometry_observation(newick, triplet, strategy, False)[2] is None
 
-    `triplet_resolution` restates `geometry_observation`'s guards so preflight
-    can name a reason without the hot path tracking one. Nothing shares code
-    between them, so this is what stops them drifting apart.
-    """
-    cases = [
-        (_LARGE_TREE, ("T1", "T2", "T3"), TRIPLET_RESOLVED),
-        ("((A:1.0,B:1.0):0.0,C:1.0);", ("A", "B", "C"), TRIPLET_RESOLVED),
+
+@pytest.mark.parity
+@pytest.mark.parametrize(
+    "newick, triplet, status",
+    [
         ("(A:1.0,B:1.0,C:1.0);", ("A", "B", "C"), TRIPLET_UNRESOLVED),
         ("((A:1.0,B:1.0):1.0,D:2.0);", ("A", "B", "C"), TRIPLET_MISSING_TAXON),
-    ]
-    for newick, triplet, expected in cases:
-        taxon_index = build_taxon_index([triplet])
-        geometry = build_triplet_geometry(_parse(newick), taxon_index)
-        positions = tuple(taxon_index[label] for label in triplet)
+        ("((A:1.0,B:1.0):0.0,C:1.0);", ("A", "B", "C"), TRIPLET_RESOLVED),
+    ],
+    ids=["root_polytomy", "absent_taxon", "zero_internal"],
+)
+def test_geometry_skips_exactly_what_each_reference_skips(newick, triplet, status):
+    """The cached path, each reference and the diagnostic decline the same triplets.
 
-        status = triplet_resolution(geometry, positions)
-        observation = geometry_observation(geometry, positions, "AVG", False)
+    ``triplet_resolution`` restates ``geometry_observation``'s guards so the
+    preflight can name a reason without the hot path tracking one; nothing
+    shares code between them, so this is what stops them drifting apart.
+    """
+    taxon_index = build_taxon_index([triplet])
+    geometry = build_triplet_geometry(_parse(newick), taxon_index)
+    positions = tuple(taxon_index[label] for label in triplet)
+    resolved = status == TRIPLET_RESOLVED
 
-        assert status == expected, (newick, triplet)
-        assert (status == TRIPLET_RESOLVED) == (observation is not None), (
-            newick,
-            triplet,
-        )
-
-    # And over a whole tree, the two must agree on every triplet.
-    labels = ("T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "OUT")
-    taxon_index = build_taxon_index([labels])
-    geometry = build_triplet_geometry(_parse(_LARGE_TREE), taxon_index)
-    for triplet in itertools.combinations(labels, 3):
-        positions = tuple(taxon_index[label] for label in triplet)
-        resolved = triplet_resolution(geometry, positions) == TRIPLET_RESOLVED
-        assert resolved == (
-            geometry_observation(geometry, positions, "AVG", False) is not None
-        ), triplet
+    assert triplet_resolution(geometry, positions) == status
+    assert (geometry_observation(geometry, positions, "AVG", True) is not None) is resolved
+    for reference in sorted(_REFERENCES):
+        assert (
+            _REFERENCES[reference](newick, triplet, "AVG", True) is not None
+        ) is resolved, reference

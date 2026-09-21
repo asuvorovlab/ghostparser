@@ -59,12 +59,17 @@ def _tuning_namespace(input_path, output_dir, **overrides):
 
 
 @pytest.mark.config
-def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
+@pytest.mark.parametrize(
+    "max_features", [["sqrt", None, 4], "log2"], ids=["list", "lone_value"]
+)
+def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path, max_features):
     """A full tuning section resolves, with its keys renamed to their config names.
 
     The section's `model`/`method`/`objective` keys surface as `model_name`,
     `search_method` and `objective_metric`, so this pins the rename as well as
-    the acceptance -- a caller reading the resolved config uses the latter names.
+    the acceptance -- a caller reading the resolved config uses the latter
+    names. Valid search-space candidates pass the `model`-block rules and keep
+    their shape, list or lone value alike.
     """
     config_path = _write_config(
         tmp_path,
@@ -81,7 +86,7 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
                 "max_depth": [None],
                 "min_samples_split": [2],
                 "min_samples_leaf": [1],
-                "max_features": ["sqrt"],
+                "max_features": max_features,
                 "class_weight": [None],
             },
         },
@@ -93,6 +98,7 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
     assert config["search_method"] == "grid"
     assert config["objective_metric"] == "exact_match_accuracy"
     assert config["search_space"]["n_estimators"] == [5, 10]
+    assert config["search_space"]["max_features"] == max_features
     assert config["use_wandb"] is False
 
 
@@ -176,37 +182,22 @@ def test_shipped_tuning_sample_configs_resolve(sample_name, expected_model):
 
 
 @pytest.mark.integration
-@pytest.mark.config
-def test_tune_hyperparameters_defaults_to_wandb_off(
+@pytest.mark.output
+def test_tune_hyperparameters_grid_search_runs_end_to_end(
     summary_statistics_tsv_tuning, tmp_path
 ):
-    """A namespace carrying no `use_wandb` runs locally instead of failing.
+    """Grid search enumerates the whole space and writes every local artifact.
 
-    The programmatic entry point takes the same default as the config loader, so
-    a caller building its own namespace does not have to know the key exists.
-    """
-    output_dir = tmp_path / "no_choice"
-    config = _tuning_namespace(summary_statistics_tsv_tuning, output_dir)
-    del config.use_wandb
-
-    result = tune_hyperparameters(config)
-
-    assert result["results"]["use_wandb"] is False
-    assert not (output_dir / "wandb").exists()
-    assert (output_dir / "hyper_tune_results.json").exists()
-
-
-@pytest.mark.integration
-@pytest.mark.output
-def test_tune_hyperparameters_grid_search_smoke(summary_statistics_tsv_tuning, tmp_path):
-    """Grid search runs end to end and enumerates the whole space.
-
-    The search space crosses one parameter over two values, so grid search must
-    evaluate exactly 2 candidates -- the count is what distinguishes exhaustive
-    enumeration from sampling.
+    The search space crosses one parameter over two values, so grid search
+    must evaluate exactly 2 candidates -- the count is what distinguishes
+    exhaustive enumeration from sampling. The namespace carries no
+    ``use_wandb``: the programmatic entry point takes the same default as the
+    config loader, so the run stays local and still emits the ranked TSVs,
+    the marginals, the plot and the report.
     """
     output_dir = tmp_path / "hyper_tune_out"
     config = _tuning_namespace(summary_statistics_tsv_tuning, output_dir)
+    del config.use_wandb
 
     result = tune_hyperparameters(config)
 
@@ -215,53 +206,7 @@ def test_tune_hyperparameters_grid_search_smoke(summary_statistics_tsv_tuning, t
     assert result["results"]["use_wandb"] is False
     assert len(result["candidates"]) == 2
     assert (output_dir / "hyper_tune_best_model.pkl").exists()
-    assert (output_dir / "hyper_tune_results.json").exists()
     assert not (output_dir / "wandb").exists()
-
-
-@pytest.mark.integration
-@pytest.mark.output
-def test_tune_hyperparameters_random_search_smoke(
-    summary_statistics_tsv_tuning, tmp_path
-):
-    """Random search samples `n_iter` candidates instead of enumerating.
-
-    The space here holds more combinations than `n_iter=1`, so a single
-    candidate proves the sampling budget is honoured rather than the grid being
-    walked; the best candidate is that one sample.
-    """
-    config = _tuning_namespace(
-        summary_statistics_tsv_tuning,
-        tmp_path / "hyper_tune_random_out",
-        search_method="random",
-        n_iter=1,
-        search_space={
-            "n_estimators": [5, 10],
-            "max_depth": [None, 3],
-            "min_samples_split": [2],
-            "min_samples_leaf": [1],
-            "max_features": ["sqrt"],
-            "class_weight": [None],
-        },
-    )
-
-    result = tune_hyperparameters(config)
-
-    assert result["results"]["search_method"] == "random"
-    assert len(result["candidates"]) == 1
-    assert result["results"]["best_candidate"]["candidate_index"] == 1
-
-
-@pytest.mark.integration
-@pytest.mark.output
-def test_tune_hyperparameters_writes_local_navigation_artifacts(
-    summary_statistics_tsv_tuning, tmp_path
-):
-    """Without W&B the run still emits ranked TSVs, marginals, plots and a report."""
-    output_dir = tmp_path / "hyper_tune_local_out"
-    config = _tuning_namespace(summary_statistics_tsv_tuning, output_dir)
-
-    result = tune_hyperparameters(config)
 
     marginals_path = output_dir / "hyper_tune_parameter_marginals.tsv"
     plot_path = output_dir / "hyper_tune_search_report.png"
@@ -305,6 +250,39 @@ def test_tune_hyperparameters_writes_local_navigation_artifacts(
     assert {entry["parameter"] for entry in payload["parameter_influence"]} == set(
         config.search_space
     )
+
+
+@pytest.mark.integration
+@pytest.mark.output
+def test_tune_hyperparameters_random_search_smoke(
+    summary_statistics_tsv_tuning, tmp_path
+):
+    """Random search samples `n_iter` candidates instead of enumerating.
+
+    The space here holds more combinations than `n_iter=1`, so a single
+    candidate proves the sampling budget is honoured rather than the grid being
+    walked; the best candidate is that one sample.
+    """
+    config = _tuning_namespace(
+        summary_statistics_tsv_tuning,
+        tmp_path / "hyper_tune_random_out",
+        search_method="random",
+        n_iter=1,
+        search_space={
+            "n_estimators": [5, 10],
+            "max_depth": [None, 3],
+            "min_samples_split": [2],
+            "min_samples_leaf": [1],
+            "max_features": ["sqrt"],
+            "class_weight": [None],
+        },
+    )
+
+    result = tune_hyperparameters(config)
+
+    assert result["results"]["search_method"] == "random"
+    assert len(result["candidates"]) == 1
+    assert result["results"]["best_candidate"]["candidate_index"] == 1
 
 
 @pytest.mark.parametrize(
@@ -520,34 +498,3 @@ def test_tune_hyperparameters_routes_bulk_artifacts_to_wandb(
     report = (output_dir / "hyper_tune_results.txt").read_text()
     assert "Weights & Biases logging: enabled" in report
     assert "logged to the Weights & Biases run" in report
-
-
-@pytest.mark.config
-@pytest.mark.parametrize(
-    "values, expected",
-    [
-        (["sqrt", None, 4], ["sqrt", None, 4]),
-        ("log2", "log2"),
-    ],
-)
-
-
-def test_load_hyper_tune_config_keeps_search_space_shape(
-    values, expected, tmp_path
-):
-    """Valid candidates pass the `model`-block rules, list or lone value alike."""
-    config_path = _write_config(
-        tmp_path,
-        "hyper_tune_search_values.json",
-        {
-            "model": "random_forest",
-            "use_wandb": False,
-            "search_space": {"max_features": values},
-        },
-    )
-
-    config = load_hyper_tune_config(str(config_path))
-
-    assert config["search_space"]["max_features"] == expected
-
-

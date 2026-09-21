@@ -265,16 +265,16 @@ def test_inference_matches_derived_expectation(discordant_test, diagnostic):
     assert sum(result.all_bootstrap.values()) == pytest.approx(1.0)
 
 
-@pytest.mark.parametrize("strategy", ["AVG", "A", "B", "C", "SIS", "INT"])
-def test_observation_heights_match_derived_geometry(strategy):
-    """Serialized observations carry the hand-derived topology and H(T) per strategy."""
-    observations = pinf._serialize_triplet_gene_trees(
-        _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy=strategy
-    )
-    assert len(observations) == len(_LEAF_GEOMETRY)
-    for observation, entry in zip(observations, _LEAF_GEOMETRY):
-        assert observation[0] == entry[0]
-        assert observation[1] == pytest.approx(_expected_height(entry, strategy))
+def test_observation_heights_match_derived_geometry():
+    """Serialized observations carry the hand-derived topology and H(T) under every strategy."""
+    for strategy in ("AVG", "A", "B", "C", "SIS", "INT"):
+        observations = pinf._serialize_triplet_gene_trees(
+            _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy=strategy
+        )
+        assert len(observations) == len(_LEAF_GEOMETRY)
+        for observation, entry in zip(observations, _LEAF_GEOMETRY):
+            assert observation[0] == entry[0], strategy
+            assert observation[1] == pytest.approx(_expected_height(entry, strategy)), strategy
 
 
 def test_empty_observations_decide_no_introgression():

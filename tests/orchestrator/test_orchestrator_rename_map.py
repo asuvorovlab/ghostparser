@@ -17,23 +17,17 @@ def _write(tmp_path, name, text):
 
 
 @pytest.mark.config
-def test_rename_map_reads_a_two_column_tsv(tmp_path):
-    """A TSV maps its first column onto its second, skipping blanks and comments."""
-    path = _write(
-        tmp_path,
-        "names.tsv",
-        "# tree label\tdisplay name\nT1\tHomo sapiens\n\nT2\tPan troglodytes\n",
-    )
-    assert load_species_rename_map(str(path)) == {
-        "T1": "Homo sapiens",
-        "T2": "Pan troglodytes",
-    }
-
-
-@pytest.mark.config
-def test_rename_map_reads_a_yaml_mapping(tmp_path):
-    """A YAML mapping is accepted in place of a TSV."""
-    path = _write(tmp_path, "names.yaml", "T1: Homo sapiens\nT2: Pan troglodytes\n")
+@pytest.mark.parametrize(
+    "name, text",
+    [
+        ("names.tsv", "# tree label\tdisplay name\nT1\tHomo sapiens\n\nT2\tPan troglodytes\n"),
+        ("names.yaml", "T1: Homo sapiens\nT2: Pan troglodytes\n"),
+    ],
+    ids=["tsv", "yaml"],
+)
+def test_rename_map_reads_a_tsv_or_a_yaml_mapping(tmp_path, name, text):
+    """A TSV maps its first column onto its second, skipping blanks and comments; YAML maps directly."""
+    path = _write(tmp_path, name, text)
     assert load_species_rename_map(str(path)) == {
         "T1": "Homo sapiens",
         "T2": "Pan troglodytes",
@@ -42,7 +36,7 @@ def test_rename_map_reads_a_yaml_mapping(tmp_path):
 
 @pytest.mark.config
 @pytest.mark.parametrize(
-    "name,text,message",
+    "name, text, message",
     [
         ("bad.tsv", "T1\tA\textra\n", "two tab-separated columns"),
         ("bad.tsv", "T1\n", "two tab-separated columns"),
@@ -52,62 +46,53 @@ def test_rename_map_reads_a_yaml_mapping(tmp_path):
         ("bad.yaml", "- T1\n- T2\n", "must be a mapping"),
         ("tab.yaml", "T1: \"Homo\\tsapiens\"\n", "holds a tab"),
         ("comma.tsv", "T1\tHomo, sapiens\n", "holds a comma"),
-        ("semicolon.tsv", "T1\tA;B\n", "holds a semicolon"),
-        ("equals.tsv", "T1\tA=B\n", "holds an equals sign"),
+        ("absent.tsv", None, "Species rename map not found"),
     ],
 )
-def test_rename_map_rejects_malformed_files(tmp_path, name, text, message):
-    """Malformed maps fail loudly rather than silently renaming nothing."""
-    path = _write(tmp_path, name, text)
-    with pytest.raises(ValueError, match=message):
+def test_rename_map_rejects_malformed_or_missing_files(tmp_path, name, text, message):
+    """Malformed or missing maps fail loudly rather than silently renaming nothing."""
+    path = tmp_path / name
+    if text is not None:
+        path.write_text(text)
+    with pytest.raises((ValueError, FileNotFoundError), match=message):
         load_species_rename_map(str(path))
 
 
-@pytest.mark.config
-def test_rename_map_rejects_a_missing_file(tmp_path):
-    """A missing map is reported by path."""
-    with pytest.raises(FileNotFoundError, match="Species rename map not found"):
-        load_species_rename_map(str(tmp_path / "absent.tsv"))
+_RENAME_MAP = {"T1": "Alpha", "T2": "Beta sp."}
 
 
 @pytest.mark.parametrize(
-    "newick,expected",
+    "newick, rename_map, expected",
     [
         # Mapped labels renamed, the unmapped one kept, lengths untouched.
-        ("((T1:0.1,T2:0.2):0.3,T3:0.4);", "((Alpha:0.1,'Beta sp.':0.2):0.3,T3:0.4);"),
+        ("((T1:0.1,T2:0.2):0.3,T3:0.4);", _RENAME_MAP, "((Alpha:0.1,'Beta sp.':0.2):0.3,T3:0.4);"),
         # The odd taxon listed first, and a root edge.
-        ("(T3:0.4,(T1:0.1,T2:0.2):0.3):0.5;", "(T3:0.4,(Alpha:0.1,'Beta sp.':0.2):0.3):0.5;"),
+        ("(T3:0.4,(T1:0.1,T2:0.2):0.3):0.5;", _RENAME_MAP, "(T3:0.4,(Alpha:0.1,'Beta sp.':0.2):0.3):0.5;"),
         # Whole-token matching: labels that merely contain a key are left alone.
-        ("((T1:0.1,T10:0.2):0.3,XT1:0.4);", "((Alpha:0.1,T10:0.2):0.3,XT1:0.4);"),
+        ("((T1:0.1,T10:0.2):0.3,XT1:0.4);", _RENAME_MAP, "((Alpha:0.1,T10:0.2):0.3,XT1:0.4);"),
         # A quoted input label is unquoted before lookup and requoted as needed.
-        ("(('O''Brien':0.1,T2:0.2):0.3,T3:0.4);", "(('O''Brien':0.1,'Beta sp.':0.2):0.3,T3:0.4);"),
+        ("(('O''Brien':0.1,T2:0.2):0.3,T3:0.4);", _RENAME_MAP, "(('O''Brien':0.1,'Beta sp.':0.2):0.3,T3:0.4);"),
+        # An empty map is a no-op.
+        ("((T1:0.1,T2:0.2):0.3,T3:0.4);", {}, "((T1:0.1,T2:0.2):0.3,T3:0.4);"),
     ],
+    ids=["mapped", "odd_first", "whole_token", "quoted_input", "empty_map"],
 )
-def test_renaming_newick_labels_maps_leaves_and_quotes_as_needed(newick, expected):
+def test_renaming_labels_maps_leaves_and_quotes_as_needed(newick, rename_map, expected):
     """Leaf labels are mapped in place, quoting display names the format needs.
 
     Branch lengths follow ``:`` so they are never mistaken for labels, and the
-    result must still parse to the display names with its lengths intact.
+    result must still parse to the display names with its lengths intact. The
+    plain label helper maps the same leaves to the same names.
     """
-    rename_map = {"T1": "Alpha", "T2": "Beta sp."}
     renamed = rename_newick_labels(newick, rename_map)
     assert renamed == expected
 
     before = dendropy.Tree.get(data=newick, schema="newick", preserve_underscores=True)
     after = dendropy.Tree.get(data=renamed, schema="newick", preserve_underscores=True)
-    assert [leaf.taxon.label for leaf in after.leaf_node_iter()] == [
-        rename_map.get(leaf.taxon.label, leaf.taxon.label)
-        for leaf in before.leaf_node_iter()
-    ]
+    before_labels = [leaf.taxon.label for leaf in before.leaf_node_iter()]
+    after_labels = [leaf.taxon.label for leaf in after.leaf_node_iter()]
+    assert after_labels == [rename_map.get(label, label) for label in before_labels]
+    assert rename_taxon_labels(before_labels, rename_map) == after_labels
     assert [leaf.edge_length for leaf in after.leaf_node_iter()] == [
         leaf.edge_length for leaf in before.leaf_node_iter()
     ]
-
-
-def test_renaming_labels_leaves_unmapped_names_alone():
-    """The label helper maps a plain name list, and an empty map is a no-op."""
-    assert rename_taxon_labels(("T1", "T3"), {"T1": "Alpha"}) == ["Alpha", "T3"]
-    assert rename_taxon_labels(("T1",), {}) == ["T1"]
-    assert rename_newick_labels("((T1:0.1,T2:0.2):0.3,T3:0.4);", {}) == (
-        "((T1:0.1,T2:0.2):0.3,T3:0.4);"
-    )

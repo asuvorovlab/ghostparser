@@ -15,6 +15,7 @@ from statsmodels.stats.multitest import multipletests
 
 from ghostparser.orchestrator import inference as pinf
 from ghostparser.orchestrator.config import P_VALUE_CORRECTION_CHOICES
+from ghostparser.orchestrator.correction import is_inline_correction
 
 _TRIPLET = ("A", "B", "C")
 _SPECIES_SUBTREE = "((A:1.0,B:1.0):1.0,C:2.0);"
@@ -64,6 +65,39 @@ def _analyze(observations, **kwargs):
     )
 
 
+def _measure(observations, method, family_size=1, iterations=40, seed=3, **kwargs):
+    """Measure one triplet without deciding it.
+
+    Args:
+        observations: The observation list.
+        method: The p-value correction method.
+        family_size: Triplet count the correction should work against.
+        iterations: Bootstrap iterations to run.
+        seed: Base seed for deterministic resampling.
+        **kwargs: Forwarded to ``analyze_triplet_from_observations``.
+
+    Returns:
+        The undecided ``TripletPipelineResult``.
+    """
+    return pinf.analyze_triplet_from_observations(
+        _TRIPLET,
+        observations,
+        species_subtree=_SPECIES_SUBTREE,
+        bootstrap_options={"iterations": iterations},
+        p_value_correction=method,
+        family_size=family_size,
+        triplet_seed=seed,
+        **kwargs,
+    )
+
+
+def _decide(results, method):
+    """Run the run-wide decision pass over measured results."""
+    return pinf._apply_triplet_result_p_value_correction(
+        results, alpha_dct=0.05, alpha_ks=0.05, method=method
+    )
+
+
 def _corrected(observations, method, family_size=1, iterations=40, seed=3, **kwargs):
     """Measure one triplet and run the run-wide decision pass over it.
 
@@ -84,15 +118,9 @@ def _corrected(observations, method, family_size=1, iterations=40, seed=3, **kwa
     Returns:
         The corrected ``TripletPipelineResult`` for the real triplet.
     """
-    result = pinf.analyze_triplet_from_observations(
-        _TRIPLET,
-        observations,
-        species_subtree=_SPECIES_SUBTREE,
-        bootstrap_options={"iterations": iterations},
-        p_value_correction=method,
-        family_size=family_size,
-        triplet_seed=seed,
-        **kwargs,
+    result = _measure(
+        observations, method, family_size=family_size, iterations=iterations,
+        seed=seed, **kwargs,
     )
     # Padding stands in for triplets that never clear a gate. Under a rank-based
     # method they need their own deferred records, not an empty one: every
@@ -116,9 +144,7 @@ def _corrected(observations, method, family_size=1, iterations=40, seed=3, **kwa
         )
         for _ in range(family_size - 1)
     ]
-    return pinf._apply_triplet_result_p_value_correction(
-        [result] + padding, alpha_dct=0.05, alpha_ks=0.05, method=method
-    )[0]
+    return _decide([result] + padding, method)[0]
 
 
 # Spread-out, fully separated samples. Every concordant height sits above every
@@ -307,79 +333,126 @@ def test_classify_introgression_truth_table(
     ``_classify_introgression`` returns both in one pass, so the pair is
     asserted over the same truth table: the gate names the test that settled the
     call, and only ``Permutation`` means the direction decision was consulted.
+    ``_resolve_deferred_bootstrap`` classifies whole arrays at once rather than
+    calling the scalar form per iteration, so the array form is held to the
+    same table -- an unmeasured tree-height flag reads as not significant
+    there, as the scalar form documents.
     """
     assert pinf._classify_introgression(
         dct_significant, ks_significant, direction
     ) == (expected, expected_gate)
 
+    code = pinf._classification_codes(
+        np.array([dct_significant]),
+        np.array([bool(ks_significant)]),
+        np.array([pinf._DIRECTION_CODES.get(direction, pinf._DIRECTION_SKIPPED)]),
+    )[0]
+    assert pinf._BOOTSTRAP_CLASSES[code] == expected
 
-@pytest.mark.parametrize("method", ["no", "bfn", "holm", "fdr_bh", "fdr_by"])
-def test_adjust_p_values_matches_statsmodels(method):
-    """Each correction method reproduces statsmodels' multipletests output."""
+
+@pytest.mark.parametrize("method", P_VALUE_CORRECTION_CHOICES)
+def test_adjust_p_values_matches_statsmodels_and_never_lowers_a_value(method):
+    """Each correction reproduces statsmodels and never pulls a p-value down.
+
+    The first half compares against ``multipletests`` called directly (``no``
+    is the identity). The second is what licenses skipping a settled gate:
+    both short-circuits -- the point estimate skipping the direction test and
+    a bootstrap iteration skipping it -- rest on ``raw > alpha`` implying
+    ``adjusted > alpha``, so the property is asserted over the whole choice
+    list rather than a fixed set of names, on the hostile family of eight
+    strong signals against two weak ones, where a true-null-count estimator
+    would drive its multiplier below 1.
+    """
     p_values = [0.001, 0.008, 0.039, 0.041, 0.042, 0.06, 0.074, 0.205, 0.212, 0.6]
-
     adjusted = pinf._adjust_p_values(p_values, method=method, alpha=0.05)
-
     if method == "no":
         assert adjusted == pytest.approx(p_values)
+    else:
+        mapped = {"bfn": "bonferroni"}.get(method, method)
+        _, expected, _, _ = multipletests(p_values, alpha=0.05, method=mapped)
+        assert adjusted == pytest.approx(list(expected))
+
+    hostile = [0.001] * 8 + [0.4, 0.9]
+    adjusted = pinf._adjust_p_values(hostile, method=method, alpha=0.05)
+    assert all(a >= p - 1e-12 for a, p in zip(adjusted, hostile))
+
+
+@pytest.mark.parametrize("method", P_VALUE_CORRECTION_CHOICES)
+def test_inline_correction_matches_the_family_pass_or_refuses(method):
+    """A method needing only the family size reproduces the full pass; the rest refuse.
+
+    ``no`` and ``bfn`` vote inline during the stream, correcting one p-value
+    from the triplet count alone, so the value must equal what the run-wide
+    pass gives that p-value inside a family of that size. A rank-based method
+    cannot be applied without the rest of its family and says so.
+    """
+    p_value = 0.004
+    if not is_inline_correction(method):
+        with pytest.raises(ValueError, match="needs the whole family"):
+            pinf._adjust_p_value_inline(p_value, method, 10)
         return
 
-    mapped = {
-        "bfn": "bonferroni",
-        "holm": "holm",
-        "fdr_bh": "fdr_bh",
-        "fdr_by": "fdr_by",
-    }[method]
-    _, expected, _, _ = multipletests(p_values, alpha=0.05, method=mapped)
-    assert adjusted == pytest.approx(list(expected))
-
-
-def test_adjust_p_values_bonferroni_by_definition():
-    """Bonferroni multiplies by the number of tests and clamps at 1.0."""
-    p_values = [0.01, 0.2, 0.5]
-    adjusted = pinf._adjust_p_values(p_values, method="bfn", alpha=0.05)
-    assert adjusted == pytest.approx([0.03, 0.6, 1.0])
-
-
-def test_adjust_p_values_rejects_unknown_method():
-    """An unsupported correction method raises ValueError."""
-    with pytest.raises(ValueError, match="Unsupported p-value correction method"):
-        pinf._adjust_p_values([0.1], method="bogus")
-
-
-@pytest.mark.parametrize("method", ["chi-square", "z-test"])
-def test_discordant_count_test_with_no_discordant_observations(method):
-    """A zero/zero discordant split short-circuits to a non-significant result."""
-    assert pinf.run_discordant_count_test(0, 0, method=method) == (0.0, 1.0)
-
-
-def test_discordant_count_test_rejects_unknown_method():
-    """An unsupported discordant test raises ValueError."""
-    with pytest.raises(ValueError, match="Unsupported discordant test method"):
-        pinf.run_discordant_count_test(3, 2, method="bogus")
+    for family_size in (1, 7, 250):
+        family = [p_value] + [0.5] * (family_size - 1)
+        expected = pinf._adjust_p_values(family, method=method, alpha=0.05)[0]
+        assert pinf._adjust_p_value_inline(p_value, method, family_size) == pytest.approx(
+            expected
+        ), family_size
 
 
 @pytest.mark.parametrize(
-    "sample_a,sample_b", [([], [1.0]), ([1.0], []), ([], [])]
+    "call, match",
+    [
+        (lambda: pinf._adjust_p_values([0.1], method="bogus"), "Unsupported p-value correction method"),
+        (lambda: pinf.run_discordant_count_test(3, 2, method="bogus"), "Unsupported discordant test method"),
+    ],
+    ids=["correction", "discordant_test"],
 )
-def test_ks_test_with_an_empty_sample(sample_a, sample_b):
-    """An empty sample makes the KS test a non-significant no-op."""
-    assert pinf.run_two_sample_ks_test(sample_a, sample_b) == (0.0, 1.0)
+def test_unknown_methods_are_rejected(call, match):
+    """An unsupported correction or count-test method raises ValueError."""
+    with pytest.raises(ValueError, match=match):
+        call()
 
 
-@pytest.mark.parametrize("method", ["no", "bfn", "holm", "fdr_bh", "fdr_by"])
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: pinf.run_discordant_count_test(0, 0, method="chi-square"),
+        lambda: pinf.run_discordant_count_test(0, 0, method="z-test"),
+        lambda: pinf.run_two_sample_ks_test([], [1.0]),
+        lambda: pinf.run_two_sample_ks_test([], []),
+    ],
+    ids=["dct_chi_square_no_discordants", "dct_z_test_no_discordants", "ks_one_empty", "ks_both_empty"],
+)
+def test_degenerate_samples_are_non_significant(call):
+    """A test with nothing to compare reports a zero statistic and p = 1."""
+    assert call() == (0.0, 1.0)
+
+
+@pytest.mark.parametrize("method", P_VALUE_CORRECTION_CHOICES)
 def test_inline_and_deferred_correction_agree_on_a_single_triplet(method):
-    """Every short-circuiting method votes the same way on a family of one.
+    """Every method votes the same way on a family of one, whichever tier it uses.
 
     A family of one leaves each correction as the identity, so all five methods
     must produce the same bootstrap tally. ``no`` and ``bfn`` reach it inline
-    during the stream while the rank-based three park their raw p-values and are
-    corrected afterwards, so agreeing here is what shows the two code paths
+    during the stream while the rank-based three park their raw p-values in a
+    deferred record -- one entry per iteration, whatever the family size, since
+    every rank depends on the other triplets' values -- which the decision pass
+    resolves and clears. Agreeing here is what shows the two code paths
     implement one decision rule rather than two.
     """
     observations = _observations([0.9] * 25, [0.2] * 3 + [0.35] * 22, [0.3] * 4)
-    result = _corrected(observations, method)
+    measured = _measure(observations, method)
+    if is_inline_correction(method):
+        assert measured.bootstrap_deferred is None
+        assert measured.all_bootstrap is not None
+    else:
+        assert measured.all_bootstrap is None
+        assert len(measured.bootstrap_deferred.dct_p_values) == 40
+
+    result = _decide([measured], method)[0]
     baseline = _corrected(observations, "no")
+    assert result.bootstrap_deferred is None
     assert result.all_bootstrap == baseline.all_bootstrap
     assert result.bootstrap_value == baseline.bootstrap_value
 
@@ -405,81 +478,6 @@ def test_bootstrap_votes_answer_to_the_corrected_threshold():
     # The same iterations vote differently when nothing corrects them, which is
     # what makes the corrected agreement above meaningful rather than vacuous.
     assert raw.all_bootstrap["no_introgression"] < 1.0
-
-
-def test_deferred_bootstrap_record_is_cleared_after_correction():
-    """A rank-based method defers its votes and the decision pass resolves them.
-
-    The stream leaves the votes parked whatever the family size, since every
-    rank in the per-iteration family depends on the other triplets' values.
-    """
-    observations = _observations([0.9] * 25, [0.2] * 3 + [0.35] * 22, [0.3] * 4)
-    deferred = pinf.analyze_triplet_from_observations(
-        _TRIPLET,
-        observations,
-        species_subtree=_SPECIES_SUBTREE,
-        bootstrap_options={"iterations": 20},
-        p_value_correction="holm",
-        triplet_seed=5,
-    )
-    assert deferred.all_bootstrap is None
-    assert deferred.bootstrap_deferred is not None
-    assert len(deferred.bootstrap_deferred.dct_p_values) == 20
-
-    resolved = pinf._apply_triplet_result_p_value_correction(
-        [deferred], alpha_dct=0.05, alpha_ks=0.05, method="holm"
-    )[0]
-    assert resolved.bootstrap_deferred is None
-    assert sum(resolved.all_bootstrap.values()) == pytest.approx(1.0)
-
-
-@pytest.mark.parametrize(
-    "dct_significant,ks_significant,direction",
-    [
-        (dct, ks, direction)
-        for dct in (True, False)
-        for ks in (True, False)
-        for direction in ("greater", "less", "equivalent", "inconclusive")
-    ],
-)
-def test_vectorized_bootstrap_codes_match_classify_introgression(
-    dct_significant, ks_significant, direction
-):
-    """The array-form cascade agrees with the scalar one on every branch.
-
-    ``_resolve_deferred_bootstrap`` classifies whole arrays at once rather than
-    calling ``_classify_introgression`` per iteration, so the two must be pinned
-    against each other or they can silently drift apart.
-    """
-    import numpy as np
-
-    code = pinf._classification_codes(
-        np.array([dct_significant]),
-        np.array([ks_significant]),
-        np.array([pinf._DIRECTION_CODES.get(direction, pinf._DIRECTION_SKIPPED)]),
-    )[0]
-    expected, _ = pinf._classify_introgression(
-        dct_significant, ks_significant, direction
-    )
-    assert pinf._BOOTSTRAP_CLASSES[code] == expected
-
-
-@pytest.mark.parametrize("method", P_VALUE_CORRECTION_CHOICES)
-def test_every_supported_correction_is_monotone(method):
-    """No supported correction may lower a p-value below its raw value.
-
-    Both short-circuits — the point estimate skipping the direction test and a
-    bootstrap iteration skipping it — rest on ``raw > alpha`` implying
-    ``adjusted > alpha``. A method that can pull a p-value back under alpha
-    would break both silently, so the property is asserted over the whole
-    choice list rather than a fixed set of names. The family is built to be the
-    hostile case: eight strong signals against two weak ones, which is where a
-    true-null-count estimator would drive its multiplier below 1.
-    """
-    p_values = [0.001] * 8 + [0.4, 0.9]
-    adjusted = pinf._adjust_p_values(p_values, method=method, alpha=0.05)
-
-    assert all(a >= p - 1e-12 for a, p in zip(adjusted, p_values))
 
 
 @pytest.mark.parametrize(
@@ -578,23 +576,6 @@ def test_diagnostic_bootstrap_records_every_test_without_moving_a_vote(con, dis1
     assert summarized.bootstrap_perm_p_greater["non_null_count"] == iterations
 
 
-@pytest.mark.parametrize("family_size", [1, 7, 250])
-def test_inline_bonferroni_matches_the_family_correction(family_size):
-    """Correcting one p-value from the family size alone reproduces the full pass."""
-    p_value = 0.004
-    family = [p_value] + [0.5] * (family_size - 1)
-    expected = pinf._adjust_p_values(family, method="bfn", alpha=0.05)[0]
-    assert pinf._adjust_p_value_inline(p_value, "bfn", family_size) == pytest.approx(
-        expected
-    )
-
-
-def test_inline_correction_rejects_a_rank_based_method():
-    """A rank-based method cannot be applied without the rest of its family."""
-    with pytest.raises(ValueError, match="needs the whole family"):
-        pinf._adjust_p_value_inline(0.01, "holm", 10)
-
-
 def test_studentized_interval_brackets_the_observed_statistic():
     """The percentile interval is ordered and covers the statistic it describes.
 
@@ -666,56 +647,6 @@ _CASCADE_FAMILY = [
 ]
 
 
-@pytest.mark.parametrize("method", ["bfn", "holm", "fdr_bh"])
-def test_each_test_is_corrected_over_every_triplet(method):
-    """Each test's p-values form one family over all triplets, whatever the other test said.
-
-    A triplet the count gate settles still contributes its tree-height p-value
-    to the tree-height family and gets a corrected value back, so a corrected
-    column is the plain whole-run correction of its raw column. Blanking every
-    count p-value leaves the tree-height column untouched: the two corrections
-    read nothing of each other, and only the cascade order decides which one a
-    triplet's classification rests on. Runs diagnostic so every raw value is
-    there to correct by hand.
-    """
-    results = [
-        pinf.analyze_triplet_from_observations(
-            _TRIPLET,
-            _observations(*case),
-            species_subtree=_SPECIES_SUBTREE,
-            bootstrap_options={"iterations": 0},
-            p_value_correction=method,
-            family_size=len(_CASCADE_FAMILY),
-            triplet_seed=11,
-            diagnostic=True,
-        )
-        for case in _CASCADE_FAMILY
-    ]
-    decided = pinf._apply_triplet_result_p_value_correction(
-        results, alpha_dct=0.05, alpha_ks=0.05, method=method
-    )
-    assert {result.decision_gate for result in decided} == {"DCT", "THT", "PERM"}
-
-    for test in ("dct", "ks"):
-        raw = [getattr(result, f"{test}_p_value") for result in results]
-        expected = pinf._adjust_p_values(raw, method=method, alpha=0.05)
-        corrected = [getattr(result, f"{test}_p_value_corrected") for result in decided]
-        assert corrected == pytest.approx(expected)
-    assert all(result.ks_significant is not None for result in decided)
-    assert all(result.perm_decision is not None for result in decided)
-
-    blanked = pinf._apply_triplet_result_p_value_correction(
-        [replace(result, dct_p_value=1.0) for result in results],
-        alpha_dct=0.05,
-        alpha_ks=0.05,
-        method=method,
-    )
-    assert [result.ks_p_value_corrected for result in blanked] == [
-        result.ks_p_value_corrected for result in decided
-    ]
-    assert {result.classification for result in blanked} == {"no_introgression"}
-
-
 # Everything the cascade reads, which the ``diagnostic`` setting must not move.
 # The raw ``ks_statistic``/``ks_p_value`` are deliberately absent: under an
 # inline correction a non-diagnostic run does not measure them below a settled
@@ -749,31 +680,29 @@ def test_diagnostic_changes_what_is_measured_and_nothing_concluded(method):
     the bootstrap votes included -- those are judged against the corrected
     threshold, so a skip that shifted a gate would move them too.
 
-    Under a rank-based method the tree-height column must agree everywhere,
-    since every triplet is a member the default still measures. Under ``bfn``
-    the default leaves it unmeasured below a settled count gate, and the
-    survivors must still be corrected by the triplet count rather than by the
-    number measured: a family shrunk to the survivors would lower their
-    corrected values and move classifications past the tree-height gate.
+    The diagnostic family, where every raw value exists, also shows what a
+    corrected column is: each test's p-values form one family over all
+    triplets, whatever the other test said, so a corrected column is the plain
+    whole-run correction of its raw column, and blanking every count p-value
+    leaves the tree-height column untouched. Under a rank-based method the
+    tree-height column must agree everywhere between the two runs, since every
+    triplet is a member the default still measures. Under ``bfn`` the default
+    leaves it unmeasured below a settled count gate, and the survivors must
+    still be corrected by the triplet count rather than by the number measured:
+    a family shrunk to the survivors would lower their corrected values and
+    move classifications past the tree-height gate.
     """
+    measured = {}
     families = {}
     for diagnostic in (False, True):
-        results = [
-            pinf.analyze_triplet_from_observations(
-                _TRIPLET,
-                _observations(*case),
-                species_subtree=_SPECIES_SUBTREE,
-                bootstrap_options={"iterations": 30},
-                p_value_correction=method,
-                family_size=len(_CASCADE_FAMILY),
-                triplet_seed=11,
-                diagnostic=diagnostic,
+        measured[diagnostic] = [
+            _measure(
+                _observations(*case), method, family_size=len(_CASCADE_FAMILY),
+                iterations=30, seed=11, diagnostic=diagnostic,
             )
             for case in _CASCADE_FAMILY
         ]
-        families[diagnostic] = pinf._apply_triplet_result_p_value_correction(
-            results, alpha_dct=0.05, alpha_ks=0.05, method=method
-        )
+        families[diagnostic] = _decide(measured[diagnostic], method)
 
     # The family has to exercise every gate, or the comparison would only prove
     # the two runs agree where neither of them resamples.
@@ -806,6 +735,22 @@ def test_diagnostic_changes_what_is_measured_and_nothing_concluded(method):
             assert lean.perm_statistic is None
             assert lean.perm_note == pinf.PERM_NOTE_NOT_CONSULTED
             assert full.perm_decision is not None
+
+    for test in ("dct", "ks"):
+        raw = [getattr(result, f"{test}_p_value") for result in measured[True]]
+        expected = pinf._adjust_p_values(raw, method=method, alpha=0.05)
+        corrected = [
+            getattr(result, f"{test}_p_value_corrected") for result in families[True]
+        ]
+        assert corrected == pytest.approx(expected), test
+
+    blanked = _decide(
+        [replace(result, dct_p_value=1.0) for result in measured[True]], method
+    )
+    assert [result.ks_p_value_corrected for result in blanked] == [
+        result.ks_p_value_corrected for result in families[True]
+    ]
+    assert {result.classification for result in blanked} == {"no_introgression"}
 
 
 @pytest.mark.parametrize("diagnostic", [False, True])

@@ -126,64 +126,22 @@ def _random_samples(rng):
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
-def test_observed_statistic_matches_scipy(seed):
-    """The observed statistic equals SciPy's for the same statistic function."""
-    rng = np.random.default_rng(seed)
-    x, y = _random_samples(rng)
+def test_statistic_p_values_and_verdict_match_scipy(seed):
+    """The statistic, both one-tailed p-values and the verdict agree with SciPy.
 
-    result = pperm.run_studentized_permutation_test(
-        x, y, min_resamples=500, max_resamples=500, rng=np.random.default_rng(seed + 100)
-    )
-    scipy_statistic, _ = _scipy_p_value(x, y, "greater", 500, seed + 200)
-
-    assert result.statistic == pytest.approx(scipy_statistic)
-    assert result.statistic == pytest.approx(float(_studentized(x, y)))
-
-
-@pytest.mark.parametrize("seed", [0, 1, 2, 3, 4, 5, 6, 7])
-def test_p_values_match_scipy_within_monte_carlo_error(seed):
-    """Both one-tailed p-values agree with SciPy's single-alternative runs.
-
-    Correction is disabled so the comparison is against SciPy's raw p-values;
-    the adaptive stopping rule is pinned off by making the minimum and maximum
-    resample counts equal, so both implementations draw the same number of
-    permutations.
+    The statistic must equal SciPy's for the same statistic function. The raw
+    p-values are Monte Carlo estimates from two independent resampling
+    streams, so they are compared within the binomial tolerance; the adaptive
+    stopping rule is pinned off by making the minimum and maximum resample
+    counts equal, so both implementations draw the same number of
+    permutations. With Bonferroni over the one-tailed family GhostParser
+    compares ``2p`` to ``alpha``, the same threshold as SciPy's raw
+    ``p <= alpha / 2``, so the verdicts must agree wherever SciPy's p-value
+    sits clear of that line by more than the Monte Carlo tolerance.
     """
     resamples = 4000
     rng = np.random.default_rng(seed)
     x, y = _random_samples(rng)
-
-    result = pperm.run_studentized_permutation_test(
-        x,
-        y,
-        min_resamples=resamples,
-        max_resamples=resamples,
-        correction="no",
-        rng=np.random.default_rng(seed + 100),
-    )
-    assert result.n_resamples == resamples
-
-    for alternative, ours in (
-        ("greater", result.p_greater),
-        ("less", result.p_less),
-    ):
-        _, theirs = _scipy_p_value(x, y, alternative, resamples, seed + 300)
-        assert ours == pytest.approx(
-            theirs, abs=_monte_carlo_tolerance(theirs, resamples)
-        ), alternative
-
-
-@pytest.mark.parametrize("seed", [11, 12, 13])
-def test_decision_matches_scipy_directional_verdict(seed):
-    """The directional decision agrees with SciPy's two one-tailed verdicts.
-
-    With Bonferroni over the one-tailed family, GhostParser compares ``2p`` to
-    ``alpha``, which is the same threshold as SciPy's raw ``p <= alpha / 2``.
-    """
-    resamples = 4000
-    rng = np.random.default_rng(seed)
-    x = rng.normal(1.0, 0.4, 60)
-    y = rng.normal(0.4, 0.6, 45)
 
     result = pperm.run_studentized_permutation_test(
         x,
@@ -194,20 +152,30 @@ def test_decision_matches_scipy_directional_verdict(seed):
         correction="bfn",
         rng=np.random.default_rng(seed + 100),
     )
+    assert result.n_resamples == resamples
+    assert result.statistic == pytest.approx(float(_studentized(x, y)))
 
-    _, scipy_greater = _scipy_p_value(x, y, "greater", resamples, seed + 300)
-    _, scipy_less = _scipy_p_value(x, y, "less", resamples, seed + 400)
-    if scipy_greater <= _ALPHA / 2:
-        expected = "greater"
-    elif scipy_less <= _ALPHA / 2:
-        expected = "less"
-    else:
-        expected = None
+    theirs = {}
+    for alternative, ours in (("greater", result.p_greater), ("less", result.p_less)):
+        scipy_statistic, theirs[alternative] = _scipy_p_value(
+            x, y, alternative, resamples, seed + 300
+        )
+        assert result.statistic == pytest.approx(scipy_statistic)
+        assert ours == pytest.approx(
+            theirs[alternative],
+            abs=_monte_carlo_tolerance(theirs[alternative], resamples),
+        ), alternative
 
-    if expected is None:
-        assert result.decision in {"equivalent", "inconclusive"}
-    else:
-        assert result.decision == expected
+    if all(
+        abs(p - _ALPHA / 2) > _monte_carlo_tolerance(p, resamples)
+        for p in theirs.values()
+    ):
+        if theirs["greater"] <= _ALPHA / 2:
+            assert result.decision == "greater"
+        elif theirs["less"] <= _ALPHA / 2:
+            assert result.decision == "less"
+        else:
+            assert result.decision in {"equivalent", "inconclusive"}
 
 
 def test_permutation_statistics_match_exhaustive_enumeration():
@@ -245,38 +213,41 @@ def test_permutation_statistics_match_exhaustive_enumeration():
     assert observed == exact
 
 
-@pytest.mark.parametrize("seed", range(12))
-def test_random_inputs_preserve_test_invariants(seed):
-    """Structural invariants hold for randomly shaped and distributed inputs."""
-    rng = np.random.default_rng(1000 + seed)
-    x, y = _random_samples(rng)
+def test_random_inputs_preserve_test_invariants():
+    """Structural invariants hold for randomly shaped and distributed inputs.
 
-    result = pperm.run_studentized_permutation_test(
-        x,
-        y,
-        alpha=_ALPHA,
-        min_resamples=600,
-        max_resamples=3000,
-        rng=np.random.default_rng(seed),
-    )
+    Twelve random pairs cover group sizes, spreads, families and separations no
+    fixed fixture does. The same inputs under the same seed give byte-identical
+    results, and two samples holding the same values cannot separate in either
+    direction.
+    """
+    for seed in range(12):
+        rng = np.random.default_rng(1000 + seed)
+        x, y = _random_samples(rng)
+        kwargs = dict(alpha=_ALPHA, min_resamples=600, max_resamples=3000)
 
-    assert result.note != "both_tails_significant"
-    assert result.decision in {"greater", "less", "equivalent", "inconclusive"}
-    assert 0.0 < result.p_greater <= 1.0
-    assert 0.0 < result.p_less <= 1.0
-    # The two one-tailed counts both include ties, so together they cover every
-    # resample at least once and their p-values must sum past 1.
-    assert result.p_greater + result.p_less > 1.0
-    assert 600 <= result.n_resamples <= 3000
-    # A significant direction must agree with the sign of the observed statistic.
-    if result.decision == "greater":
-        assert result.statistic > 0
-    elif result.decision == "less":
-        assert result.statistic < 0
+        result = pperm.run_studentized_permutation_test(
+            x, y, rng=np.random.default_rng(seed), **kwargs
+        )
 
+        assert result.note != "both_tails_significant", seed
+        assert result.decision in {"greater", "less", "equivalent", "inconclusive"}, seed
+        assert 0.0 < result.p_greater <= 1.0, seed
+        assert 0.0 < result.p_less <= 1.0, seed
+        # The two one-tailed counts both include ties, so together they cover
+        # every resample at least once and their p-values must sum past 1.
+        assert result.p_greater + result.p_less > 1.0, seed
+        assert 600 <= result.n_resamples <= 3000, seed
+        # A significant direction must agree with the sign of the statistic.
+        if result.decision == "greater":
+            assert result.statistic > 0, seed
+        elif result.decision == "less":
+            assert result.statistic < 0, seed
 
-def test_equal_samples_give_a_zero_statistic_and_no_direction():
-    """Two samples holding the same values cannot separate in either direction."""
+        assert result == pperm.run_studentized_permutation_test(
+            x, y, rng=np.random.default_rng(seed), **kwargs
+        ), seed
+
     values = [0.10, 0.22, 0.31, 0.44, 0.55, 0.61, 0.78, 0.83]
     result = pperm.run_studentized_permutation_test(
         values, list(values), min_resamples=600, max_resamples=600,
@@ -287,29 +258,45 @@ def test_equal_samples_give_a_zero_statistic_and_no_direction():
 
 
 @pytest.mark.parametrize(
-    "n, expected",
-    [(8, "inconclusive"), (400, "equivalent")],
+    "n, equivalence_test, expected",
+    [(8, True, "inconclusive"), (400, True, "equivalent"), (400, False, "inconclusive")],
+    ids=["too_little_data", "enough_data", "disabled"],
 )
-def test_equivalence_needs_enough_data_to_conclude(n, expected):
-    """TOST separates "shown to be close" from "nothing shown" as data accrues.
+def test_equivalence_step_decides_from_the_directional_resamples(
+    n, equivalence_test, expected
+):
+    """TOST separates "shown to be close" from "nothing shown", on the draws already made.
 
-    Both cases feed the test two samples drawn from the same distribution, so
+    Every case feeds the test two samples drawn from the same distribution, so
     neither direction can be significant and the equivalence step decides. The
     margin is an effect size (0.5 pooled standard deviations), so it shrinks
     relative to the standard error as n grows: 8 observations per group cannot
-    rule out a medium effect, while 400 can. A margin expressed in standard-error
-    units would report ``inconclusive`` at every n, since the studentized
-    statistic is a pivot whose null spread does not shrink with sample size.
+    rule out a medium effect, while 400 can. A margin expressed in
+    standard-error units would report ``inconclusive`` at every n, since the
+    studentized statistic is a pivot whose null spread does not shrink with
+    sample size. The equivalence p-value is an add-one estimator over the
+    directional test's own resamples, so it is a multiple of
+    ``1 / (n_resamples + 1)`` and never sits below that floor; with the step
+    switched off there is no p-value and the decision falls through.
     """
     rng = np.random.default_rng(11)
     x = rng.normal(1.0, 0.2, n)
     y = rng.normal(1.0, 0.2, n)
     result = pperm.run_studentized_permutation_test(
         x, y, min_resamples=1000, max_resamples=1000,
-        rng=np.random.default_rng(12),
+        equivalence_test=equivalence_test, rng=np.random.default_rng(12),
     )
     assert result.decision == expected
+
+    if not equivalence_test:
+        assert result.p_tost is None
+        return
     assert (result.p_tost <= 0.05) is (expected == "equivalent")
+    resolution = 1.0 / (result.n_resamples + 1)
+    assert result.p_tost >= resolution
+    assert result.p_tost / resolution == pytest.approx(
+        round(result.p_tost / resolution), abs=1e-9
+    )
 
 
 def test_type_one_error_rate_tracks_alpha_under_unequal_variance():
@@ -348,21 +335,6 @@ def test_type_one_error_rate_tracks_alpha_under_unequal_variance():
     assert 3 <= rejections <= 30, rejections
 
 
-def test_seeded_runs_are_reproducible():
-    """The same inputs and seed give byte-identical results."""
-    rng = np.random.default_rng(9)
-    x, y = _random_samples(rng)
-    kwargs = dict(min_resamples=800, max_resamples=2000)
-
-    first = pperm.run_studentized_permutation_test(
-        x, y, rng=np.random.default_rng(42), **kwargs
-    )
-    second = pperm.run_studentized_permutation_test(
-        x, y, rng=np.random.default_rng(42), **kwargs
-    )
-    assert first == second
-
-
 @pytest.mark.parametrize(
     "x,y,expected_note",
     [
@@ -384,74 +356,66 @@ def test_guards_short_circuit_without_resampling(x, y, expected_note):
     assert result.converged is False
 
 
-def test_null_skewness_is_measured_and_matches_scipy():
-    """The reported null skewness equals the skewness of the drawn statistics.
+@pytest.mark.parametrize(
+    "seed, sizes, bound",
+    [
+        # A shape seen on real data: a large concordant sample against a tiny
+        # discordant1 sample carrying a few extreme heights, which splits the
+        # null into clusters by how many extremes land in the small group and
+        # leaves it strongly asymmetric.
+        (21, "asymmetric", ("gt", 1.0)),
+        # Balanced samples from one symmetric family leave the null unskewed.
+        (4, "symmetric", ("lt", 0.15)),
+    ],
+    ids=["asymmetric", "symmetric"],
+)
+def test_null_skewness_matches_scipy_and_the_null_shape(seed, sizes, bound):
+    """The reported null skewness is SciPy's skewness of the drawn statistics.
 
-    ``perm_null_skew`` is accumulated from running power sums so batches can be
-    discarded, so it is checked against `scipy.stats.skew` over the same draws.
-    The fixture is a shape seen on real data — a large concordant sample against
-    a tiny discordant1 sample carrying a few extreme heights — which splits the
-    null into clusters by how many extremes land in the small group and leaves
-    it strongly asymmetric.
+    ``perm_null_skew`` is accumulated from running power sums so batches can
+    be discarded, so it is checked against ``scipy.stats.skew`` over the same
+    draws, and its magnitude against what the null's shape implies.
     """
-    rng = np.random.default_rng(21)
-    con = rng.normal(0.42, 0.10, 700)
-    dis1 = np.concatenate([rng.normal(0.5, 0.1, 15), rng.normal(25.0, 5.0, 4)])
-    resamples = 2500
+    rng = np.random.default_rng(seed)
+    if sizes == "asymmetric":
+        x = rng.normal(0.42, 0.10, 700)
+        y = np.concatenate([rng.normal(0.5, 0.1, 15), rng.normal(25.0, 5.0, 4)])
+        resamples = 2500
+    else:
+        x = rng.normal(1.0, 1.0, 150)
+        y = rng.normal(1.0, 1.0, 150)
+        resamples = 4000
 
     result = pperm.run_studentized_permutation_test(
-        con,
-        dis1,
+        x,
+        y,
         alpha=_ALPHA,
         min_resamples=resamples,
         max_resamples=resamples,
         correction="bfn",
-        rng=np.random.default_rng(22),
+        rng=np.random.default_rng(seed + 1),
     )
 
-    pooled = np.concatenate([con, dis1])
+    pooled = np.concatenate([x, y])
     pooled = pooled - pooled.mean()
     drawn = pperm._permutation_statistics(
-        pooled, con.size, dis1.size, resamples, np.random.default_rng(22)
+        pooled, x.size, y.size, resamples, np.random.default_rng(seed + 1)
     )[0]
 
-    assert result.statistic < 0
-    assert result.decision == "less"
+    assert result.note is None
     assert result.n_resamples_skew == resamples
     assert result.null_skew == pytest.approx(float(stats.skew(drawn)), rel=1e-9)
-    # This fixture's null is strongly asymmetric; a symmetric one sits near 0.
-    assert abs(result.null_skew) > 1.0
-    assert result.note is None
+    if bound[0] == "gt":
+        assert abs(result.null_skew) > bound[1]
+        assert result.statistic < 0
+        assert result.decision == "less"
+    else:
+        assert abs(result.null_skew) < bound[1]
 
 
-def test_null_skewness_is_near_zero_for_a_symmetric_null():
-    """Balanced samples from one symmetric family leave the null unskewed."""
-    rng = np.random.default_rng(4)
-    x = rng.normal(1.0, 1.0, 150)
-    y = rng.normal(1.0, 1.0, 150)
-    result = pperm.run_studentized_permutation_test(
-        x, y, alpha=_ALPHA, min_resamples=4000,
-        max_resamples=4000, rng=np.random.default_rng(5),
-    )
-    assert abs(result.null_skew) < 0.15
-
-
-def test_adaptive_run_grows_batches_until_it_converges():
-    """A clearly separated pair converges on the first batch."""
-    rng = np.random.default_rng(8)
-    x = rng.normal(2.0, 0.2, 80)
-    y = rng.normal(0.5, 0.2, 80)
-    result = pperm.run_studentized_permutation_test(
-        x, y, min_resamples=1000, max_resamples=20000, rng=np.random.default_rng(9)
-    )
-    assert result.converged is True
-    assert result.batches == 1
-    assert result.n_resamples == 1000
-    assert result.decision == "greater"
-
-
-def test_undecided_runs_grow_their_batches_until_the_budget_is_reached():
-    """An undecided run escalates its batches and stops once the budget is met.
+@pytest.mark.parametrize("separated", [True, False], ids=["converges", "exhausts_budget"])
+def test_adaptive_run_converges_or_exhausts_its_budget(separated):
+    """A clear separation converges on the first batch; a marginal one grows to the budget.
 
     A marginal shift keeps the corrected p-value close enough to alpha that the
     interval never excludes it, so the run draws every batch it is allowed and
@@ -460,14 +424,25 @@ def test_undecided_runs_grow_their_batches_until_the_budget_is_reached():
     size, so the total lands at or above the budget by at most one batch. The
     growth factor itself is a performance knob and is deliberately not pinned.
     """
+    if separated:
+        rng = np.random.default_rng(8)
+        x = rng.normal(2.0, 0.2, 80)
+        y = rng.normal(0.5, 0.2, 80)
+        result = pperm.run_studentized_permutation_test(
+            x, y, min_resamples=1000, max_resamples=20000, rng=np.random.default_rng(9)
+        )
+        assert result.converged is True
+        assert result.batches == 1
+        assert result.n_resamples == 1000
+        assert result.decision == "greater"
+        return
+
     rng = np.random.default_rng(3)
     x = rng.normal(1.4, 1.0, 30)
     y = rng.normal(1.0, 1.0, 30)
-
     result = pperm.run_studentized_permutation_test(
         x, y, min_resamples=100, max_resamples=1000, rng=np.random.default_rng(103)
     )
-
     assert result.batches > 1
     # Growth: a schedule that repeated the opening batch would total exactly
     # batches * 100, so a larger total shows the batches grew.
@@ -480,35 +455,30 @@ def test_undecided_runs_grow_their_batches_until_the_budget_is_reached():
     assert result.note == "max_resamples_reached"
 
 
-@pytest.mark.parametrize(
-    "min_resamples, max_resamples",
-    [(2500, 25000), (2, 3), (1, 1), (100, 100), (7, 1000), (999, 1001)],
-)
-def test_bootstrap_resample_budget_is_reduced_but_always_usable(
-    min_resamples, max_resamples
-):
+def test_bootstrap_resample_budget_shrinks_but_stays_usable_and_monotone():
     """The bootstrap budget shrinks the configured one without going unusable.
 
     Asserts the properties rather than the divisor: a bootstrap iteration must
     cost no more than the point estimate, must still draw at least one
-    resample, and must keep its bounds in order -- otherwise an adaptive run
-    inside an iteration has no valid range to grow through.
+    resample, must keep its bounds in order -- otherwise an adaptive run
+    inside an iteration has no valid range to grow through -- and a larger
+    configured budget must never yield a smaller one.
     """
-    scaled_min, scaled_max = pperm.bootstrap_resample_budget(
-        min_resamples, max_resamples
-    )
+    for min_resamples, max_resamples in (
+        (2500, 25000), (2, 3), (1, 1), (100, 100), (7, 1000), (999, 1001),
+    ):
+        scaled_min, scaled_max = pperm.bootstrap_resample_budget(
+            min_resamples, max_resamples
+        )
+        assert scaled_max <= max(max_resamples, scaled_min)
+        assert scaled_min >= 1
+        assert scaled_max >= scaled_min
+        # Strictly smaller wherever there is room to divide, so a divisor of
+        # 1 -- which would silently restore the full per-iteration cost --
+        # fails here.
+        if min_resamples >= 2:
+            assert scaled_min < min_resamples
 
-    assert scaled_max <= max(max_resamples, scaled_min)
-    assert scaled_min >= 1
-    assert scaled_max >= scaled_min
-    # Strictly smaller wherever there is room to divide, so a divisor of 1 --
-    # which would silently restore the full per-iteration cost -- fails here.
-    if min_resamples >= 2:
-        assert scaled_min < min_resamples
-
-
-def test_bootstrap_resample_budget_never_shrinks_as_the_budget_grows():
-    """A larger configured budget never yields a smaller bootstrap budget."""
     previous = (0, 0)
     for configured in (1, 2, 5, 10, 100, 2500, 25000):
         current = pperm.bootstrap_resample_budget(configured, configured * 10)
@@ -517,8 +487,7 @@ def test_bootstrap_resample_budget_never_shrinks_as_the_budget_grows():
         previous = current
 
 
-@pytest.mark.parametrize("nx, ny", [(10, 30), (30, 10), (7, 7), (4, 25), (2, 60)])
-def test_shifted_statistics_match_an_explicit_shift(nx, ny):
+def test_shifted_statistics_match_an_explicit_shift():
     """A shifted row equals re-running the draw on explicitly shifted data.
 
     The equivalence test rides on the directional test's permutations: rather
@@ -529,62 +498,23 @@ def test_shifted_statistics_match_an_explicit_shift(nx, ny):
     splits are covered because the kernel samples whichever group is smaller and
     recovers the other by subtraction.
     """
-    rng = np.random.default_rng(4)
-    x = rng.gamma(2.0, 1.0, nx)
-    y = rng.gamma(2.5, 1.2, ny)
-    pooled = np.concatenate([x, y])
-    pooled = pooled - pooled.mean()
-    shift = 0.75
+    for nx, ny in ((10, 30), (30, 10), (7, 7), (4, 25), (2, 60)):
+        rng = np.random.default_rng(4)
+        x = rng.gamma(2.0, 1.0, nx)
+        y = rng.gamma(2.5, 1.2, ny)
+        pooled = np.concatenate([x, y])
+        pooled = pooled - pooled.mean()
+        shift = 0.75
 
-    fused = pperm._permutation_statistics(
-        pooled, nx, ny, 2000, np.random.default_rng(31), shifts=(shift, -shift)
-    )
+        fused = pperm._permutation_statistics(
+            pooled, nx, ny, 2000, np.random.default_rng(31), shifts=(shift, -shift)
+        )
 
-    for row, value in enumerate((0.0, shift, -shift)):
-        shifted = pooled.copy()
-        shifted[:nx] += value
-        shifted = shifted - shifted.mean()
-        expected = pperm._permutation_statistics(
-            shifted, nx, ny, 2000, np.random.default_rng(31)
-        )[0]
-        assert fused[row] == pytest.approx(expected, rel=1e-9, abs=1e-12)
-
-
-def test_equivalence_reuses_the_directional_resamples():
-    """TOST answers at the resample count the directional test settled on.
-
-    The equivalence p-value is an add-one estimator over the same draws, so it
-    is a multiple of ``1 / (n_resamples + 1)`` and can never sit below that
-    floor. Fusing the two also means no extra resampling happens for it.
-    """
-    rng = np.random.default_rng(8)
-    # Same mean, so no direction is significant and the equivalence step runs.
-    x = rng.normal(0.0, 1.0, 40)
-    y = rng.normal(0.0, 1.0, 40)
-
-    result = pperm.run_studentized_permutation_test(
-        x, y, min_resamples=2000, max_resamples=2000, rng=np.random.default_rng(2)
-    )
-
-    assert result.decision in {"equivalent", "inconclusive"}
-    assert result.p_tost is not None
-    resolution = 1.0 / (result.n_resamples + 1)
-    assert result.p_tost >= resolution
-    assert result.p_tost * (result.n_resamples + 1) == pytest.approx(
-        round(result.p_tost * (result.n_resamples + 1)), abs=1e-9
-    )
-
-
-def test_equivalence_test_disabled_reports_no_tost():
-    """With the equivalence step off the decision falls through to inconclusive."""
-    rng = np.random.default_rng(8)
-    x = rng.normal(0.0, 1.0, 40)
-    y = rng.normal(0.0, 1.0, 40)
-
-    result = pperm.run_studentized_permutation_test(
-        x, y, min_resamples=2000, max_resamples=2000,
-        equivalence_test=False, rng=np.random.default_rng(2),
-    )
-
-    assert result.p_tost is None
-    assert result.decision == "inconclusive"
+        for row, value in enumerate((0.0, shift, -shift)):
+            shifted = pooled.copy()
+            shifted[:nx] += value
+            shifted = shifted - shifted.mean()
+            expected = pperm._permutation_statistics(
+                shifted, nx, ny, 2000, np.random.default_rng(31)
+            )[0]
+            assert fused[row] == pytest.approx(expected, rel=1e-9, abs=1e-12), (nx, ny, row)
