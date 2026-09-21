@@ -265,7 +265,7 @@ Settable either on the CLI or in a config file.
 
 - CLI: `--alpha-perm`
 - Default: `0.05`
-- Significance threshold for the studentized permutation test (the third gate). Applied to each of the two one-tailed p-values after they are corrected against each other, and to the TOST equivalence p-value when neither direction is significant.
+- Significance threshold for the studentized permutation test (the third gate). Applied to each of the two one-tailed p-values after they are corrected against each other, and to the TOST equivalence p-value when neither direction is significant. TOST (two one-sided tests) is the equivalence procedure that decides whether the mean heights were shown to be close: each of its two nulls puts the difference at least a margin to one side of zero, and rejecting both confines it to within the margin, which is half a pooled standard deviation. See "Gate 3" in the [orchestrator guide](ghostparser/orchestrator/ORCHESTRATOR.md#gate-3--adaptive-studentized-permutation-test).
 
 ##### `p_value_correction`
 

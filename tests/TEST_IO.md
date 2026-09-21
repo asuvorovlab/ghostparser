@@ -532,7 +532,10 @@ group, 1000 resamples, fixed seeds; and the n=400 pair with
 `equivalence_test=False`.
 
 **Derivation:** both samples come from one distribution, so neither directional
-tail can be significant and the TOST step decides. The margin is `0.5` pooled
+tail can be significant and the TOST step decides. TOST is two one-sided
+tests: each null puts the mean difference at least a margin to one side of
+zero, and rejecting both confines the difference to within the margin, which
+is what `equivalent` asserts. The margin is `0.5` pooled
 standard deviations, so the shift applied to each null is `0.5 x SD` in raw
 units, and the studentized size of that shift is `0.5 x SD / SE`, which grows
 like `sqrt(n)`: with equal groups `SE = SD x sqrt(2/n)`, so the shifted null is

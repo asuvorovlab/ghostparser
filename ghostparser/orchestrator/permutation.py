@@ -2,7 +2,9 @@
 
 Decides whether the mean concordant tree height is greater than, less than, or
 equivalent to the mean discordant1 height, resampling until the decision is
-resolved to within Monte Carlo error.
+resolved to within Monte Carlo error. Equivalence is established by TOST (two
+one-sided tests): each null puts the mean difference at least a margin to one
+side of zero, and rejecting both confines the difference to within the margin.
 
 The method, its citations, and the sampling optimization are written up under
 "Gate 3 - Adaptive studentized permutation test" in the orchestrator guide.

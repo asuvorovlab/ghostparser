@@ -588,9 +588,13 @@ median and maximum magnitude and how many triplets reach `|skew| >= 0.5`.
 A non-significant directional pair means only that the data did not establish a
 direction. It does not mean the two means are alike — that conclusion needs its
 own test, because absence of evidence is not evidence of absence. When neither
-tail is significant, the run therefore performs two one-sided tests (TOST) at an
-equivalence margin of `EQUIVALENCE_DELTA = 0.5` pooled standard deviations and
-splits the outcome:
+tail is significant, the run therefore performs TOST — two one-sided tests, the
+standard equivalence procedure. TOST turns the null around: instead of asking
+whether the difference is zero, it states two nulls, that the difference is at
+least a margin to one side of zero and that it is at least a margin to the
+other, and tests each one-sidedly; rejecting both confines the difference to
+within the margin. The margin is `EQUIVALENCE_DELTA = 0.5` pooled standard
+deviations, and the outcome splits:
 
 | `perm_decision` | Meaning |
 | --- | --- |

@@ -30,7 +30,7 @@ suite. The criteria are meant to be objective:
 
 | Marker | Criterion |
 |---|---|
-| `core` | The statistics and decisions: the cascade, corrections, permutation and TOST, geometry, tree preprocessing, metrics math, tuner marginals. Every test with a hand derivation in TEST_IO.md. |
+| `core` | The statistics and decisions: the cascade, corrections, permutation and its TOST equivalence step (two one-sided tests against a margin; rejecting both shows the mean difference to be smaller than the margin), geometry, tree preprocessing, metrics math, tuner marginals. Every test with a hand derivation in TEST_IO.md. |
 | `config` | Exercises a loader, normalizer or validator; asserts on the resolved config dict or a `ConfigError`. |
 | `output` | Asserts on *what was written* -- files present, TSV columns, report fields, artifact routing, a figure saved -- not on the numbers in them. |
 | `integration` | Drives an entry point end to end: `run_orchestrator`, `train_random_forest`, `train_multi_knn`, `tune_hyperparameters`. |
