@@ -1,0 +1,22 @@
+# A reproducible run over every triplet among a chosen set of species, with
+# display names in the outputs and the summary statistics the ML trainers read.
+#
+#   python -m ghostparser.orchestrator -c sample_configs/orchestrator_species_filter.yaml
+#
+# The species-filter and rename-map file formats are described in CONFIG.md.
+
+species_tree_path: ./data/species.tree
+gene_trees_path: ./data/genes.tree
+outgroup: Out1,Out2               # comma-separated works as well as a list
+
+output_folder: ./results_filtered
+overwrite: false                  # keep an existing folder; write to results_filtered_1
+
+species_filter: ./data/species_filter.txt   # tree labels, comma-separated, any number per line
+# The rename map is read when the config loads, so the file must exist:
+# species_rename_map: ./data/species_rename_map.tsv   # tree label <tab> name shown in outputs
+
+seed: 42                          # every random draw derives from it; identical at any worker count
+processes: 4
+
+generate_summary_stats: true      # also write summary_statistics.tsv

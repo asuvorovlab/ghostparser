@@ -13,7 +13,7 @@ model:
   min_samples_split: 2
   min_samples_leaf: 1
   # null (the default) lets every split consider every feature. Write it as
-  # null or ~, or omit the key -- YAML reads the bare word None as a string.
+  # null or ~, or omit the key; YAML reads the bare word None as a string.
   max_features: null
   class_weight: null
 

@@ -36,9 +36,6 @@ venv/
 *.pkl
 **/wandb/
 
-!sample_configs/*.json
-!sample_configs/*.yaml
-
 # Scripts and Test Notebooks
 ghost*.sh
 test*.ipynb
@@ -49,6 +46,9 @@ test*.ipynb
 # Configurations
 configs/
 *.yaml
+
+# The shipped sample configs are never ignored
+!sample_configs/**
 
 # Everything except GitHub Actions
 .github/*

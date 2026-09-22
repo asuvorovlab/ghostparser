@@ -3,7 +3,7 @@
 #
 #   python -m ghostparser.orchestrator -c sample_configs/orchestrator_full.yaml
 #
-# Full reference: CONFIG.md#orchestrator-primary-module
+# Full reference and the other scenarios: CONFIG.md
 
 # --- Required inputs -------------------------------------------------------
 species_tree_path: ./data/species.tree
