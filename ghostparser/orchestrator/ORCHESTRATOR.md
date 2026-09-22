@@ -29,8 +29,8 @@ python -m ghostparser.orchestrator \
     -st species.tree -gt genes.tree -og OutGroup \
     --species-filter species.txt
 
-# config-file mode (JSON or YAML); other CLI flags are ignored
-python -m ghostparser.orchestrator -c run_config.yaml
+# config file (JSON or YAML); a flag given beside it overrides the file's value
+python -m ghostparser.orchestrator -c run_config.yaml --seed 42
 
 # start from a shipped sample: orchestrator_minimal.yaml has just the required
 # inputs, orchestrator_full.yaml lists every key at its default
@@ -46,7 +46,7 @@ python -m ghostparser.orchestrator \
 Three inputs are required — the species tree (`-st`), the gene trees (`-gt`),
 and the outgroup(s) (`-og`) — and everything else has a default.
 `-c/--config-file` is the only CLI-only option; when given, the file supplies
-every setting and the other CLI flags are ignored with a warning.
+the settings and any other flag given beside it overrides the file's value.
 
 A handful of settings are config-file-only (`discordant_test`,
 `tree_height_calculation_strategy`, `min_support_value`,
@@ -1156,7 +1156,7 @@ configuration. It imports only three things from the rest of the package:
   and validators live in `orchestrator/config.py`, which is why the orchestrator can set
   its own defaults without affecting the ML subpackage.
 - `ghostparser.cli_config` — the generic `resolve_cli_or_config_args` resolver
-  implementing config-file-wins precedence.
+  that lays the given CLI flags over the config file before normalizing.
 - `ghostparser.triplet_utils` — pure topology helpers.
 
 ### Fused streaming engine

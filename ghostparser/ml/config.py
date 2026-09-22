@@ -428,7 +428,7 @@ def build_trainer_argument_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--seed", type=int, default=None,
         help="RNG seed for the train/test split, the folds and the model; omit "
-        "for a fresh draw each run",
+        "for the config file's value, or a fresh draw each run",
     )
     parser.add_argument(
         "--no-overwrite", dest="no_overwrite", action="store_true", default=None,
@@ -438,7 +438,7 @@ def build_trainer_argument_parser(description: str) -> argparse.ArgumentParser:
 
 
 def resolve_trainer_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
-    """Resolve a trainer's CLI/config arguments under config-file-wins precedence.
+    """Resolve a trainer's CLI/config arguments; a flag given overrides the file's value.
 
     Args:
         args: The parsed CLI namespace.
@@ -448,7 +448,6 @@ def resolve_trainer_runtime_args(args: argparse.Namespace) -> argparse.Namespace
     """
     return resolve_cli_or_config_args(
         args,
-        load_config=load_ml_config,
         normalize_payload=normalize_ml_payload,
         payload_arg_names=["input_path", "output_dir", "seed", "no_overwrite"],
     )

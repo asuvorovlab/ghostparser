@@ -160,7 +160,7 @@ See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) for the mechanis
 
 **Config-file mode (CLI-only):**
 
-- `-c, --config-file` — when given, the file supplies every setting and the other CLI flags are ignored with a warning.
+- `-c, --config-file` — the file supplies the settings; any other flag given beside it overrides the file's value for that setting.
 
 **Config + CLI:**
 
@@ -414,7 +414,7 @@ The package entrypoint `python -m ghostparser.ml` only prints those direct-run c
 
 **Configuration Precedence:**
 
-`ghostparser.orchestrator` and the `ghostparser.ml` trainers each support `-c/--config-file`. When a config file is given, it supplies every setting and the other CLI flags are ignored with a warning.
+`ghostparser.orchestrator`, the `ghostparser.ml` trainers and `ghostparser.ml.hyper_tune` each support `-c/--config-file`. The file supplies the settings, and a flag given beside it overrides the file's value for that setting -- the command line wins wherever a setting has a flag. Settings without a flag can only come from the file.
 
 ---
 

@@ -140,6 +140,14 @@ def test_seed_is_a_top_level_key_with_a_cli_flag(tmp_path):
     )
     assert resolve_trainer_runtime_args(args).seed == 7
 
+    # Beside a config file the flag replaces the file's seed and nothing else.
+    config_path = tmp_path / "ml_config.json"
+    config_path.write_text(json.dumps({**_REQUIRED, "seed": 7, "test_size": 0.3}))
+    args = parser.parse_args(["-c", str(config_path), "--seed", "9"])
+    resolved = resolve_trainer_runtime_args(args)
+    assert resolved.seed == 9
+    assert resolved.test_size == 0.3
+
     with pytest.raises(ConfigError, match="'seed'"):
         _load(tmp_path, random_state=7)
     with pytest.raises(ConfigError, match="top level"):

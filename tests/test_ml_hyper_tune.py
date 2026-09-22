@@ -6,7 +6,12 @@ import pytest
 
 from ghostparser.config import ConfigError
 from ghostparser.ml import hyper_tune, tuning_report
-from ghostparser.ml.hyper_tune import load_hyper_tune_config, tune_hyperparameters
+from ghostparser.cli_config import resolve_cli_or_config_args
+from ghostparser.ml.hyper_tune import (
+    load_hyper_tune_config,
+    normalize_hyper_tune_payload,
+    tune_hyperparameters,
+)
 
 
 _VALID_TUNING = {"model": "random_forest", "search_space": {"n_estimators": [5]}}
@@ -103,6 +108,25 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path, 
 
 
 @pytest.mark.config
+def test_tuner_cli_flags_override_the_config_file(tmp_path):
+    """`--seed` and `--no-overwrite` beside the tuner's config file replace its values."""
+    config_path = _write_config(
+        tmp_path, "tune.json", _VALID_TUNING, seed=7, overwrite=True
+    )
+    args = argparse.Namespace(config_file=str(config_path), seed=9, no_overwrite=True)
+
+    config = resolve_cli_or_config_args(
+        args,
+        normalize_payload=normalize_hyper_tune_payload,
+        payload_arg_names=["seed", "no_overwrite"],
+    )
+
+    assert config.seed == 9
+    assert config.overwrite is False
+    assert config.search_space["n_estimators"] == [5]
+
+
+@pytest.mark.config
 @pytest.mark.parametrize(
     "tuning, top_level, match",
     [
@@ -133,8 +157,6 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path, 
         ),
     ],
 )
-
-
 def test_load_hyper_tune_config_rejects_malformed_configs(
     tuning, top_level, match, tmp_path
 ):

@@ -151,21 +151,41 @@ def test_p_value_correction_accepts_yaml_bare_word_no(tmp_path, written):
     assert config["p_value_correction"] == "no"
 
 
-def test_config_file_wins_over_cli(tmp_path):
-    """In config-file mode the file wins and every CLI flag is ignored."""
-    payload = {**_REQUIRED, "species_tree_path": "file_species.tree", "alpha_dct": 0.03}
+def test_cli_flags_override_the_config_file(tmp_path):
+    """A flag given beside a config file replaces the file's value for that key.
+
+    Keys the command line does not touch keep the file's value, a flag the
+    file never set is added, and the negated `--no-overwrite` switch beats
+    the file's canonical `overwrite: true` rather than losing to it inside
+    the normalizer.
+    """
+    payload = {
+        **_REQUIRED,
+        "species_tree_path": "file_species.tree",
+        "alpha_dct": 0.03,
+        "p_value_correction": "no",
+        "overwrite": True,
+    }
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(payload))
 
     args = _base_cli_args(
-        config_file=str(config_path), alpha_dct=0.5, alpha_perm=0.5
+        config_file=str(config_path),
+        species_tree_path=None,
+        gene_trees_path=None,
+        outgroup=None,
+        alpha_dct=0.5,
+        alpha_perm=0.5,
+        no_overwrite=True,
+        consolidation=False,
     )
     config = resolve_config(args)
 
-    assert config["alpha_dct"] == 0.03
-    # The file omits alpha_perm, so it takes the default rather than the CLI's
-    # 0.5, proving the CLI flag was ignored rather than merged.
-    assert config["alpha_perm"] != 0.5
+    assert config["alpha_dct"] == 0.5
+    assert config["alpha_perm"] == 0.5
+    assert config["overwrite"] is False
+    assert config["consolidation"] is False
+    assert config["p_value_correction"] == "no"
     assert config["species_tree"].endswith("file_species.tree")
 
 

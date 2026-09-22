@@ -791,10 +791,15 @@ them.
   Purpose: YAML 1.1 resolves bare `no` and `NO` to boolean `False`, so the
   value never reaches validation as a string; the mapping back to the written
   choice is what makes the unquoted spellings work.
-- `test_config_file_wins_over_cli` — Inputs: a config file plus conflicting CLI
-  flags. Expected outputs: the file's `alpha_dct` wins, `alpha_perm` is not the
-  CLI's value (the file omits it, so it took the default), and the file's paths
-  are used. Purpose: config-file precedence — ignored, not merged.
+- `test_cli_flags_override_the_config_file` — Inputs: a config file setting
+  the paths, `alpha_dct`, `p_value_correction` and `overwrite: true`, plus the
+  flags `alpha_dct`, `alpha_perm`, `--no-overwrite` and `--no-consolidation`.
+  Expected outputs: the flags' `alpha_dct`, `alpha_perm`, `overwrite is
+  False` and `consolidation is False`; the file's `p_value_correction` and
+  paths. Purpose: precedence — a flag given beside the file replaces the
+  file's value, adds a key the file lacks, and the negated switch beats the
+  file's canonical `overwrite`; keys the command line does not touch keep the
+  file's value.
 - `test_outgroup_key_is_normalized_or_rejected` — Inputs (parametrized, 8
   rows): `outgroup` given as a single label, a comma-separated string, a
   padded string with a trailing comma, and a list whose entries are
@@ -1006,10 +1011,12 @@ pinned.
   spelling users reach for by reflex has to be steered to the right one. `true`
   also pins that a bool is rejected rather than passing the `int` check.
 - `test_seed_is_a_top_level_key_with_a_cli_flag` — Inputs: a config with
-  `seed: 7`; the trainer parser given `--seed 7` in CLI mode; then
-  `random_state: 7` at the top level, `seed` under `model`, and `random_state`
-  under `model`. Expected outputs: `seed == 7` from the file and from the
-  flag; `ConfigError` naming `'seed'` for the top-level `random_state`, and
+  `seed: 7`; the trainer parser given `--seed 7` in CLI mode; the parser
+  given `-c` for a file holding `seed: 7` and `test_size: 0.3` plus
+  `--seed 9`; then `random_state: 7` at the top level, `seed` under `model`,
+  and `random_state` under `model`. Expected outputs: `seed == 7` from the
+  file and from the flag; `seed == 9` with `test_size == 0.3` when both are
+  given; `ConfigError` naming `'seed'` for the top-level `random_state`, and
   naming the top level for either key under `model`. Purpose: the seed has one
   name and one place, and a config written with scikit-learn's name is refused
   rather than run unseeded.
@@ -1080,6 +1087,12 @@ tests are `output`.
   caller reads the resolved config by; search-space candidates reach the
   estimator one at a time, so they pass the same per-value rules as the
   `model` block, and the container shape a user wrote has to survive them.
+- `test_tuner_cli_flags_override_the_config_file` — Inputs: a valid tuner
+  config with `seed: 7` and `overwrite: true`, resolved through the shared
+  resolver with `seed=9` and `no_overwrite=True` given. Expected outputs:
+  `seed == 9`, `overwrite is False`, the file's search space intact. Purpose:
+  the tuner's two flags beside `-c` override the file like every other
+  module's.
 - `test_load_hyper_tune_config_rejects_malformed_configs` — Inputs
   (parametrized, 5 rows): no `hyperparameter_tuning` section at all;
   `use_wandb: "yes"`; `wandb_detailed_payloads: true` beside `use_wandb: false`;

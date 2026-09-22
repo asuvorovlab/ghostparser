@@ -90,7 +90,7 @@ python -m ghostparser.orchestrator -c run_config.json
 python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
 ```
 
-When a config file is given, **the file supplies every setting and the other CLI flags are ignored with a warning** (config wins). This is the only way to set the config-file-only keys listed below.
+When a config file is given, **it supplies the settings, and any flag given beside it overrides the file's value for that setting** (the command line wins; the run prints which settings it overrode). The file is the only way to set the config-file-only keys listed below.
 
 Minimal YAML:
 

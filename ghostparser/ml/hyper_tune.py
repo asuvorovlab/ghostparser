@@ -23,6 +23,7 @@ from ..config import (
     _validate_required_path,
     prepare_output_directory,
 )
+from ..cli_config import resolve_cli_or_config_args
 from . import ml_utils as shared
 from . import multi_knn as knn_module
 from . import random_forest as rf_module
@@ -1060,7 +1061,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "--no-overwrite",
         dest="no_overwrite",
         action="store_true",
-        default=False,
+        default=None,
         help="Append a numeric suffix when the output directory already exists",
     )
     return parser
@@ -1068,12 +1069,12 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = _build_argument_parser().parse_args()
-    config = load_hyper_tune_config(args.config_file)
-    if args.seed is not None:
-        config["seed"] = args.seed
-    if args.no_overwrite:
-        config["overwrite"] = False
-    result = tune_hyperparameters(argparse.Namespace(**config))
+    config = resolve_cli_or_config_args(
+        args,
+        normalize_payload=normalize_hyper_tune_payload,
+        payload_arg_names=["seed", "no_overwrite"],
+    )
+    result = tune_hyperparameters(config)
     print(result["results_txt_path"])
 
 

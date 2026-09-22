@@ -1115,17 +1115,21 @@ flattened onto `bootstrap_iterations = 25`, `bootstrap_diagnostic = True`,
 against the nine written, so any one of them resolving to something else fails
 naming the key.
 
-### `test_config_file_wins_over_cli`
+### `test_cli_flags_override_the_config_file`
 
-**Input:** a config file setting `alpha_dct: 0.03` and file-specific tree paths,
-plus conflicting CLI flags `alpha_dct=0.5` and `alpha_perm=0.5`.
+**Input:** a config file setting file-specific tree paths, `alpha_dct: 0.03`,
+`p_value_correction: "no"` and `overwrite: true`, plus the flags
+`alpha_dct=0.5`, `alpha_perm=0.5`, `no_overwrite=True` and
+`consolidation=False` with the path flags left unset.
 
-**Derivation:** in config-file mode the file supplies everything, so
-`alpha_dct` is `0.03` (not `0.5`). The decisive check is `alpha_perm`: the file
-omits it, so it takes the default — whatever that is — and must not be the CLI's
-`0.5`. The assertion is `!= 0.5` rather than `== 0.05` so the test does not
-pin the default; it pins only that the CLI value was ignored rather than
-merged. The resolved species path must come from the file.
+**Derivation:** the given flags are laid over the file's payload before it
+is normalized, so `alpha_dct` is the flag's `0.5` and `alpha_perm`, which the
+file omits, is the flag's `0.5` rather than the default. `--no-overwrite` is
+translated to `overwrite: false` before the merge, so it replaces the file's
+`overwrite: true` instead of losing to it in the overwrite validator, which
+prefers the canonical key. `--no-consolidation` gives `consolidation: false`
+the same way. `p_value_correction` and the paths have no flag given, so they
+keep the file's values.
 
 ### `test_outgroup_key_is_normalized_or_rejected`
 

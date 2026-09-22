@@ -502,7 +502,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "-c",
         "--config-file",
         default=None,
-        help="Path to a JSON or YAML config file (config-file mode; other CLI flags are ignored)",
+        help="Path to a JSON or YAML config file; any other flag given alongside it overrides the file's value",
     )
     parser.add_argument(
         "-st",
@@ -754,9 +754,10 @@ def load_orchestrator_config(config_file: str) -> dict:
 def resolve_config(args: argparse.Namespace) -> dict:
     """Resolve a parsed CLI namespace into the orchestrator runtime config.
 
-    In config-file mode (``-c/--config-file``) the file is loaded and the other
-    CLI flags are ignored with a warning; otherwise the exposed CLI flags are
-    normalized directly. Config-file-only keys take their defaults in CLI mode.
+    With ``-c/--config-file`` the file is loaded and every other CLI flag given
+    overrides the file's value for that key; otherwise the exposed CLI flags
+    are normalized directly. Config-file-only keys take their defaults in CLI
+    mode.
 
     Args:
         args: Parsed ``argparse.Namespace`` from :func:`build_argument_parser`.
@@ -770,7 +771,6 @@ def resolve_config(args: argparse.Namespace) -> dict:
     """
     resolved = resolve_cli_or_config_args(
         args,
-        load_config=load_orchestrator_config,
         normalize_payload=normalize_orchestrator_payload,
         payload_arg_names=_ORCHESTRATOR_PAYLOAD_ARG_NAMES,
     )
