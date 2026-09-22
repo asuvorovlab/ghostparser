@@ -83,7 +83,7 @@ The ML loaders enforce a strict nested layout. For the full schema and examples,
 
 The top-level keys point the trainer at the data and control the split
 (`input_path`, `output_dir`, `overwrite`, `target_column`, `test_size`,
-`cv_folds`, `random_state`, `n_jobs`, `rare_class_policy`); `model` holds the
+`cv_folds`, `seed`, `n_jobs`, `rare_class_policy`); `model` holds the
 estimator hyperparameters; `evaluation` selects what gets reported and saved.
 Every key, its default, and its allowed values are documented in
 [CONFIG.md](../../CONFIG.md#machine-learning-ghostparserml).
@@ -113,7 +113,7 @@ class/bit distributions are always embedded in the overall metrics JSON.
 
 ### Hyperparameter tuning
 
-The `hyperparameter_tuning` section configures the standalone tuner in `ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so the search strategy stays explicit and easy to read. For the tuner, only the runtime keys (`input_path`, `output_dir`, `overwrite`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, `n_jobs`) plus `hyperparameter_tuning` are allowed at the top level. Do not provide `evaluation` or `model` sections in a tuning config; the tuner does not read them.
+The `hyperparameter_tuning` section configures the standalone tuner in `ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so the search strategy stays explicit and easy to read. For the tuner, only the runtime keys (`input_path`, `output_dir`, `overwrite`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `seed`, `n_jobs`) plus `hyperparameter_tuning` are allowed at the top level. Do not provide `evaluation` or `model` sections in a tuning config; the tuner does not read them.
 
 `method: grid` evaluates every combination in the search space and is rejected
 if the full grid would exceed `max_candidates`; `method: random` samples
@@ -130,7 +130,7 @@ Supported `search_space` keys are:
 - `random_forest`: `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`, `class_weight`
 - `multi_knn`: `n_neighbors`, `weights`, `algorithm`, `leaf_size`, `metric`, `p`
 
-Do not put runtime keys such as `input_path`, `output_dir`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, or `n_jobs` inside `search_space`.
+Do not put runtime keys such as `input_path`, `output_dir`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `seed`, or `n_jobs` inside `search_space`.
 
 Example:
 
@@ -328,7 +328,7 @@ The sample config files in [random_forest_minimal.yaml](https://github.com/asif2
 ## Cross-validation and reproducibility
 
 - When `cv_folds` is set, the trainer attempts stratified-like splitting based on label combinations. If exact stratification is impossible due to rare labels, `rare_class_policy` controls fold reduction or CV skipping.
-- All splitting uses `random_state` for determinism.
+- All splitting, the models and a random search's draws use `seed` (`--seed`) for determinism.
 - `n_jobs` only affects CPU-side parallel work in scikit-learn; it does not change the model into a GPU-backed implementation.
 
 Stratified here means we try to preserve the frequency of each 6-bit label combination across folds so each fold has a similar class distribution. If a particular combination is too rare to appear in every fold, the trainer follows `rare_class_policy` (reduce folds or skip CV) to avoid invalid splits.

@@ -20,7 +20,7 @@ DEFAULT_ML_OUTPUT_DIR = "ml_results"
 DEFAULT_TARGET_COLUMN = "class"
 DEFAULT_TEST_SIZE = 0.2
 DEFAULT_CV_FOLDS = 5
-DEFAULT_RANDOM_STATE = None
+DEFAULT_SEED = None
 DEFAULT_RARE_CLASS_POLICY = "warn_reduce_cv"
 DEFAULT_EVALUATION_METRICS = "all"
 DEFAULT_REPORT_CLASS_DISTRIBUTION = True
@@ -245,7 +245,7 @@ def normalize_ml_payload(payload: dict) -> dict:
 
     Top-level runtime keys:
       - `target_column`, `test_size`, `cv_folds`, `rare_class_policy`,
-        `random_state`, `n_jobs`
+        `seed`, `n_jobs`
 
     Model hyperparameters must be provided under `model`.
     Evaluation reporting controls must be provided under `evaluation`.
@@ -296,14 +296,19 @@ def normalize_ml_payload(payload: dict) -> dict:
             f"{', '.join(sorted(present_forbidden))}"
         )
 
-    forbidden_model_runtime_keys = {"random_state", "n_jobs"}
+    forbidden_model_runtime_keys = {"seed", "random_state", "n_jobs"}
     present_forbidden_model_runtime = forbidden_model_runtime_keys & set(
         model_section.keys()
     )
     if present_forbidden_model_runtime:
         raise ConfigError(
-            "Place 'random_state' and 'n_jobs' at the top level, not under 'model'. Offending keys: "
+            "Place 'seed' and 'n_jobs' at the top level, not under 'model'. Offending keys: "
             f"{', '.join(sorted(present_forbidden_model_runtime))}"
+        )
+    if "random_state" in payload:
+        raise ConfigError(
+            "Config field random_state is not recognized; the RNG seed is the "
+            "top-level 'seed' key (--seed on the command line)"
         )
 
     return {
@@ -321,9 +326,7 @@ def normalize_ml_payload(payload: dict) -> dict:
             DEFAULT_RARE_CLASS_POLICY,
             RARE_CLASS_POLICY_CHOICES,
         ),
-        "random_state": _validate_optional_int(
-            payload, "random_state", DEFAULT_RANDOM_STATE
-        ),
+        "seed": _validate_optional_int(payload, "seed", DEFAULT_SEED),
         "n_jobs": _validate_optional_int(payload, "n_jobs", DEFAULT_N_JOBS),
         "n_estimators": _validate_positive_int(
             model_section, "n_estimators", DEFAULT_N_ESTIMATORS
@@ -423,6 +426,11 @@ def build_trainer_argument_parser(description: str) -> argparse.ArgumentParser:
         help="Directory for ML outputs",
     )
     parser.add_argument(
+        "--seed", type=int, default=None,
+        help="RNG seed for the train/test split, the folds and the model; omit "
+        "for a fresh draw each run",
+    )
+    parser.add_argument(
         "--no-overwrite", dest="no_overwrite", action="store_true", default=None,
         help="Append a numeric suffix when the output directory already exists",
     )
@@ -442,5 +450,5 @@ def resolve_trainer_runtime_args(args: argparse.Namespace) -> argparse.Namespace
         args,
         load_config=load_ml_config,
         normalize_payload=normalize_ml_payload,
-        payload_arg_names=["input_path", "output_dir", "no_overwrite"],
+        payload_arg_names=["input_path", "output_dir", "seed", "no_overwrite"],
     )

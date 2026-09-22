@@ -409,7 +409,7 @@ The loader uses a strict layout:
 - `model` for trainer hyperparameters
 - `evaluation` for metric selection and report/save toggles
 
-The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--output-dir`. Other settings are config-file keys.
+The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, `-o/--output-dir`, `--seed` and `--no-overwrite`. Other settings are config-file keys.
 
 ### Top-Level Config Keys
 
@@ -456,11 +456,12 @@ The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--
 - Default: `warn_reduce_cv`
 - Description: behaviour when stratified CV is not feasible. Choices: `warn_reduce_cv`, `warn_skip_cv`, `error`.
 
-##### `random_state`
+##### `seed`
 
 - Type: int or null
+- Parallel CLI: `--seed`
 - Default: `null`
-- Description: optional RNG seed for deterministic splits and model behaviour.
+- Description: RNG seed for the train/test split, the cross-validation folds and the model; `null` draws afresh each run.
 
 ##### `n_jobs`
 
@@ -480,7 +481,7 @@ target_column: class                 # multi-label target bitstring column
 test_size: 0.2                       # fraction reserved for the hold-out split
 cv_folds: 5                          # integer >= 1 or null; null disables CV
 rare_class_policy: warn_reduce_cv    # warn_reduce_cv, warn_skip_cv, error
-random_state: null                   # null = use nondeterministic defaults
+seed: null                           # null = draw afresh each run
 n_jobs: -1                           # -1 = all available cores, null = no parallelism
 
 model:
@@ -540,7 +541,7 @@ If you want to avoid a string column being encoded, remove it from the TSV befor
   - `metric` (string, default: `minkowski`)
   - `p` (int >= 1, default: `2`)
 
-The top-level `n_jobs` and `random_state` keys apply to both trainers.
+The top-level `n_jobs` and `seed` keys apply to both trainers.
 
 ### Evaluation Parameters
 
@@ -574,7 +575,7 @@ Allowed `search_space` keys depend on `model`:
 - `random_forest`: `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`, `class_weight`
 - `multi_knn`: `n_neighbors`, `weights`, `algorithm`, `leaf_size`, `metric`, `p`
 
-Do not place runtime fields such as `input_path`, `output_dir`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, or `n_jobs` inside `search_space`.
+Do not place runtime fields such as `input_path`, `output_dir`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `seed`, or `n_jobs` inside `search_space`.
 
 Example:
 
@@ -586,7 +587,7 @@ target_column: class
 test_size: 0.2
 cv_folds: 5
 rare_class_policy: warn_reduce_cv
-random_state: null
+seed: null
 n_jobs: -1
 
 hyperparameter_tuning:
@@ -644,15 +645,16 @@ python -m ghostparser.ml.multi_knn \
   -o ./results/ml_out
 
 # optional CLI switches: -c/--config-file, -i/--input-path, -o/--output-dir,
-# --no-overwrite
+# --seed, --no-overwrite
 # default behaviors: config-file mode ignores other flags; input/output are required unless
 # supplied by config; overwrite is enabled by default.
 
-# The hyperparameter tuner accepts these two options:
+# The hyperparameter tuner takes its config file and two overrides:
 python -m ghostparser.ml.hyper_tune \
   -c ./sample_configs/hyperparameter_tuning_random_forest.yaml
-# optional CLI switches: -c/--config-file, --no-overwrite
-# default behaviors: config-file mode is required; overwrite is enabled by default.
+# optional CLI switches: -c/--config-file, --seed, --no-overwrite
+# default behaviors: config-file mode is required; --seed replaces the file's seed;
+# overwrite is enabled by default.
 ```
 
 Run RandomForest via module entrypoint:

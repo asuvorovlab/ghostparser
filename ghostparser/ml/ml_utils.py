@@ -378,7 +378,7 @@ def build_dataset_summary(
             "strategy": split_notes[0] if split_notes else None,
             "notes": list(split_notes),
             "test_size": float(test_size),
-            "random_state": random_state,
+            "seed": random_state,
             "total_rows": int(len(all_labels)),
             "train_rows": int(len(train_labels)),
             "test_rows": int(len(test_labels)),

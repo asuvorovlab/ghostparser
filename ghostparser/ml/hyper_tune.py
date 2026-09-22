@@ -41,7 +41,7 @@ from .config import (
     DEFAULT_N_ESTIMATORS,
     DEFAULT_N_JOBS,
     DEFAULT_N_NEIGHBORS,
-    DEFAULT_RANDOM_STATE,
+    DEFAULT_SEED,
     DEFAULT_TARGET_COLUMN,
     _load_raw_config,
     _validate_optional_bool,
@@ -270,7 +270,7 @@ def _create_run_logger(
         "cv_folds": int(cv_folds),
         "test_size": float(config.test_size),
         "rare_class_policy": config.rare_class_policy,
-        "random_state": config.random_state,
+        "seed": config.seed,
         "n_jobs": config.n_jobs,
     }
 
@@ -308,7 +308,7 @@ RUNTIME_KEYS = {
     "test_size",
     "cv_folds",
     "rare_class_policy",
-    "random_state",
+    "seed",
     "n_jobs",
 }
 
@@ -526,9 +526,7 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
             "warn_reduce_cv",
             ("warn_reduce_cv", "warn_skip_cv", "error"),
         ),
-        "random_state": _validate_optional_int(
-            payload, "random_state", DEFAULT_RANDOM_STATE
-        ),
+        "seed": _validate_optional_int(payload, "seed", DEFAULT_SEED),
         "n_jobs": _validate_optional_int(payload, "n_jobs", DEFAULT_N_JOBS),
         "model_name": model_name,
         "search_method": search_method,
@@ -569,7 +567,7 @@ def _evaluate_candidate(
             y_train,
             labels_train,
             folds,
-            candidate_config.random_state,
+            candidate_config.seed,
         )
     elif model_name == "multi_knn":
         cv_results = knn_module._cross_validate(
@@ -577,7 +575,7 @@ def _evaluate_candidate(
             y_train,
             labels_train,
             folds,
-            candidate_config.random_state,
+            candidate_config.seed,
             candidate_config,
         )
     else:
@@ -615,7 +613,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             matrix.train_targets,
             labels,
             config.test_size,
-            config.random_state,
+            config.seed,
         )
     )
     split_seconds = time.perf_counter() - split_start
@@ -642,7 +640,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             )
         candidates = candidate_grid
     else:
-        rng = random.Random(config.random_state)
+        rng = random.Random(config.seed)
         sample_size = min(config.n_iter, len(candidate_grid))
         candidates = rng.sample(candidate_grid, sample_size)
 
@@ -816,7 +814,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         y_test,
         split_notes,
         config.test_size,
-        config.random_state,
+        config.seed,
     )
     prediction_rows = shared.build_prediction_rows(y_test, test_predictions)
 
@@ -1052,6 +1050,13 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="Path to a JSON or YAML hyperparameter tuning config file",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="RNG seed for the split, the folds, the models and a random "
+        "search's draws; overrides the config file's seed",
+    )
+    parser.add_argument(
         "--no-overwrite",
         dest="no_overwrite",
         action="store_true",
@@ -1064,6 +1069,8 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _build_argument_parser().parse_args()
     config = load_hyper_tune_config(args.config_file)
+    if args.seed is not None:
+        config["seed"] = args.seed
     if args.no_overwrite:
         config["overwrite"] = False
     result = tune_hyperparameters(argparse.Namespace(**config))

@@ -50,6 +50,8 @@
 - Newick writers single-quote a label holding whitespace or `()[]{}':;,"\=`, so an input tree with quoted labels round-trips through the processed tree files.
 - Added `species_filter` (`--species-filter`), a file of taxon names — comma-separated, any number per line — that restricts the run to every triplet among the named species. Names that are not ingroup taxa are skipped with a warning; fewer than three left stops the run. It excludes `triplet_filter`; setting both is a config error. The preflight check accepts it too and caps the triplets it generates like the full ingroup's.
 
+- The ML trainers and the tuner take their RNG seed as `seed` (`--seed`), the orchestrator's name for it, instead of `random_state`; the `seed` written into the metrics and tuning JSON follows. A config carrying `random_state` at the top level is refused with a message naming `seed`, so an old file cannot run unseeded by accident. `--seed` on `hyper_tune` replaces the config file's seed; on the trainers it follows config-file-wins precedence like the other flags.
+
 ### Hyperparameter tuning
 
 - Weights & Biases logging is opt-in: `hyperparameter_tuning.use_wandb` (default `false`), with `wandb` in its own `wandb` extra (`pip install .[ml,wandb]`) and imported only when used. `wandb_detailed_payloads` requires `use_wandb: true`. With W&B on, `hyper_tune_results.json`/`.tsv`, `hyper_tune_parameter_marginals.tsv` and `predictions.tsv` are logged to the run as tables instead of written to disk, and `artifact_paths` lists only what was written. Added `sample_configs/hyperparameter_tuning_multi_knn.json`.

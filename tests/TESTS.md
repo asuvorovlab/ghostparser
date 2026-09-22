@@ -1005,6 +1005,14 @@ pinned.
   wrote, not surface as a bare estimator error at fit time, and the one
   spelling users reach for by reflex has to be steered to the right one. `true`
   also pins that a bool is rejected rather than passing the `int` check.
+- `test_seed_is_a_top_level_key_with_a_cli_flag` — Inputs: a config with
+  `seed: 7`; the trainer parser given `--seed 7` in CLI mode; then
+  `random_state: 7` at the top level, `seed` under `model`, and `random_state`
+  under `model`. Expected outputs: `seed == 7` from the file and from the
+  flag; `ConfigError` naming `'seed'` for the top-level `random_state`, and
+  naming the top level for either key under `model`. Purpose: the seed has one
+  name and one place, and a config written with scikit-learn's name is refused
+  rather than run unseeded.
 
 ### tests/test_ml_utils.py
 

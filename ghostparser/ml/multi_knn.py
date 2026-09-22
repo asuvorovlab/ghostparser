@@ -103,7 +103,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
             matrix.train_targets,
             labels,
             config.test_size,
-            config.random_state,
+            config.seed,
         )
     )
     split_seconds = time.perf_counter() - split_start
@@ -118,7 +118,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     cv_results = {"folds": [], "aggregate": {}}
     if cv_folds is not None:
         cv_results = _cross_validate(
-            x_train, y_train, labels_train, cv_folds, config.random_state, config
+            x_train, y_train, labels_train, cv_folds, config.seed, config
         )
     cv_seconds = time.perf_counter() - cv_start
 
@@ -149,7 +149,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
         y_test,
         split_notes,
         config.test_size,
-        config.random_state,
+        config.seed,
     )
 
     feature_start = time.perf_counter()
@@ -160,7 +160,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
             x_test,
             y_test,
             n_repeats=10,
-            random_state=config.random_state,
+            random_state=config.seed,
             scoring="f1_micro",
         )
         feature_rows = shared.build_feature_importance_rows(
@@ -212,7 +212,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
         "metric": config.metric,
         "p": int(config.p),
         "n_jobs": config.n_jobs if config.n_jobs is not None else DEFAULT_N_JOBS,
-        "random_state": config.random_state,
+        "seed": config.seed,
         "test_size": config.test_size,
         "cv_folds_requested": config.cv_folds,
         "cv_folds_effective": cv_folds,

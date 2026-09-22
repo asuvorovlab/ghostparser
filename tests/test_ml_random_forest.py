@@ -23,7 +23,7 @@ def test_train_random_forest_smoke(summary_statistics_tsv, tmp_path):
         target_column="class",
         test_size=0.25,
         cv_folds=3,
-        random_state=7,
+        seed=7,
         rare_class_policy="warn_reduce_cv",
         n_estimators=25,
         max_depth=None,

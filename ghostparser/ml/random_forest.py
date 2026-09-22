@@ -39,7 +39,7 @@ def _build_model(config: argparse.Namespace) -> MultiOutputClassifier:
         max_features=config.max_features,
         class_weight=config.class_weight,
         n_jobs=config.n_jobs if config.n_jobs is not None else DEFAULT_N_JOBS,
-        random_state=config.random_state,
+        random_state=config.seed,
     )
     return MultiOutputClassifier(
         classifier,
@@ -111,7 +111,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
             matrix.train_targets,
             labels,
             config.test_size,
-            config.random_state,
+            config.seed,
         )
     )
     split_seconds = time.perf_counter() - split_start
@@ -126,7 +126,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     cv_results = {"folds": [], "aggregate": {}}
     if cv_folds is not None:
         cv_results = _cross_validate(
-            model_factory, x_train, y_train, labels_train, cv_folds, config.random_state
+            model_factory, x_train, y_train, labels_train, cv_folds, config.seed
         )
     cv_seconds = time.perf_counter() - cv_start
 
@@ -157,7 +157,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         y_test,
         split_notes,
         config.test_size,
-        config.random_state,
+        config.seed,
     )
 
     feature_start = time.perf_counter()
@@ -212,7 +212,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         "max_features": config.max_features,
         "class_weight": config.class_weight,
         "n_jobs": config.n_jobs if config.n_jobs is not None else DEFAULT_N_JOBS,
-        "random_state": config.random_state,
+        "seed": config.seed,
         "test_size": config.test_size,
         "cv_folds_requested": config.cv_folds,
         "cv_folds_effective": cv_folds,

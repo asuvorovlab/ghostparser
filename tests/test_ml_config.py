@@ -12,7 +12,11 @@ from pathlib import Path
 import pytest
 
 from ghostparser.config import ConfigError
-from ghostparser.ml.config import load_ml_config
+from ghostparser.ml.config import (
+    build_trainer_argument_parser,
+    load_ml_config,
+    resolve_trainer_runtime_args,
+)
 
 pytestmark = pytest.mark.config
 
@@ -120,3 +124,25 @@ def test_ml_config_rejects_invalid_estimator_values(
     assert f"model.{key}" in message
     assert repr(value) in message
     assert expected_message in message
+
+
+def test_seed_is_a_top_level_key_with_a_cli_flag(tmp_path):
+    """`seed` resolves from the config file or `--seed`, and only from the top level.
+
+    The scikit-learn name `random_state` is refused wherever it appears, so a
+    config written with it cannot run unseeded by accident.
+    """
+    assert _load(tmp_path, seed=7)["seed"] == 7
+
+    parser = build_trainer_argument_parser("test")
+    args = parser.parse_args(
+        ["-i", _REQUIRED["input_path"], "-o", _REQUIRED["output_dir"], "--seed", "7"]
+    )
+    assert resolve_trainer_runtime_args(args).seed == 7
+
+    with pytest.raises(ConfigError, match="'seed'"):
+        _load(tmp_path, random_state=7)
+    with pytest.raises(ConfigError, match="top level"):
+        _load(tmp_path, model={"seed": 7})
+    with pytest.raises(ConfigError, match="top level"):
+        _load(tmp_path, model={"random_state": 7})

@@ -33,7 +33,7 @@ def _tuning_namespace(input_path, output_dir, **overrides):
         test_size=0.25,
         cv_folds=2,
         rare_class_policy="warn_reduce_cv",
-        random_state=7,
+        seed=7,
         n_jobs=1,
         overwrite=True,
         model_name="random_forest",

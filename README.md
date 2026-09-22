@@ -577,7 +577,7 @@ This section summarizes user-facing errors and validation failures that GhostPar
    Required runtime/model/evaluation fields are missing or typed incorrectly.
 - `Do not place model hyperparameters or evaluation reporting controls at the top level ...`
    ML config shape is invalid; expected nested `model` and `evaluation` sections.
-- `Place 'random_state' and 'n_jobs' at the top level, not under 'model'. ...`
+- `Place 'seed' and 'n_jobs' at the top level, not under 'model'. ...`
    Runtime controls were placed in the wrong config section.
 - `Config field model.max_features got 'None'. Valid values are ...` (likewise `model.class_weight`)
    The bare word `None` in YAML is a string, not null. Omit the key (null is the default) or write `null` / `~`.
