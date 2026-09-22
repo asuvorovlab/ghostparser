@@ -75,8 +75,8 @@ def test_clean_and_save_trees_quotes_labels_the_format_needs(tmp_path):
             ["OUT"],
             "(((A:0.1,B:0.1):0.1,C:0.2):0.3,D:0.1):0.5;",
         ),
-        # OUT1 and OUT2 are not a clade as written -- they sit on either side
-        # of the file's root -- but both branch off the ingroup at the node
+        # OUT1 and OUT2 are not a clade as written (they sit on either side
+        # of the file's root), but both branch off the ingroup at the node
         # joining OUT2 to it. Rooting there and pruning leaves the ingroup
         # clade with its own 0.4 edge.
         (
@@ -200,9 +200,9 @@ def test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_of
     Rooting at the outgroup attachment point folds the outgroup's original
     edge into the ingroup clade's edge; the outgroups are then cut away, so
     the written tree is the rooted ingroup. An outgroup tangled among the
-    ingroup taxa is pruned without being used -- outvoted when the others
+    ingroup taxa is pruned without being used, outvoted when the others
     still sit together, or beaten by the listed order when no set holds a
-    majority -- and the counts say which and how often.
+    majority, and the counts say which and how often.
     """
     out_path = tmp_path / "clean_genes.tree"
     cleaning = ptrees.clean_and_save_gene_trees(

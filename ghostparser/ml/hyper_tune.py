@@ -123,14 +123,17 @@ MODEL_DEFAULTS = {
 
 
 def _format_seconds(seconds: float) -> str:
+    """Format a duration in seconds for the progress log."""
     return f"{seconds:.2f}s"
 
 
 def _pluralize(word: str, count: int) -> str:
+    """Pluralize ``word`` unless ``count`` is one."""
     return word if count == 1 else f"{word}s"
 
 
 def _log_progress(message: str) -> None:
+    """Print a progress line prefixed with the tuner's name."""
     print(f"[hyper_tune] {message}", flush=True)
 
 
@@ -149,6 +152,7 @@ def _import_wandb():
 
 
 def _get_wandb_project() -> str:
+    """Read the W&B project from ``WANDB_PROJECT``, falling back to the default."""
     value = os.getenv("WANDB_PROJECT")
     if value is None:
         return DEFAULT_WANDB_PROJECT
@@ -157,6 +161,7 @@ def _get_wandb_project() -> str:
 
 
 def _get_wandb_entity() -> str | None:
+    """Read the W&B entity from ``WANDB_ENTITY``, or ``None``."""
     value = os.getenv("WANDB_ENTITY")
     if value is None:
         return None
@@ -165,6 +170,7 @@ def _get_wandb_entity() -> str | None:
 
 
 def _build_wandb_run_name(config: argparse.Namespace) -> str:
+    """Name the W&B run after the model, the search method and the time."""
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return (
         f"ghostparser-{config.model_name}-{config.search_method}-"
@@ -179,15 +185,19 @@ class _NullRunLogger:
     detailed_payloads = False
 
     def log(self, payload: dict) -> None:
+        """Discard the payload."""
         return None
 
     def log_table(self, name: str, rows: list[dict[str, object]]) -> None:
+        """Discard the table."""
         return None
 
     def set_summary(self, key: str, value: object) -> None:
+        """Discard the summary value."""
         return None
 
     def finish(self) -> None:
+        """Do nothing."""
         return None
 
 
@@ -197,11 +207,13 @@ class _WandbRunLogger:
     enabled = True
 
     def __init__(self, wandb_module, run, detailed_payloads: bool) -> None:
+        """Wrap a live W&B run."""
         self._wandb = wandb_module
         self._run = run
         self.detailed_payloads = detailed_payloads
 
     def log(self, payload: dict) -> None:
+        """Log a payload to the run."""
         self._wandb.log(payload)
 
     def log_table(self, name: str, rows: list[dict[str, object]]) -> None:
@@ -226,9 +238,11 @@ class _WandbRunLogger:
         self._wandb.log({name: table})
 
     def set_summary(self, key: str, value: object) -> None:
+        """Set a run-summary value."""
         self._run.summary[key] = value
 
     def finish(self) -> None:
+        """Finish the run."""
         self._run.finish()
 
 
@@ -343,6 +357,8 @@ def _normalize_search_space_values(search_space: dict[str, object]) -> dict:
 
 
 def _normalize_search_values(value: object) -> list[object]:
+    """Turn a search-space entry into a non-empty candidate list, accepting a lone value.
+    """
     if isinstance(value, (list, tuple)):
         candidates = list(value)
         if not candidates:
@@ -354,6 +370,18 @@ def _normalize_search_values(value: object) -> list[object]:
 def _build_candidate_grid(
     search_space: dict[str, object],
 ) -> tuple[list[dict[str, object]], list[str]]:
+    """Expand the search space into every candidate combination.
+
+    Args:
+        search_space: Parameter name to candidate list.
+
+    Returns:
+        ``(candidates, parameter_names)``: one dict per combination, and the
+        parameter names in order.
+
+    Raises:
+        ConfigError: If the search space is empty or a list has no values.
+    """
     if not search_space:
         raise ConfigError(
             "Config field search_space must define at least one parameter"
@@ -368,10 +396,16 @@ def _build_candidate_grid(
 
 
 def _objective_direction(metric_name: str) -> str:
+    """Return ``min`` for the objectives that are losses, else ``max``."""
     return "min" if metric_name in MINIMIZE_OBJECTIVES else "max"
 
 
 def _candidate_score(cv_results: dict, objective_metric: str) -> float:
+    """Read the candidate's cross-validated objective mean.
+
+    Raises:
+        ConfigError: If the objective is not among the CV metrics.
+    """
     aggregate = cv_results.get("aggregate", {})
     key = f"{objective_metric}_mean"
     if key not in aggregate:
@@ -386,6 +420,8 @@ def _build_training_namespace(
     candidate_params: dict[str, object],
     model_name: str,
 ) -> argparse.Namespace:
+    """Build a trainer config from the runtime keys, the model defaults and one candidate's parameters.
+    """
     payload = dict(base_config)
     payload.update(MODEL_DEFAULTS[model_name])
     payload.update(candidate_params)
@@ -393,11 +429,23 @@ def _build_training_namespace(
 
 
 def load_hyper_tune_config(config_file: str) -> dict[str, object]:
+    """Load and normalize a tuner config file."""
     payload = _load_raw_config(config_file)
     return normalize_hyper_tune_payload(payload)
 
 
 def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
+    """Validate a tuner config: the runtime keys plus the ``hyperparameter_tuning`` block.
+
+    Args:
+        payload: The raw config mapping.
+
+    Returns:
+        The resolved tuner config dict.
+
+    Raises:
+        ConfigError: If a key is missing, misplaced or invalid.
+    """
     input_path = _validate_required_path(payload, "input_path")
     output_dir = _validate_required_path(payload, "output_dir")
 
@@ -554,6 +602,20 @@ def _evaluate_candidate(
     labels_train: np.ndarray,
     folds: int,
 ) -> tuple[argparse.Namespace, dict, float]:
+    """Cross-validate one candidate and return its score and results.
+
+    Args:
+        base_config: The runtime keys.
+        candidate_params: The candidate's hyperparameters.
+        model_name: ``random_forest`` or ``multi_knn``.
+        x_train: The training features.
+        y_train: The training binary targets.
+        labels_train: The training combination labels.
+        folds: Number of folds.
+
+    Returns:
+        ``(candidate_config, cv_results, score)``.
+    """
     candidate_config = _build_training_namespace(
         base_config, candidate_params, model_name
     )
@@ -586,6 +648,15 @@ def _evaluate_candidate(
 
 
 def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
+    """Search the hyperparameter space, refit the best candidate and write the reports.
+
+    Args:
+        config: The resolved tuner config.
+
+    Returns:
+        A dict with the ranked candidates, the best parameters, the test
+        metrics, the parameter marginals and the artifact paths.
+    """
     run_start = time.perf_counter()
     use_wandb = bool(getattr(config, "use_wandb", DEFAULT_USE_WANDB))
     # The ranked-candidate table, the parameter marginals, the per-row
@@ -1040,6 +1111,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
 
 
 def _build_argument_parser() -> argparse.ArgumentParser:
+    """Build the tuner's argument parser."""
     parser = argparse.ArgumentParser(
         description="Ghostparser ML hyperparameter tuner for supported model modules."
     )
@@ -1068,6 +1140,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Run the tuner from the command line."""
     args = _build_argument_parser().parse_args()
     config = resolve_cli_or_config_args(
         args,

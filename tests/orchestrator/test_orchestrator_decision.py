@@ -194,7 +194,7 @@ def test_decision_cascade_lands_on_each_classification(
     classification by the wrong route fails rather than passing by coincidence.
     The ``diagnostic`` setting must not move the classification or the gate: a
     diagnostic run measures and reports every test on every row, while the
-    default declines a test whose result the cascade would have ignored -- it
+    default declines a test whose result the cascade would have ignored: it
     reports ``perm_decision`` exactly on the rows the permutation gate settled,
     and under the inline ``no`` correction leaves the tree-height flag
     undefined below a settled count gate.
@@ -335,7 +335,7 @@ def test_classify_introgression_truth_table(
     call, and only ``Permutation`` means the direction decision was consulted.
     ``_resolve_deferred_bootstrap`` classifies whole arrays at once rather than
     calling the scalar form per iteration, so the array form is held to the
-    same table -- an unmeasured tree-height flag reads as not significant
+    same table, an unmeasured tree-height flag reads as not significant
     there, as the scalar form documents.
     """
     assert pinf._classify_introgression(
@@ -356,8 +356,8 @@ def test_adjust_p_values_matches_statsmodels_and_never_lowers_a_value(method):
 
     The first half compares against ``multipletests`` called directly (``no``
     is the identity). The second is what licenses skipping a settled gate:
-    both short-circuits -- the point estimate skipping the direction test and
-    a bootstrap iteration skipping it -- rest on ``raw > alpha`` implying
+    both short-circuits (the point estimate skipping the direction test and
+    a bootstrap iteration skipping it) rest on ``raw > alpha`` implying
     ``adjusted > alpha``, so the property is asserted over the whole choice
     list rather than a fixed set of names, on the hostile family of eight
     strong signals against two weak ones, where a true-null-count estimator
@@ -436,8 +436,8 @@ def test_inline_and_deferred_correction_agree_on_a_single_triplet(method):
     A family of one leaves each correction as the identity, so all five methods
     must produce the same bootstrap tally. ``no`` and ``bfn`` reach it inline
     during the stream while the rank-based three park their raw p-values in a
-    deferred record -- one entry per iteration, whatever the family size, since
-    every rank depends on the other triplets' values -- which the decision pass
+    deferred record (one entry per iteration, whatever the family size, since
+    every rank depends on the other triplets' values) which the decision pass
     resolves and clears. Agreeing here is what shows the two code paths
     implement one decision rule rather than two.
     """
@@ -495,9 +495,9 @@ def test_bootstrap_votes_answer_to_the_corrected_threshold():
 def test_diagnostic_bootstrap_records_every_test_without_moving_a_vote(con, dis1, dis2):
     """A diagnostic bootstrap measures all three tests per iteration and changes no vote.
 
-    The record must be complete -- one entry per iteration for every test,
+    The record must be complete: one entry per iteration for every test,
     the direction test included even where a failed gate meant the vote never
-    read it -- and it must be the vote's own numbers: replaying the cascade
+    read it, and it must be the vote's own numbers: replaying the cascade
     over the recorded p-values and decisions rebuilds ``all_bootstrap``
     exactly. The extra direction tests draw from their own stream, so the
     votes and the studentized interval are identical with the record on or
@@ -677,7 +677,7 @@ def test_diagnostic_changes_what_is_measured_and_nothing_concluded(method):
     unrun test moves no other triplet's numbers. A run with ``diagnostic`` off
     therefore has to agree field for field with a diagnostic one on everything
     the cascade reads, across an inline correction and two deferred ones, with
-    the bootstrap votes included -- those are judged against the corrected
+    the bootstrap votes included, those are judged against the corrected
     threshold, so a skip that shifted a gate would move them too.
 
     The diagnostic family, where every raw value exists, also shows what a
@@ -762,7 +762,7 @@ def test_bootstrap_measures_the_tree_height_test_its_correction_reads(
 
     Under ``bfn`` a count gate that failed on the exactly corrected value
     classifies the iteration before the tree-height flag is read, so the test
-    goes unmeasured there -- exactly as often as the count gate fails, and never
+    goes unmeasured there, exactly as often as the count gate fails, and never
     elsewhere. Under ``holm`` every iteration's value is a member of a family
     corrected by rank, so it is measured in every iteration. ``diagnostic``
     reaches only the point estimate: on, it adds the one measurement the point

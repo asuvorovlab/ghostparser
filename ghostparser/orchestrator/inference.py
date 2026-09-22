@@ -1,8 +1,5 @@
-"""Per-triplet GhostParser inference for the orchestrator.
-
-Topology classification, the three decision gates, bootstrap aggregation,
-summary statistics, run-wide p-value correction, and TSV writing. All statistics
-use the scipy/statsmodels backend.
+"""Per-triplet inference: topology counts, the three tests, bootstrap support,
+run-wide p-value correction and the TSV writers.
 """
 
 import hashlib
@@ -195,16 +192,10 @@ class _CorrectionPolicy:
 # ~4 KB result, so at 645,000 triplets slots save over a gigabyte, twice.
 @dataclass(frozen=True, slots=True)
 class TripletPipelineResult:
-    """Result of the GhostParser orchestrator for one rooted species triplet.
-
-    The stream fills the measurements: topology counts, the DCT and KS statistics
-    with their raw p-values, the direction test, and the bootstrap votes. The
-    decided fields -- corrected p-values, significance flags, classification,
-    decision gate and ``bootstrap_value`` -- stay ``None`` until the run-wide
-    pass (:func:`_apply_triplet_result_p_value_correction`) sets them, since
-    every one of them depends on the whole run's p-values. Unless the run is
-    diagnostic, a test the cascade could not consult is left unmeasured, so the
-    KS pair and the ``perm_*`` block may be ``None`` on a measured result.
+    """One triplet's measurements and, once the run-wide pass has corrected
+    every p-value, its decision. Decided fields stay ``None`` until
+    then, and a test the cascade could not consult is left unmeasured
+    unless the run is diagnostic.
     """
 
     triplet: tuple[str, str, str]
@@ -702,13 +693,8 @@ def _build_empty_metric_buckets():
 def _build_topology_metric_statistics(
     species_triplet, species_topology, metric_buckets, dis1_topology, dis2_topology
 ):
-    """Build topology/metric summary statistics for one triplet.
-
-    The ``discordant1`` columns describe whichever discordant topology is more
-    frequent, so they name the same set of gene trees as the ``dis1_topology``
-    column and as the groups the DCT, KS, and permutation tests use. The roles
-    are passed in rather than recomputed here so they cannot drift from the ones
-    the decision logic resolved.
+    """Build the topology/metric summary statistics for one triplet, with
+    ``discordant1`` naming the more frequent discordant topology.
 
     Args:
         species_triplet: The ``(A, B, C)`` triplet.
@@ -753,11 +739,8 @@ def _build_topology_metric_statistics(
 
 
 def _classify_introgression(dct_significant, ks_significant, direction):
-    """Apply the GhostParser decision cascade to produce a classification.
-
-    Each branch returns the classification and the gate that produced it in one
-    pass, so the two cannot drift apart. What each gate means biologically is
-    described under "The statistical tests" in the orchestrator guide.
+    """Apply the three-gate decision cascade and return the classification with
+    the gate that settled it.
 
     Args:
         dct_significant: Whether the discordant count test is significant.
@@ -920,13 +903,9 @@ def _generate_inference_description(triplet, classification, dis1_topology):
 
 
 def _build_triplet_seed_sequence(seed, triplet):
-    """Build a deterministic per-triplet seed sequence from the run's base seed.
-
-    The run carries a single configured seed; a stable per-triplet sequence is
-    derived from ``(seed, triplet)`` via SHA-256. Deriving per triplet rather
-    than drawing from one shared stream is what makes a run reproducible
-    independently of how triplets are chunked across workers, so the ``taxon``,
-    ``gene``, and serial paths all produce identical results.
+    """Derive a deterministic per-triplet seed sequence from ``(seed,
+    triplet)`` via SHA-256, so results do not depend on how triplets are
+    chunked across workers.
 
     Args:
         seed: The global base seed, or ``None`` for a non-deterministic sequence.
@@ -949,13 +928,9 @@ def observation_from_subtree(
     tree_height_calculation_strategy,
     collect_summary_statistics=False,
 ):
-    """Compute a ``(topology, tree_height, metrics)`` observation from a subtree.
-
-    Reference implementation, paired with
-    :func:`~.trees.extract_triplet_subtree`. The pipeline derives observations
-    from a cached :class:`~.triplet_geometry.TripletGeometry`
-    (:func:`~.triplet_geometry.geometry_observation`); this path walks a real
-    DendroPy subtree instead, and the parity tests hold the two to agreement.
+    """Compute a ``(topology, tree_height, metrics)`` observation by walking a
+    DendroPy subtree. This is the reference path the parity tests hold
+    the cached geometry to; no run calls it.
 
     Args:
         subtree: The extracted triplet subtree as a DendroPy tree.
@@ -1188,15 +1163,10 @@ def _run_triplet_pipeline_from_observations(
     alpha_ks=DEFAULT_ALPHA_KS,
     gate_policy=None,
 ):
-    """Measure the GhostParser Figure 6 tests from serialized observations.
-
-    Nothing here decides anything: the classification depends on p-values
-    corrected across the whole run, so the result's decided fields are left
-    ``None`` for the run-wide pass to fill. What is measured depends on
-    ``gate_policy``: without one every triplet gets all three tests; with one,
-    a test the cascade could no longer consult is skipped -- see "Skipping a
-    settled gate" in the orchestrator guide for why that changes nothing the
-    pass decides.
+    """Measure the topology counts and the three tests for one triplet, leaving
+    every decided field ``None`` for the run-wide pass. With a
+    ``gate_policy`` a test the cascade could no longer consult is
+    skipped.
 
     Args:
         species_triplet: The ``(A, B, C)`` triplet.
@@ -1265,8 +1235,8 @@ def _run_triplet_pipeline_from_observations(
     )
     # A gate judged here is judged the way a bootstrap iteration judges it: on
     # the exactly corrected value under an inline method, on the raw value
-    # under a rank-based one. Either way a failure is final -- no supported
-    # correction can lower a p-value -- so the pass will find the gate failed
+    # under a rank-based one. Either way a failure is final: no supported
+    # correction can lower a p-value, so the pass will find the gate failed
     # too, and nothing measured below it could have been read.
     dct_failed = gate_policy is not None and (
         _gate_p_value(dct_p_value, gate_policy) > alpha_dct
@@ -1382,19 +1352,9 @@ def _iteration_outcome(
     diagnostic=False,
     diagnostic_rng=None,
 ):
-    """Run one bootstrap iteration's tests over its resampled heights.
-
-    Measures what the run's correction will read, and nothing more unless the
-    bootstrap is diagnostic (the run-level ``diagnostic`` reaches only the
-    point estimate). The direction test is skipped once an upstream gate has
-    failed, which no supported correction can undo; the tree-height test is
-    skipped below a failed count gate only under an inline method, whose fixed
-    family size means the value would go unread. Neither skip can move a vote:
-    a failed count gate classifies the iteration before either later test is
-    read. A diagnostic bootstrap measures all three tests every iteration and
-    records them; the direction tests it adds below a failed gate draw from
-    ``diagnostic_rng``, so the vote's own draws are the same with or without
-    them.
+    """Run one bootstrap iteration's tests over its resampled heights,
+    measuring only what the run's correction will read unless the
+    bootstrap is diagnostic.
 
     Args:
         n_dis1: Discordant1 count in the resample.
@@ -1731,15 +1691,10 @@ def _run_bootstrap_iterations(
     summary_only=False,
     diagnostic_rng=None,
 ):
-    """Resample observations and aggregate per-iteration classifications.
-
-    Resampling is vectorized and assumes the concordant topology is ``((A,B),C)``
-    (always true on the orchestrator path). Under an inline correction each
-    iteration's corrected p-values follow from the family size alone, so it
-    votes on the spot and only the tally is kept; under a rank-based one the
-    raw p-values are parked in a :class:`DeferredBootstrapRecord`, since every
-    triplet's value for the same iteration is needed before any can be
-    corrected.
+    """Resample the observations with replacement and tally the per-iteration
+    classifications, voting inline under ``no``/``bfn`` and parking raw
+    p-values in a :class:`DeferredBootstrapRecord` under the rank-based
+    methods.
 
     Args:
         observations: List of ``(topology, tree_height, metrics)`` tuples.
@@ -2025,13 +1980,9 @@ def analyze_triplet_from_observations(
     diagnostic=DEFAULT_DIAGNOSTIC,
     bootstrap=DEFAULT_BOOTSTRAP,
 ):
-    """Measure one triplet from precomputed observations.
-
-    This is the orchestrator's per-triplet unit: observations are computed once
-    during extraction, so no Newick reparse happens here. The result carries raw
-    p-values, the direction test and the bootstrap votes; the classification and
-    every corrected value depend on the whole run, so
-    :func:`_apply_triplet_result_p_value_correction` sets them afterwards.
+    """Measure one triplet from precomputed observations, returning raw
+    p-values, the direction test and the bootstrap votes with every
+    decided field left for the run-wide pass.
 
     Args:
         triplet: The ``(A, B, C)`` triplet.
@@ -2168,14 +2119,8 @@ def _resolve_deferred_bootstrap(results, alpha_dct, alpha_ks, method):
 
 
 def _correct_family(p_values, method, alpha, family_size):
-    """Correct one test's measured p-values as a family of ``family_size``.
-
-    The family is always the triplet count. Under an inline method each value
-    is corrected from that count alone, so members a non-diagnostic run left
-    unmeasured cost the others nothing and may simply be absent from
-    ``p_values``. A rank-based method reads every member's value, so the stream
-    never leaves one of its members unmeasured and ``p_values`` must be the
-    whole family.
+    """Correct one test's measured p-values as a family of ``family_size``,
+    which is always the triplet count.
 
     Args:
         p_values: The measured raw p-values, in result order.
@@ -2208,12 +2153,8 @@ def _apply_triplet_result_p_value_correction(
     alpha_ks,
     method=DEFAULT_P_VALUE_CORRECTION,
 ):
-    """Correct the DCT and KS p-values across the run and classify every triplet.
-
-    The single decision point. Each test's raw p-values form one family over
-    all triplets; the corrected values set the two gate flags, the stored
-    direction settles the third gate, and the classification, its gate,
-    ``bootstrap_value`` and any deferred bootstrap votes follow.
+    """Correct the DCT and KS p-values across the whole run and classify every
+    triplet. This is the single decision point.
 
     Args:
         results: List of ``TripletPipelineResult`` objects.
@@ -2270,7 +2211,7 @@ def _apply_triplet_result_p_value_correction(
         # The permutation p-values are corrected inside the test, across its
         # one-tailed pair, so they take no part in this pass; the stored
         # decision is read as it stands. A skipped test leaves ``perm_decision``
-        # as ``None`` -- guards and empty groups still record a string -- so
+        # as ``None``: guards and empty groups still record a string, so
         # reaching gate three without one means a gate the stream judged
         # settled was not, an invariant violation rather than an ambiguous
         # call, and it says so instead of classifying the triplet ``ambiguous``.
@@ -2587,11 +2528,8 @@ def write_pipeline_results(
 
 
 def write_summary_statistics_tsv(results, output_filepath, bootstrap=DEFAULT_BOOTSTRAP):
-    """Write per-triplet topology/metric summary statistics to a TSV file.
-
-    Emits the identity fields, the 63 topology/metric/statistic columns, the
-    classification, and (when bootstrap is enabled) the bootstrap value. Shape
-    diagnostics are not part of this file; they appear only in the results TSV.
+    """Write the per-triplet topology/metric summary statistics to
+    ``summary_statistics.tsv``.
 
     Args:
         results: List of ``TripletPipelineResult`` objects.

@@ -24,6 +24,7 @@ DatasetSplit = shared.DatasetSplit
 
 
 def _rows_to_matrix(rows, target_column: str):
+    """Build the feature matrix, reporting a malformed TSV as a :class:`ConfigError`."""
     try:
         return shared.rows_to_matrix(rows, target_column)
     except ValueError as exc:
@@ -31,6 +32,7 @@ def _rows_to_matrix(rows, target_column: str):
 
 
 def _build_model(config: argparse.Namespace) -> MultiOutputClassifier:
+    """Build the one-vs-rest random forest from the config's hyperparameters."""
     classifier = RandomForestClassifier(
         n_estimators=config.n_estimators,
         max_depth=config.max_depth,
@@ -55,6 +57,20 @@ def _cross_validate(
     folds: int,
     random_state: int | None,
 ) -> dict:
+    """Cross-validate a model over stratified folds of the training partition.
+
+    Args:
+        model_factory: Callable returning a fresh, unfitted model.
+        x_train: The training features.
+        y_train: The training binary targets.
+        labels_train: The training combination labels, for stratification.
+        folds: Number of folds.
+        random_state: Seed for the fold shuffle.
+
+    Returns:
+        A dict with the per-fold metrics and their ``aggregate`` means and
+        standard deviations.
+    """
     splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=random_state)
     fold_metrics: list[dict] = []
     for fold_index, (fit_index, val_index) in enumerate(
@@ -97,6 +113,14 @@ _write_tsv = shared.write_tsv
 
 
 def train_random_forest(config: argparse.Namespace) -> dict:
+    """Train and evaluate the random forest baseline end to end.
+
+    Args:
+        config: The resolved trainer config.
+
+    Returns:
+        A dict of the metrics and the paths of the artifacts written.
+    """
     run_start = time.perf_counter()
     load_start = time.perf_counter()
     rows = shared.read_tsv_rows(config.input_path)
@@ -385,6 +409,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
 
 
 def main() -> None:
+    """Run the random forest trainer from the command line."""
     parser = build_trainer_argument_parser(
         "Ghostparser ML random forest baseline for summary statistics."
     )

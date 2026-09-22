@@ -5,12 +5,7 @@ from .runner import run_orchestrator
 
 
 def main() -> None:
-    """Run the orchestrator from the command line.
-
-    Parses process argv, resolves the config, and invokes
-    :func:`ghostparser.orchestrator.runner.run_orchestrator`. On a ``ConfigError`` the
-    parser prints the error and exits.
-    """
+    """Parse the command line, resolve the config and run the orchestrator."""
     parser = build_argument_parser()
     parsed_args = parser.parse_args()
 

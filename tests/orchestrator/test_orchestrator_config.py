@@ -73,7 +73,7 @@ def _payload(tmp_path, **extra):
     """Write a minimal orchestrator config file with extra keys merged in.
 
     A key given as ``None`` is written as null, which the loader treats as
-    absent -- the way to express a missing required field.
+    absent, the way to express a missing required field.
 
     Args:
         tmp_path: The pytest temporary directory.
@@ -245,10 +245,18 @@ def test_invalid_values_are_rejected_by_field_name(tmp_path, extra, match):
 
 
 @pytest.mark.parametrize(
-    "sample_name", ["orchestrator_minimal.yaml", "orchestrator_full.yaml"]
+    "sample_name, key, expected",
+    [
+        ("orchestrator_minimal.yaml", "outgroup", ["OutGroup"]),
+        ("orchestrator_full.yaml", "outgroup", ["Out1", "Out2"]),
+        ("orchestrator_preflight.yaml", "preflight_data_check", True),
+        ("orchestrator_species_filter.yaml", "generate_summary_stats", True),
+        ("orchestrator_triplet_filter_diagnostic.yaml", "diagnostic", True),
+        ("orchestrator_screen.json", "bootstrap", False),
+    ],
 )
-def test_shipped_sample_configs_resolve(sample_name):
-    """The sample configs load cleanly and use the current key names.
+def test_shipped_sample_configs_resolve(sample_name, key, expected):
+    """The sample configs load cleanly and set the key their scenario is about.
 
     Guards against the samples drifting out of step with the validator, which
     would leave users copying a config the loader rejects.
@@ -257,6 +265,7 @@ def test_shipped_sample_configs_resolve(sample_name):
 
     assert config["outgroup"]
     assert all(isinstance(label, str) and label for label in config["outgroup"])
+    assert config[key] == expected
 
 
 def test_full_sample_config_names_every_runtime_key_at_its_default(tmp_path):

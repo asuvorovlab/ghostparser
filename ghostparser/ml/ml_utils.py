@@ -56,6 +56,17 @@ class DatasetSplit:
 
 
 def read_tsv_rows(input_path: str) -> list[dict[str, str]]:
+    """Read a TSV into one dict per row.
+
+    Args:
+        input_path: Path to the TSV file.
+
+    Returns:
+        The rows, each keyed by column name.
+
+    Raises:
+        ValueError: If the file has no header row or no data rows.
+    """
     with open(input_path, "r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
         if reader.fieldnames is None:
@@ -67,10 +78,23 @@ def read_tsv_rows(input_path: str) -> list[dict[str, str]]:
 
 
 def is_valid_bitstring(value: str) -> bool:
+    """Say whether ``value`` is a 6-character string of ``0``/``1``."""
     return len(value) == BIT_COUNT and set(value) <= {"0", "1"}
 
 
 def parse_classes(raw_labels: Iterable[str]) -> tuple[np.ndarray, list[str]]:
+    """Parse the label column into a binary target matrix.
+
+    Args:
+        raw_labels: The label strings, one per row.
+
+    Returns:
+        A tuple ``(targets, labels)``: the ``rows x 6`` 0/1 matrix and the
+        stripped label strings.
+
+    Raises:
+        ValueError: If a label is not a 6-character bitstring.
+    """
     labels: list[str] = []
     binary_rows: list[list[int]] = []
     for raw_label in raw_labels:
@@ -85,10 +109,12 @@ def parse_classes(raw_labels: Iterable[str]) -> tuple[np.ndarray, list[str]]:
 
 
 def select_feature_names(fieldnames: list[str], target_column: str) -> tuple[str, ...]:
+    """Return every column name except the target column, in file order."""
     return tuple(name for name in fieldnames if name != target_column)
 
 
 def _parse_numeric_column(values: list[str]) -> np.ndarray | None:
+    """Parse a column as floats, or return ``None`` when any value is not numeric."""
     try:
         return np.asarray([float(value) for value in values], dtype=float)
     except (TypeError, ValueError):
@@ -98,6 +124,20 @@ def _parse_numeric_column(values: list[str]) -> np.ndarray | None:
 def _encode_feature_column(
     values: list[str], feature_name: str
 ) -> tuple[np.ndarray, tuple[str, ...]]:
+    """Encode one feature column as numeric or one-hot columns.
+
+    Args:
+        values: The column's raw values.
+        feature_name: The column name, used for the encoded column names.
+
+    Returns:
+        A tuple ``(matrix, names)``: the ``rows x k`` encoded block and its
+        column names.
+
+    Raises:
+        ValueError: If a value is empty, or a string column has more distinct
+            values than the one-hot cap.
+    """
     parsed_numeric = _parse_numeric_column(values)
     if parsed_numeric is not None:
         return parsed_numeric.reshape(-1, 1), (feature_name,)
@@ -123,6 +163,20 @@ def _encode_feature_column(
 
 
 def rows_to_matrix(rows: list[dict[str, str]], target_column: str) -> DatasetSplit:
+    """Build the feature matrix and the binary targets from TSV rows.
+
+    Args:
+        rows: The rows as read by :func:`read_tsv_rows`.
+        target_column: The label column, excluded from the features.
+
+    Returns:
+        A :class:`DatasetSplit` holding the feature matrix, its column names,
+        the targets and the label strings.
+
+    Raises:
+        ValueError: If the target column is missing, no feature column remains,
+            or a column cannot be encoded.
+    """
     fieldnames = list(rows[0].keys())
     if target_column not in fieldnames:
         raise ValueError(f"Missing required target column: {target_column}")
@@ -165,6 +219,7 @@ def rows_to_matrix(rows: list[dict[str, str]], target_column: str) -> DatasetSpl
 
 
 def combination_labels(bit_labels: Iterable[str]) -> np.ndarray:
+    """Return the label strings as an array, one combination label per row."""
     return np.asarray(list(bit_labels))
 
 
@@ -177,6 +232,19 @@ def split_dataset(
 ) -> tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]
 ]:
+    """Split the rows into training and hold-out partitions, stratified on the label when every label occurs twice.
+
+    Args:
+        features: The feature matrix.
+        targets: The binary target matrix.
+        labels: The combination label per row.
+        test_size: Fraction held out.
+        random_state: Seed for the split.
+
+    Returns:
+        ``(x_train, x_test, y_train, y_test, labels_train, labels_test, notes)``,
+        the notes saying how the split was stratified.
+    """
     try:
         x_train, x_test, y_train, y_test, labels_train, labels_test = train_test_split(
             features,
@@ -216,6 +284,17 @@ def split_dataset(
 
 
 def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+    """Score predicted bits against the true bits.
+
+    Args:
+        y_true: The true binary targets.
+        y_pred: The predicted binary targets.
+
+    Returns:
+        A dict of per-bit and aggregate metrics: precision, recall, F1 and
+        accuracy per bit, micro/macro/weighted F1, Hamming loss, exact-match
+        accuracy and the classification report.
+    """
     per_bit_precision, per_bit_recall, per_bit_f1, per_bit_support = (
         precision_recall_fscore_support(y_true, y_pred, average=None, zero_division=0)
     )
@@ -247,6 +326,7 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 
 
 def summarize_distribution(labels: list[str]) -> dict[str, dict[str, float]]:
+    """Count each label and its fraction of the rows."""
     counts = Counter(labels)
     total = sum(counts.values()) or 1
     return {
@@ -256,6 +336,7 @@ def summarize_distribution(labels: list[str]) -> dict[str, dict[str, float]]:
 
 
 def bit_distribution(targets: np.ndarray) -> dict[str, dict[str, float]]:
+    """Count the positive rows and their fraction for each bit."""
     totals = targets.sum(axis=0)
     total_rows = targets.shape[0] or 1
     return {
@@ -270,6 +351,21 @@ def bit_distribution(targets: np.ndarray) -> dict[str, dict[str, float]]:
 def auto_cv_folds(
     labels: np.ndarray, requested_folds: int, policy: str
 ) -> tuple[int | None, list[str]]:
+    """Pick the cross-validation fold count the label counts allow.
+
+    Args:
+        labels: The combination label per training row.
+        requested_folds: The configured fold count.
+        policy: ``warn_reduce_cv``, ``warn_skip_cv`` or ``error``.
+
+    Returns:
+        ``(folds, warnings)``; ``folds`` is ``None`` when cross-validation is
+        skipped.
+
+    Raises:
+        ValueError: Under the ``error`` policy when a label occurs fewer than
+            twice.
+    """
     counts = Counter(labels.tolist())
     if not counts:
         return None, ["No labels available for cross-validation"]
@@ -300,14 +396,18 @@ def auto_cv_folds(
 
 
 def write_text(path: Path, content: str) -> None:
+    """Write text to a file as UTF-8."""
     path.write_text(content, encoding="utf-8")
 
 
 def write_json(path: Path, payload: dict) -> None:
+    """Write a dict to a file as indented JSON with sorted keys."""
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def write_tsv(path: Path, rows: list[dict[str, object]]) -> None:
+    """Write dict rows to a TSV, using the first row's keys as the header; nothing is written for no rows.
+    """
     if not rows:
         return
     fieldnames = list(rows[0].keys())
@@ -318,11 +418,8 @@ def write_tsv(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def format_bit_label_title(bit_label: str) -> str:
-    """Render a bit label as a plot title.
-
-    Underscores become spaces and the first character is upper-cased. Only the
-    first -- ``str.capitalize`` would lower-case the rest and destroy the taxon
-    letters, turning ``ghost_into_A`` into ``Ghost into a``.
+    """Render a bit label as a plot title, upper-casing only the first
+    character so the taxon letters survive.
 
     Args:
         bit_label: One of :data:`BIT_LABELS`, e.g. ``inflow_into_A_from_C``.
@@ -355,6 +452,7 @@ def build_confusion_matrices(
 
 
 def build_label_map() -> dict:
+    """Describe the label format: the bit names and their order."""
     return {
         "source_label_format": "6-bit bitstring",
         "bit_labels": list(BIT_LABELS),
@@ -372,6 +470,22 @@ def build_dataset_summary(
     test_size: float,
     random_state: int | None,
 ) -> dict:
+    """Summarize the split and the label distributions for the metrics JSON.
+
+    Args:
+        all_labels: Every row's label.
+        train_labels: The training rows' labels.
+        test_labels: The hold-out rows' labels.
+        train_targets: The training binary targets.
+        test_targets: The hold-out binary targets.
+        split_notes: How the split was stratified.
+        test_size: The hold-out fraction.
+        random_state: The seed used.
+
+    Returns:
+        A dict with the label map, the split description and the label and bit
+        distributions per partition.
+    """
     return {
         "label_map": build_label_map(),
         "split": {
@@ -403,6 +517,8 @@ def build_dataset_summary(
 def build_prediction_rows(
     y_true: np.ndarray, y_pred: np.ndarray
 ) -> list[dict[str, object]]:
+    """Build one prediction row per sample: index, true and predicted labels and bits, exact-match flag and matched-bit count.
+    """
     rows: list[dict[str, object]] = []
     for index, (true_row, pred_row) in enumerate(zip(y_true, y_pred)):
         matched_label_count = int(np.sum(true_row == pred_row))
@@ -423,6 +539,7 @@ def build_prediction_rows(
 def build_feature_importance_rows(
     feature_names: tuple[str, ...], scores: np.ndarray
 ) -> list[dict[str, object]]:
+    """Pair feature names with their scores, sorted by importance descending."""
     rows: list[dict[str, object]] = []
     for index, feature_name in enumerate(feature_names):
         rows.append({"feature": feature_name, "importance": float(scores[index])})
@@ -461,6 +578,8 @@ def format_hyperparameter_section(
 def format_confusion_matrix_section(
     confusion_matrices: dict[str, list[list[int]]],
 ) -> list[str]:
+    """Render each bit's 2x2 confusion matrix as text lines with counts and percentages.
+    """
     lines: list[str] = []
     for bit_label, matrix_values in confusion_matrices.items():
         matrix_array = np.asarray(matrix_values, dtype=float)
@@ -482,6 +601,15 @@ def save_confusion_matrix_plot(
     confusion_matrices: dict[str, list[list[int]]],
     output_path: Path,
 ) -> str | None:
+    """Save the per-bit confusion matrices as one heatmap grid.
+
+    Args:
+        confusion_matrices: Bit label to its 2x2 matrix.
+        output_path: Where to write the figure.
+
+    Returns:
+        The path written, or ``None`` when there is nothing to plot.
+    """
     if not confusion_matrices:
         return None
 
@@ -565,6 +693,16 @@ def build_64_class_confusion_matrix(
     y_true: np.ndarray,
     y_pred: np.ndarray,
 ) -> dict[str, object]:
+    """Build the 64-class confusion matrix over whole 6-bit labels.
+
+    Args:
+        y_true: The true binary targets.
+        y_pred: The predicted binary targets.
+
+    Returns:
+        A dict with ``class_labels`` ordered by number of set bits and the
+        ``matrix`` of counts in that order.
+    """
     powers = (2 ** np.arange(BIT_COUNT - 1, -1, -1)).astype(int)
     true_indices = (np.asarray(y_true, dtype=int) * powers).sum(axis=1)
     pred_indices = (np.asarray(y_pred, dtype=int) * powers).sum(axis=1)
@@ -614,6 +752,15 @@ def save_64_class_confusion_matrix_plot(
     class_confusion: dict[str, object],
     output_path: Path,
 ) -> str:
+    """Save the row-normalized 64-class confusion matrix as a heatmap.
+
+    Args:
+        class_confusion: The output of :func:`build_64_class_confusion_matrix`.
+        output_path: Where to write the figure.
+
+    Returns:
+        The path written.
+    """
     labels = [str(label) for label in class_confusion["class_labels"]]
     # Raw counts depend on how many test rows each class happened to draw, which
     # is fixed per run but arbitrary to a reader. Row-normalizing puts every cell

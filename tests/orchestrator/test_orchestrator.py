@@ -104,7 +104,7 @@ def _make_config(
 #
 # The pruned species tree is (((A,B),C),D), giving 4 triplets. Every gene tree
 # has the shape ((((X,Y),Z),D),OUT), so for any triplet containing D the two
-# non-D taxa always sit inside the ((X,Y),Z) clade with D outside -- the
+# non-D taxa always sit inside the ((X,Y),Z) clade with D outside, the
 # concordant topology is the only one observed (12/0/0). Only triplet (A,B,C)
 # varies: reading the innermost sister pair off each of the 12 gene trees gives
 # (A,B) in trees 0,1,4,6,8,10,11 -> 7 concordant; (B,C) in trees 3,5,9 -> 3; and
@@ -349,8 +349,8 @@ def test_species_rename_map_reaches_every_output(
     """Mapped taxa appear under their display names in every output, and nowhere else.
 
     The run works in the trees' own labels and the map is applied to the
-    results just before they are written, so the display names -- chosen here
-    to hold spaces and a dot, which a bare Newick label cannot -- must reach
+    results just before they are written, so the display names (chosen here
+    to hold spaces and a dot, which a bare Newick label cannot) must reach
     the returned results, the results TSV, the ``species_tree`` column and the
     consolidation artifacts, while the processed trees keep the tree labels.
     """

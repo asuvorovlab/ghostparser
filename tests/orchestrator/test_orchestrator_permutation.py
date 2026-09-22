@@ -308,7 +308,7 @@ def test_type_one_error_rate_tracks_alpha_under_unequal_variance():
     nominal level; holding level here is what the Welch studentization buys.
 
     Over 300 null replicates at alpha=0.05 the expected count is 15 with a
-    standard deviation of 3.8. The assertion band spans 1% to 10% -- wide enough
+    standard deviation of 3.8. The assertion band spans 1% to 10%, wide enough
     that fixed seeds make it stable, tight enough to catch a test that has
     stopped controlling its error rate. The level does degrade once the smaller
     group falls below roughly 30 observations *and* carries the larger spread;
@@ -460,8 +460,8 @@ def test_bootstrap_resample_budget_shrinks_but_stays_usable_and_monotone():
 
     Asserts the properties rather than the divisor: a bootstrap iteration must
     cost no more than the point estimate, must still draw at least one
-    resample, must keep its bounds in order -- otherwise an adaptive run
-    inside an iteration has no valid range to grow through -- and a larger
+    resample, must keep its bounds in order, otherwise an adaptive run
+    inside an iteration has no valid range to grow through, and a larger
     configured budget must never yield a smaller one.
     """
     for min_resamples, max_resamples in (
@@ -474,7 +474,7 @@ def test_bootstrap_resample_budget_shrinks_but_stays_usable_and_monotone():
         assert scaled_min >= 1
         assert scaled_max >= scaled_min
         # Strictly smaller wherever there is room to divide, so a divisor of
-        # 1 -- which would silently restore the full per-iteration cost --
+        # 1 (which would silently restore the full per-iteration cost)
         # fails here.
         if min_resamples >= 2:
             assert scaled_min < min_resamples

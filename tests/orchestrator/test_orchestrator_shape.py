@@ -208,8 +208,8 @@ def test_shape_columns_reach_the_results_tsv_only_and_only_when_enabled(enabled,
     that did not measure them cannot emit empty columns claiming it did, and
     the row never shifts against the header. The summary TSV is a feature
     matrix, and the diagnostics are undefined for groups below their
-    observation floors -- a group of 12 has no modality p-value and a thin
-    upper tail has no tail index -- so carrying them there would punch holes
+    observation floors: a group of 12 has no modality p-value and a thin
+    upper tail has no tail index, so carrying them there would punch holes
     in every row that hit one; nothing of theirs reaches that file even when
     they were measured.
     """

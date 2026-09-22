@@ -6,6 +6,7 @@ from .config import _load_raw_config
 
 
 def _flag_name(arg_name: str) -> str:
+    """Turn an argument name into its ``--flag`` spelling."""
     return f"--{arg_name.replace('_', '-')}"
 
 
@@ -13,7 +14,7 @@ def _given_cli_args(args: argparse.Namespace, arg_names: list[str]) -> dict:
     """Collect the CLI arguments the user gave, by their config key.
 
     Every flag the modules expose defaults to ``None``, so a value that is not
-    ``None`` -- ``False`` from a ``--no-<x>`` switch included -- was given on
+    ``None`` (``False`` from a ``--no-<x>`` switch included) was given on
     the command line.
     """
     given = {}
@@ -30,14 +31,8 @@ def resolve_cli_or_config_args(
     normalize_payload,
     payload_arg_names: list[str],
 ) -> argparse.Namespace:
-    """Resolve runtime args from the config file, with the given CLI flags laid over it.
-
-    A config file, when given, supplies the payload; every CLI flag the user
-    also gave replaces that key in it, so the command line wins wherever a
-    setting has a flag. Without a config file the flags are the payload. The
-    merged payload then goes through the module's normalizer, which validates
-    it and fills the defaults, so a value reaching the run is checked the same
-    way whichever side it came from.
+    """Resolve the runtime config from the config file, if any, with every
+    given CLI flag laid over it, then normalize the merged payload.
 
     Args:
         args: The parsed CLI namespace; ``config_file`` names the file, or is

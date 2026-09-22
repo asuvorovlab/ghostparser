@@ -1,8 +1,5 @@
-"""Configuration for the orchestrator.
-
-Owns the orchestrator's defaults, choices, validation rules, CLI parser, and
-CLI/config resolution; shared helpers come from the :mod:`ghostparser.config`
-trunk. Every key is documented in the configuration guide.
+"""The orchestrator's defaults, choices, validation, CLI parser and config
+resolution.
 """
 
 import argparse
@@ -320,12 +317,8 @@ def _validate_choice(
 
 
 def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
-    """Validate the bootstrap toggle and its nested/flat options.
-
-    Accepts the canonical ``bootstrap`` toggle plus either a nested
-    ``bootstrap_options`` block or the flat ``bootstrap_iterations``/
-    ``bootstrap_diagnostic``/``bootstrap_summary_only`` keys. The RNG seed is a
-    run-wide key, not a bootstrap option.
+    """Validate the ``bootstrap`` toggle and its options, given nested under
+    ``bootstrap_options`` or flat as ``bootstrap_<key>``.
 
     Args:
         payload: The config/CLI payload.
@@ -388,11 +381,7 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
 
 
 def _validate_permutation_options(payload: dict) -> dict:
-    """Validate the nested permutation-test options block.
-
-    The tuning knobs inside ``permutation_options`` are config-file-only. There
-    is no ``initial_batch`` knob: the first adaptive batch is always
-    ``min_resamples``.
+    """Validate the config-file-only ``permutation_options`` block.
 
     Args:
         payload: The config/CLI payload.
@@ -641,12 +630,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def normalize_orchestrator_payload(payload: dict) -> dict:
-    """Normalize an orchestrator config/CLI payload into the runtime config dict.
-
-    Validates and fills every runtime key from the payload (a parsed config file
-    or a CLI-derived dict), applying orchestrator defaults for anything omitted.
-    Config-file-only keys default when absent, which is what happens in CLI mode
-    since they have no corresponding flag.
+    """Validate a config-file or CLI payload and fill every runtime key,
+    applying the defaults for anything omitted.
 
     Args:
         payload: Raw config/CLI key-value mapping.
@@ -752,12 +737,8 @@ def load_orchestrator_config(config_file: str) -> dict:
 
 
 def resolve_config(args: argparse.Namespace) -> dict:
-    """Resolve a parsed CLI namespace into the orchestrator runtime config.
-
-    With ``-c/--config-file`` the file is loaded and every other CLI flag given
-    overrides the file's value for that key; otherwise the exposed CLI flags
-    are normalized directly. Config-file-only keys take their defaults in CLI
-    mode.
+    """Resolve a parsed CLI namespace into the runtime config, laying any given
+    flags over the config file when one is named.
 
     Args:
         args: Parsed ``argparse.Namespace`` from :func:`build_argument_parser`.

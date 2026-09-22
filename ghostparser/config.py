@@ -1,8 +1,4 @@
-"""Shared configuration trunk for GhostParser.
-
-Holds only the helpers whose behaviour is identical for every consumer.
-Module-specific defaults, choices, and validators live with their module.
-"""
+"""Configuration helpers shared by every module."""
 
 import json
 import shutil

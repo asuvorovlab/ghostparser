@@ -1,13 +1,5 @@
-"""Adaptive studentized permutation test for concordant vs. discordant1 heights.
-
-Decides whether the mean concordant tree height is greater than, less than, or
-equivalent to the mean discordant1 height, resampling until the decision is
-resolved to within Monte Carlo error. Equivalence is established by TOST (two
-one-sided tests): each null puts the mean difference at least a margin to one
-side of zero, and rejecting both confines the difference to within the margin.
-
-The method, its citations, and the sampling optimization are written up under
-"Gate 3 - Adaptive studentized permutation test" in the orchestrator guide.
+"""Adaptive studentized permutation test on concordant versus discordant1
+heights, with a TOST equivalence step when neither direction is significant.
 """
 
 import math
@@ -47,7 +39,7 @@ DECISION_INCONCLUSIVE = "inconclusive"
 # 0.5). An effect size, not a multiple of the standard error: the studentized
 # statistic is a pivot whose null spread stays near 1 at every sample size, so an
 # SE-based margin could never be rejected; see "Gate 3" in the orchestrator
-# guide for the measurements behind that.
+# guide.
 EQUIVALENCE_DELTA = 0.5
 
 # Each adaptive batch after the first is this multiple of the previous one, so
@@ -227,26 +219,10 @@ def _studentize(sum_small, sumsq_small, total_sum, total_sumsq, geometry):
 
 
 def _permutation_statistics(pooled, nx, ny, count, rng, shifts=()):
-    """Draw ``count`` random group assignments and studentize each one.
-
-    Samples only the smaller group and recovers the larger by subtracting from
-    the pooled totals, using a partial partition instead of a full shuffle.
-    ``pooled`` must be mean-centered, which is what keeps that subtraction safe
-    in floating point.
-
-    ``shifts`` lets one set of draws answer several hypotheses at once. Adding a
-    constant ``c`` to the first ``nx`` entries is what makes the samples
-    exchangeable under ``H0: mean(x) - mean(y) == -c``, and the shifted power
-    sums follow from the unshifted ones plus two extra reductions over the same
-    gather::
-
-        sum_w(S)   = sum_v(S)   + c * a
-        sumsq_w(S) = sumsq_v(S) + 2c * b + c**2 * a
-
-    where ``a`` counts the sampled entries drawn from the x block and ``b`` sums
-    their values. The equivalence test therefore costs two reductions rather
-    than two more full passes. The algebra is derived under "Gate 3 - Adaptive
-    studentized permutation test" in the orchestrator guide.
+    """Draw ``count`` random group assignments and studentize each, sampling
+    only the smaller group and recovering the larger from the pooled
+    totals. Each entry of ``shifts`` yields a further statistic on the
+    same draws with the x block shifted by that constant.
 
     Args:
         pooled: Mean-centered concatenation of both samples.
@@ -386,14 +362,8 @@ def run_studentized_permutation_test(
     equivalence_test=True,
     rng=None,
 ):
-    """Run the adaptive studentized permutation test on two samples.
-
-    Resamples in growing batches until a confidence interval around each
-    one-tailed p-value excludes ``alpha``, or the budget is spent. The tail pair
-    is corrected against itself; when neither is significant the TOST step at
-    :data:`EQUIVALENCE_DELTA` splits ``equivalent`` from ``inconclusive``. The
-    skewness of the permutation null is reported alongside, whatever the
-    outcome.
+    """Run the adaptive studentized permutation test, resampling in growing
+    batches until the decision is settled or the budget is spent.
 
     Args:
         x: First sample (concordant tree heights).
@@ -449,7 +419,7 @@ def run_studentized_permutation_test(
     # Guard: both groups are internally constant but their means differ. The
     # studentized statistic then divides a real difference by numerical noise,
     # while every permutation that mixes the two constants has genuine spread
-    # and stays finite -- so the test would report the p-value floor no matter
+    # and stays finite, so the test would report the p-value floor no matter
     # how few observations back the difference up.
     if not math.isfinite(standard_error) or standard_error <= scale_floor:
         return _guard_result("degenerate_observed_scale")
@@ -468,7 +438,7 @@ def run_studentized_permutation_test(
 
     # The equivalence test rides along on the directional draws. Its two nulls
     # sit a margin either side of zero, which is a constant added to the x block
-    # -- so the same permutations answer all three hypotheses and both questions
+    #, so the same permutations answer all three hypotheses and both questions
     # land at the same Monte Carlo resolution by construction. Reusing one
     # permutation set across hypotheses is standard (maxT/minP do it to preserve
     # the dependence); each p-value is still a valid permutation p-value for its
@@ -544,7 +514,7 @@ def run_studentized_permutation_test(
         # entirely in the resampling count, which is Binomial(n_done, p_true)
         # for the exact permutation p-value p_true. ``proportion_confint``
         # takes exactly that count-and-total pair, and its point estimate is
-        # ``count / nobs`` -- so passing ``(count + 1, n_done + 1)`` makes the
+        # ``count / nobs``, so passing ``(count + 1, n_done + 1)`` makes the
         # proportion it works from identical to the add-one p-value reported
         # above, rather than an estimator differing from it by ~1/n_done.
         # The interval is mildly conservative because one of those n_done + 1

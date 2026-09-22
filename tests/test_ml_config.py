@@ -1,6 +1,6 @@
 """Config resolution for the ML trainers.
 
-Marked ``config`` throughout. Individual defaults are not pinned -- CONFIG.md
+Marked ``config`` throughout. Individual defaults are not pinned: CONFIG.md
 and the shipped sample configs state them; what is pinned is that the loader
 resolves, that explicit values win, and that the two estimator passthrough keys
 accept every form scikit-learn does and nothing else.
@@ -114,7 +114,7 @@ def test_ml_config_rejects_invalid_estimator_values(
 ):
     """An invalid value is caught in config, naming the value and what is valid.
 
-    The `"None"` case is the YAML trap -- the bare word parses as a string --
+    The `"None"` case is the YAML trap: the bare word parses as a string,
     so its rejection has to say how null is actually written.
     """
     with pytest.raises(ConfigError) as excinfo:

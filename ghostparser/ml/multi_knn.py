@@ -26,6 +26,15 @@ BIT_COUNT = shared.BIT_COUNT
 def _build_model(
     config: argparse.Namespace, train_size: int
 ) -> tuple[MultiOutputClassifier, int]:
+    """Build the one-vs-rest KNN, capping ``n_neighbors`` at the training size.
+
+    Args:
+        config: The resolved trainer config.
+        train_size: Number of training rows.
+
+    Returns:
+        ``(model, effective_n_neighbors)``.
+    """
     effective_n_neighbors = max(1, min(int(config.n_neighbors), int(train_size)))
     classifier = KNeighborsClassifier(
         n_neighbors=effective_n_neighbors,
@@ -51,6 +60,20 @@ def _cross_validate(
     random_state: int | None,
     config: argparse.Namespace,
 ) -> dict:
+    """Cross-validate the KNN over stratified folds of the training partition.
+
+    Args:
+        x_train: The training features.
+        y_train: The training binary targets.
+        labels_train: The training combination labels, for stratification.
+        folds: Number of folds.
+        random_state: Seed for the fold shuffle.
+        config: The resolved trainer config.
+
+    Returns:
+        A dict with the per-fold metrics and their ``aggregate`` means and
+        standard deviations.
+    """
     splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=random_state)
     fold_metrics: list[dict] = []
     for fold_index, (fit_index, val_index) in enumerate(
@@ -89,6 +112,14 @@ def _cross_validate(
 
 
 def train_multi_knn(config: argparse.Namespace) -> dict:
+    """Train and evaluate the multi-label KNN baseline end to end.
+
+    Args:
+        config: The resolved trainer config.
+
+    Returns:
+        A dict of the metrics and the paths of the artifacts written.
+    """
     run_start = time.perf_counter()
     load_start = time.perf_counter()
     rows = shared.read_tsv_rows(config.input_path)
@@ -384,6 +415,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
 
 
 def main() -> None:
+    """Run the KNN trainer from the command line."""
     parser = build_trainer_argument_parser(
         "Ghostparser ML multi-label KNN baseline for summary statistics."
     )

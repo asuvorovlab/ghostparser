@@ -203,12 +203,8 @@ def _log_permutation_diagnostics(metrics, results):
 
 
 def _rename_result_taxa(results, rename_map):
-    """Rebuild every result under its display names.
-
-    The run reads, roots, filters and measures in the trees' own labels; the
-    display names enter here, once the decision pass is done and before any
-    output is written. Only two fields name taxa: ``triplet`` and the
-    ``species_tree`` Newick, whose labels are quoted as the names require.
+    """Rebuild every result under its display names once the decision pass is
+    done.
 
     Args:
         results: List of ``TripletPipelineResult`` objects.
@@ -240,10 +236,10 @@ def _run_preflight_only(config, output_dir):
     Returns:
         The :class:`~ghostparser.orchestrator.preflight.PreflightResult`, or
         ``None`` when the check could not run at all (unrootable species tree,
-        missing outgroups) — the reason is printed in that case.
+        missing outgroups); the reason is printed in that case.
     """
     outgroup_taxa = _parse_outgroup_arg(config["outgroup"])
-    print("Preflight data check enabled — no analysis will be run.")
+    print("Preflight data check enabled: no analysis will be run.")
     try:
         result = run_preflight_data_check(
             species_tree_path=config["species_tree"],
@@ -309,7 +305,7 @@ def run_orchestrator(config):
         metrics.log(f"Processing species tree: {config['species_tree']}")
         metrics.log(f"Processing gene trees: {config['gene_trees']}")
         outgroup_taxa = _parse_outgroup_arg(config["outgroup"])
-        # The whole run -- trees, outgroup, filter, log -- works in the trees'
+        # The whole run (trees, outgroup, filter, log) works in the trees'
         # own labels; the map is applied to the results just before they are
         # written, so no renamed label is ever read back out of a Newick. The
         # config layer has already read and validated the file.

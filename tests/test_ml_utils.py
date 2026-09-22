@@ -49,7 +49,7 @@ def test_rows_to_matrix_uses_numeric_features_and_excludes_target_column():
 def test_rows_to_matrix_encodes_multiple_string_columns():
     """Each string column is one-hot encoded on its own categories.
 
-    Two string columns must not share a category space -- the names stay
+    Two string columns must not share a category space: the names stay
     prefixed by their column, and the blocks stay grouped per column rather
     than interleaved.
     """

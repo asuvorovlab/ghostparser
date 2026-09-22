@@ -62,6 +62,7 @@ _HOW_TO_WRITE_NULL = (
 )
 
 def _validate_optional_path(payload: dict, key: str, default: str) -> str:
+    """Resolve an optional path key, falling back to ``default``."""
     value = payload.get(key, default)
     if value is None:
         value = default
@@ -75,6 +76,7 @@ def _validate_optional_path(payload: dict, key: str, default: str) -> str:
 def _validate_optional_string(
     payload: dict, key: str, default: str | None
 ) -> str | None:
+    """Validate an optional non-empty string key."""
     value = payload.get(key, default)
     if value is None:
         return None
@@ -86,6 +88,8 @@ def _validate_optional_string(
 
 
 def _validate_optional_float(payload: dict, key: str, default: float) -> float:
+    """Validate an optional float key that must be a fraction strictly between 0 and 1.
+    """
     value = payload.get(key, default)
     if value is None:
         value = default
@@ -119,6 +123,7 @@ def _validate_optional_positive_int(
 
 
 def _validate_optional_int(payload: dict, key: str, default: int | None) -> int | None:
+    """Validate an optional integer key, ``None`` allowed."""
     value = payload.get(key, default)
     if value is None:
         return None
@@ -130,6 +135,7 @@ def _validate_optional_int(payload: dict, key: str, default: int | None) -> int 
 def _validate_optional_choice(
     payload: dict, key: str, default: str, choices: tuple[str, ...]
 ) -> str:
+    """Validate an optional enumerated string key."""
     value = payload.get(key, default)
     if value is None:
         value = default
@@ -139,6 +145,7 @@ def _validate_optional_choice(
 
 
 def _validate_optional_bool(payload: dict, key: str, default: bool) -> bool:
+    """Validate an optional boolean key."""
     value = payload.get(key, default)
     if not isinstance(value, bool):
         raise ConfigError(f"Config field {key} must be a boolean")
@@ -158,7 +165,7 @@ def normalize_max_features(value: object, *, where: str) -> object:
 
     Raises:
         ConfigError: If the value is anything else, naming what was received,
-            every accepted form, and how to write null -- the strings ``"None"``
+            every accepted form, and how to write null: the strings ``"None"``
             and ``"none"`` that YAML produces from the bare words land here.
     """
     if value is None:
@@ -189,6 +196,7 @@ def normalize_max_features(value: object, *, where: str) -> object:
 
 
 def _max_features_message(where: str, value: object) -> str:
+    """Word the rejection of a ``max_features`` value, naming every accepted form."""
     choices = ", ".join(repr(choice) for choice in MAX_FEATURES_STRING_CHOICES)
     return (
         f"Config field {where} got {value!r}. Valid values are {choices}, an "
@@ -211,7 +219,7 @@ def normalize_class_weight(value: object, *, where: str) -> object:
 
     Raises:
         ConfigError: If the value is anything else, naming what was received,
-            every accepted form, and how to write null -- the strings ``"None"``
+            every accepted form, and how to write null: the strings ``"None"``
             and ``"none"`` that YAML produces from the bare words land here.
     """
     if value is None:
@@ -229,6 +237,7 @@ def normalize_class_weight(value: object, *, where: str) -> object:
 
 
 def _class_weight_message(where: str, value: object) -> str:
+    """Word the rejection of a ``class_weight`` value, naming every accepted form."""
     choices = ", ".join(repr(choice) for choice in CLASS_WEIGHT_STRING_CHOICES)
     return (
         f"Config field {where} got {value!r}. Valid values are {choices}, a "
@@ -238,17 +247,9 @@ def _class_weight_message(where: str, value: object) -> str:
 
 
 def normalize_ml_payload(payload: dict) -> dict:
-    """Normalize ML config payload using a strict top-level + nested layout.
-
-    Required top-level keys:
-      - `input_path`, `output_dir`
-
-    Top-level runtime keys:
-      - `target_column`, `test_size`, `cv_folds`, `rare_class_policy`,
-        `seed`, `n_jobs`
-
-    Model hyperparameters must be provided under `model`.
-    Evaluation reporting controls must be provided under `evaluation`.
+    """Validate a trainer config with runtime keys at the top level,
+    hyperparameters under ``model`` and reporting controls under
+    ``evaluation``.
     """
     input_path = _validate_required_path(payload, "input_path")
     output_dir = _validate_required_path(payload, "output_dir")

@@ -4,6 +4,7 @@ import argparse
 
 
 def main() -> None:
+    """Print the trainer commands; the package has no dispatcher of its own."""
     parser = argparse.ArgumentParser(
         description="ghostparser.ml package entrypoint. Run a trainer module directly."
     )

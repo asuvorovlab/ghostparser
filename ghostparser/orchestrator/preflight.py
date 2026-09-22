@@ -1,9 +1,5 @@
-"""Structural preflight checks for species and gene trees.
-
-Reproduces the engine's structural logic -- including the cached per-tree
-geometry it reads every triplet out of -- and reports every problem at once,
-rather than raising on the first from deep inside a run. The checks say whether
-the data can be processed, not whether the result is biologically meaningful.
+"""Structural preflight check that replays the run's tree handling and reports
+every problem at once.
 """
 
 from collections import defaultdict
@@ -274,14 +270,8 @@ def _load_filtered_species(species_filter, species_labels_sorted, outgroups, iss
 
 
 def _normalize_species_triplets(species_tree_d, triplets, issues):
-    """Normalize each triplet to A/B/C order, recording those the species tree rejects.
-
-    Replays :func:`trees._build_species_triplet_metadata`, including its single
-    cached geometry over the species tree, so the triplets accepted here are
-    exactly the ones a run would analyze. Every label reaching this point is
-    known to be a species-tree leaf -- the unfiltered path builds triplets from
-    those labels and the filtered path drops entries naming anything else -- so
-    the only rejection left is an unresolved triplet.
+    """Normalize each triplet to A/B/C order from the species tree's cached
+    geometry, recording the ones it cannot resolve.
 
     Args:
         species_tree_d: Rooted, standardized species tree as a DendroPy tree.
@@ -675,7 +665,7 @@ def run_preflight_data_check(
         ValueError: If no outgroups are given, the species-tree file does not
             hold exactly one tree, or the outgroups do not root the species
             tree (an :class:`~ghostparser.orchestrator.trees.OutgroupRootingError`,
-            whose message names the taxa in the way) — all conditions that
+            whose message names the taxa in the way): all conditions that
             make the check itself impossible.
     """
     if not outgroups:
@@ -683,8 +673,8 @@ def run_preflight_data_check(
 
     issues: list[Issue] = []
 
-    # The species tree takes the run's own path -- standardize, then root on
-    # the outgroups and prune them -- so the ingroup and every triplet's
+    # The species tree takes the run's own path: standardize, then root on
+    # the outgroups and prune them, so the ingroup and every triplet's
     # rooted shape are the ones the run would see.
     species_tree_bio = standardize_tree(_load_single_species_tree(species_tree_path))
     species_labels_sorted = sorted(

@@ -1,10 +1,6 @@
-"""Fused extract-and-infer streaming engine for the orchestrator.
-
-Extracts a batch of triplets' observations from the cached gene-tree geometries
-and runs inference immediately, with no serialize-then-reparse round trip and
-never more than a batch of observations in hand. Caches every gene tree's
-geometry once for the run, dispatches triplet chunks across workers, and
-applies the run-wide p-value correction.
+"""Fused extract-and-infer engine: caches every gene tree's geometry once, then
+reads each triplet's observations from it and runs inference in bounded
+batches, serially or across workers.
 """
 
 import os
@@ -77,13 +73,8 @@ def _chunk_list(items, chunk_size):
 
 
 def available_cpu_count():
-    """Count the CPUs this process is allowed to run on.
-
-    ``multiprocessing.cpu_count`` reports every core in the machine, which on a
-    shared cluster node can be many times what the scheduler allocated: a
-    128-core node running an 8-core job would start 128 workers, each with its
-    own copy of the per-chunk state, and time-slice them over 8 cores. The
-    affinity mask is what the allocation actually leaves the process.
+    """Count the CPUs this process may run on, from its affinity mask rather
+    than the machine's core count.
 
     Returns:
         The usable CPU count, at least 1.

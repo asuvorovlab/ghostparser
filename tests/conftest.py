@@ -1,7 +1,7 @@
 """Shared fixtures, plus the rule that sorts every test into a category.
 
-Four explicit markers -- ``config``, ``output``, ``integration`` and ``parity``
--- are applied in the test files. Anything carrying none of the first three is
+Four explicit markers (``config``, ``output``, ``integration`` and
+``parity``) are applied in the test files. Anything carrying none of the first three is
 the pipeline's statistics and decisions, and is marked ``core`` here so
 ``pytest -m core`` selects it without every such test naming itself. A test
 may carry several: consolidation tests that check a computed average by reading

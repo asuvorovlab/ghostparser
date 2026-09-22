@@ -72,7 +72,7 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path, 
 
     The section's `model`/`method`/`objective` keys surface as `model_name`,
     `search_method` and `objective_metric`, so this pins the rename as well as
-    the acceptance -- a caller reading the resolved config uses the latter
+    the acceptance, a caller reading the resolved config uses the latter
     names. Valid search-space candidates pass the `model`-block rules and keep
     their shape, list or lone value alike.
     """
@@ -163,7 +163,7 @@ def test_load_hyper_tune_config_rejects_malformed_configs(
     """Each structural rule of the tuning config fails by name.
 
     One case per rule: the section itself is required (nothing about a search
-    can be defaulted -- there is no search space to infer); `use_wandb` may be
+    can be defaulted, there is no search space to infer); `use_wandb` may be
     omitted but not mistyped, and it gates the detailed-payload flag rather than
     letting it be silently ignored; an `evaluation` block is refused rather
     than ignored, since accepting it would let a user believe their evaluation
@@ -211,7 +211,7 @@ def test_tune_hyperparameters_grid_search_runs_end_to_end(
     """Grid search enumerates the whole space and writes every local artifact.
 
     The search space crosses one parameter over two values, so grid search
-    must evaluate exactly 2 candidates -- the count is what distinguishes
+    must evaluate exactly 2 candidates: the count is what distinguishes
     exhaustive enumeration from sampling. The namespace carries no
     ``use_wandb``: the programmatic entry point takes the same default as the
     config loader, so the run stays local and still emits the ranked TSVs,

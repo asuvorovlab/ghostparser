@@ -13,7 +13,7 @@ def test_train_random_forest_smoke(summary_statistics_tsv, tmp_path):
     """Training runs end to end and writes every artifact it promises.
 
     The one smoke test for this entry point: it proves the forest path fits,
-    scores and persists, and pins the metrics-field and output-file contracts --
+    scores and persists, and pins the metrics-field and output-file contracts:
     both metric tiers, the dataset summary, the 64-class matrix, one timing per
     stage, and the four written artifacts.
     """

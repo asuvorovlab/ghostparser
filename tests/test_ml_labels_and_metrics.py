@@ -31,8 +31,8 @@ def test_bit_labels_and_their_titles_cover_every_bit():
 
     A label is read back positionally, so the name list and the bit count
     must not drift apart. The title trap is `str.capitalize`, which lower-cases
-    everything after the first character -- turning `ghost_into_A` into
-    `Ghost into a` and renaming the taxon -- so every title is pinned.
+    everything after the first character, turning `ghost_into_A` into
+    `Ghost into a` and renaming the taxon, so every title is pinned.
     """
     assert len(BIT_LABELS) == BIT_COUNT
     assert len(set(BIT_LABELS)) == BIT_COUNT
@@ -50,7 +50,7 @@ def test_64_class_matrix_orders_classes_by_set_bits():
     """Both axes run from 000000 up to 111111 by the number of set bits.
 
     The label list must be non-decreasing in set-bit count, lexical within a
-    count, and the count matrix must be permuted along with it -- a sort that
+    count, and the count matrix must be permuted along with it: a sort that
     reordered the labels but left the counts in binary order would mislabel
     every off-diagonal cell. Three rows with known true/predicted classes pin
     the permutation: each lands where its labels say, and nowhere else.

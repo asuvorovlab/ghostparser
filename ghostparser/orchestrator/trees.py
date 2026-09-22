@@ -173,7 +173,7 @@ def standardize_tree(tree):
 
 
 # Characters a Newick reader takes for structure when they appear in a bare
-# label -- whitespace and the punctuation Bio.Phylo or DendroPy trips on -- plus
+# label: whitespace and the punctuation Bio.Phylo or DendroPy trips on, plus
 # the quote itself. A label holding any of them is written single-quoted.
 _NEWICK_QUOTED_CHARS = frozenset(" \t\r\n()[]{}':;,\"\\=")
 
@@ -405,13 +405,8 @@ def _describe_taxon_group(taxa):
 
 
 def _outgroup_attachment(tree, present):
-    """Find the node where a set of outgroups parts from every other taxon.
-
-    Read unrooted, the outgroups root the tree when one branch -- or, inside
-    a polytomy, one node -- parts all of them from every other taxon, in
-    whatever orientation the file wrote it. Every outgroup-free subtree then
-    hangs off the same node, and rooting there puts every outgroup on one
-    side of it.
+    """Find the node where a set of outgroups parts from every other taxon,
+    reading the tree unrooted.
 
     Args:
         tree: A ``Bio.Phylo`` tree object, in any orientation.
@@ -470,12 +465,8 @@ def _outgroup_attachment(tree, present):
 
 
 def _root_tree_on_outgroup(tree, outgroup_taxa):
-    """Root a tree where the outgroups branch off and prune them.
-
-    Read unrooted, the tree must have one branch -- or, inside a polytomy,
-    one node -- where the outgroups part from every other taxon. The tree is
-    rooted there, whatever orientation the file wrote it in, and the outgroup
-    side is cut away.
+    """Root a tree where its outgroups branch off, in whatever orientation the
+    file was written, and prune them.
 
     Args:
         tree: A ``Bio.Phylo`` tree object; rerooted in place.
@@ -544,9 +535,9 @@ class GeneTreeRooting:
             the outgroups used, and were pruned without rooting on them. When
             ``tree`` is ``None`` every outgroup present is listed here.
         missing: The outgroups absent from the tree.
-        order_decided: ``True`` when no set of outgroups held a majority --
+        order_decided: ``True`` when no set of outgroups held a majority:
             another set of the same size as ``used`` also parted from the
-            other taxa at one point -- so the listed order chose.
+            other taxa at one point, so the listed order chose.
     """
 
     tree: object
@@ -557,17 +548,9 @@ class GeneTreeRooting:
 
 
 def root_gene_tree(tree, outgroup_taxa):
-    """Root a gene tree where the largest set of its outgroups branches off.
-
-    Every outgroup the tree carries is tried together first. When ingroup
-    taxa sit between them, the largest subset that parts from the other taxa
-    at a single point roots the tree instead -- a single gene often places a
-    distant outgroup somewhere inside the ingroup, and the outgroups that
-    still sit together outvote it; the tangled one is pruned without being
-    used. Among equally large subsets none holds a majority, and the one
-    listed earliest wins, so with two outgroups apart the first listed
-    decides. All outgroups are then pruned: no triplet contains one, and
-    pruning a leaf changes no other taxon's rooted shape or heights.
+    """Root a gene tree on the largest set of its outgroups that parts from the
+    other taxa at one point, ties going to the listed order, and prune
+    every outgroup.
 
     Args:
         tree: A ``Bio.Phylo`` tree object; rerooted in place.
@@ -645,12 +628,8 @@ class GeneTreeCleaning:
 def clean_and_save_gene_trees(
     input_filepath, output_filepath, outgroup_taxa, min_avg_support=0.5
 ):
-    """Read, support-filter, root on the outgroups, standardize, and save gene trees.
-
-    Each tree is rooted by :func:`root_gene_tree` -- where the largest set of
-    its outgroups branches off, with any outgroup tangled among the ingroup
-    taxa pruned unused -- and written without its outgroups. A tree carrying no
-    outgroup, or nothing but outgroups, is dropped.
+    """Read, support-filter, root, standardize and save the gene trees,
+    dropping any that carries no outgroup or nothing but outgroups.
 
     Args:
         input_filepath: Path to the input Newick file.
@@ -789,8 +768,8 @@ def load_species_rename_map(filepath):
             )
         if display in display_names:
             # Two labels sharing a display name would merge two taxa in every
-            # output -- one row for both in the consolidation matrices, an
-            # ``A=X;B=X`` triplet in the results -- with no trace of the map.
+            # output: one row for both in the consolidation matrices, an
+            # ``A=X;B=X`` triplet in the results, with no trace of the map.
             raise ValueError(
                 f"Species rename map {path} maps both {display_names[display]} and "
                 f"{original} to {display}"
@@ -801,16 +780,12 @@ def load_species_rename_map(filepath):
 
 
 def rename_newick_labels(newick, rename_map):
-    """Map the leaf labels inside a Newick string written by this module.
-
-    The run measures in the trees' own labels and the display names enter only
-    at the outputs, so the ``species_tree`` column is renamed as text rather
-    than by reparsing every triplet's subtree. Labels the display name forces
-    into quotes are quoted as :func:`_newick_label` writes them.
+    """Map the leaf labels inside a Newick string written by this module,
+    quoting any display name the format cannot carry bare.
 
     Args:
         newick: A Newick string as :func:`format_newick_with_precision` or
-            :func:`_format_triplet_subtree_newick` produce it -- no comments
+            :func:`_format_triplet_subtree_newick` produce it: no comments
             or whitespace, labels bare or single-quoted.
         rename_map: Mapping of tree label to display name. Labels absent from
             the map keep their name.
@@ -935,12 +910,9 @@ def generate_triplets(taxa_list, outgroup):
 
 
 def extract_triplet_subtree(tree, triplet_taxa):
-    """Extract the subtree spanning only the triplet taxa.
-
-    Reference implementation. The pipeline reads triplets out of a cached
-    :class:`~.triplet_geometry.TripletGeometry` instead of copying a subtree per
-    (triplet, gene tree) pair; this is kept as the independent second opinion the
-    parity tests check that path against.
+    """Extract the subtree spanning only the triplet taxa. This is the
+    reference path the parity tests hold the cached geometry to; no run
+    calls it.
 
     Args:
         tree: A DendroPy tree object.

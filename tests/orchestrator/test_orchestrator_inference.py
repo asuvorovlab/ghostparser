@@ -157,7 +157,7 @@ def _expected_result(strategy, discordant_test, diagnostic=True, alpha=0.05):
         ks_significant = ks_p_value < alpha
 
     # This fixture has 5 concordant and 3 discordant1 trees, so the pooled
-    # sample admits only C(8, 3) = 56 distinct group assignments -- far fewer
+    # sample admits only C(8, 3) = 56 distinct group assignments, far fewer
     # than the 2500-resample minimum. The support guard fires and reports no
     # conclusion without any resampling. A non-diagnostic run does not even get
     # that far unless both earlier gates cleared.

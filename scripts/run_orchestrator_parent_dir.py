@@ -1,10 +1,5 @@
-"""Run the GhostParser orchestrator over each subdirectory of a parent directory.
-
-Every immediate subdirectory is treated as one dataset holding a gene-tree file
-of the given name, and all of them are run from a single Python process.
-
-Each run is driven by a generated JSON config file rather than CLI flags,
-because ``generate_summary_stats`` is a config-file-only orchestrator setting.
+"""Run the orchestrator over every immediate subdirectory of a parent
+directory, each holding one gene-tree file, through a generated config file.
 """
 
 import argparse

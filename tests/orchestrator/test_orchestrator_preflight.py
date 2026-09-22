@@ -88,8 +88,8 @@ def test_clean_inputs_pass_and_the_report_lands_where_documented(clean_inputs, t
 def test_species_tree_is_rooted_where_the_outgroups_branch_off(tmp_path):
     """The check roots both trees as the run does, whatever the file's orientation.
 
-    OUT1 and OUT2 are not a clade as written -- they sit on either side of the
-    file's root -- but both branch off the ingroup at one node, so the ingroup
+    OUT1 and OUT2 are not a clade as written (they sit on either side of the
+    file's root), but both branch off the ingroup at one node, so the ingroup
     is A,B,C,D and 4 triplets are checked. Each gene tree roots where the
     largest set of its outgroups branches off, and the counters say which
     outgroups were used, which were tangled and pruned unused, and when the
@@ -116,7 +116,7 @@ def test_species_tree_is_rooted_where_the_outgroups_branch_off(tmp_path):
     assert result.triplets_checked == 4
     assert result.counters["gene_tree.rooted"] == 3
     # In tree 2 the two outgroups sit apart with no majority, so the listed
-    # order picks OUT1; OUT2 is tangled and pruned unused -- counted, not
+    # order picks OUT1; OUT2 is tangled and pruned unused, counted, not
     # reported as a defect.
     assert result.counters["gene_tree.rooted_on.OUT1"] == 2
     assert result.counters["gene_tree.rooted_on.OUT2"] == 1
@@ -241,8 +241,8 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path, outgroup):
 
     The cap is set below the four ingroup triplets so its effect is visible in
     the result, proving the config value reaches the check rather than the
-    module default. An impossible check -- an outgroup the species tree lacks
-    -- is reported without raising out of the runner, which returns ``None``
+    module default. An impossible check (an outgroup the species tree lacks)
+    is reported without raising out of the runner, which returns ``None``
     and writes no report.
     """
     species, genes = dirty_inputs

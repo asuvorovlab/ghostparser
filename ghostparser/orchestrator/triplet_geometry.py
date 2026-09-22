@@ -1,10 +1,5 @@
-"""Triplet geometry read directly from a cached gene tree.
-
-Produces the same ``(topology, tree_height, summary_metrics)`` observation as
-extracting a triplet's subtree with DendroPy, without copying the tree. A gene
-tree is cached once as parent/edge-length arrays plus a pairwise LCA table;
-each triplet's geometry then follows from three table lookups and a few short
-walks up the parent chain.
+"""Triplet observations read from a per-tree cache of parent, edge-length and
+pairwise-LCA tables instead of an extracted subtree.
 """
 
 from array import array
@@ -74,11 +69,8 @@ def build_taxon_index(triplets):
 
 
 def build_triplet_geometry(tree, taxon_index):
-    """Cache one gene tree's parent, edge-length, leaf and pairwise-LCA arrays.
-
-    Walks the tree twice: pre-order to number the nodes and record the parent
-    chain, then post-order to fill the LCA table. A node is the LCA of exactly
-    those pairs drawn from two different children, so each pair is written once.
+    """Cache one gene tree as parent, edge-length, leaf and pairwise-LCA
+    arrays, from one pre-order and one post-order walk.
 
     Args:
         tree: A rooted DendroPy tree.
@@ -179,13 +171,9 @@ class _ResolvedTriplet(NamedTuple):
 
 
 def _resolve_triplet(geometry, triplet_positions):
-    """Resolve a triplet's sister pair from its pairwise LCA node indices.
-
-    Exactly two of the three pair LCAs are the triplet's own LCA and the odd one
-    out is the sister pair's, so which pair is odd *is* the topology -- no
-    distance enters the call, which is what keeps it exact and what makes a
-    zero-length internal branch harmless. All three equal is an unresolved
-    polytomy, where the subtree path's ``find_sister_pair`` raises.
+    """Resolve a triplet's sister pair from its three pairwise LCAs: the pair
+    whose LCA differs from the other two is the sister pair, and all
+    three equal is a polytomy.
 
     Args:
         geometry: The tree's :class:`TripletGeometry`.
@@ -326,13 +314,8 @@ def geometry_observation(
 
 
 def triplet_resolution(geometry, triplet_positions):
-    """Name why a triplet does or does not yield an observation.
-
-    Mirrors the two guards in :func:`geometry_observation`, which returns
-    ``None`` for exactly the outcomes this reports as not resolved. It is kept
-    separate so the hot path carries no reason tracking;
-    ``test_triplet_resolution_agrees_with_the_observation_guards`` pins the two
-    against each other so they cannot drift.
+    """Name why a triplet does or does not yield an observation, mirroring the
+    guards in :func:`geometry_observation`.
 
     Args:
         geometry: The gene tree's :class:`TripletGeometry`.
@@ -440,7 +423,7 @@ def triplet_subtree_shape(geometry, triplet_positions):
     # A copied-out subtree keeps an edge above its root: unifurcation
     # suppression collapses the whole path from the tree's root down to the
     # triplet LCA into it, the tree root's own edge included. When the triplet
-    # LCA *is* the tree root, only that root edge remains -- and if the Newick
+    # LCA *is* the tree root, only that root edge remains, and if the Newick
     # gave none, the subtree has none either.
     root_edge = geometry.root_edge
     if parent[resolved.root_node] >= 0:

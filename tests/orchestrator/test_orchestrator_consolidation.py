@@ -84,8 +84,8 @@ def test_generate_introgression_maps_writes_every_sheet_from_the_results(tmp_pat
     """The stage writes the figure and eight TSVs, with the hand-derived values.
 
     The averages divide each edge's and ghost target's bootstrap weight by the
-    number of triplets that produced it -- never by the triplets that merely
-    contain the taxa -- so the raw-sum and supporting-count sheets must
+    number of triplets that produced it (never by the triplets that merely
+    contain the taxa), so the raw-sum and supporting-count sheets must
     reproduce them. The ghost sheet flags a taxon that is also the target of a
     non-zero sampled edge, the non-sister sheet counts the pairs the normalized
     triplets leave apart, and a second call with overwriting disabled leaves
@@ -226,8 +226,8 @@ def test_count_helpers_follow_the_classification():
     A ``no_introgression`` row contains the same taxa as its neighbours but
     produces no edge and no ghost target, so it raises neither count; an
     unrelated triplet maps to a different edge. Non-sister counts come from
-    every row -- for a normalized triplet ``(A, B, C)`` the pairs ``{A, C}``
-    and ``{B, C}`` -- so the same ``no_introgression`` row does count there.
+    every row: for a normalized triplet ``(A, B, C)`` the pairs ``{A, C}``
+    and ``{B, C}``, so the same ``no_introgression`` row does count there.
     A taxon is flagged as having sampled introgression only when it is the
     target of a non-zero sampled edge.
     """

@@ -50,7 +50,7 @@ PANEL_TITLE_PAD = 0.25
 # rotated "Target taxon" label on the left, the colorbar's label on the right,
 # and the bold panel titles underneath. GridSpec ratios divide the area left
 # after these, so reserving the space explicitly is what makes a row's ratio
-# equal its intended height in inches -- matplotlib's default subplot margins
+# equal its intended height in inches: matplotlib's default subplot margins
 # would otherwise silently absorb roughly a fifth of every row.
 # Rendering resolution, and the ceiling the figure is allowed to grow to. The
 # figure is sized from the taxon count, so a large tree produces a large canvas
@@ -237,6 +237,7 @@ def _build_non_ghost_matrix(taxa_order, non_ghost_norm):
 
 
 def _write_non_ghost_matrix_tsv(path, taxa_order, matrix):
+    """Write a target x source matrix TSV with the taxa as row and column labels."""
     with open(path, "w") as out_f:
         out_f.write("target_taxon\t" + "\t".join(taxa_order) + "\n")
         for idx, target in enumerate(taxa_order):
@@ -249,7 +250,7 @@ def _sampled_introgression_presence(taxa_order, non_ghost_norm):
 
     Sampled (non-ghost) edges are keyed ``(source, target)``, so a taxon counts
     as having sampled introgression when any source contributes a non-zero
-    weight to it as the target -- the same row the ghost bar chart draws.
+    weight to it as the target, the same row the ghost bar chart draws.
 
     Args:
         taxa_order: Ordered taxa matching the plot axes.
@@ -288,6 +289,7 @@ def _write_ghost_strength_tsv(path, taxa_order, ghost_norm, sampled_presence=Non
 
 
 def _write_single_value_tsv(path, taxa_order, values, header_name):
+    """Write a per-taxon TSV with one value column."""
     with open(path, "w") as out_f:
         out_f.write(f"target_taxon\t{header_name}\n")
         for target in taxa_order:
@@ -295,6 +297,7 @@ def _write_single_value_tsv(path, taxa_order, values, header_name):
 
 
 def _write_taxa_order_tsv(path, taxa_order):
+    """Write the taxa order as an index/taxon TSV."""
     with open(path, "w") as out_f:
         out_f.write("index\ttaxon\n")
         for idx, taxon in enumerate(taxa_order):
@@ -302,12 +305,24 @@ def _write_taxa_order_tsv(path, taxa_order):
 
 
 def _node_edge_length(node):
+    """Return a node's edge length, ``0.0`` when it has none."""
     if node.edge_length is None:
         return 0.0
     return float(node.edge_length)
 
 
 def _species_tree_layout(tree, taxa_order, orientation):
+    """Lay out the species tree along one axis for the plot strip.
+
+    Args:
+        tree: The DendroPy species tree, pruned in place to ``taxa_order``.
+        taxa_order: The leaf order along the axis.
+        orientation: ``horizontal`` or ``vertical``.
+
+    Returns:
+        ``(tree, positions, max_depth, leaf_nodes)``: node positions along and
+        across the axis, the deepest root distance, and the leaves.
+    """
     if taxa_order:
         tree.retain_taxa_with_labels(sorted(set(taxa_order)))
     leaf_positions = {taxon: idx for idx, taxon in enumerate(taxa_order)}
@@ -364,6 +379,7 @@ def _species_tree_layout(tree, taxa_order, orientation):
 def _draw_species_tree_strip(
     ax, species_tree, taxa_order, orientation, show_leaf_labels=True
 ):
+    """Draw the species tree as a thin strip aligned to the heatmap axis."""
     tree, positions, max_depth, leaf_nodes = _species_tree_layout(
         species_tree, taxa_order, orientation
     )
@@ -467,7 +483,7 @@ def _collect_non_sister_counts(results):
             continue
         a_taxon, b_taxon, c_taxon = triplet
 
-        # (A, B) are sisters — only the non-sister pairs get incremented.
+        # (A, B) are sisters, only the non-sister pairs get incremented.
         for sp1, sp2 in ((a_taxon, c_taxon), (b_taxon, c_taxon)):
             key = (sp1, sp2) if sp1 < sp2 else (sp2, sp1)
             non_sister_counts[key] = non_sister_counts.get(key, 0) + 1
@@ -495,6 +511,7 @@ def _build_non_sister_matrix(taxa_order, non_sister_counts):
 
 
 def _write_non_sister_matrix_tsv(path, taxa_order, matrix):
+    """Write the symmetric non-sister count matrix TSV."""
     with open(path, "w") as out_f:
         out_f.write("taxon\t" + "\t".join(taxa_order) + "\n")
         for idx, row_taxon in enumerate(taxa_order):
@@ -526,10 +543,7 @@ def _plot_combined(
     ghost_avg,
     ghost_has_sampled=None,
 ):
-    """Plot combined heatmap (sampled introgressions) with ghost bar chart to the right.
-
-    Layout (left to right):
-      heatmap (with species tree on top) | centered target labels | ghost bar | colorbar
+    """Plot the sampled-introgression heatmap, with the species tree above it, beside the ghost bar chart and colorbar.
 
     Args:
         path: Output image path.
@@ -660,7 +674,7 @@ def _plot_combined(
     ax_bar = fig.add_subplot(gs[2, 2])
     ax_cbar = fig.add_subplot(gs[2, 3])
 
-    # --- species tree strip (no leaf labels — label strip below handles them) ---
+    # --- species tree strip (no leaf labels, label strip below handles them) ---
     _draw_species_tree_strip(
         ax_tree, species_tree, taxa_order, "top", show_leaf_labels=False
     )
@@ -797,8 +811,8 @@ def _plot_combined(
             label="Ghost + sampled",
         ),
     ]
-    # Anchor the legend to the bottom of the source-label strip -- the row that
-    # sits directly above the bar panel -- so it reads with the bars rather than
+    # Anchor the legend to the bottom of the source-label strip (the row that
+    # sits directly above the bar panel), so it reads with the bars rather than
     # floating near the top of the figure. It grows upward into the tree-strip
     # row, which is empty on this side.
     legend = ax_src_right.legend(
@@ -818,7 +832,7 @@ def _plot_combined(
     # A note explaining why parts of the heatmap are blank, so the colorbar is
     # not read as covering those cells too. It is wrapped to the bar panel's
     # width and sits directly on top of the legend, which means its position
-    # depends on how tall the legend rendered -- hence the draw to measure it.
+    # depends on how tall the legend rendered, hence the draw to measure it.
     note_font = text_sizes["cbar_tick"]
     wrap_chars = max(18, int((bar_panel_w * 72.0) / (0.5 * note_font)))
     note_text = textwrap.fill(
