@@ -10,7 +10,6 @@ import dendropy
 
 from .config import prepare_output_directory, resolve_config
 from .consolidation import generate_introgression_maps
-from .correction import is_inline_correction
 from .inference import (
     PERM_NOTE_NOT_CONSULTED,
     write_pipeline_results,
@@ -73,29 +72,6 @@ def _log_stage_timing(metrics, wall_time, cpu_time):
     """
     metrics.log(f"  Time taken (wall): {wall_time:.2f}s")
     metrics.log(f"  Time taken (CPU): {cpu_time:.2f}s")
-
-
-def _describe_diagnostic(config):
-    """Spell out what the point estimate skips under this run's correction.
-
-    Args:
-        config: The resolved orchestrator config.
-
-    Returns:
-        The ``diagnostic`` setting, followed when it is off by which tests the
-        point estimate declines and a reminder that the results are unchanged.
-    """
-    if config["diagnostic"]:
-        return "True (every test is measured for every triplet)"
-    if is_inline_correction(config["p_value_correction"]):
-        skipped = "tree-height and direction tests below a settled gate"
-    else:
-        skipped = (
-            "direction test below a settled gate; the tree-height test is "
-            f"measured for every triplet because {config['p_value_correction']} "
-            "corrects it as a whole-run family"
-        )
-    return f"False (skips the {skipped}; results are identical to a diagnostic run)"
 
 
 def _log_permutation_diagnostics(metrics, results):
@@ -345,7 +321,7 @@ def run_orchestrator(config):
         metrics.log(f"Bootstrap diagnostic: {config['bootstrap_diagnostic']}")
         metrics.log(f"Generate summary statistics TSV: {config['generate_summary_stats']}")
         metrics.log(f"Shape diagnostics: {config['shape_diagnostics']}")
-        metrics.log(f"Diagnostic: {_describe_diagnostic(config)}")
+        metrics.log(f"Diagnostic: {config['diagnostic']}")
         metrics.log(f"Consolidation enabled: {config['consolidation']}")
         metrics.log(f"Support threshold: {support_threshold}")
         metrics.log("")

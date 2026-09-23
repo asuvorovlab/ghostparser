@@ -28,7 +28,7 @@
 - Renamed `perm_stat_ci_low`/`perm_stat_ci_high` to `bootstrap_perm_stat_ci_low`/`bootstrap_perm_stat_ci_high`; the interval is a bootstrap percentile interval on the permutation statistic and is empty without a bootstrap.
 - Removed the shape-diagnostic columns from `summary_statistics.tsv`; they remain in the results TSV.
 - Renamed `bootstrap_options.debug_mode` to `bootstrap_options.diagnostic`. A diagnostic bootstrap runs the direction test in every iteration too and adds `bootstrap_perm_stats`, `bootstrap_perm_p_greater`, `bootstrap_perm_p_less` and `bootstrap_perm_decisions`, drawn from a separate stream so no vote moves.
-- `metrics.txt` reports the seed as `Seed: <n> (configured|generated)`, the `diagnostic` setting with what the run skips, and the triplets clearing each gate.
+- `metrics.txt` reports the seed as `Seed: <n> (configured|generated)`, the `diagnostic` setting, and the triplets clearing each gate.
 
 ### Configuration
 
