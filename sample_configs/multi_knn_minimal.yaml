@@ -20,5 +20,8 @@ evaluation:
   report_class_distribution: true
   report_confusion_matrix: true
   report_feature_importance: true
+  # The neighbours classifier measures no impurity, so mdi is rejected here;
+  # permutation is its default and grouped_permutation the other choice.
+  feature_importance_method: permutation
   save_label_map: true
   save_predictions: true

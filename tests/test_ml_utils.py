@@ -1,7 +1,12 @@
 import numpy as np
 import pytest
 
+from ghostparser.config import ConfigError
 from ghostparser.ml.ml_utils import (
+    BIT_COUNT,
+    correlation_feature_groups,
+    feature_importance_rows,
+    grouped_permutation_importance,
     row_normalize_confusion_matrix,
     rows_to_matrix,
 )
@@ -127,3 +132,79 @@ def test_row_normalize_confusion_matrix_turns_counts_into_per_class_fractions():
     # Rows with samples normalize to 1; the empty row is left at 0 so the plot
     # masks it rather than dividing by zero.
     np.testing.assert_allclose(fractions.sum(axis=1), [1.0, 0.0, 1.0])
+
+
+def test_correlation_feature_groups_collects_the_redundant_columns():
+    """Features that rank the rows alike land in one group, others stay apart.
+
+    Column 1 is a monotone transform of column 0, so their Spearman
+    correlation is exactly 1 whatever the values; column 2 ranks the rows in
+    an unrelated order. The threshold is the default 0.7.
+    """
+    features = np.array(
+        [
+            [1.0, 1.0, 3.0],
+            [2.0, 4.0, 1.0],
+            [3.0, 9.0, 4.0],
+            [4.0, 16.0, 2.0],
+            [5.0, 25.0, 5.0],
+        ]
+    )
+
+    groups = correlation_feature_groups(
+        features, ("height_mean", "height_square", "unrelated"), 0.7
+    )
+
+    assert groups == ((0, 1), (2,))
+
+
+def test_grouped_permutation_importance_scores_the_group_that_carries_the_label():
+    """A group is scored by the micro-F1 lost when the whole group is shuffled.
+
+    The stand-in model reads bit 0 off column 0 alone, so it predicts the
+    labels exactly: shuffling the group that holds column 0 breaks the
+    predictions, while shuffling the group of unread columns leaves every
+    prediction and therefore the score untouched, for an importance of
+    exactly zero.
+    """
+
+    class ColumnZeroModel:
+        def predict(self, features):
+            positive = (features[:, 0] > 0.5).astype(int)
+            return np.column_stack([positive] * BIT_COUNT)
+
+    rows = 40
+    column_zero = np.tile([0.0, 1.0], rows // 2)
+    features = np.column_stack(
+        [column_zero, column_zero * 2.0, np.arange(rows, dtype=float)]
+    )
+    targets = ColumnZeroModel().predict(features)
+
+    means, deviations = grouped_permutation_importance(
+        ColumnZeroModel(), features, targets, ((0, 1), (2,)), seed=3
+    )
+
+    assert means[0] > 0.2
+    assert means[1] == pytest.approx(0.0)
+    assert deviations[1] == pytest.approx(0.0)
+
+
+def test_feature_importance_rows_refuses_impurity_without_a_tree():
+    """`mdi` is rejected, not silently swapped, for a model without impurity."""
+
+    class NoImpurityModel:
+        estimators_ = [object()]
+
+        def predict(self, features):
+            return np.zeros((len(features), BIT_COUNT), dtype=int)
+
+    with pytest.raises(ConfigError, match="tree-based model"):
+        feature_importance_rows(
+            NoImpurityModel(),
+            method="mdi",
+            feature_names=("feature_1",),
+            features=np.zeros((4, 1)),
+            targets=np.zeros((4, BIT_COUNT), dtype=int),
+            seed=1,
+            correlation_threshold=0.7,
+        )

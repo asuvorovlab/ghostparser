@@ -1026,6 +1026,17 @@ pinned.
   naming the top level for either key under `model`. Purpose: the seed has one
   name and one place, and a config written with scikit-learn's name is refused
   rather than run unseeded.
+- `test_feature_importance_method_resolves_under_evaluation`. Inputs: an
+  `evaluation` block holding `feature_importance_method: grouped_permutation`
+  and `feature_importance_correlation_threshold: 0.9`; a config naming
+  neither; then `feature_importance_method: shapley`, a threshold of `1.4`,
+  and the method key at the top level. Expected outputs: both values resolve
+  as written; the method resolves to `None` when absent, which each trainer
+  reads as its own measure; `ConfigError` listing the three methods, one
+  demanding a fraction between 0 and 1, and one naming the misplaced key.
+  Purpose: the estimator is chosen in config, an unknown measure cannot reach
+  the trainer, and null has to survive normalization because the two trainers
+  resolve it differently.
 
 ### tests/test_ml_utils.py
 
@@ -1047,6 +1058,25 @@ All `core`.
   confusion-matrix plot is drawn on a fixed 0-1 scale, so the normalization has
   to put populated rows on a common scale and leave an empty class at zero (the
   value the plot masks) instead of dividing by zero.
+- `test_correlation_feature_groups_collects_the_redundant_columns`. Inputs: a
+  5-row matrix whose second column is the square of the first and whose third
+  ranks the rows in an unrelated order, at a threshold of `0.7`. Expected
+  outputs: the groups `((0, 1), (2,))`. Purpose: grouping has to catch
+  features that rank the rows alike whatever their scale, since that is what
+  divides one signal's credit, and leave an unrelated feature on its own.
+- `test_grouped_permutation_importance_scores_the_group_that_carries_the_label`.
+  Inputs: a 40-row matrix whose first two columns hold one binary signal and
+  whose third counts the rows, labels equal to that signal on every bit, and a
+  stand-in model predicting from the first column alone. Expected outputs: the
+  first group's mean drop exceeds 0.2, the second group's drop and its
+  standard deviation are exactly zero. Purpose: a group is scored by the
+  micro-F1 it costs to shuffle it, so a group the model does not read must
+  cost nothing at all, not merely little.
+- `test_feature_importance_rows_refuses_impurity_without_a_tree`. Inputs: a
+  model whose estimators expose no `feature_importances_`, asked for `mdi`.
+  Expected outputs: `ConfigError` naming a tree-based model. Purpose: a model
+  with no impurity to read has to say so rather than fall back to another
+  measure, which would leave the reported ranking unexplained.
 
 ### tests/test_ml_random_forest.py
 

@@ -336,6 +336,8 @@ evaluation:
   report_class_distribution: true
   report_confusion_matrix: true
   report_feature_importance: true
+  feature_importance_method: null    # null = mdi on the forest, permutation on KNN
+  feature_importance_correlation_threshold: 0.7   # grouped_permutation only
   save_label_map: true
   save_predictions: true
 ```
@@ -351,6 +353,26 @@ stratify: reduce the fold count, skip cross-validation, or stop. Write null
 as `null` or `~`, never the bare word `None`; `max_features: auto` is
 rejected (scikit-learn removed it; `sqrt` is the equivalent). Omit
 `min_samples_split` and `min_samples_leaf` to take their defaults.
+
+`feature_importance_method` chooses how influence is measured, and the three
+answers differ when features are correlated, as the summary statistics of one
+height distribution are:
+
+| Value | Measure |
+| --- | --- |
+| `mdi` | Mean decrease in impurity, summed over the splits a feature makes and averaged over the six estimators. Fast, read off the fitted trees, but scored in-sample: it favours features with many split points, and correlated features divide the credit for one signal between them. Needs a tree-based model, so the neighbours classifier rejects it. |
+| `permutation` | The drop in hold-out micro-F1 when a feature's column is shuffled. Scores the metric actually reported, on rows the model never saw. Correlated features still score low, because shuffling one leaves its twin to carry the signal. |
+| `grouped_permutation` | The same shuffle applied to a whole group of correlated features at once, so one signal is scored once. Features are grouped by average-linkage clustering on `1 - abs(Spearman rho)`, cut at `feature_importance_correlation_threshold`; a lower threshold builds larger groups. |
+
+Null takes each trainer's own measure: `mdi` for `random_forest`, which reads
+impurity off its trees, and `permutation` for `multi_knn`, which has no
+impurity to read. The permutation measures shuffle ten times and report the
+mean drop with its standard deviation; on a small hold-out partition the
+scores are noisy, and an uninformative feature can score slightly negative.
+No measure is unbiased for correlated features in the strict sense, because
+two features carrying one signal have no unique split of the credit between
+them; `grouped_permutation` sidesteps the question by scoring the signal
+rather than the columns.
 
 ### Hyperparameter tuning
 

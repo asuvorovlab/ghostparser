@@ -26,6 +26,10 @@ DEFAULT_EVALUATION_METRICS = "all"
 DEFAULT_REPORT_CLASS_DISTRIBUTION = True
 DEFAULT_REPORT_CONFUSION_MATRIX = True
 DEFAULT_REPORT_FEATURE_IMPORTANCE = True
+# Null resolves to each trainer's own estimator: impurity for the forest,
+# which has one, and permutation for the neighbours classifier, which has not.
+DEFAULT_FEATURE_IMPORTANCE_METHOD = None
+DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD = 0.7
 DEFAULT_SAVE_LABEL_MAP = True
 DEFAULT_SAVE_PREDICTIONS = True
 DEFAULT_N_ESTIMATORS = 200
@@ -46,6 +50,7 @@ RARE_CLASS_POLICY_CHOICES = ("warn_reduce_cv", "warn_skip_cv", "error")
 KNN_WEIGHT_CHOICES = ("uniform", "distance")
 KNN_ALGORITHM_CHOICES = ("auto", "ball_tree", "kd_tree", "brute")
 EVALUATION_METRICS_CHOICES = ("all", "primary", "diagnostic", "per_bit")
+FEATURE_IMPORTANCE_METHOD_CHOICES = ("mdi", "permutation", "grouped_permutation")
 MAX_FEATURES_STRING_CHOICES = ("sqrt", "log2")
 CLASS_WEIGHT_STRING_CHOICES = ("balanced", "balanced_subsample")
 
@@ -133,12 +138,34 @@ def _validate_optional_int(payload: dict, key: str, default: int | None) -> int 
 
 
 def _validate_optional_choice(
-    payload: dict, key: str, default: str, choices: tuple[str, ...]
-) -> str:
-    """Validate an optional enumerated string key."""
+    payload: dict,
+    key: str,
+    default: str | None,
+    choices: tuple[str, ...],
+    *,
+    allow_none: bool = False,
+) -> str | None:
+    """Validate an optional enumerated string key.
+
+    Args:
+        payload: The section the key is read from.
+        key: The key to validate.
+        default: Value taken when the key is absent or null.
+        choices: The accepted spellings.
+        allow_none: Whether a null default passes through as ``None``, for a
+            key whose meaning is settled later.
+
+    Returns:
+        The validated value.
+
+    Raises:
+        ConfigError: If the value is not one of ``choices``.
+    """
     value = payload.get(key, default)
     if value is None:
         value = default
+    if allow_none and value is None:
+        return None
     if not isinstance(value, str) or value not in choices:
         raise ConfigError(f"Config field {key} must be one of: {', '.join(choices)}")
     return value
@@ -286,6 +313,8 @@ def normalize_ml_payload(payload: dict) -> dict:
         "report_class_distribution",
         "report_confusion_matrix",
         "report_feature_importance",
+        "feature_importance_method",
+        "feature_importance_correlation_threshold",
         "save_label_map",
         "save_predictions",
     }
@@ -385,6 +414,18 @@ def normalize_ml_payload(payload: dict) -> dict:
             evaluation_section,
             "report_feature_importance",
             DEFAULT_REPORT_FEATURE_IMPORTANCE,
+        ),
+        "feature_importance_method": _validate_optional_choice(
+            evaluation_section,
+            "feature_importance_method",
+            DEFAULT_FEATURE_IMPORTANCE_METHOD,
+            FEATURE_IMPORTANCE_METHOD_CHOICES,
+            allow_none=True,
+        ),
+        "feature_importance_correlation_threshold": _validate_optional_float(
+            evaluation_section,
+            "feature_importance_correlation_threshold",
+            DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD,
         ),
         "save_label_map": _validate_optional_bool(
             evaluation_section,

@@ -154,3 +154,29 @@ def test_seed_is_a_top_level_key_with_a_cli_flag(tmp_path):
         _load(tmp_path, model={"seed": 7})
     with pytest.raises(ConfigError, match="top level"):
         _load(tmp_path, model={"random_state": 7})
+
+
+def test_feature_importance_method_resolves_under_evaluation(tmp_path):
+    """The importance estimator is an ``evaluation`` key with three choices.
+
+    Null stays null in the resolved config: each trainer reads it as its own
+    estimator, impurity for the forest and permutation for the neighbours
+    classifier, which measures none.
+    """
+    resolved = _load(
+        tmp_path,
+        evaluation={
+            "feature_importance_method": "grouped_permutation",
+            "feature_importance_correlation_threshold": 0.9,
+        },
+    )
+    assert resolved["feature_importance_method"] == "grouped_permutation"
+    assert resolved["feature_importance_correlation_threshold"] == 0.9
+    assert _load(tmp_path)["feature_importance_method"] is None
+
+    with pytest.raises(ConfigError, match="mdi, permutation, grouped_permutation"):
+        _load(tmp_path, evaluation={"feature_importance_method": "shapley"})
+    with pytest.raises(ConfigError, match="fraction between 0 and 1"):
+        _load(tmp_path, evaluation={"feature_importance_correlation_threshold": 1.4})
+    with pytest.raises(ConfigError, match="feature_importance_method"):
+        _load(tmp_path, feature_importance_method="mdi")

@@ -1388,6 +1388,45 @@ bit 1 once → count 1, fraction `0.5`; bit 2 never → count 0.
 **Derivation:** pair each name with its score and sort by score descending →
 `feature_2` (0.5), `feature_3` (0.3), `feature_1` (0.2).
 
+### `test_correlation_feature_groups_collects_the_redundant_columns`
+
+**Input:** the matrix `[[1,1,3],[2,4,1],[3,9,4],[4,16,2],[5,25,5]]`, names
+`("height_mean","height_square","unrelated")`, threshold `0.7`.
+
+**Derivation:** column 1 is column 0 squared over positive values, so the two
+rank the rows identically and their Spearman correlation is exactly `1`, for a
+distance of `1 - 1 = 0`. Column 2's ranks are `3,1,4,2,5` against column 0's
+`1,2,3,4,5`: the Spearman correlation is `0.5`, a distance of `0.5`. The cut
+sits at `1 - 0.7 = 0.3`, above the first distance and below the second, so
+columns 0 and 1 merge and column 2 stays alone, giving `((0, 1), (2,))`.
+
+### `test_grouped_permutation_importance_scores_the_group_that_carries_the_label`
+
+**Input:** 40 rows; column 0 alternates `0.0, 1.0`, column 1 is twice column
+0, column 2 is `0..39`. The model predicts `column 0 > 0.5` on all six bits,
+and the targets are that same prediction, so the unpermuted micro-F1 is `1.0`.
+
+**Derivation:** group `(2,)` holds no column the model reads, so every
+permuted matrix yields the identical prediction and a micro-F1 of `1.0` in
+each of the ten repeats: the mean drop is `1.0 - 1.0 = 0` and the standard
+deviation over the repeats is `0`, both exactly. Group `(0, 1)` holds the
+column the model reads, and a random permutation of a balanced 0/1 column
+agrees with the original on about half the rows, so about a quarter of the
+rows become false positives and a quarter false negatives, putting micro-F1
+near `0.5` and the drop near `0.5`; the assertion asks only for a drop above
+`0.2`, which the permutation distribution clears with the bound
+comfortably slack.
+
+### `test_feature_importance_rows_refuses_impurity_without_a_tree`
+
+**Input:** a model whose `estimators_` holds one plain object, asked for
+method `mdi`.
+
+**Derivation:** the impurity path needs `feature_importances_` on every
+sub-estimator; the object has none, so the call raises `ConfigError` before
+reading any data, and the message names the tree-based model the measure
+requires.
+
 ### `test_auto_cv_folds_follows_the_rare_class_policy`
 
 `auto_cv_folds(labels, requested_folds, policy)` caps folds at the smallest class

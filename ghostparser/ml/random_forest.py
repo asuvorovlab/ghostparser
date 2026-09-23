@@ -13,6 +13,7 @@ from sklearn.multioutput import MultiOutputClassifier
 from ..config import ConfigError, prepare_output_directory
 from . import ml_utils as shared
 from .config import (
+    DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD,
     DEFAULT_N_JOBS,
     build_trainer_argument_parser,
     resolve_trainer_runtime_args,
@@ -169,6 +170,16 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     report_class_distribution = getattr(config, "report_class_distribution", True)
     report_confusion_matrix = getattr(config, "report_confusion_matrix", True)
     report_feature_importance = getattr(config, "report_feature_importance", True)
+    # The forest is the one model here that measures impurity, so a run that
+    # names no estimator gets that one.
+    feature_importance_method = (
+        getattr(config, "feature_importance_method", None) or "mdi"
+    )
+    correlation_threshold = getattr(
+        config,
+        "feature_importance_correlation_threshold",
+        DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD,
+    )
     save_predictions = getattr(config, "save_predictions", True)
     include_diagnostic = metric_set in {"diagnostic", "all"}
     include_per_bit = metric_set in {"per_bit", "all"}
@@ -187,11 +198,14 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     feature_start = time.perf_counter()
     feature_rows = None
     if report_feature_importance:
-        feature_importances = np.mean(
-            [estimator.feature_importances_ for estimator in model.estimators_], axis=0
-        )
-        feature_rows = shared.build_feature_importance_rows(
-            matrix.feature_names, feature_importances
+        feature_rows = shared.feature_importance_rows(
+            model,
+            method=feature_importance_method,
+            feature_names=matrix.feature_names,
+            features=x_test,
+            targets=y_test,
+            seed=config.seed,
+            correlation_threshold=correlation_threshold,
         )
     feature_importance_seconds = time.perf_counter() - feature_start
 
@@ -284,6 +298,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
         metrics_payload["per_bit"] = test_metrics["per_bit"]
     if feature_rows is not None:
         metrics_payload["feature_importance"] = feature_rows
+        metrics_payload["feature_importance_method"] = feature_importance_method
     if confusion_matrix_plot_path is not None:
         metrics_payload["confusion_matrix_plot"] = confusion_matrix_plot_path
     if confusion_matrix_64_plot_path is not None:

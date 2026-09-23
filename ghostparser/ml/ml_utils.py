@@ -11,6 +11,10 @@ from typing import Iterable
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import squareform
+from scipy.stats import spearmanr
+from sklearn.inspection import permutation_importance
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -22,6 +26,8 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
 
+from ..config import ConfigError
+
 BIT_LABELS = (
     "ghost_into_A",
     "ghost_into_B",
@@ -32,6 +38,11 @@ BIT_LABELS = (
 )
 BIT_COUNT = len(BIT_LABELS)
 MAX_STRING_CATEGORIES = 7
+
+# Permutation-based importance shuffles each feature (or each correlated group
+# of them) this many times, and reports the mean and standard deviation of the
+# resulting drop in micro-F1.
+PERMUTATION_IMPORTANCE_REPEATS = 10
 
 # All 64 class labels are drawn on each axis of the 64-class figure, so the tick
 # font has to fit a 6-character label into one cell of the square grid.
@@ -545,6 +556,224 @@ def build_feature_importance_rows(
         rows.append({"feature": feature_name, "importance": float(scores[index])})
     rows.sort(key=lambda row: row["importance"], reverse=True)
     return rows
+
+
+def correlation_feature_groups(
+    features: np.ndarray,
+    feature_names: tuple[str, ...],
+    correlation_threshold: float,
+) -> tuple[tuple[int, ...], ...]:
+    """Group features that carry the same information, by rank correlation.
+
+    Features are clustered by average-linkage hierarchical clustering on the
+    distance ``1 - |Spearman rho|``, cut so that a group holds features whose
+    average absolute correlation with each other is at least the threshold.
+    Constant columns correlate with nothing and come back on their own.
+
+    Args:
+        features: The ``(rows, features)`` matrix the groups are read off.
+        feature_names: One name per column, used only for the returned order.
+        correlation_threshold: Absolute Spearman correlation at which two
+            features are treated as one; ``1.0`` would group nothing.
+
+    Returns:
+        One tuple of column indices per group, each group's indices ascending
+        and the groups ordered by their first column.
+    """
+    column_count = len(feature_names)
+    if column_count < 2 or len(features) < 3:
+        return tuple((index,) for index in range(column_count))
+
+    correlation = np.asarray(spearmanr(features).statistic, dtype=float)
+    if correlation.ndim == 0:
+        # Two columns give the one coefficient rather than a matrix.
+        correlation = np.array([[1.0, correlation], [correlation, 1.0]])
+    if correlation.shape != (column_count, column_count):
+        return tuple((index,) for index in range(column_count))
+    distance = 1.0 - np.abs(np.nan_to_num(correlation, nan=0.0))
+    distance = np.clip((distance + distance.T) / 2.0, 0.0, 1.0)
+    np.fill_diagonal(distance, 0.0)
+
+    clusters = fcluster(
+        linkage(squareform(distance, checks=False), method="average"),
+        t=1.0 - correlation_threshold,
+        criterion="distance",
+    )
+    groups: dict[int, list[int]] = {}
+    for index, cluster_id in enumerate(clusters):
+        groups.setdefault(int(cluster_id), []).append(index)
+    return tuple(tuple(group) for group in sorted(groups.values()))
+
+
+def grouped_permutation_importance(
+    model,
+    features: np.ndarray,
+    targets: np.ndarray,
+    groups: tuple[tuple[int, ...], ...],
+    seed: int | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Score each group of features by the micro-F1 it costs to shuffle it.
+
+    Every column of a group is permuted by the same row order, which breaks
+    the group's link to the label while leaving the correlations inside the
+    group intact, so the score reads as the whole group's contribution rather
+    than being divided among its members.
+
+    Args:
+        model: A fitted estimator exposing ``predict``.
+        features: The held-out ``(rows, features)`` matrix.
+        targets: The held-out label matrix, one column per bit.
+        groups: Column indices per group, as
+            :func:`correlation_feature_groups` returns them.
+        seed: Seed for the row orders drawn.
+
+    Returns:
+        The mean drop in micro-F1 per group and its standard deviation over
+        the repeats.
+    """
+    generator = np.random.default_rng(seed)
+    baseline = f1_score(targets, model.predict(features), average="micro",
+                        zero_division=0)
+    means = np.empty(len(groups))
+    deviations = np.empty(len(groups))
+    for group_index, group in enumerate(groups):
+        columns = list(group)
+        scores = np.empty(PERMUTATION_IMPORTANCE_REPEATS)
+        for repeat in range(PERMUTATION_IMPORTANCE_REPEATS):
+            shuffled = features.copy()
+            order = generator.permutation(len(features))
+            shuffled[:, columns] = features[np.ix_(order, columns)]
+            scores[repeat] = f1_score(
+                targets, model.predict(shuffled), average="micro", zero_division=0
+            )
+        means[group_index] = baseline - scores.mean()
+        deviations[group_index] = scores.std(ddof=1)
+    return means, deviations
+
+
+def _mdi_importance_rows(model, feature_names: tuple[str, ...]) -> list[dict]:
+    """Mean decrease in impurity, averaged over the one-vs-rest estimators."""
+    estimators = getattr(model, "estimators_", [])
+    if not estimators or any(
+        not hasattr(estimator, "feature_importances_") for estimator in estimators
+    ):
+        raise ConfigError(
+            "Config field evaluation.feature_importance_method: mdi needs a "
+            "tree-based model that measures impurity; use permutation or "
+            "grouped_permutation for this one"
+        )
+    scores = np.mean(
+        [estimator.feature_importances_ for estimator in estimators], axis=0
+    )
+    return build_feature_importance_rows(feature_names, scores)
+
+
+def _permutation_importance_rows(
+    model,
+    feature_names: tuple[str, ...],
+    features: np.ndarray,
+    targets: np.ndarray,
+    seed: int | None,
+) -> list[dict]:
+    """Per-feature drop in held-out micro-F1 when that feature is shuffled."""
+    permutation = permutation_importance(
+        model,
+        features,
+        targets,
+        n_repeats=PERMUTATION_IMPORTANCE_REPEATS,
+        random_state=seed,
+        scoring="f1_micro",
+    )
+    rows = [
+        {
+            "feature": feature_name,
+            "importance": float(permutation.importances_mean[index]),
+            "importance_std": float(permutation.importances_std[index]),
+        }
+        for index, feature_name in enumerate(feature_names)
+    ]
+    rows.sort(key=lambda row: row["importance"], reverse=True)
+    return rows
+
+
+def _grouped_permutation_importance_rows(
+    model,
+    feature_names: tuple[str, ...],
+    features: np.ndarray,
+    targets: np.ndarray,
+    seed: int | None,
+    correlation_threshold: float,
+) -> list[dict]:
+    """Group-level drops, reported on one row per feature of each group."""
+    groups = correlation_feature_groups(
+        features, feature_names, correlation_threshold
+    )
+    means, deviations = grouped_permutation_importance(
+        model, features, targets, groups, seed
+    )
+    order = sorted(range(len(groups)), key=lambda index: means[index], reverse=True)
+    rows = []
+    for rank, group_index in enumerate(order, start=1):
+        for column in groups[group_index]:
+            rows.append(
+                {
+                    "feature": feature_names[column],
+                    "group": rank,
+                    "group_size": len(groups[group_index]),
+                    "importance": float(means[group_index]),
+                    "importance_std": float(deviations[group_index]),
+                }
+            )
+    return rows
+
+
+def feature_importance_rows(
+    model,
+    *,
+    method: str,
+    feature_names: tuple[str, ...],
+    features: np.ndarray,
+    targets: np.ndarray,
+    seed: int | None,
+    correlation_threshold: float,
+) -> list[dict]:
+    """Rank the features by the requested importance estimator.
+
+    Args:
+        model: The fitted one-vs-rest classifier.
+        method: ``mdi``, ``permutation`` or ``grouped_permutation``.
+        feature_names: One name per feature column.
+        features: The held-out feature matrix, read by the permutation
+            estimators and ignored by ``mdi``.
+        targets: The held-out label matrix that goes with ``features``.
+        seed: Seed for the shuffles the permutation estimators draw.
+        correlation_threshold: Absolute Spearman correlation at which
+            ``grouped_permutation`` treats two features as one.
+
+    Returns:
+        One row per feature, ranked most important first. Every method reports
+        ``feature`` and ``importance``; the permutation methods add
+        ``importance_std``, and ``grouped_permutation`` also reports each
+        feature's ``group`` and that group's size.
+
+    Raises:
+        ConfigError: If ``mdi`` is asked of a model that has no impurity
+            measure, or the method is not one of the three.
+    """
+    if method == "mdi":
+        return _mdi_importance_rows(model, feature_names)
+    if method == "permutation":
+        return _permutation_importance_rows(
+            model, feature_names, features, targets, seed
+        )
+    if method == "grouped_permutation":
+        return _grouped_permutation_importance_rows(
+            model, feature_names, features, targets, seed, correlation_threshold
+        )
+    raise ConfigError(
+        "Config field evaluation.feature_importance_method must be one of: "
+        "mdi, permutation, grouped_permutation"
+    )
 
 
 def format_hyperparameter_section(

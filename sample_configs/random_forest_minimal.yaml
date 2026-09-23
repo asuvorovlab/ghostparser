@@ -22,5 +22,10 @@ evaluation:
   report_class_distribution: true
   report_confusion_matrix: true
   report_feature_importance: true
+  # mdi (the default here) reads impurity off the trees. grouped_permutation
+  # scores correlated features as one group, at the cost of scoring the
+  # hold-out partition once per group and shuffle.
+  feature_importance_method: mdi
+  feature_importance_correlation_threshold: 0.7
   save_label_map: true
   save_predictions: true
