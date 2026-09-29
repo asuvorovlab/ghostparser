@@ -23,7 +23,6 @@ from .trees import (
     _build_species_triplet_metadata,
     _parse_outgroup_arg,
     _read_gene_trees_file,
-    _root_tree_on_outgroup,
     clean_and_save_gene_trees,
     clean_and_save_trees,
     filter_triplets_by_taxa,
@@ -34,6 +33,7 @@ from .trees import (
     read_tree_file,
     rename_newick_labels,
     rename_taxon_labels,
+    root_species_tree,
     read_species_filter_file,
     read_triplet_filter_file,
     write_clean_trees,
@@ -373,7 +373,7 @@ def run_orchestrator(config):
                 taxa = get_taxa_from_tree(species_trees[0])
                 species_summary.append(f"  Found {len(taxa)} taxa")
 
-                species_rooting = _root_tree_on_outgroup(
+                species_rooting = root_species_tree(
                     species_trees[0], outgroup_taxa
                 )
                 pruned_tree = species_rooting.tree

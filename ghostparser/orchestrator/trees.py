@@ -538,12 +538,13 @@ def _outgroup_distances(tree, ingroup_taxa, outgroups):
     return {outgroup: distances[outgroup] for outgroup in ranked}
 
 
-def _root_tree_on_outgroup(tree, outgroup_taxa):
-    """Root a tree where its outgroups branch off, in whatever orientation the
-    file was written, rank the outgroups by distance and prune them.
+def root_species_tree(tree, outgroup_taxa):
+    """Root the species tree where its outgroups branch off, in whatever
+    orientation the file was written, rank the outgroups by distance and
+    prune them.
 
     Args:
-        tree: A ``Bio.Phylo`` tree object; rerooted in place.
+        tree: A ``Bio.Phylo`` species tree; rerooted in place.
         outgroup_taxa: Ordered outgroup taxon names; the order ranks them
             when the tree lacks some branch length and breaks distance ties.
 

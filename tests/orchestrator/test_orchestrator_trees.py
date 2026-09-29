@@ -115,7 +115,7 @@ def test_clean_and_save_trees_quotes_labels_the_format_needs(tmp_path):
     ],
     ids=["single_outgroup", "either_side_of_root", "root_polytomy", "no_lengths"],
 )
-def test_root_tree_on_outgroup_roots_where_the_outgroups_branch_off(
+def test_root_species_tree_roots_where_the_outgroups_branch_off(
     newick, outgroups, expected_pruned, expected_distances, expected_order, tmp_path
 ):
     """The tree is rooted where the outgroups branch off, pruned of them, and
@@ -130,7 +130,7 @@ def test_root_tree_on_outgroup_roots_where_the_outgroups_branch_off(
     path.write_text(newick + "\n")
     species_tree = ptrees.read_tree_file(str(path))[0]
 
-    rooting = ptrees._root_tree_on_outgroup(species_tree, outgroups)
+    rooting = ptrees.root_species_tree(species_tree, outgroups)
     pruned = rooting.tree
 
     if expected_distances is None:
@@ -159,7 +159,7 @@ def test_root_tree_on_outgroup_roots_where_the_outgroups_branch_off(
         ),
     ],
 )
-def test_root_tree_on_outgroup_rejects_outgroups_that_branch_off_twice(
+def test_root_species_tree_rejects_outgroups_that_branch_off_twice(
     newick, expected_groups, tmp_path
 ):
     """Outgroups with other taxa between them raise, naming the separated groups."""
@@ -168,7 +168,7 @@ def test_root_tree_on_outgroup_rejects_outgroups_that_branch_off_twice(
     species_tree = ptrees.read_tree_file(str(path))[0]
 
     with pytest.raises(ptrees.OutgroupRootingError) as excinfo:
-        ptrees._root_tree_on_outgroup(species_tree, ["OUT1", "OUT2"])
+        ptrees.root_species_tree(species_tree, ["OUT1", "OUT2"])
 
     assert excinfo.value.separated_groups == expected_groups
 
@@ -211,7 +211,7 @@ def test_generate_triplets_and_species_subtrees(
     ptrees.clean_and_save_trees(
         str(orchestrator_species_tree), str(out_path), min_avg_support=0.5
     )
-    rooting = ptrees._root_tree_on_outgroup(
+    rooting = ptrees.root_species_tree(
         ptrees.read_tree_file(str(out_path))[0], _OUTGROUP
     )
     ingroup = rooting.ingroup

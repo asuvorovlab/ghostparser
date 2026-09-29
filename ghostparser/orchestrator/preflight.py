@@ -15,7 +15,7 @@ from .config import DEFAULT_PREFLIGHT_TRIPLET_CAP
 from .trees import (
     has_branch_lengths,
     root_gene_tree,
-    _root_tree_on_outgroup,
+    root_species_tree,
     format_newick_with_precision,
     read_tree_file,
     read_species_filter_file,
@@ -723,7 +723,7 @@ def run_preflight_data_check(
     species_labels_sorted = sorted(
         terminal.name for terminal in species_tree_bio.get_terminals()
     )
-    species_rooting = _root_tree_on_outgroup(species_tree_bio, outgroups)
+    species_rooting = root_species_tree(species_tree_bio, outgroups)
 
     species_tree_d = _to_dendropy_tree(species_rooting.tree)
 

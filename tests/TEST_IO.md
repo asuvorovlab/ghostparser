@@ -716,7 +716,7 @@ plus a newline, byte for byte. Read back, Bio.Phylo must give
 different taxa from the ones it wrote. Unquoted, the same file reads as
 `sapiens`, `sp.`, `Brien` in Bio.Phylo and fails to parse in DendroPy.
 
-### `test_root_tree_on_outgroup_roots_where_the_outgroups_branch_off`
+### `test_root_species_tree_roots_where_the_outgroups_branch_off`
 
 **Inputs (parametrized):** one of
 
@@ -759,7 +759,7 @@ each outgroup's distance is its own edge, `0.3` and `0.2`. The fourth tree has
 no lengths, so it has no distances (`None`) and the outgroups keep their listed
 order, with `OUTX`, absent from the tree, last: `(OUT3, OUT2, OUT1, OUTX)`.
 
-### `test_root_tree_on_outgroup_rejects_outgroups_that_branch_off_twice`
+### `test_root_species_tree_rejects_outgroups_that_branch_off_twice`
 
 **Inputs (parametrized):** outgroups `["OUT1", "OUT2"]` and one of
 

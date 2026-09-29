@@ -547,7 +547,7 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   DendroPy, the leaves are `Homo sapiens`, `Pan sp.`, `O'Brien`, `Mus_musculus`.
   Purpose: the processed trees are reread by the run, so the writer must quote
   exactly the labels a bare token cannot hold and leave the rest as they were.
-- `test_root_tree_on_outgroup_roots_where_the_outgroups_branch_off`. Inputs
+- `test_root_species_tree_roots_where_the_outgroups_branch_off`. Inputs
   (parametrized, 4 rows): the fixture species tree
   `(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2)` with outgroup `OUT`;
   a tree written with the outgroups on either side of the file's root,
@@ -571,7 +571,7 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   the ingroup root whatever the listed order, the listed order breaking ties
   and standing in whole when a length is missing, and an outgroup the tree
   lacks ranked last.
-- `test_root_tree_on_outgroup_rejects_outgroups_that_branch_off_twice`.
+- `test_root_species_tree_rejects_outgroups_that_branch_off_twice`.
   Inputs (parametrized): `(((A,B),C),(D,(OUT1,(OUT2,X))))`, where `X` nests
   among the outgroups, and `((OUT1,(A,B)),(OUT2,(C,D)))`, where each outgroup
   carries its own pocket of ingroup taxa, both with outgroups `OUT1`, `OUT2`.

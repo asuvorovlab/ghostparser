@@ -14,7 +14,7 @@ from Bio.Phylo._io import write as phylo_write
 import dendropy
 import numpy as np
 
-from ghostparser.orchestrator.trees import _root_tree_on_outgroup, root_gene_tree
+from ghostparser.orchestrator.trees import root_gene_tree, root_species_tree
 
 
 TOPOLOGY_AB = "((A,B),C)"
@@ -260,7 +260,7 @@ def _read_and_root_species_tree(
 
     # The rooting error names the taxa in the way when the outgroups do not
     # branch off the tree at a single point.
-    rooting = _root_tree_on_outgroup(species_trees[0], outgroup_taxa)
+    rooting = root_species_tree(species_trees[0], outgroup_taxa)
 
     metadata = {
         "species_outgroup_missing_count": len(rooting.missing),
