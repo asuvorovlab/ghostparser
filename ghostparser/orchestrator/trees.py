@@ -464,18 +464,93 @@ def _outgroup_attachment(tree, present):
     return (groups[0][0] if len(hosts) == 1 else None), groups
 
 
+def has_branch_lengths(tree):
+    """Tell whether every branch of a tree, the root's own aside, has a length.
+
+    Args:
+        tree: A ``Bio.Phylo`` tree.
+
+    Returns:
+        ``True`` when no branch below the root lacks a length.
+    """
+    return all(
+        clade.branch_length is not None
+        for clade in tree.find_clades()
+        if clade is not tree.root
+    )
+
+
+@dataclass(frozen=True)
+class SpeciesTreeRooting:
+    """How the species tree was rooted on its outgroups.
+
+    Attributes:
+        tree: The rooted ingroup tree with every outgroup pruned.
+        ranked: The outgroups in the tree, farthest from the ingroup root
+            first, or in listed order when the tree lacks some branch length.
+        distances: Each outgroup in the tree mapped to its path length from
+            the ingroup root, farthest first, or ``None`` when the tree lacks
+            some branch length.
+        missing: The outgroup names absent from the tree, in listed order.
+        ingroup: The ingroup taxon names.
+    """
+
+    tree: object
+    ranked: tuple
+    distances: dict | None
+    missing: tuple
+    ingroup: frozenset
+
+    @property
+    def outgroup_order(self):
+        """Every outgroup in species-tree rank, as gene trees fall back on it:
+        those in the species tree first, then those it lacks in listed
+        order."""
+        return self.ranked + self.missing
+
+
+def _outgroup_distances(tree, ingroup_taxa, outgroups):
+    """Measure each outgroup's path length from the ingroup root, farthest
+    first.
+
+    Args:
+        tree: A ``Bio.Phylo`` tree rooted where its outgroups branch off,
+            with a length on every branch.
+        ingroup_taxa: Set of ingroup taxon names.
+        outgroups: The outgroups in the tree, in listed order, which breaks
+            ties.
+
+    Returns:
+        A dict of outgroup name to path length, farthest first.
+    """
+    terminals = {terminal.name: terminal for terminal in tree.get_terminals()}
+    ingroup_root = tree.common_ancestor([terminals[name] for name in ingroup_taxa])
+    # The rooting leaves every ingroup taxon on one side of the root: either
+    # the root itself, when several ingroup groups hang from it, or a single
+    # child of it, whose own branch then starts every outgroup's path.
+    stem = [] if ingroup_root is tree.root else [ingroup_root]
+    distances = {
+        outgroup: sum(
+            clade.branch_length for clade in stem + tree.get_path(terminals[outgroup])
+        )
+        for outgroup in outgroups
+    }
+    listed = {outgroup: index for index, outgroup in enumerate(outgroups)}
+    ranked = sorted(outgroups, key=lambda name: (-distances[name], listed[name]))
+    return {outgroup: distances[outgroup] for outgroup in ranked}
+
+
 def _root_tree_on_outgroup(tree, outgroup_taxa):
     """Root a tree where its outgroups branch off, in whatever orientation the
-    file was written, and prune them.
+    file was written, rank the outgroups by distance and prune them.
 
     Args:
         tree: A ``Bio.Phylo`` tree object; rerooted in place.
-        outgroup_taxa: Iterable of outgroup taxon names.
+        outgroup_taxa: Ordered outgroup taxon names; the order ranks them
+            when the tree lacks some branch length and breaks distance ties.
 
     Returns:
-        A tuple ``(pruned_tree, excluded_taxa, missing_taxa, ingroup_taxa)``:
-        the rooted ingroup tree, the outgroup names found and pruned, the
-        outgroup names absent from the tree, and the ingroup names.
+        A :class:`SpeciesTreeRooting`.
 
     Raises:
         OutgroupRootingError: If no outgroup is in the tree, if every taxon
@@ -484,21 +559,21 @@ def _root_tree_on_outgroup(tree, outgroup_taxa):
             them; the message names those groups.
     """
     tree_taxa = {terminal.name for terminal in tree.get_terminals()}
-    outgroup_set = set(outgroup_taxa)
-    missing = outgroup_set - tree_taxa
-    present = outgroup_set & tree_taxa
+    outgroup_list = list(dict.fromkeys(outgroup_taxa))
+    missing = tuple(outgroup for outgroup in outgroup_list if outgroup not in tree_taxa)
+    present = [outgroup for outgroup in outgroup_list if outgroup in tree_taxa]
     if not present:
         raise OutgroupRootingError(
             "Could not root the species tree: none of the outgroup taxa are in "
             f"it (missing: {', '.join(sorted(missing))})"
         )
-    ingroup_taxa = tree_taxa - present
+    ingroup_taxa = tree_taxa - set(present)
     if not ingroup_taxa:
         raise OutgroupRootingError(
             "Could not root the species tree: every taxon in it is an outgroup"
         )
 
-    host, groups = _outgroup_attachment(tree, present)
+    host, groups = _outgroup_attachment(tree, set(present))
     if host is None:
         separated = sorted(
             (tuple(sorted(taxa)) for _, taxa in groups),
@@ -515,10 +590,28 @@ def _root_tree_on_outgroup(tree, outgroup_taxa):
             separated_groups=separated,
         )
 
+    # Rerooting turns a missing branch length into 0, so check before it.
+    has_lengths = has_branch_lengths(tree)
+    lengthless = all(
+        clade.branch_length is None
+        for clade in tree.find_clades()
+        if clade is not tree.root
+    )
     tree.root_with_outgroup(host)
+    if lengthless:
+        for clade in tree.find_clades():
+            clade.branch_length = None
+    distances = (
+        _outgroup_distances(tree, ingroup_taxa, present) if has_lengths else None
+    )
     pruned_root = _copy_clade_for_taxa(tree.root, ingroup_taxa)
-    pruned_tree = Tree(root=pruned_root, rooted=True)
-    return pruned_tree, present, missing, ingroup_taxa
+    return SpeciesTreeRooting(
+        tree=Tree(root=pruned_root, rooted=True),
+        ranked=tuple(distances) if has_lengths else tuple(present),
+        distances=distances,
+        missing=missing,
+        ingroup=frozenset(ingroup_taxa),
+    )
 
 
 @dataclass(frozen=True)
@@ -528,64 +621,138 @@ class GeneTreeRooting:
     Attributes:
         tree: The rooted tree with every outgroup pruned, or ``None`` when the
             tree carries no outgroup or nothing but outgroups.
-        used: The outgroups the rooting used, in listed order: the largest set
-            of those present that parts from the other taxa at one point.
-        tangled: The outgroups present but not used, in listed order: they
-            sat among the ingroup taxa, with ingroup taxa between them and
-            the outgroups used, and were pruned without rooting on them. When
-            ``tree`` is ``None`` every outgroup present is listed here.
+        present: The outgroups the tree carries, in species-tree rank.
+        farthest: The outgroup farthest from the ingroup taxa, or ``None``
+            when ``tree`` is ``None``.
+        used: ``farthest`` and the other outgroups outside the ingroup, in
+            species-tree rank; the tree is rooted at their common ancestor.
+        tangled: The outgroups that sat among the ingroup taxa once the tree
+            was rooted on ``farthest``, in species-tree rank; pruned unused.
         missing: The outgroups absent from the tree.
-        order_decided: ``True`` when no set of outgroups held a majority:
-            another set of the same size as ``used`` also parted from the
-            other taxa at one point, so the listed order chose.
     """
 
     tree: object
+    present: tuple
+    farthest: object
     used: tuple
     tangled: tuple
     missing: frozenset
-    order_decided: bool
+
+
+def _ingroup_distance_sums(tree, outgroups, ingroup_taxa):
+    """Sum each outgroup's path lengths to every ingroup taxon, reading the
+    tree unrooted.
+
+    Args:
+        tree: A ``Bio.Phylo`` tree; a missing branch length counts as 0.
+        outgroups: Outgroup names in the tree.
+        ingroup_taxa: Set of ingroup taxon names.
+
+    Returns:
+        A dict of outgroup name to the summed path length.
+    """
+    # A branch lies on the path from an outgroup to every ingroup taxon on
+    # its far side: those below it, or, when the outgroup is below it, those
+    # above it. Counting them once per branch sums every path in one pass.
+    ingroup_counts = {}
+    for clade in tree.find_clades(order="postorder"):
+        if clade.is_terminal():
+            ingroup_counts[clade] = int(clade.name in ingroup_taxa)
+        else:
+            ingroup_counts[clade] = sum(ingroup_counts[child] for child in clade.clades)
+    total = len(ingroup_taxa)
+    branches = [clade for clade in ingroup_counts if clade is not tree.root]
+    terminals = {terminal.name: terminal for terminal in tree.get_terminals()}
+    sums = {}
+    for outgroup in outgroups:
+        above = set(tree.get_path(terminals[outgroup]))
+        sums[outgroup] = sum(
+            (clade.branch_length or 0.0)
+            * (
+                total - ingroup_counts[clade]
+                if clade in above
+                else ingroup_counts[clade]
+            )
+            for clade in branches
+        )
+    return sums
 
 
 def root_gene_tree(tree, outgroup_taxa):
-    """Root a gene tree on the largest set of its outgroups that parts from the
-    other taxa at one point, ties going to the listed order, and prune
-    every outgroup.
+    """Root a gene tree at the common ancestor of its farthest outgroup and
+    the other outgroups outside the ingroup, and prune every outgroup.
 
     Args:
-        tree: A ``Bio.Phylo`` tree object; rerooted in place.
-        outgroup_taxa: Ordered outgroup taxon names.
+        tree: A ``Bio.Phylo`` tree object; rerooted in place. A missing
+            branch length counts as 0.
+        outgroup_taxa: Outgroup taxon names in species-tree rank (see
+            :attr:`SpeciesTreeRooting.outgroup_order`), which breaks exact
+            ties, as between the outgroups of a tree lacking every length.
 
     Returns:
         A :class:`GeneTreeRooting`.
     """
-    tree_taxa = {terminal.name for terminal in tree.get_terminals()}
+    terminals = {terminal.name: terminal for terminal in tree.get_terminals()}
     outgroup_list = list(dict.fromkeys(outgroup_taxa))
-    present = [outgroup for outgroup in outgroup_list if outgroup in tree_taxa]
-    missing = frozenset(outgroup_list) - tree_taxa
-    ingroup_taxa = tree_taxa - set(present)
+    present = tuple(outgroup for outgroup in outgroup_list if outgroup in terminals)
+    missing = frozenset(outgroup_list) - terminals.keys()
+    ingroup_taxa = terminals.keys() - set(present)
     if not present or not ingroup_taxa:
-        return GeneTreeRooting(None, (), tuple(present), missing, False)
+        return GeneTreeRooting(None, present, None, (), (), missing)
 
-    # itertools.combinations keeps the listed order, so the first subset that
-    # fits at a given size is the one listed earliest.
-    host = None
-    for size in range(len(present), 0, -1):
-        fitting = []
-        for subset in combinations(present, size):
-            candidate, _ = _outgroup_attachment(tree, set(subset))
-            if candidate is not None:
-                fitting.append((subset, candidate))
-        if fitting:
-            used, host = fitting[0]
-            order_decided = len(fitting) > 1
+    # The farthest outgroup has the longest mean path to the ingroup taxa,
+    # which needs no root; for outgroups outside the ingroup it ranks them
+    # as the species tree's distance from the ingroup root does. max() keeps
+    # the first of equals, so the species-tree rank breaks ties.
+    if len(present) == 1:
+        farthest = present[0]
+    else:
+        sums = _ingroup_distance_sums(tree, present, ingroup_taxa)
+        farthest = max(present, key=sums.__getitem__)
+
+    # Rooted on the farthest, an outgroup under a child of the ingroup's
+    # lowest common ancestor that also holds ingroup taxa sits among them.
+    # One outside that ancestor, or under a child holding no ingroup taxon
+    # (possible only at a polytomy), sits between the ingroup and the
+    # farthest.
+    tree.root_with_outgroup(terminals[farthest])
+    ingroup_counts = {}
+    for clade in tree.find_clades(order="postorder"):
+        if clade.is_terminal():
+            ingroup_counts[clade] = int(clade.name in ingroup_taxa)
+        else:
+            ingroup_counts[clade] = sum(ingroup_counts[child] for child in clade.clades)
+    total = len(ingroup_taxa)
+    ingroup_mrca = tree.root
+    while True:
+        below = [
+            child for child in ingroup_mrca.clades if ingroup_counts[child] == total
+        ]
+        if not below:
             break
+        ingroup_mrca = below[0]
+    among_ingroup = {
+        terminal.name
+        for child in ingroup_mrca.clades
+        if ingroup_counts[child]
+        for terminal in child.get_terminals()
+    }
+    tangled = tuple(outgroup for outgroup in present if outgroup in among_ingroup)
+    used = tuple(outgroup for outgroup in present if outgroup not in among_ingroup)
 
+    # The used outgroups part from the other taxa at one node, their common
+    # ancestor read unrooted, where the species tree is rooted too. For the
+    # ingroup it is the same root as the farthest outgroup's own branch.
+    host, _ = _outgroup_attachment(tree, set(used))
     tree.root_with_outgroup(host)
     pruned_root = _copy_clade_for_taxa(tree.root, ingroup_taxa)
-    tangled = tuple(outgroup for outgroup in present if outgroup not in used)
     return GeneTreeRooting(
-        Tree(root=pruned_root, rooted=True), used, tangled, missing, order_decided
+        Tree(root=pruned_root, rooted=True),
+        present,
+        farthest,
+        used,
+        tangled,
+        missing,
     )
 
 
@@ -598,8 +765,12 @@ class GeneTreeCleaning:
             their outgroups pruned.
         dropped_trees: 1-based input index of each tree dropped for low
             support, mapped to its average support.
+        missing_length_indices: 1-based input indices of the kept trees
+            lacking some branch length, each read as 0.
         unrootable_indices: 1-based input indices of the trees dropped for
             carrying no outgroup taxon, or nothing but outgroup taxa.
+        farthest: Each outgroup label, in the order given, mapped to the
+            number of kept trees in which it was the farthest outgroup.
         rooted_on: Each outgroup label, in the order given, mapped to the
             number of kept trees whose rooting used it.
         tangled: Each outgroup label, in the order given, mapped to the
@@ -607,17 +778,16 @@ class GeneTreeCleaning:
             was pruned without being used for rooting.
         tangled_trees: Number of kept trees with at least one tangled
             outgroup.
-        order_decided: Number of kept trees in which no set of outgroups held
-            a majority, so the listed order chose which to root on.
     """
 
     trees: list
     dropped_trees: dict
+    missing_length_indices: list
     unrootable_indices: list
+    farthest: dict
     rooted_on: dict
     tangled: dict
     tangled_trees: int
-    order_decided: int
 
     @property
     def rooted_count(self):
@@ -634,7 +804,8 @@ def clean_and_save_gene_trees(
     Args:
         input_filepath: Path to the input Newick file.
         output_filepath: Path where cleaned gene trees are written.
-        outgroup_taxa: Ordered outgroup taxon names used for rooting.
+        outgroup_taxa: Outgroup taxon names in species-tree rank (see
+            :attr:`SpeciesTreeRooting.outgroup_order`).
         min_avg_support: Minimum average support threshold; trees below it are
             dropped.
 
@@ -646,10 +817,11 @@ def clean_and_save_gene_trees(
 
     dropped_trees = {}
     cleaned_trees = []
+    farthest = {outgroup: 0 for outgroup in outgroup_list}
     rooted_on = {outgroup: 0 for outgroup in outgroup_list}
     tangled = {outgroup: 0 for outgroup in outgroup_list}
     tangled_trees = 0
-    order_decided = 0
+    missing_length_indices = []
     unrootable_indices = []
 
     for idx, tree in enumerate(trees, start=1):
@@ -657,18 +829,21 @@ def clean_and_save_gene_trees(
         if avg_support is not None and avg_support < min_avg_support:
             dropped_trees[idx] = avg_support
             continue
-
+        # Checked before rooting, which turns a missing length into 0.
+        lacks_length = not has_branch_lengths(tree)
         rooting = root_gene_tree(tree, outgroup_list)
         if rooting.tree is None:
             unrootable_indices.append(idx)
             continue
+        if lacks_length:
+            missing_length_indices.append(idx)
 
+        farthest[rooting.farthest] += 1
         for outgroup in rooting.used:
             rooted_on[outgroup] += 1
         for outgroup in rooting.tangled:
             tangled[outgroup] += 1
         tangled_trees += bool(rooting.tangled)
-        order_decided += rooting.order_decided
 
         standardized = standardize_tree(rooting.tree)
         cleaned_trees.append(standardized)
@@ -678,11 +853,12 @@ def clean_and_save_gene_trees(
     return GeneTreeCleaning(
         trees=cleaned_trees,
         dropped_trees=dropped_trees,
+        missing_length_indices=missing_length_indices,
         unrootable_indices=unrootable_indices,
+        farthest=farthest,
         rooted_on=rooted_on,
         tangled=tangled,
         tangled_trees=tangled_trees,
-        order_decided=order_decided,
     )
 
 
@@ -929,7 +1105,9 @@ def extract_triplet_subtree(tree, triplet_taxa):
     return subtree
 
 
-def _format_triplet_subtree_newick(shape, label_of, decimal_places=10):
+def _format_triplet_subtree_newick(
+    shape, label_of, decimal_places=10, with_lengths=True
+):
     """Write the Newick for a triplet's induced subtree from its shape.
 
     Reproduces what serializing a copied-out subtree produces, including the
@@ -940,10 +1118,21 @@ def _format_triplet_subtree_newick(shape, label_of, decimal_places=10):
         shape: The triplet's :class:`~.triplet_geometry.TripletSubtreeShape`.
         label_of: Mapping of taxon position to label.
         decimal_places: Number of decimal places for branch lengths.
+        with_lengths: Write branch lengths; ``False`` writes the topology
+            alone, for a tree that carries none.
 
     Returns:
         The Newick string, terminated with ``;``.
     """
+    if not with_lengths:
+        first_position, second_position = shape.sister_positions
+        clade = (
+            f"({_newick_label(label_of[first_position])},"
+            f"{_newick_label(label_of[second_position])})"
+        )
+        odd = _newick_label(label_of[shape.odd_position])
+        inner = f"{clade},{odd}" if shape.sister_clade_first else f"{odd},{clade}"
+        return f"({inner});"
 
     def branch(length):
         formatted = f"{length:.{decimal_places}f}"
@@ -986,6 +1175,11 @@ def _build_species_triplet_metadata(species_tree, triplets):
     # the gene trees are handled.
     taxon_index = build_taxon_index(triplets)
     geometry = build_triplet_geometry(species_tree, taxon_index)
+    with_lengths = any(
+        node.edge_length is not None
+        for node in species_tree.preorder_node_iter()
+        if node is not species_tree.seed_node
+    )
 
     seen = set()
     for triplet in triplets:
@@ -1005,7 +1199,7 @@ def _build_species_triplet_metadata(species_tree, triplets):
         seen.add(abc_triplet)
         normalized_triplets.append(abc_triplet)
         species_triplet_trees[abc_triplet] = _format_triplet_subtree_newick(
-            shape, label_of
+            shape, label_of, with_lengths=with_lengths
         )
 
     return normalized_triplets, species_triplet_trees, skipped_triplets

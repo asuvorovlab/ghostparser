@@ -548,20 +548,29 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   Purpose: the processed trees are reread by the run, so the writer must quote
   exactly the labels a bare token cannot hold and leave the rest as they were.
 - `test_root_tree_on_outgroup_roots_where_the_outgroups_branch_off`. Inputs
-  (parametrized, 3 rows): the fixture species tree
+  (parametrized, 4 rows): the fixture species tree
   `(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2)` with outgroup `OUT`;
   a tree written with the outgroups on either side of the file's root,
   `(OUT1:0.3,(OUT2:0.2,(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.1):0.4):0.5)`, and
   one with a root polytomy joining both outgroups and both ingroup clades,
   `(OUT1:0.3,OUT2:0.2,(A:0.1,B:0.1):0.4,(C:0.1,D:0.1):0.6)`, both with
-  outgroups `OUT1`, `OUT2`. Expected outputs: the excluded set equals the
-  outgroups given, no missing taxa, ingroup `[A, B, C, D]`, and the pruned
-  Newick `(((A:0.1,B:0.1):0.1,C:0.2):0.3,D:0.1):0.5;`,
-  `(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.1):0.4;` and
-  `((A:0.1,B:0.1):0.4,(C:0.1,D:0.1):0.6);` respectively. Purpose: rooting
-  folds the removed node's edge into its sibling; the outgroups need not be a
-  clade as written, only branch off at one point; and a polytomy at that
-  point keeps every ingroup clade under the root.
+  outgroups `["OUT2", "OUT1"]`; and a tree without branch lengths,
+  `(OUT1,(OUT2,(OUT3,((A,B),(C,D)))))`, with outgroups
+  `["OUT3", "OUT2", "OUT1", "OUTX"]`. Expected outputs: ingroup
+  `[A, B, C, D]`; the pruned Newick
+  `(((A:0.1,B:0.1):0.1,C:0.2):0.3,D:0.1):0.5;`,
+  `(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.1):0.4;`,
+  `((A:0.1,B:0.1):0.4,(C:0.1,D:0.1):0.6);` and `((A,B),(C,D));`; distances
+  from the ingroup root, farthest first, `{OUT: 0.5}`,
+  `{OUT1: 1.2, OUT2: 0.6}`, `{OUT1: 0.3, OUT2: 0.2}` and none for the tree
+  without lengths; and the order that breaks gene-tree rooting ties, `(OUT,)`,
+  `(OUT1, OUT2)`, `(OUT1, OUT2)` and `(OUT3, OUT2, OUT1, OUTX)`. Purpose: rooting folds the removed node's edge
+  into its sibling; the outgroups need not be a clade as written, only
+  branch off at one point; a polytomy at that point keeps every ingroup
+  clade under the root; and the outgroups are ranked by path length from
+  the ingroup root whatever the listed order, the listed order breaking ties
+  and standing in whole when a length is missing, and an outgroup the tree
+  lacks ranked last.
 - `test_root_tree_on_outgroup_rejects_outgroups_that_branch_off_twice`.
   Inputs (parametrized): `(((A,B),C),(D,(OUT1,(OUT2,X))))`, where `X` nests
   among the outgroups, and `((OUT1,(A,B)),(OUT2,(C,D)))`, where each outgroup
@@ -570,34 +579,44 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   `(("A","B","C","D"), ("X",))` and `(("A","B"), ("C","D"))` respectively.
   Purpose: outgroups that branch off at more than one point are refused, and
   the error carries the groups the other taxa fall into, largest first.
-- `test_generate_triplets_and_species_subtrees`. Inputs: the pruned species
-  tree. Expected outputs: the 4 sorted triplets from 4 ingroup taxa, no skipped
+- `test_generate_triplets_and_species_subtrees`. Inputs (parametrized): the
+  pruned species tree, with its branch lengths and with them removed.
+  Expected outputs: the 4 sorted triplets from 4 ingroup taxa, no skipped
   triplets, identity ABC normalization, and the exact per-triplet species
-  subtree Newick strings. Purpose: triplet enumeration and species-subtree
-  construction.
+  subtree Newick strings, which carry no lengths when the tree has none.
+  Purpose: triplet enumeration and species-subtree construction, which need
+  no species-tree branch lengths.
 - `test_read_species_filter_file_collects_names_in_order`. Inputs: a file
   reading ` A, B ` / a blank line / `C` / `B,,D` / a whitespace line / `A`.
   Expected outputs: `["A", "B", "C", "D"]`. Purpose: the species filter's file
   contract; names may share a line or take one each, surrounding whitespace
   and empty entries are dropped, and a repeat keeps its first position.
-- `test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_off`.
-  Inputs: `orchestrator_gene_trees` with outgroup `OUT`; then six gene
-  trees with outgroups `["OUT1", "OUT2", "OUT3"]`: `OUT1` alone; `OUT1` with
-  `OUT2` nested among the ingroup; `OUT1` nested among the ingroup with
-  `OUT2` and `OUT3` sisters; `OUT2` alone; no outgroup; nothing but
-  outgroups. Expected outputs: all 12 fixture trees survive with no `OUT`
-  leaf, trees 0 and 3 match their expected rerooted Newick (the ingroup edge
-  absorbs OUT's original edge length), `rooted_on == {"OUT": 12}`,
-  `tangled == {"OUT": 0}`, `tangled_trees == 0` and `order_decided == 0`; for the
-  six trees `rooted_count == 4`, `rooted_on == {"OUT1": 2, "OUT2": 2, "OUT3":
-  1}`, `tangled == {"OUT1": 1, "OUT2": 1, "OUT3": 0}`, `tangled_trees ==
-  2`, `order_decided == 1`, `unrootable_indices == [5, 6]`, no support drops, and the
-  four written trees as exact Newick. Purpose: gene-tree rooting semantics;
-  each tree roots where the largest set of its outgroups branches off, an
-  outgroup tangled among the ingroup taxa is pruned without being used, no
-  majority means the listed order chooses, every outgroup is pruned, and
-  the counts report, per outgroup, the trees rooted using it and the trees
-  in which it was tangled, and how many trees the order settled.
+- `test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup`.
+  Inputs: `orchestrator_gene_trees` with outgroup `OUT`; then nine gene
+  trees with outgroups `["OUT1", "OUT2", "OUT3"]` in species-tree rank:
+  `OUT1` alone; `OUT1` with `OUT2` nested among the ingroup; `OUT1` nested
+  beside `C` with `OUT2` and `OUT3` sisters; the same with `OUT1` on a
+  branch of 9; `OUT2` alone; a tree without branch lengths and one with a
+  single internal branch lacking a length; no outgroup; nothing but
+  outgroups.
+  Expected outputs: all 12 fixture trees survive with no `OUT` leaf, trees 0
+  and 3 match their expected rerooted Newick (the ingroup edge absorbs OUT's
+  original edge length), `farthest == {"OUT": 12}`, `rooted_on ==
+  {"OUT": 12}`, `tangled == {"OUT": 0}` and `tangled_trees == 0`; for the
+  nine trees `rooted_count == 7`, `farthest == {"OUT1": 5, "OUT2": 2,
+  "OUT3": 0}`, `rooted_on == {"OUT1": 5, "OUT2": 2, "OUT3": 1}`, `tangled ==
+  {"OUT1": 1, "OUT2": 4, "OUT3": 1}`, `tangled_trees == 5`,
+  `missing_length_indices == [6, 7]`, `unrootable_indices == [8, 9]`, no
+  support drops, and the seven written trees as exact Newick. Purpose:
+  gene-tree rooting semantics; the farthest outgroup is read from the gene
+  tree's own branch lengths, a missing one counting as 0, so it can differ
+  from the species-tree rank either way, and the rank breaks ties, as in a
+  tree without lengths; a tree lacking some length is kept and counted; an
+  outgroup among the ingroup taxa once the tree is rooted
+  on the farthest is pruned without being used, even when two others sit
+  together; the tree is rooted at the common ancestor of the outgroups
+  outside the ingroup; every outgroup is pruned; and the counts report, per
+  outgroup, the trees it was the farthest in, rooted and was tangled in.
 
 ### tests/orchestrator/test_orchestrator_triplet_geometry.py
 
@@ -715,25 +734,28 @@ The checks themselves are `core`; `test_clean_inputs_pass_and_the_report_lands_w
   positives, the report is persisted where documented, and the check is
   usable without touching disk.
 - `test_species_tree_is_rooted_where_the_outgroups_branch_off`. Inputs: the
-  species tree `(OUT1,(OUT2,(((A,B),C),D)))` with `outgroups=["OUT1", "OUT2"]`,
+  species tree `(OUT1,(OUT2,(((A,B),C),D)))` with `outgroups=["OUT2", "OUT1"]`,
   and three gene trees: one carrying `OUT1` only, one carrying `OUT1` with
   `OUT2` nested among the ingroup, one carrying `OUT2` only. Expected outputs:
   `passed is True`, `triplets_checked == 4`, three gene trees rooted with
+  `gene_tree.farthest.OUT1 == 2`, `gene_tree.farthest.OUT2 == 1`,
   `gene_tree.rooted_on.OUT1 == 2`, `gene_tree.rooted_on.OUT2 == 1`,
   `gene_tree.tangled.OUT2 == 1`, `gene_tree.tangled_trees == 1`,
-  `gene_tree.order_decided == 1`, `triplet.resolved == 9` and
+  `triplet.resolved == 9` and
   `triplet.taxa_absent_from_gene_tree == 3`. Purpose: the
   check roots the species tree with the run's own rooting, so outgroups that
   are not a clade as written but branch off the ingroup at one node still give
   the ingroup `A,B,C,D` and its four triplets; each gene tree roots as the run
-  roots it, and a tree whose two outgroups sit apart has no majority, so the
-  listed order settles it, counted rather than reported as a defect.
+  roots it, and in the tree carrying both outgroups its own branch lengths
+  make `OUT1` the farthest, which leaves `OUT2` among the ingroup, counted
+  rather than reported as a defect.
 - `test_detects_polytomy_and_missing_outgroup`. Inputs: gene tree 1 well
   formed, gene tree 2 a polytomy over A/B/C, gene tree 3 with no outgroup
-  label. Expected outputs: exactly one `gene_tree.rooting_failed` and one
-  `triplet.unresolved_rooted_sister_pair`, two trees rooted out of three
-  checked, the polytomy message naming `Gene tree #2` and `A,B,C`, and the
-  pair counters accounting for all 8 triplet/gene-tree pairs as 7 usable, 1
+  label, gene tree 4 without branch lengths. Expected outputs: exactly one
+  `gene_tree.rooting_failed` and one `triplet.unresolved_rooted_sister_pair`,
+  a `gene_tree.missing_branch_lengths` count of 1 with no issue raised for it,
+  three trees rooted out of four checked, the polytomy message naming
+  `Gene tree #2` and `A,B,C`, and the pair counters accounting for all 12 triplet/gene-tree pairs as 11 usable, 1
   unresolved, 0 with an absent taxon. Purpose: each defect class is detected
   once and located precisely, and every pair the check looked at is accounted
   for.

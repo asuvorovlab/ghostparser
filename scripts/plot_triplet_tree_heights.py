@@ -246,8 +246,13 @@ def _biophylo_to_dendropy(tree: Tree) -> dendropy.Tree:
     return dendropy.Tree.get(data=handle.getvalue().strip(), schema="newick", preserve_underscores=True)
 
 
-def _read_and_root_species_tree(species_tree_path: Path, outgroup_taxa: list[str]) -> tuple[dendropy.Tree, dict[str, int]]:
-    """Read the species tree, root and prune it on the outgroups as the orchestrator does, and convert to DendroPy."""
+def _read_and_root_species_tree(
+    species_tree_path: Path, outgroup_taxa: list[str]
+) -> tuple[dendropy.Tree, dict[str, int], tuple[str, ...]]:
+    """Read the species tree, root and prune it on the outgroups as the orchestrator does, and convert to DendroPy.
+
+    Also returns the outgroups in species-tree rank, farthest from the ingroup first.
+    """
     with species_tree_path.open("r", encoding="utf-8") as handle:
         species_trees = list(phylo_parse(handle, "newick"))
     if not species_trees:
@@ -255,20 +260,23 @@ def _read_and_root_species_tree(species_tree_path: Path, outgroup_taxa: list[str
 
     # The rooting error names the taxa in the way when the outgroups do not
     # branch off the tree at a single point.
-    rooted_tree, excluded_taxa, missing_taxa, ingroup_taxa = _root_tree_on_outgroup(species_trees[0], outgroup_taxa)
+    rooting = _root_tree_on_outgroup(species_trees[0], outgroup_taxa)
 
     metadata = {
-        "species_outgroup_missing_count": len(missing_taxa),
-        "species_outgroup_excluded_count": len(excluded_taxa),
-        "species_ingroup_taxa_count": len(ingroup_taxa),
+        "species_outgroup_missing_count": len(rooting.missing),
+        "species_outgroup_excluded_count": len(rooting.distances),
+        "species_ingroup_taxa_count": len(rooting.ingroup),
     }
-    return _biophylo_to_dendropy(rooted_tree), metadata
+    return _biophylo_to_dendropy(rooting.tree), metadata, rooting.outgroup_order
 
 
 def _read_and_root_gene_trees(gene_trees_path: Path, outgroup_taxa: list[str]) -> tuple[list[dendropy.Tree], int]:
-    """Read gene trees and root each where its outgroups branch off; discard trees with no outgroup."""
+    """Read gene trees and root each from its farthest outgroup as the orchestrator does; discard trees with no outgroup.
+
+    ``outgroup_taxa`` lists the outgroups in species-tree rank, farthest from the ingroup first.
+    """
     trees: list[dendropy.Tree] = []
-    discarded_missing_outgroup = 0
+    discarded = 0
     with gene_trees_path.open("r", encoding="utf-8") as handle:
         for line in handle:
             newick = line.strip()
@@ -277,10 +285,10 @@ def _read_and_root_gene_trees(gene_trees_path: Path, outgroup_taxa: list[str]) -
             bio_tree = phylo_read(io.StringIO(newick), "newick")
             rooting = root_gene_tree(bio_tree, outgroup_taxa)
             if rooting.tree is None:
-                discarded_missing_outgroup += 1
+                discarded += 1
                 continue
             trees.append(_biophylo_to_dendropy(rooting.tree))
-    return trees, discarded_missing_outgroup
+    return trees, discarded
 
 
 def _leaf_label_set(tree: dendropy.Tree) -> set[str]:
@@ -296,8 +304,8 @@ def compute_height_arrays(
     max_triplets: int | None = None,
 ) -> dict[str, list[float] | dict[str, int | str]]:
     """Compute global concordant/discordant height arrays from input files."""
-    species_tree, species_rooting_meta = _read_and_root_species_tree(species_tree_path, outgroup_taxa)
-    gene_trees, gene_trees_discarded = _read_and_root_gene_trees(gene_trees_path, outgroup_taxa)
+    species_tree, species_rooting_meta, outgroup_order = _read_and_root_species_tree(species_tree_path, outgroup_taxa)
+    gene_trees, gene_trees_discarded = _read_and_root_gene_trees(gene_trees_path, outgroup_order)
 
     species_taxa = sorted(_leaf_label_set(species_tree))
     if len(species_taxa) < 3:
@@ -368,7 +376,7 @@ def compute_height_arrays(
             "disc2_topology": disc2_topology,
             "species_taxa_count": len(species_taxa),
             "gene_tree_count": len(gene_trees),
-            "gene_trees_discarded_missing_outgroup": gene_trees_discarded,
+            "gene_trees_discarded": gene_trees_discarded,
             "triplets_total": len(raw_triplets),
             "triplets_used": len(normalized_triplets),
             "triplets_skipped": len(skipped_triplets),

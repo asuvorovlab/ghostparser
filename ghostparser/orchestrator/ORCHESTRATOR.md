@@ -31,7 +31,8 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 
 1. **Rooting.** The species tree is rooted where the outgroups branch off and
    pruned of them; the remaining taxa are the ingroup. Each gene tree is
-   rooted the same way on the outgroups it carries and pruned of them.
+   rooted from its farthest outgroup, at the common ancestor of the
+   outgroups outside the ingroup, and pruned of them.
 2. **Triplets.** Every ingroup triplet is enumerated (or the ones a
    `triplet_filter` names, or every triplet among the species a
    `species_filter` names) and written `(A, B, C)` with A and B the
@@ -99,19 +100,39 @@ way; if other taxa sit between the outgroups the run stops and names the
 groups those taxa fall into, so the ones that are outgroups can be added to
 the list.
 
-A gene tree is rooted on the largest set of the outgroups it carries that
-parts from the other taxa at one point. An outgroup a gene places among the
-ingroup taxa (typically a distant one on a long branch, which single genes
-place unreliably) is pruned without being used, because rooting on it would
-move the root into the ingroup and change the rooted shape of every triplet
-spanning the two. When no set holds a majority (two outgroups apart, say) the
-one listed earliest wins, so list first the outgroup whose placement you
-trust most. All outgroups are then pruned: no triplet contains one, and
-removing a leaf changes no other taxon's rooted shape or heights. `metrics.txt`
-and the preflight report count, per outgroup, the trees rooted using it and
-the trees in which it was tangled and pruned unused, and the trees the listed
-order settled. A gene tree carrying no outgroup, or nothing but outgroups, is
-dropped.
+The rooted species tree ranks the outgroups by their distance from the
+ingroup root, the summed branch lengths along the path, with the listed order
+breaking exact ties. A species tree lacking any branch length keeps the
+listed order; nothing else in a run reads species-tree lengths. An outgroup
+the species tree lacks ranks after the rest.
+
+A gene tree is rooted from its farthest outgroup, taken as the most reliable
+because a closer outgroup can carry genes that sit nearer the ingroup through
+incomplete lineage sorting or introgression. The farthest is the outgroup
+with the longest mean path to the ingroup taxa in that gene tree. The mean
+needs no root, and for outgroups outside the ingroup it ranks them as their
+distance from the ingroup root does. A missing branch length counts as 0 here
+and in every tree height; when two outgroups tie, as all do in a tree without
+lengths, the species-tree rank decides.
+
+Rooted on the farthest, any other outgroup that sits among the ingroup taxa
+(inside the ingroup's common ancestor, on a branch that also leads to
+ingroup taxa) is pruned without being used, because rooting on it would move
+the root into the ingroup and change the rooted shape of every triplet
+spanning the two. The tree is then rooted at the common ancestor of the
+farthest and the other outgroups outside the ingroup, read unrooted, as for
+the species tree; for the ingroup this is the same root as the farthest
+outgroup's own branch. All outgroups are then pruned: no triplet contains
+one, and removing a leaf changes no other taxon's rooted shape or heights.
+
+`metrics.txt` and the preflight report give the ranking and count, per
+outgroup, the trees in which it was the farthest, the trees rooted using it
+and the trees in which it was pruned unused. A distant outgroup on a long
+branch can attach inside the ingroup in a single gene and still be the
+farthest, so a closer outgroup that is often pruned unused is the sign to
+compare with a run that leaves the distant one out. A gene tree carrying no
+outgroup, or nothing but outgroups, is dropped. `metrics.txt` and the
+preflight report count the gene trees lacking some branch length.
 
 ## Reading a triplet from a gene tree
 
@@ -405,8 +426,10 @@ so give it a directory of its own, never one holding the input trees.
   identity columns, the counts, the classification and `bootstrap_value`.
 - `processed_<species tree>` / `processed_<gene trees>`: the cleaned, rooted
   and pruned trees, in the input labels.
-- `metrics.txt`: run parameters, per-stage timings, the rooting counts, the
-  gate counts and the permutation-test convergence summary.
+- `metrics.txt`: the run parameters, then one block per stage (species tree,
+  gene trees, inference, introgression maps) giving what it processed, its
+  timings and what it found: the rooting counts, the classification and gate
+  counts and the permutation-test convergence summary.
 - `consolidation/`: the introgression maps and their TSV matrices.
 
 ### Results columns

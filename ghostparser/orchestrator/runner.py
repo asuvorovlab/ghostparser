@@ -278,8 +278,6 @@ def run_orchestrator(config):
     support_threshold = config["min_support_value"]
 
     with MetricsLogger(metrics_filepath) as metrics:
-        metrics.log(f"Processing species tree: {config['species_tree']}")
-        metrics.log(f"Processing gene trees: {config['gene_trees']}")
         outgroup_taxa = _parse_outgroup_arg(config["outgroup"])
         # The whole run (trees, outgroup, filter, log) works in the trees'
         # own labels; the map is applied to the results just before they are
@@ -326,53 +324,74 @@ def run_orchestrator(config):
         metrics.log(f"Support threshold: {support_threshold}")
         metrics.log("")
 
+        # Every stage logs what it starts, what it processes, its timings and
+        # then what it found. Warnings wait for the summary so the timings
+        # stay together; an error is logged at once and ends the run.
+        metrics.log("✓ Starting species tree stage...")
+        metrics.log(f"  Processing: {config['species_tree']}")
+        species_start_wall, species_start_cpu = _now_times()
+        species_summary = []
+        triplets = []
+        species_triplet_trees = {}
+        plot_taxa = None
+        gene_tree_outgroups = outgroup_taxa
         try:
-            species_start_wall, species_start_cpu = _now_times()
             species_trees, dropped_species = clean_and_save_trees(
                 str(species_tree_path),
                 species_tree_clean,
                 min_avg_support=support_threshold,
             )
-            metrics.log(f"✓ Species tree cleaned and saved to: {species_tree_clean}")
-            metrics.log(f"  Processed {len(species_trees)} tree(s)")
             if dropped_species:
-                metrics.log(
-                    f"  ⚠ Dropped {len(dropped_species)} tree(s) with avg support < {support_threshold}"
+                species_summary.append(
+                    f"  ⚠ Dropped {len(dropped_species)} tree(s) with avg support "
+                    f"< {support_threshold}"
                 )
             species_trees = read_tree_file(species_tree_clean)
-            species_wall_time, species_cpu_time = _elapsed_times(
-                species_start_wall, species_start_cpu
-            )
-            _log_stage_timing(metrics, species_wall_time, species_cpu_time)
         except Exception as exc:
             metrics.log(f"✗ Error processing species tree: {exc}")
             return None
 
-        triplets = []
-        species_triplet_trees = {}
-        plot_taxa = None
         try:
             if species_trees:
                 taxa = get_taxa_from_tree(species_trees[0])
-                metrics.log(f"\n✓ Found {len(taxa)} taxa in species tree")
+                species_summary.append(f"  Found {len(taxa)} taxa")
 
                 try:
-                    pruned_tree, excluded_taxa, missing_taxa, ingroup_taxa = (
-                        _root_tree_on_outgroup(species_trees[0], outgroup_taxa)
+                    species_rooting = _root_tree_on_outgroup(
+                        species_trees[0], outgroup_taxa
                     )
                 except OutgroupRootingError as exc:
                     metrics.log(f"✗ Error: {exc}")
                     return None
+                pruned_tree = species_rooting.tree
+                ingroup_taxa = species_rooting.ingroup
+                gene_tree_outgroups = species_rooting.outgroup_order
 
-                if missing_taxa:
-                    metrics.log(
-                        f"⚠ Warning: Outgroup taxa not found in species tree: {', '.join(sorted(missing_taxa))}"
+                if species_rooting.missing:
+                    species_summary.append(
+                        "  ⚠ Outgroup taxa not found in species tree: "
+                        f"{', '.join(species_rooting.missing)}; they rank last "
+                        "where a gene tree falls back on the species-tree order"
                     )
-                metrics.log(
-                    f"✓ Rooted species tree on {len(excluded_taxa)} outgroup "
-                    f"taxa and pruned them: {', '.join(sorted(excluded_taxa))}"
+                species_summary.append(
+                    f"  Rooted on {len(species_rooting.ranked)} outgroup taxa "
+                    "and pruned them"
                 )
-                metrics.log(f"  {len(ingroup_taxa)} ingroup taxa remain")
+                if species_rooting.distances is None:
+                    species_summary.append(
+                        "    Outgroups in listed order, as the species tree lacks "
+                        "branch lengths: " + ", ".join(species_rooting.ranked)
+                    )
+                else:
+                    species_summary.append(
+                        "    Outgroups farthest from the ingroup root first (path "
+                        "length): "
+                        + ", ".join(
+                            f"{outgroup} {distance:g}"
+                            for outgroup, distance in species_rooting.distances.items()
+                        )
+                    )
+                species_summary.append(f"  {len(ingroup_taxa)} ingroup taxa remain")
 
                 species_trees = [pruned_tree]
                 write_clean_trees(species_trees, species_tree_clean)
@@ -389,8 +408,8 @@ def run_orchestrator(config):
                         str(filter_path)
                     )
                     for line_number, raw in invalid_lines:
-                        metrics.log(
-                            f"⚠ Warning: Skipping invalid triplet line {line_number} in {filter_path}: {raw}"
+                        species_summary.append(
+                            f"  ⚠ Skipping invalid triplet line {line_number} in {filter_path}: {raw}"
                         )
 
                     triplets, skipped_triplets = filter_triplets_by_taxa(
@@ -400,10 +419,11 @@ def run_orchestrator(config):
                         {taxon for triplet in triplets for taxon in triplet}
                     )
                     for triplet, missing in skipped_triplets:
-                        metrics.log(
-                            "⚠ Warning: Skipping triplet with missing taxa: "
+                        species_summary.append(
+                            "  ⚠ Skipping triplet with missing taxa: "
                             f"{','.join(triplet)} (missing: {', '.join(missing)})"
                         )
+                    triplet_source = f" from {filter_path}"
                 elif config["species_filter"]:
                     filter_path = Path(config["species_filter"])
                     if not filter_path.exists():
@@ -419,13 +439,13 @@ def run_orchestrator(config):
                     ]
                     for taxon in requested_species:
                         if taxon in outgroup_taxa:
-                            metrics.log(
-                                f"⚠ Warning: Skipping species filter entry {taxon}: "
+                            species_summary.append(
+                                f"  ⚠ Skipping species filter entry {taxon}: "
                                 "it is an outgroup taxon"
                             )
                         elif taxon not in ingroup_set:
-                            metrics.log(
-                                f"⚠ Warning: Skipping species filter entry {taxon}: "
+                            species_summary.append(
+                                f"  ⚠ Skipping species filter entry {taxon}: "
                                 "not found in the species tree"
                             )
                     if len(kept_species) < 3:
@@ -437,13 +457,10 @@ def run_orchestrator(config):
 
                     plot_taxa = sorted(kept_species)
                     triplets = generate_triplets(plot_taxa, [])
-                    metrics.log(
-                        f"✓ Generated {len(triplets)} unique triplets among "
-                        f"{len(plot_taxa)} filtered species"
-                    )
+                    triplet_source = f" among {len(plot_taxa)} filtered species"
                 else:
                     triplets = generate_triplets(sorted(ingroup_taxa), [])
-                    metrics.log(f"✓ Generated {len(triplets)} unique triplets")
+                    triplet_source = ""
 
                 species_tree_newick = format_newick_with_precision(pruned_tree)
                 species_dendro_tree = dendropy.Tree.get(
@@ -452,44 +469,84 @@ def run_orchestrator(config):
                     preserve_underscores=True,
                 )
 
+                # Each triplet is ordered (A, B, C) with A and B the species
+                # tree's sister pair; a triplet the tree leaves unresolved is
+                # skipped.
                 triplets, species_triplet_trees, skipped_species_triplets = (
                     _build_species_triplet_metadata(
                         species_dendro_tree,
                         triplets,
                     )
                 )
-
+                species_summary.append(
+                    f"  Generated {len(triplets)} unique triplets{triplet_source}"
+                )
                 if skipped_species_triplets:
-                    metrics.log(
-                        "⚠ Warning: Skipping triplets that could not be mapped on species tree: "
+                    species_summary.append(
+                        "  ⚠ Skipping triplets that could not be mapped on species tree: "
                         + "; ".join(
                             ",".join(triplet) for triplet in skipped_species_triplets
                         )
                     )
+                species_summary.append(f"  Saved to: {species_tree_clean}")
 
-                metrics.log(
-                    f"✓ Normalized {len(triplets)} triplets to A,B,C (A and B are sisters)"
-                )
         except Exception as exc:
             metrics.log(f"✗ Error generating triplets: {exc}")
             return None
+        species_wall_time, species_cpu_time = _elapsed_times(
+            species_start_wall, species_start_cpu
+        )
+        _log_stage_timing(metrics, species_wall_time, species_cpu_time)
+        for line in species_summary:
+            metrics.log(line)
 
+        metrics.log("\n✓ Starting gene tree stage...")
+        metrics.log(f"  Processing: {config['gene_trees']}")
         try:
             genes_start_wall, genes_start_cpu = _now_times()
             cleaning = clean_and_save_gene_trees(
                 str(gene_trees_path),
                 gene_trees_clean,
-                outgroup_taxa,
+                gene_tree_outgroups,
                 min_avg_support=support_threshold,
             )
             gene_trees = cleaning.trees
-            metrics.log(f"\n✓ Gene trees cleaned and saved to: {gene_trees_clean}")
-            metrics.log(f"  Processed {len(gene_trees)} tree(s)")
+            genes_wall_time, genes_cpu_time = _elapsed_times(
+                genes_start_wall, genes_start_cpu
+            )
+            _log_stage_timing(metrics, genes_wall_time, genes_cpu_time)
+            if cleaning.dropped_trees:
+                metrics.log(
+                    f"  ⚠ Dropped {len(cleaning.dropped_trees)} tree(s) with avg support < {support_threshold}"
+                )
+            if cleaning.unrootable_indices:
+                metrics.log(
+                    f"  Discarded {len(cleaning.unrootable_indices)} gene tree(s) "
+                    "carrying no outgroup taxon, or nothing but outgroup taxa"
+                )
+            metrics.log(f"  Kept {len(gene_trees)} tree(s)")
+            if cleaning.missing_length_indices:
+                metrics.log(
+                    f"  ⚠ {len(cleaning.missing_length_indices)} kept tree(s) lack "
+                    "some branch length; each missing length is read as 0, which "
+                    "may affect their tree heights and the inferences"
+                )
             metrics.log(
-                f"  Rooted {cleaning.rooted_count} tree(s) on their outgroups and "
-                "pruned the outgroups; trees rooted using each: "
+                f"  Rooted {cleaning.rooted_count} tree(s) at the common ancestor "
+                "of their farthest outgroup and the others outside the ingroup, "
+                "and pruned the outgroups"
+            )
+            metrics.log(
+                "    Trees rooted using each outgroup: "
                 + ", ".join(
                     f"{outgroup}: {count}" for outgroup, count in cleaning.rooted_on.items()
+                )
+            )
+            metrics.log(
+                "    Trees in which each outgroup was the farthest from the "
+                "ingroup taxa: "
+                + ", ".join(
+                    f"{outgroup}: {count}" for outgroup, count in cleaning.farthest.items()
                 )
             )
             if cleaning.tangled_trees:
@@ -505,25 +562,7 @@ def run_orchestrator(config):
                         for outgroup, count in cleaning.tangled.items()
                     )
                 )
-            if cleaning.order_decided:
-                metrics.log(
-                    f"  ⚠ In {cleaning.order_decided} of those the outgroups sat apart "
-                    "with no majority among them, so the listed order chose which "
-                    "to root on; list first the outgroup you trust most"
-                )
-            if cleaning.unrootable_indices:
-                metrics.log(
-                    f"  Discarded {len(cleaning.unrootable_indices)} gene tree(s) "
-                    "carrying no outgroup taxon, or nothing but outgroup taxa"
-                )
-            if cleaning.dropped_trees:
-                metrics.log(
-                    f"  ⚠ Dropped {len(cleaning.dropped_trees)} tree(s) with avg support < {support_threshold}"
-                )
-            genes_wall_time, genes_cpu_time = _elapsed_times(
-                genes_start_wall, genes_start_cpu
-            )
-            _log_stage_timing(metrics, genes_wall_time, genes_cpu_time)
+            metrics.log(f"  Saved to: {gene_trees_clean}")
         except Exception as exc:
             metrics.log(f"✗ Error processing gene trees: {exc}")
             return None
@@ -561,12 +600,16 @@ def run_orchestrator(config):
             # ``processes: 0``, and on a scheduler allocation it is the
             # allocation, not the node.
             worker_count = resolve_worker_count(len(triplets), config["processes"])
+            metrics.log("\n✓ Starting inference stage...")
             metrics.log(
-                f"Worker processes: {worker_count} "
+                f"  Processing: {len(triplets)} triplet(s) across "
+                f"{len(gene_trees_newick)} gene tree(s)"
+            )
+            metrics.log(
+                f"  Worker processes: {worker_count} "
                 f"(requested {config['processes'] or 'all'}; "
                 f"{available_cpu_count()} CPU(s) available to this process)"
             )
-            metrics.log("✓ Starting fused extraction + inference stage...")
             stream_start_wall, stream_start_cpu = _now_times()
             results, stream_worker_cpu = stream_triplet_results(
                 triplets,
@@ -577,12 +620,6 @@ def run_orchestrator(config):
                 p_value_correction=config["p_value_correction"],
                 return_worker_cpu=True,
             )
-            stream_wall_time, stream_cpu_time = _elapsed_times(
-                stream_start_wall, stream_start_cpu
-            )
-            # process_time() misses CPU spent in pool workers; add it back so the
-            # reported CPU total reflects all work, not just the parent process.
-            stream_cpu_time += stream_worker_cpu
 
             results = _rename_result_taxa(results, rename_map)
 
@@ -595,11 +632,7 @@ def run_orchestrator(config):
                 bootstrap=config["bootstrap"],
                 bootstrap_diagnostic=config["bootstrap_diagnostic"],
             )
-            metrics.log("✓ Fused extraction + inference complete")
-            metrics.log(f"  Output: {final_tsv}")
-            metrics.log(f"  Triplets analyzed: {len(results)}")
-            _log_permutation_diagnostics(metrics, results)
-
+            summary_tsv = None
             if config["generate_summary_stats"]:
                 summary_tsv = str(output_dir / "summary_statistics.tsv")
                 write_summary_statistics_tsv(
@@ -607,14 +640,32 @@ def run_orchestrator(config):
                     summary_tsv,
                     bootstrap=config["bootstrap"],
                 )
-                metrics.log(f"  Summary statistics: {summary_tsv}")
+            stream_wall_time, stream_cpu_time = _elapsed_times(
+                stream_start_wall, stream_start_cpu
+            )
+            # process_time() misses CPU spent in pool workers; add it back so the
+            # reported CPU total reflects all work, not just the parent process.
+            stream_cpu_time += stream_worker_cpu
             _log_stage_timing(metrics, stream_wall_time, stream_cpu_time)
-            metrics.log("")
+            metrics.log(f"  Triplets analyzed: {len(results)}")
+            classes = Counter(result.classification for result in results)
+            metrics.log(
+                "  Classifications: "
+                + ", ".join(
+                    f"{classification}: {count}"
+                    for classification, count in classes.most_common()
+                )
+            )
+            _log_permutation_diagnostics(metrics, results)
+            metrics.log(f"  Results: {final_tsv}")
+            if summary_tsv:
+                metrics.log(f"  Summary statistics: {summary_tsv}")
 
             map_wall_time = 0.0
             map_cpu_time = 0.0
             if config["consolidation"]:
-                metrics.log("✓ Starting introgression map generation stage...")
+                metrics.log("\n✓ Starting introgression map generation stage...")
+                metrics.log(f"  Processing: {len(results)} triplet result(s)")
                 map_start_wall, map_start_cpu = _now_times()
                 # Consolidation writes into a dedicated subfolder so its own
                 # output-directory reset (rmtree) never touches the run folder's
@@ -639,17 +690,14 @@ def run_orchestrator(config):
                 map_wall_time, map_cpu_time = _elapsed_times(
                     map_start_wall, map_start_cpu
                 )
-                metrics.log("✓ Introgression map generation complete")
-                metrics.log(f"  Output folder: {consolidation_dir}")
+                _log_stage_timing(metrics, map_wall_time, map_cpu_time)
                 metrics.log(f"  Taxa represented: {map_artifacts.taxa_count}")
                 metrics.log(f"  Combined plot: {map_artifacts.plot_path}")
-                _log_stage_timing(metrics, map_wall_time, map_cpu_time)
-                metrics.log("")
+                metrics.log(f"  Output folder: {consolidation_dir}")
             else:
                 metrics.log(
-                    "✓ Introgression map generation stage skipped (consolidation disabled)"
+                    "\n✓ Introgression map generation stage skipped (consolidation disabled)"
                 )
-                metrics.log("")
 
             total_wall_time = (
                 species_wall_time
@@ -660,11 +708,11 @@ def run_orchestrator(config):
             total_cpu_time = (
                 species_cpu_time + genes_cpu_time + stream_cpu_time + map_cpu_time
             )
-            metrics.log("✓ End-to-end pipeline complete")
+            metrics.log("\n✓ End-to-end pipeline complete")
             metrics.log(f"  Total time (wall): {total_wall_time:.2f}s")
             metrics.log(f"  Total time (CPU): {total_cpu_time:.2f}s")
         except Exception as exc:
-            metrics.log(f"✗ Error in fused extraction/inference stage: {exc}")
+            metrics.log(f"✗ Error in inference stage: {exc}")
             return None
 
         metrics.log("\nProcessing complete!")

@@ -129,22 +129,35 @@ permutation_options:
 
 ##### `species_tree_path` (`-st`)
 
-Species tree in Newick format. The file must hold exactly one tree.
+Species tree in Newick format. The file must hold exactly one tree. Branch
+lengths are optional: the topology alone places the triplets, and lengths
+only rank the outgroups (see `outgroup`).
 
 ##### `gene_trees_path` (`-gt`)
 
-Gene trees in Newick format, one per line.
+Gene trees in Newick format, one per line. Every branch should carry a length,
+since the tests compare tree heights: a missing length is read as 0, and
+`metrics.txt` counts the trees lacking any.
 
 ##### `outgroup` (`-og`)
 
 One label, a comma-separated string, or a list. The species tree is rooted
 where the outgroups branch off and pruned of them; if other taxa sit between
-the outgroups the run stops and names them. Each gene tree is rooted on the
-largest set of its outgroups that sits together, an outgroup a gene places
-among the ingroup is pruned unused, and when no set holds a majority the one
-listed earliest wins, so list first the outgroup whose placement you trust
-most, usually the nearest one that is outside the ingroup in every gene, and
-a distant, long-branch outgroup last.
+the outgroups the run stops and names them.
+
+Each gene tree is rooted from its farthest outgroup: the one with the longest
+mean path to the ingroup taxa in that gene tree. The outgroups that sit among
+the ingroup taxa once the tree is rooted there are pruned without being used,
+and the tree is rooted at the common ancestor of the farthest and the others
+outside the ingroup.
+
+When two outgroups tie in a gene tree (as they all do in a tree without
+branch lengths), the species tree decides: it ranks the
+outgroups by the summed branch lengths from the ingroup root, the listed order
+breaking exact ties. A species tree lacking any branch length keeps the listed
+order. An outgroup the species tree lacks ranks last. `metrics.txt` gives the ranking and counts, per outgroup,
+the trees in which it was the farthest and the trees in which it was pruned
+unused.
 
 ### Config + CLI
 

@@ -721,8 +721,9 @@ different taxa from the ones it wrote. Unquoted, the same file reads as
 **Inputs (parametrized):** one of
 
 - `(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2);` with outgroups `["OUT"]`
-- `(OUT1:0.3,(OUT2:0.2,(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.1):0.4):0.5);` with `["OUT1", "OUT2"]`
-- `(OUT1:0.3,OUT2:0.2,(A:0.1,B:0.1):0.4,(C:0.1,D:0.1):0.6);` with `["OUT1", "OUT2"]`
+- `(OUT1:0.3,(OUT2:0.2,(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.1):0.4):0.5);` with `["OUT2", "OUT1"]`
+- `(OUT1:0.3,OUT2:0.2,(A:0.1,B:0.1):0.4,(C:0.1,D:0.1):0.6);` with `["OUT2", "OUT1"]`
+- `(OUT1,(OUT2,(OUT3,((A,B),(C,D)))));` with `["OUT3", "OUT2", "OUT1", "OUTX"]`
 
 **Derivation:** the rooting counts the outgroup leaves under every clade and
 finds where outgroup-free subtrees hang off the paths joining the outgroups.
@@ -744,8 +745,19 @@ node collapses onto its one remaining child, which keeps its own edge:
 polytomy joining both outgroups and both ingroup clades; both clades hang off
 that same node, so it is the host, rerooting is a no-op, and pruning the
 outgroups leaves `((A:0.1,B:0.1):0.4,(C:0.1,D:0.1):0.6);` with the two clades
-still under the root. In every case the excluded set is the outgroups given,
-`missing` is empty and the ingroup is `[A, B, C, D]`.
+still under the root. The fourth tree roots the same way at the node joining
+`OUT3` to `((A,B),(C,D))` and, having no branch lengths, prunes to
+`((A,B),(C,D));`. In every case the ingroup is `[A, B, C, D]`.
+
+Distances run from the ingroup root, the node the pruned tree is rooted at,
+along the path to each outgroup. In the first tree that root is the dissolved
+`(D,OUT)` node, `0.5` from `OUT`. In the second it is the ingroup clade's own
+node, whose `0.4` edge starts both paths: `OUT2` is `0.4 + 0.2 = 0.6` away and
+`OUT1`, past the file's root, `0.4 + 0.5 + 0.3 = 1.2`, so `OUT1` ranks first
+although listed second. In the third the root polytomy is the ingroup root and
+each outgroup's distance is its own edge, `0.3` and `0.2`. The fourth tree has
+no lengths, so it has no distances (`None`) and the outgroups keep their listed
+order, with `OUTX`, absent from the tree, last: `(OUT3, OUT2, OUT1, OUTX)`.
 
 ### `test_root_tree_on_outgroup_rejects_outgroups_that_branch_off_twice`
 
@@ -765,7 +777,9 @@ common clade is the root, `(A,B)` hangs off the node joining it to `OUT1` and
 
 ### `test_generate_triplets_and_species_subtrees`
 
-**Input:** the pruned species tree `(((A,B),C),D)`.
+**Inputs (parametrized):** the orchestrator fixture species tree, once as
+written and once with every branch length removed; either way it prunes to
+`(((A,B),C),D)`.
 
 **Derivation:** 4 ingroup taxa give `C(4,3) = 4` triplets, enumerated over the
 sorted taxa: `(A,B,C)`, `(A,B,D)`, `(A,C,D)`, `(B,C,D)`. In each of these the
@@ -790,6 +804,11 @@ rooted at the tree root itself and keep its `0.5` unchanged:
 | (A,C,D) | `((A:0.2,C:0.2):0.3,D:0.1):0.5;` | A absorbs `0.1 + 0.1 = 0.2` |
 | (B,C,D) | `((B:0.2,C:0.2):0.3,D:0.1):0.5;` | B absorbs `0.1 + 0.1 = 0.2` |
 
+Without branch lengths each subtree is the same topology written without any:
+`((A,B),C);`, `((A,B),D);`, `((A,C),D);` and `((B,C),D);`. Rerooting on the
+outgroup gives the new root a zero-length edge, which would read as a length
+the file never had, so a tree that carries no lengths stays without them.
+
 ### `test_read_species_filter_file_collects_names_in_order`
 
 **Input:** a file whose lines are ` A, B `, an empty line, `C`, `B,,D`, a line
@@ -802,52 +821,79 @@ piece that is dropped, and `D`, and the last line yields `A`. Repeats keep
 their first position: `B` and `A` are already present, so the result is
 `["A", "B", "C", "D"]` in first-seen order.
 
-### `test_clean_and_save_gene_trees_roots_each_tree_where_its_outgroups_branch_off`
+### `test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup`
 
 **Inputs:** `orchestrator_gene_trees` (12 trees, outgroup `OUT`); then
-a gene-tree file of six trees, checked against `["OUT1", "OUT2", "OUT3"]`:
+a gene-tree file of nine trees, checked against `["OUT1", "OUT2", "OUT3"]`,
+the species-tree rank:
 
-1. `((((A,B),C),D),OUT1)`: `OUT1` alone.
-2. `(((A,B),(C,OUT2)),OUT1)`: `OUT1` at the root, `OUT2` sister to `C`.
-3. `((((A,B),(C,OUT1)),D),(OUT2,OUT3))`: `OUT1` sister to `C`, `OUT2` and
-   `OUT3` sisters.
-4. `((((A,B),C),D),OUT2)`: `OUT2` alone.
-5. `(((A,B),C),D)`: no outgroup.
-6. `(OUT1,(OUT2,OUT3))`: nothing but outgroups.
-
-Every branch of the six trees has length 1.
+1. `((((A:1,B:1):1,C:1):1,D:1):1,OUT1:1);`: `OUT1` alone.
+2. `(((A:1,B:1):1,(C:1,OUT2:1):1):1,OUT1:1);`: `OUT1` at the root, `OUT2`
+   sister to `C`.
+3. `((((A:1,B:1):1,(C:1,OUT1:1):1):1,D:1):1,(OUT2:1,OUT3:1):1);`: `OUT1`
+   sister to `C`, `OUT2` and `OUT3` sisters.
+4. The same as tree 3 with `OUT1:9`.
+5. `((((A:1,B:1):1,C:1):1,D:1):1,OUT2:1);`: `OUT2` alone.
+6. `(((A,B),(C,OUT2)),OUT1);`: no branch lengths.
+7. `(((A:1,B:1),(C:1,OUT2:1):1):1,OUT1:1);`: the `(A,B)` edge lacks a length.
+8. `(((A:1,B:1):1,C:1):1,D:1);`: no outgroup.
+9. `(OUT1:1,(OUT2:1,OUT3:1):1);`: nothing but outgroups.
 
 **Derivation:** none of the 12 fixture trees carry support labels, so all 12
-survive, every one rooted on `OUT` (`rooted_on == {"OUT": 12}`) and every one
-carrying a single outgroup, which is trivially together (`tangled ==
-{"OUT": 0}`, `tangled_trees == 0`, `order_decided == 0`). Rooting at the outgroup
-attachment point moves `OUT`'s edge into the ingroup clade's edge, and
-pruning `OUT` leaves that clade as the root, so no line carries `OUT`. Tree
-0: `0.10 + 0.50 = 0.6` → `(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6;`. Tree
-3: `0.10 + 0.55 = 0.65` → `(((B:0.4,C:0.4):0.1,A:0.6):0.1,D:0.35):0.65;`.
+survive; each carries `OUT` alone, which is the farthest and roots it
+(`farthest == rooted_on == {"OUT": 12}`) with nothing to tangle
+(`tangled == {"OUT": 0}`, `tangled_trees == 0`). Rooting on `OUT` moves its edge into the ingroup
+clade's edge, and pruning `OUT` leaves that clade as the root, so no line
+carries `OUT`. Tree 0: `0.10 + 0.50 = 0.6` →
+`(((A:0.1,B:0.1):0.1,C:0.2):0.1,D:0.3):0.6;`. Tree 3: `0.10 + 0.55 = 0.65` →
+`(((B:0.4,C:0.4):0.1,A:0.6):0.1,D:0.35):0.65;`.
 
-For the six trees the rooting tries the outgroups present together and
-then, largest first, their subsets, taking a set that parts from the other
-taxa at one point; among sets of one size the earliest listed wins. Tree 1
-carries `OUT1` alone and tree 4 `OUT2` alone: one outgroup always fits, and
-its edge 1 folds into the ingroup edge 1, giving
-`(((A:1,B:1):1,C:1):1,D:1):2;` for both. Tree 2 carries `OUT1` and `OUT2`;
-neither `{OUT1, OUT2}` nor `{A, B, C}` is a clade, so the pair does not fit,
-both singletons do, and with no majority the listed order picks `OUT1`
-(`order_decided`); `OUT2` is tangled and pruned unused, and pruning it from
-`(C:1,OUT2:1):1` leaves `C` on an edge of `1 + 1 = 2`, so the written tree is
-`((A:1,B:1):1,C:2):2;`. Tree 3 carries all three; the triple does not fit
-(`OUT1` sits with `C`), of the pairs only `{OUT2, OUT3}` is a clade, so that
-pair holds the majority and roots the tree, and `OUT1` is tangled and pruned
-unused. The rooting joins the ingroup to the pair's node,
-folding the pair's edge 1 into the ingroup's edge 1, and pruning `OUT1`
-lengthens `C`'s edge to 2: `(((A:1,B:1):1,C:2):1,D:1):2;`. Tree 5 carries no
-outgroup and tree 6 nothing else, so both are dropped, `unrootable_indices
-== [5, 6]`. Hence `rooted_count == 4`, `rooted_on == {"OUT1": 2, "OUT2": 2,
-"OUT3": 1}` (tree 3 counts for both `OUT2` and `OUT3`), `tangled ==
-{"OUT1": 1, "OUT2": 1, "OUT3": 0}`, `tangled_trees == 2` (trees 2 and 3)
-and `order_decided == 1` (tree 2). No tree carries support values, so none is dropped
-for support.
+For the nine trees, the farthest outgroup has the longest mean path to the
+ingroup taxa; an outgroup under a child of the ingroup's common ancestor that
+also holds ingroup taxa, once the tree is rooted on the farthest, is tangled;
+and the tree is rooted where the remaining outgroups part from the rest.
+
+- Tree 1 carries `OUT1` alone, so it is the farthest and roots the tree;
+  its edge 1 folds into the ingroup edge 1: `(((A:1,B:1):1,C:1):1,D:1):2;`.
+- Tree 2: `OUT1` is 4 from each of `A`, `B` and `C` (mean 4); `OUT2` is 4
+  from `A` and `B` and 2 from `C` (mean 10/3). Rooted on `OUT1`, the
+  ingroup's common ancestor is `((A,B),(C,OUT2))`, and `OUT2` sits under its
+  child `(C,OUT2)` with `C`, so it is tangled. Pruning it leaves `C` on
+  `1 + 1 = 2`: `((A:1,B:1):1,C:2):2;`.
+- Tree 3: `OUT1` is 4 from `A`, `B` and `D` and 2 from `C` (mean 3.5);
+  `OUT2` is 6 from `A`, `B` and `C` and 4 from `D` (mean 5.5), and so is
+  `OUT3`. The tie keeps the species-tree rank, so `OUT2` is the farthest
+  although the species tree ranks `OUT1` first. Rooted on `OUT2`, `OUT3` is
+  its sister, outside the ingroup, and `OUT1` sits with `C`, so it is
+  tangled. The tree is rooted where the pair joins the ingroup, whose edge
+  takes the pair's edge (`1 + 1 = 2`), and pruning `OUT1` lengthens `C`'s
+  edge to 2: `(((A:1,B:1):1,C:2):1,D:1):2;`.
+- Tree 4: `OUT1`'s branch of 9 puts it 12 from `A`, `B` and `D` and 10 from
+  `C` (mean 11.5), farther than the pair's 5.5. Rooted on `OUT1`, the
+  ingroup's common ancestor is the node `OUT1` shared with `C`, and the pair
+  sits under its other child with `A`, `B` and `D`, so both are tangled.
+  Rooting on a leaf gives the leaf's branch to the other side, so the root
+  keeps 9; pruning the pair dissolves `D`'s node, and `D` takes `1 + 1 = 2`:
+  `((D:2,(A:1,B:1):1):1,C:1):9;`.
+- Tree 5 carries `OUT2` alone: `(((A:1,B:1):1,C:1):1,D:1):2;`.
+- Tree 6 has no branch lengths, so every mean path is 0 and the tie keeps
+  the species-tree rank: `OUT1` is the farthest, and `OUT2`, sitting with
+  `C`, is tangled. Rerooting gives the missing root edge the value 0, and
+  the rest stay unwritten: `((A,B),C):0;`.
+- Tree 7 lacks only the `(A,B)` edge, read as 0. `OUT1` is `1 + 1 + 0 + 1 = 3`
+  from `A` and `B` and 4 from `C` (mean 10/3); `OUT2` is 3 from `A` and `B`
+  and 2 from `C` (mean 8/3). So `OUT1` roots it and `OUT2` is tangled. The
+  root edge is the ingroup's 1 plus `OUT1`'s 1, and `C` takes `OUT2`'s parent
+  edge: `((A:1,B:1),C:2):2;`.
+- Trees 6 and 7 are kept and counted: `missing_length_indices == [6, 7]`.
+- Trees 8 and 9 are dropped: `unrootable_indices == [8, 9]`.
+
+Hence `rooted_count == 7`, `farthest == {"OUT1": 5, "OUT2": 2, "OUT3": 0}`
+(trees 1, 2, 4, 6 and 7; trees 3 and 5), `rooted_on == {"OUT1": 5,
+"OUT2": 2, "OUT3": 1}` (tree 3 counts for `OUT2` and `OUT3`), `tangled ==
+{"OUT1": 1, "OUT2": 4, "OUT3": 1}` (`OUT1` in tree 3; `OUT2` in trees 2, 4, 6
+and 7; `OUT3` in tree 4) and `tangled_trees == 5`. No tree carries support values, so none is
+dropped for support.
 
 ## tests/orchestrator/test_orchestrator.py
 
@@ -930,7 +976,8 @@ the permutation test enabled).
 
 ### Shared inputs
 
-The species tree is `(((A:1,B:1):1,C:1):1,(D:1,OUT:1):1);`. Removing the
+The species tree is `(((A,B),C),(D,OUT));`, without branch lengths, which the
+check needs no more than a run does. Removing the
 outgroup `OUT` leaves ingroup `{A, B, C, D}`, so the check enumerates
 `C(4,3) = 4` triplets: `A,B,C`, `A,B,D`, `A,C,D`, `B,C,D`.
 
@@ -941,12 +988,13 @@ The clean gene-tree file holds two trees, both containing all five taxa:
 ((((A:1,C:1):1,B:1):1,D:1):1,OUT:1);
 ```
 
-The defective file holds three, each planted with exactly one problem class:
+The defective file holds four, each planted with exactly one problem class:
 
 ```
 ((((A:1,B:1):1,C:1):1,D:1):1,OUT:1);   # well formed
 (((A:1,B:1,C:1):1,D:1):1,OUT:1);       # polytomy over A,B,C
 (((A:1,B:1):1,C:1):1,MISSING:1);       # no OUT label
+((((A,B),C),D),OUT);                   # no branch lengths
 ```
 
 ### `test_clean_inputs_pass_and_the_report_lands_where_documented`
@@ -971,7 +1019,7 @@ where its output goes.
 ### `test_species_tree_is_rooted_where_the_outgroups_branch_off`
 
 **Inputs:** the species tree `(OUT1:1,(OUT2:1,(((A:1,B:1):1,C:1):1,D:1):1):1);`,
-`outgroups=["OUT1", "OUT2"]`, and three gene trees:
+`outgroups=["OUT2", "OUT1"]`, and three gene trees:
 `((((A:1,B:1):1,C:1):1,D:1):1,OUT1:1);`,
 `(((A:1,B:1):1,(C:1,OUT2:1):1):1,OUT1:1);` and
 `((((A:1,C:1):1,B:1):1,D:1):1,OUT2:1);`.
@@ -980,13 +1028,15 @@ where its output goes.
 are not a clade as written; the only outgroup-free subtree is the ingroup
 clade `(((A,B),C),D)`, hanging off the node that joins `OUT2` to it, so the
 tree is rooted there, both outgroups are pruned and the ingroup is
-`A, B, C, D`, giving `C(4,3) = 4` triplets. Gene tree 1 carries `OUT1` alone
-and tree 3 `OUT2` alone, so each roots on the one it has. In tree 2 the
-non-outgroup taxa `A,B,C` do not form a clade (`OUT2` is `C`'s sister), so
-the pair does not fit, each singleton does, and the listed order picks `OUT1`
-and sets `OUT2` aside: `gene_tree.rooted == 3`, `rooted_on.OUT1 == 2`,
-`rooted_on.OUT2 == 1`, `tangled.OUT2 == 1`, `tangled_trees == 1` and
-`order_decided == 1`. Tree 2 lacks
+`A, B, C, D`, giving `C(4,3) = 4` triplets. From the ingroup root `OUT2` is
+`1 + 1 = 2` away and `OUT1`, past the file's root, `1 + 1 + 1 = 3`, so `OUT1`
+ranks first although listed second. Gene tree 1 carries `OUT1` alone and
+tree 3 `OUT2` alone, so each is the farthest in its tree and roots it. In
+tree 2 `OUT1`'s mean path to `A`, `B` and `C` is 4 against `OUT2`'s 10/3, so
+`OUT1` is the farthest; rooted on it, `OUT2`, `C`'s sister, sits among the
+ingroup and is set aside: `gene_tree.rooted == 3`, `farthest.OUT1 == 2`,
+`farthest.OUT2 == 1`, `rooted_on.OUT1 == 2`, `rooted_on.OUT2 == 1`,
+`tangled.OUT2 == 1` and `tangled_trees == 1`. Tree 2 lacks
 `D`, so its three `D` triplets are skipped as absent
 (`triplet.taxa_absent_from_gene_tree == 3`); the other `4 + 1 + 4 = 9` pairs
 resolve (tree 2's `A,B,C` has `A,B` as sisters with `C` outside), so
@@ -994,12 +1044,14 @@ resolve (tree 2's `A,B,C` has `A,B` as sisters with `C` outside), so
 
 ### `test_detects_polytomy_and_missing_outgroup`
 
-**Inputs:** the defective trio, `outgroups=["OUT"]`.
+**Inputs:** the defective four, `outgroups=["OUT"]`.
 
-**Derivation:** gene tree 3 contains no `OUT`, so `_root_tree_on_any_outgroup`
-returns no used outgroup → one `gene_tree.rooting_failed`, and that tree is
-skipped before any triplet check. Trees 1 and 2 root, so
-`gene_tree.rooted == 2` while `gene_tree.total_checked == 3`. Tree 2 collapses
+**Derivation:** gene tree 3 contains no `OUT`, so it has no outgroup to root
+on → one `gene_tree.rooting_failed`, and that tree is skipped before any
+triplet check. Gene tree 4 has no branch lengths, which a run reads as 0: it
+roots and is counted (`gene_tree.missing_branch_lengths == 1`) without an
+issue. Trees 1, 2 and 4 root, so `gene_tree.rooted == 3` while
+`gene_tree.total_checked == 4`. Tree 2 collapses
 A, B and C into a single polytomous clade, so all three pairwise LCAs of triplet
 `A,B,C` are the same node and `triplet_resolution` reports it unresolved → one
 `triplet.unresolved_rooted_sister_pair`. The other three triplets each contain
@@ -1007,11 +1059,11 @@ A, B and C into a single polytomous clade, so all three pairwise LCAs of triplet
 exactly 1, not 4. The message is formatted with the enumeration index (`Gene
 tree #2`) and the comma-joined triplet (`A,B,C`).
 
-The pair accounting follows from the same reading. Two trees root, and each
-carries all four ingroup taxa, so the check looks at `4 x 2 = 8` triplet/
-gene-tree pairs: tree 1 resolves all 4, tree 2 resolves the three containing
-`D` and fails on `A,B,C`. That gives 7 usable, 1 unresolved, and 0 skipped for
-an absent taxon, and the three must sum to the 8 pairs seen, which is the
+The pair accounting follows from the same reading. Three trees root, and each
+carries all four ingroup taxa, so the check looks at `4 x 3 = 12` triplet/
+gene-tree pairs: trees 1 and 4 resolve all 4 each, tree 2 resolves the three
+containing `D` and fails on `A,B,C`. That gives 11 usable, 1 unresolved, and 0
+skipped for an absent taxon, and the three must sum to the 12 pairs seen, which is the
 property worth pinning: a pair that is neither measured nor reported would
 otherwise vanish silently between the counters.
 
@@ -1057,14 +1109,14 @@ requires exactly 1.
 ### `test_runner_preflight_mode_skips_analysis`
 
 **Inputs (parametrized):** a config dict with `preflight_data_check: True`
-and `preflight_triplet_cap: 3` over the defective trio, with
+and `preflight_triplet_cap: 3` over the defective four, with
 `outgroup="OUT"` and then `outgroup="NOT_PRESENT"`.
 
 **Derivation:** `run_orchestrator` prepares the output directory and then
 returns `_run_preflight_only(...)` before any tree cleaning, so the only write
 into that directory is the report. Listing the directory must therefore yield
 exactly `["preflight_data_check.txt"]`: no `metrics.txt`, no processed trees,
-no results TSV. `passed` is `False` because the defective trio yields issues.
+no results TSV. `passed` is `False` because the defective four yield issues.
 
 The cap: the species tree's ingroup is `A, B, C, D`, so `combinations(·, 3)`
 yields `C(4, 3) = 4` triplets. `_load_target_triplets` keeps the first

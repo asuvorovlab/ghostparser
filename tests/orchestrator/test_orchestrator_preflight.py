@@ -9,15 +9,17 @@ from ghostparser.orchestrator.preflight import (
 )
 
 # A clean 5-taxon species tree: ingroup A,B,C,D gives C(4,3) = 4 triplets.
-_CLEAN_SPECIES = "(((A:1,B:1):1,C:1):1,(D:1,OUT:1):1);\n"
+_CLEAN_SPECIES = "(((A,B),C),(D,OUT));\n"
 
 # Gene tree 1 is well formed. Gene tree 2 is a polytomy over A,B,C, so the
 # rooted sister pair for triplet A,B,C is undeterminable. Gene tree 3 carries no
-# outgroup label at all, so rooting fails outright.
+# outgroup label at all, so rooting fails outright. Gene tree 4 has no branch
+# lengths, which is counted, not reported as a defect.
 _DIRTY_GENES = (
     "((((A:1,B:1):1,C:1):1,D:1):1,OUT:1);\n"
     "(((A:1,B:1,C:1):1,D:1):1,OUT:1);\n"
     "(((A:1,B:1):1,C:1):1,MISSING:1);\n"
+    "((((A,B),C),D),OUT);\n"
 )
 
 _CLEAN_GENES = (
@@ -90,10 +92,10 @@ def test_species_tree_is_rooted_where_the_outgroups_branch_off(tmp_path):
 
     OUT1 and OUT2 are not a clade as written (they sit on either side of the
     file's root), but both branch off the ingroup at one node, so the ingroup
-    is A,B,C,D and 4 triplets are checked. Each gene tree roots where the
-    largest set of its outgroups branches off, and the counters say which
-    outgroups were used, which were tangled and pruned unused, and when the
-    listed order had to decide.
+    is A,B,C,D and 4 triplets are checked. Each gene tree roots from its
+    farthest outgroup, read from its own branch lengths, and the counters
+    say which outgroup was the farthest, which were used, and which were
+    tangled and pruned unused.
     """
     species = tmp_path / "species.tree"
     genes = tmp_path / "genes.tre"
@@ -108,21 +110,22 @@ def test_species_tree_is_rooted_where_the_outgroups_branch_off(tmp_path):
     result = run_preflight_data_check(
         species_tree_path=str(species),
         gene_trees_path=str(genes),
-        outgroups=["OUT1", "OUT2"],
+        outgroups=["OUT2", "OUT1"],
         output_dir=str(tmp_path),
     )
 
     assert result.passed is True
     assert result.triplets_checked == 4
     assert result.counters["gene_tree.rooted"] == 3
-    # In tree 2 the two outgroups sit apart with no majority, so the listed
-    # order picks OUT1; OUT2 is tangled and pruned unused, counted, not
-    # reported as a defect.
+    # In tree 2 OUT1's mean path to A, B, C is 4 against OUT2's 10/3, so
+    # OUT1 is the farthest and roots it; OUT2, C's sister, is tangled and
+    # pruned unused, counted, not reported as a defect.
+    assert result.counters["gene_tree.farthest.OUT1"] == 2
+    assert result.counters["gene_tree.farthest.OUT2"] == 1
     assert result.counters["gene_tree.rooted_on.OUT1"] == 2
     assert result.counters["gene_tree.rooted_on.OUT2"] == 1
     assert result.counters["gene_tree.tangled.OUT2"] == 1
     assert result.counters["gene_tree.tangled_trees"] == 1
-    assert result.counters["gene_tree.order_decided"] == 1
     # Tree 2 lacks D, so its three D triplets are skipped, not failed.
     assert result.counters["triplet.resolved"] == 9
     assert result.counters["triplet.taxa_absent_from_gene_tree"] == 3
@@ -141,13 +144,15 @@ def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path):
 
     categories = [issue.category for issue in result.issues]
     assert result.passed is False
-    # Gene tree 3 has no OUT label.
+    # Gene tree 3 has no OUT label; gene tree 4, lacking branch lengths, is
+    # counted but raises no issue.
     assert categories.count("gene_tree.rooting_failed") == 1
+    assert result.counters["gene_tree.missing_branch_lengths"] == 1
     # Gene tree 2 is a polytomy, and only triplet A,B,C is affected by it.
     assert categories.count("triplet.unresolved_rooted_sister_pair") == 1
-    # Gene tree 3 never gets rooted, so only trees 1 and 2 reach triplet checks.
-    assert result.counters["gene_tree.rooted"] == 2
-    assert result.counters["gene_tree.total_checked"] == 3
+    # Gene tree 3 never gets rooted, so trees 1, 2 and 4 reach triplet checks.
+    assert result.counters["gene_tree.rooted"] == 3
+    assert result.counters["gene_tree.total_checked"] == 4
     # The offending gene-tree index and the failing triplet are both named.
     polytomy_message = next(
         issue.message
@@ -157,16 +162,16 @@ def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path):
     assert "Gene tree #2" in polytomy_message
     assert "A,B,C" in polytomy_message
     # Every triplet/gene-tree pair the check looked at is accounted for: 4
-    # triplets x 2 rooted trees = 8 pairs, of which tree 2's A,B,C is the only
-    # one that cannot be measured.
-    assert result.counters["triplet.resolved"] == 7
+    # triplets x 3 rooted trees = 12 pairs, of which tree 2's A,B,C is the
+    # only one that cannot be measured.
+    assert result.counters["triplet.resolved"] == 11
     assert result.counters.get("triplet.taxa_absent_from_gene_tree", 0) == 0
     assert (
         result.counters["triplet.resolved"]
         + result.counters["triplet.unresolved_rooted_sister_pair"]
         + result.counters.get("triplet.taxa_absent_from_gene_tree", 0)
         == result.triplets_checked * result.counters["gene_tree.rooted"]
-        == 8
+        == 12
     )
 
 

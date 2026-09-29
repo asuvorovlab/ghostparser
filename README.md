@@ -65,7 +65,8 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 What a run does:
 
 1. Roots the species tree where the outgroups branch off and prunes them;
-   roots each gene tree the same way on the outgroups it carries.
+   roots each gene tree from its farthest outgroup, at the common ancestor
+   of the outgroups outside the ingroup, and prunes them.
 2. Enumerates every ingroup triplet (or the ones a triplet or species filter
    names), written `(A, B, C)` with A and B the species-tree sisters.
 3. Reads each triplet's rooted topology and tree height out of every gene
@@ -83,9 +84,10 @@ gene trees, unresolved triplets, filter lines naming unknown taxa) and writes
 
 ## Inputs
 
-Three inputs are required: the species tree (`-st`), the gene trees (`-gt`,
-one Newick tree per line) and the outgroup label(s) (`-og`, comma-separated,
-the one whose placement you trust most first). Everything else has a default;
+Three inputs are required: the species tree (`-st`, branch lengths optional),
+the gene trees (`-gt`, one Newick tree per line, every branch with a length;
+a missing one is read as 0) and the outgroup label(s) (`-og`,
+comma-separated, in any order: the species tree ranks them). Everything else has a default;
 the full argument table, the config-file-only keys and the formats of the
 filter and rename-map files are in [CONFIG.md](CONFIG.md).
 
@@ -111,7 +113,7 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 | `orchestrator_triplet_results.tsv` | One row per triplet: counts, the three tests' statistics and p-values (raw and corrected), `decision_gate`, `classification`, `inference` in words, and the bootstrap support. Columns are described in [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#results-columns). |
 | `summary_statistics.tsv` | With `generate_summary_stats`: per-triplet descriptive statistics of the heights per topology; the ML trainers' input. |
 | `processed_<species tree>`, `processed_<gene trees>` | The cleaned, rooted and pruned trees. |
-| `metrics.txt` | Run parameters, timings, rooting counts, gate counts and permutation convergence. |
+| `metrics.txt` | Run parameters, then per stage what it processed, its timings and what it found: rooting counts, classification and gate counts, permutation convergence. |
 | `consolidation/` | `introgression_combined.png`, a heatmap of directed sampled introgression beside a bar chart of ghost targets, with the TSV matrices under `consolidation_data/`. |
 
 Abbreviated results:

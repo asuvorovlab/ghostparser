@@ -4,15 +4,15 @@
 #
 #   python -m ghostparser.orchestrator -c sample_configs/orchestrator_preflight.yaml
 #
-# The report says which outgroups rooted how many gene trees and how many were
-# tangled among the ingroup; if a distant outgroup is tangled often, move it to
-# the end of the list and check again.
+# The report ranks the outgroups by distance from the ingroup in the species
+# tree and says, per outgroup, how many gene trees it was the farthest in,
+# rooted and sat tangled among the ingroup in.
 
 species_tree_path: ./data/species.tree
 gene_trees_path: ./data/genes.tree
 
-# Listed in order of trust: the nearest outgroup that is outside the ingroup in
-# every gene first, the distant long-branch one last.
+# Any order: each gene tree finds its own farthest, and the species tree
+# ranking breaks ties.
 outgroup:
   - Out1
   - Out2

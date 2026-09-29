@@ -327,12 +327,20 @@ def _species_tree_layout(tree, taxa_order, orientation):
         tree.retain_taxa_with_labels(sorted(set(taxa_order)))
     leaf_positions = {taxon: idx for idx, taxon in enumerate(taxa_order)}
 
+    # A tree without branch lengths is drawn as a cladogram, one unit per
+    # branch, rather than collapsing onto its root.
+    has_lengths = any(
+        node.edge_length is not None
+        for node in tree.preorder_node_iter()
+        if node is not tree.seed_node
+    )
     root_dist = {}
 
     def _record_root_dist(node, distance):
         root_dist[id(node)] = distance
         for child in node.child_node_iter():
-            _record_root_dist(child, distance + _node_edge_length(child))
+            step = _node_edge_length(child) if has_lengths else 1.0
+            _record_root_dist(child, distance + step)
 
     _record_root_dist(tree.seed_node, 0.0)
 
