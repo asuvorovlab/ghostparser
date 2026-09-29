@@ -35,6 +35,7 @@ venv/
 *.parquet
 *.pkl
 **/wandb/
+*.html
 
 # Scripts and Test Notebooks
 ghost*.sh
