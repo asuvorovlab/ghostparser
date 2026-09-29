@@ -1,12 +1,11 @@
 # ghostparser.orchestrator
 
-`ghostparser.orchestrator` is GhostParser's introgression engine. It fuses triplet
-subtree extraction and per-triplet inference into a single streaming pass, so
-the intermediate triplet-gene-trees dataset is never written to disk or reloaded
-into memory.
-
-This document explains how the module works. The complete reference for every
-flag and config key lives in [CONFIG.md](../../CONFIG.md#orchestrator-primary-module).
+`ghostparser.orchestrator` detects introgression from a species tree and a set
+of gene trees. It decomposes the ingroup into species triplets, reads every
+gene tree's version of each triplet, and runs a three-gate cascade of tests
+per triplet that labels it `no_introgression`, `inflow_introgression`,
+`outflow_introgression`, `ghost_introgression` or `ambiguous`. This document
+explains the method; every flag and key is in [CONFIG.md](../../CONFIG.md).
 
 ## Running it
 
@@ -14,881 +13,486 @@ flag and config key lives in [CONFIG.md](../../CONFIG.md#orchestrator-primary-mo
 # minimal run
 python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 
-# multiple outgroups, custom output folder, all cores
-python -m ghostparser.orchestrator \
-    -st species.tree -gt genes.tree -og Out1,Out2 \
-    --output-folder results --processes 0
+# several outgroups, a species filter, a fixed seed, all available CPUs
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og Out1,Out2 \
+    --species-filter species.txt --seed 42 --processes 0
 
-# a filtered set of triplets, no consolidation plots
-python -m ghostparser.orchestrator \
-    -st species.tree -gt genes.tree -og OutGroup \
-    --triplet-filter triplets.txt --no-consolidation
+# a config file; a flag given beside it overrides the file's value
+python -m ghostparser.orchestrator -c run_config.yaml --seed 42
 
-# config-file mode (JSON or YAML); other CLI flags are ignored
-python -m ghostparser.orchestrator -c run_config.yaml
+# one of the shipped scenario configs (CONFIG.md lists them)
+python -m ghostparser.orchestrator -c sample_configs/orchestrator_preflight.yaml
 
-# start from a shipped sample: orchestrator_minimal.yaml has just the required
-# inputs, orchestrator_full.yaml lists every key at its default
-python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
-
-# check the input data and exit, without running any analysis
-python -m ghostparser.orchestrator \
-    -st species.tree -gt genes.tree -og OutGroup --preflight-data-check
+# check the inputs and exit without analysis
+python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup --preflight-data-check
 ```
 
-## Configuration
+## The pipeline
 
-Three inputs are required — the species tree (`-st`), the gene trees (`-gt`),
-and the outgroup(s) (`-og`) — and everything else has a default.
-`-c/--config-file` is the only CLI-only option; when given, the file supplies
-every setting and the other CLI flags are ignored with a warning.
+1. **Rooting.** The species tree is rooted where the outgroups branch off and
+   pruned of them; the remaining taxa are the ingroup. Each gene tree is
+   rooted from its farthest outgroup, at the common ancestor of the
+   outgroups outside the ingroup, and pruned of them.
+2. **Triplets.** Every ingroup triplet is enumerated (or the ones a
+   `triplet_filter` names, or every triplet among the species a
+   `species_filter` names) and written `(A, B, C)` with A and B the
+   species-tree sisters.
+3. **Observations.** Each gene tree is measured once. For every triplet the
+   engine reads, from each gene tree that carries all three taxa, the rooted
+   topology of the three and a tree height `H(T)`.
+4. **Tests.** Per triplet: the discordant count test, the tree-height test
+   and the direction test, described below.
+5. **Decision.** Once every triplet is measured, the count and tree-height
+   p-values are corrected across the run and the cascade classifies each
+   triplet. Bootstrap resampling of the gene trees gives each classification a
+   support value.
+6. **Outputs.** The results TSV, optionally `summary_statistics.tsv`, and the
+   consolidated introgression maps.
 
-A handful of settings are config-file-only (`discordant_test`,
-`tree_height_calculation_strategy`, `min_support_value`,
-`generate_summary_stats`, and the `bootstrap_options` and `permutation_options`
-blocks). One default is worth calling out: `p_value_correction` defaults to
-`bfn` (Bonferroni), and it is applied both run-wide across triplets and inside
-each permutation test across its pair of one-tailed p-values.
+## Why triplets
 
-See [CONFIG.md](../../CONFIG.md#orchestrator-primary-module) for every key, its
-default, and its allowed values.
+For three species with the rooted species tree `((A,B),C)`, a gene tree
+carries one of three rooted topologies: the concordant `((A,B),C)` and the two
+discordant ones, `((B,C),A)` and `((A,C),B)`. Under the multispecies
+coalescent with no gene flow, discordance arises only from incomplete lineage
+sorting (ILS): the A and B lineages fail to coalesce in the branch above their
+split and are then equally likely to pair with C in either way. With that
+branch `T` coalescent units long,
 
-## Preflight data check
+```
+P(concordant) = 1 - (2/3) e^(-T)      P(each discordant) = (1/3) e^(-T)
+```
 
-`--preflight-data-check` (or `preflight_data_check: true`) turns the run into a
-data validation pass. `runner._run_preflight_only` short-circuits
-`run_orchestrator` immediately after the output directory is prepared, so no
-analysis runs and the only artifact is `preflight_data_check.txt`.
+(Hudson 1983, *Evolution* 37(1), 203-217; Pamilo & Nei 1988, *Molecular
+Biology and Evolution* 5(5), 568-583; Degnan & Rosenberg 2009, *Trends in
+Ecology & Evolution* 24(6), 332-340, https://doi.org/10.1016/j.tree.2009.01.009).
+The two discordant topologies are exchangeable under ILS, so their counts are
+expected to be equal. Gene flow between one of the sisters and C breaks that
+symmetry, the same asymmetry the ABBA-BABA *D*-statistic reads from site
+patterns (Green et al. 2010, *Science* 328(5979), 710-722,
+https://doi.org/10.1126/science.1188021; Durand et al. 2011, *Molecular
+Biology and Evolution* 28(8), 2239-2252,
+https://doi.org/10.1093/molbev/msr048), and is the signal the first test
+looks for.
 
-`preflight.run_preflight_data_check` replays the same structural logic the
-engine uses, but collects failures instead of raising on the first one:
+Counts alone do not say what kind of gene flow produced the excess. The
+*timing* of the discordant gene trees does: ILS-discordant trees coalesce
+above the species-tree root of the triplet, a gene tree produced by
+introgression between the sampled taxa coalesces at the time of that exchange,
+and a gene tree carrying DNA from an unsampled ("ghost") lineage that diverged
+before the triplet's root coalesces deeper still (Hibbins & Hahn 2019,
+*Genetics* 211(3), 1059-1073, https://doi.org/10.1534/genetics.118.301831;
+Tricou, Tannier & de Vienne 2022, *Systematic Biology* 71(5), 1147-1158,
+https://doi.org/10.1093/sysbio/syac011). Comparing the heights of the
+discordant gene trees with the heights of the concordant ones is what the
+second and third tests do.
 
-1. Root the species tree on the outgroup and normalize each triplet to A/B/C
-   via `find_sister_pair` and `normalize_abc_from_sister_pair`, recording
-   triplets whose rooted topology cannot be resolved.
-2. Root every gene tree with `trees._root_tree_on_any_outgroup`, recording the
-   ones where no outgroup label is present.
-3. For each triplet contained in a gene tree, extract the subtree and replay
-   `triplet_taxa_labels` → `find_sister_pair` → `topology_from_sister_pair` →
-   sister-pair MRCA lookup, recording whichever step fails.
+The more frequent discordant topology is `discordant1` (the `dis1_topology`
+column, `BC` or `AC`), and its height sample against the concordant sample is
+what the last two tests compare.
 
-Every failure becomes an `Issue` with a dotted category. The report groups them
-by category with counts, up to 25 examples each naming the gene-tree index and
-triplet plus the offending input line, and an attribution summary separating
-species-tree causes from gene-tree causes. `PreflightResult.passed` is `True`
-only when nothing was detected.
+## Rooting
 
-Three conditions make the check itself impossible and raise `ValueError`
-instead: no outgroups given, a species-tree file that does not hold exactly one
-tree, and a species tree containing none of the outgroups.
+Read unrooted, a tree is rooted by its outgroups when one branch (or, inside
+a polytomy, one node) parts every outgroup from every other taxon, in
+whatever orientation the file was written. The species tree must root this
+way; if other taxa sit between the outgroups the run stops and names the
+groups those taxa fall into, so the ones that are outgroups can be added to
+the list.
 
-## Orchestrator summary
+The rooted species tree ranks the outgroups by their distance from the
+ingroup root, the summed branch lengths along the path, with the listed order
+breaking exact ties. A species tree lacking any branch length keeps the
+listed order; nothing else in a run reads species-tree lengths. An outgroup
+the species tree lacks ranks after the rest.
 
-`runner.run_orchestrator(config)` coordinates the run:
+A gene tree is rooted from its farthest outgroup, taken as the most reliable
+because a closer outgroup can carry genes that sit nearer the ingroup through
+incomplete lineage sorting or introgression. The farthest is the outgroup
+with the longest mean path to the ingroup taxa in that gene tree. The mean
+needs no root, and for outgroups outside the ingroup it ranks them as their
+distance from the ingroup root does. A missing branch length counts as 0 here
+and in every tree height; when two outgroups tie, as all do in a tree without
+lengths, the species-tree rank decides.
 
-1. **Species preprocessing** — `trees.clean_and_save_trees` standardizes the
-   species tree and drops trees whose mean internal support is below
-   `min_support_value`. `trees._root_tree_on_outgroup` roots on the outgroup
-   MRCA and prunes the outgroup, returning the ingroup taxa.
-2. **Triplet setup** — `trees.generate_triplets` enumerates every ingroup
-   triplet (or `trees.read_triplet_filter_file` plus
-   `trees.filter_triplets_by_taxa` restricts them).
-   `trees._build_species_triplet_metadata` normalizes each triplet to
-   `(A, B, C)` with A and B the species-tree sisters, and builds the triplet's
-   species subtree.
-3. **Gene-tree preprocessing** — `trees.clean_and_save_gene_trees` cleans each
-   gene tree and roots it on the outgroup.
-4. **Fused extraction + inference** — `stream.stream_triplet_results` walks the
-   triplets, extracts each one's subtree per gene tree, converts it directly to
-   an observation (`inference.observation_from_subtree`), and immediately runs
-   `inference.analyze_triplet_from_observations`. Only the small result object
-   is retained; the subtrees are discarded.
-5. **Run-wide correction** —
-   `inference._apply_triplet_result_p_value_correction` applies the
-   multiple-testing correction once across all triplets, because a global
-   correction needs every p-value in a single pass.
-6. **Writing** — `inference.write_pipeline_results` emits
-   `orchestrator_triplet_results.tsv`; `inference.write_summary_statistics_tsv`
-   emits `summary_statistics.tsv` when `generate_summary_stats` is set.
-7. **Consolidation** — `consolidation.generate_introgression_maps`
-   writes the map artifacts into a `consolidation/` subfolder.
+Rooted on the farthest, any other outgroup that sits among the ingroup taxa
+(inside the ingroup's common ancestor, on a branch that also leads to
+ingroup taxa) is pruned without being used, because rooting on it would move
+the root into the ingroup and change the rooted shape of every triplet
+spanning the two. The tree is then rooted at the common ancestor of the
+farthest and the other outgroups outside the ingroup, read unrooted, as for
+the species tree; for the ingroup this is the same root as the farthest
+outgroup's own branch. All outgroups are then pruned: no triplet contains
+one, and removing a leaf changes no other taxon's rooted shape or heights.
 
-## Per-triplet inference
+`metrics.txt` and the preflight report give the ranking and count, per
+outgroup, the trees in which it was the farthest, the trees rooted using it
+and the trees in which it was pruned unused. A distant outgroup on a long
+branch can attach inside the ingroup in a single gene and still be the
+farthest, so a closer outgroup that is often pruned unused is the sign to
+compare with a run that leaves the distant one out. A gene tree carrying no
+outgroup, or nothing but outgroups, is dropped. `metrics.txt` and the
+preflight report count the gene trees lacking some branch length.
 
-For each triplet the engine classifies every gene tree's subtree into one of
-three topologies — concordant (matching the species tree) plus two discordant
-alternatives — and records a tree height H(T) per the configured strategy. It
-then applies a three-gate decision:
+## Reading a triplet from a gene tree
 
-1. **Discordant count test (DCT)** — compares the two discordant counts
-   (`inference.run_discordant_count_test`, chi-square or z-test). If the
-   corrected p-value is not below `alpha_dct`, the triplet is
-   `no_introgression` and the remaining gates are skipped.
-2. **Tree-height test (THT)** — a two-sample KS test between the concordant and
-   discordant1 height distributions (`inference.run_two_sample_ks_test`). If it
-   is *not* significant, the triplet is `inflow_introgression`.
-3. **Direction test** — otherwise the concordant and discordant1 heights are
-   compared directionally by the studentized permutation test
-   (`permutation.run_studentized_permutation_test`): `greater` gives
-   `outflow_introgression`, `less` gives `ghost_introgression`, and no
-   resolvable direction gives `ambiguous`.
+Each gene tree is cached once as three tables: the parent of every node, the
+length of the edge above every node, and the lowest common ancestor (LCA) of
+every pair of taxa. The LCA table fills in one post-order walk (a node is the
+LCA of exactly the pairs drawn from two of its different children) and after
+that no gene tree is touched again. A triplet's observation in a gene tree is
+then read from three table lookups and a few short walks up the parent chain,
+rather than by copying out a subtree.
 
-`inference._classify_introgression` implements this decision table directly,
-returning the classification and the name of the test that settled it as one
-pair. That pair populates the `classification` and `decision_gate` columns, so
-the two are derived in a single pass and cannot drift apart.
+**Topology.** For taxa `a`, `b`, `c` let `m(a,b)`, `m(a,c)`, `m(b,c)` be the
+pairwise LCAs. In a binary rooted tree two of the three are the same node
+(the LCA of all three, the triplet's root `r`) and the third lies strictly
+below it: the pair whose LCA is the odd one out is the sister pair, and its
+LCA is the sisters' node `s`. All three coinciding means the three taxa hang
+off one polytomy, and the triplet is skipped in that gene tree. Because the
+topology is read from node identity rather than from distances, a zero-length
+internal branch is still a resolved topology, not a polytomy.
 
-The cascade *consults* the tests in order, but the point estimate *computes* all
-three for every triplet, so the `perm_*` columns are populated even where the
-cascade never reached them. Read `decision_gate` before reading `perm_decision`:
-only `PERM` means the direction result produced the classification. A row
-carrying `decision_gate = THT`, `perm_decision = ambiguous`, and
-`classification = inflow_introgression` is consistent — the direction test ran
-and was recorded, but the tree-height test had already settled the call.
+**Heights.** With `d(x)` the sum of edge lengths from leaf `x` up to `r`, and
+`d(s)` the same sum from `s` up to `r`, the tree-height strategies are
 
-Bootstrap resampling (on by default) repeats the analysis over resampled
-observations and aggregates the per-iteration classifications into
-`bootstrap_value`.
+| `tree_height_calculation_strategy` | `H(T)` |
+| --- | --- |
+| `AVG` (default) | `(d(A) + d(B) + d(C)) / 3` |
+| `A`, `B`, `C` | `d(A)`, `d(B)`, `d(C)` |
+| `INT` | `d(s)`, the internal branch from the triplet's root to the sisters' node |
+| `SIS` | `d(s1) + d(s2) - 2 d(s)`, the patristic distance between the two sisters |
 
-## The statistical tests
+Every quantity is a sum along one path, never the difference of two depths
+measured from the tree's root, so nothing cancels in floating point. The
+same tables serve the species tree, from which each triplet's `(A, B, C)`
+order and its `species_tree` subtree are read.
 
-Each gate answers a different question, and each is computed by a named library
-routine rather than by hand. This section states what each test measures, how
-its value is obtained, and where its assumptions bite.
+## The tests
 
-### Gate 1 — Discordant count test
+### Gate 1: Discordant count test (DCT)
 
-**Question.** Are the two discordant topologies equally frequent?
+*Are the two discordant topologies equally frequent?* Under ILS alone they
+are; an excess of one is gene flow. The test compares `n_dis1` and `n_dis2`
+against a 50/50 split and ignores the concordant count.
 
-Under incomplete lineage sorting alone, the two discordant histories are
-exchangeable and should appear about equally often; an excess of one of them is
-the signal that something other than ILS — introgression — has acted (Huson et
-al. 2005, *RECOMB*, https://doi.org/10.1007/11415770_18). The test therefore
-asks only whether `n_dis1` and `n_dis2` depart from a 50/50 split, and ignores
-the concordant count entirely.
+- `chi-square` (default): Pearson's goodness-of-fit statistic against equal
+  expected counts, `(n_dis1 - n_dis2)^2 / (n_dis1 + n_dis2)`, on one degree
+  of freedom (Pearson 1900, *Philosophical Magazine* 50(302), 157-175,
+  https://doi.org/10.1080/14786440009463897).
+- `z-test`: the two-proportion z-test of `n_dis1/n` against `n_dis2/n` with
+  the pooled variance at `p = 1/2`. The two proportions are complements, so
+  `z^2 = 2 chi^2` on the same counts and the z-test rejects more readily.
 
-Two backends, selected by `discordant_test`:
+A `0/0` split gives `p = 1`. The p-value is corrected across every triplet in
+the run (see *Correction*), and the gate is significant at `corrected p <=
+alpha_dct`. A triplet that fails it is `no_introgression`.
 
-- `chi-square` (default) — `scipy.stats.chisquare([n_dis1, n_dis2])`, a
-  goodness-of-fit test against equal expected counts. The statistic is
-  `sum((observed - expected)^2 / expected)` with `expected = (n_dis1 + n_dis2) / 2`,
-  compared against a chi-square distribution on one degree of freedom.
-- `z-test` — `statsmodels.stats.proportion.proportions_ztest` with
-  `count=[n_dis1, n_dis2]`, `nobs=[total, total]`, `alternative="two-sided"`,
-  a two-proportion z-test on the same counts.
+### Gate 2: Tree-height test (THT)
 
-A zero/zero split short-circuits to `(0.0, 1.0)` rather than dividing by zero.
-Both backends test the same null and agree closely; the chi-square statistic is
-approximately the square of the z-score.
+*Do the concordant and discordant1 height distributions differ at all?* The
+two-sample Kolmogorov-Smirnov statistic is the largest gap between the two
+empirical distribution functions, `D = sup_x |F_con(x) - F_dis1(x)|`, with
+SciPy's exact or asymptotic p-value by sample size (Massey 1951, *Journal of
+the American Statistical Association* 46(253), 68-78,
+https://doi.org/10.1080/01621459.1951.10500769). The test is deliberately
+sensitive to any difference: location, spread or shape.
 
-### Gate 2 — Tree-height test (KS)
+If the discordant trees are distributed like the concordant ones, they
+coalesce on the same timescale, which is what gene flow between the sampled
+taxa produces: the triplet is `inflow_introgression`. The p-value is
+corrected across every triplet, and the gate is significant at `corrected p
+<= alpha_ks`. A significant KS test says the heights differ but not which way;
+that is the third gate's question.
 
-**Question.** Do the concordant and discordant1 tree-height distributions differ
-at all — in any respect, not just in location?
+### Gate 3: Direction test
 
-`scipy.stats.ks_2samp(dis1_heights, con_heights, alternative="two-sided",
-method="auto")` computes the two-sample Kolmogorov–Smirnov statistic: the
-largest absolute gap between the two empirical cumulative distribution
-functions, `D = sup_x |F_con(x) - F_dis1(x)|`. SciPy chooses an exact or
-asymptotic p-value automatically based on the sample sizes.
+*Is the mean concordant height greater than, less than or indistinguishable
+from the mean discordant1 height?* Concordant trees taller than the discordant
+ones (`greater`) is `outflow_introgression`; discordant trees taller than the
+concordant ones (`less`) is `ghost_introgression`, the signature of a lineage
+that diverged before the triplet's root; neither is `ambiguous`.
 
-The KS test is deliberately omnidirectional. If the two height distributions are
-indistinguishable, the discordant gene trees coalesce on the same timescale as
-the concordant ones, which is what introgression between the *sampled* taxa
-looks like — hence `inflow_introgression` when this gate is not significant. An
-empty sample yields `(0.0, 1.0)`.
-
-Because the KS statistic responds to differences in shape, spread, and tails as
-well as location, a significant result does not by itself say which direction
-the heights moved. That is gate 3's job.
-
-### Gate 3 — Adaptive studentized permutation test
-
-**Question.** Is the *mean* concordant height greater than, less than, or
-indistinguishable from the mean discordant1 height?
-
-The answer carries a p-value and a confidence statement, so a direction is
-reported only when the separation is larger than sampling noise accounts for.
-The test lives in `ghostparser/orchestrator/permutation.py`.
-
-**The statistic.** For concordant sample `x` (size `nx`) and discordant1 sample
-`y` (size `ny`), the Welch-studentized mean difference is
+**Statistic.** For concordant sample `x` (size `nx`) and discordant1 sample
+`y` (size `ny`),
 
 ```
 T = (mean(x) - mean(y)) / sqrt(var(x)/nx + var(y)/ny)
 ```
 
-with `var` the unbiased sample variance (`ddof=1`). The denominator is the Welch
-standard error, and using it rather than a pooled one is essential here: the
-concordant sample is normally much larger than the discordant1 sample and the
-two have different variances. Under that combination a permutation test of the
-raw mean difference does *not* hold its nominal level, while the studentized
-version remains asymptotically valid (Janssen 1997, *Statistics & Probability
-Letters* 36(1), 9–21, https://doi.org/10.1016/S0167-7152(97)00043-6). This is
-the permutation analogue of the Behrens–Fisher problem.
+with unbiased variances. The Welch standard error (Welch 1947, *Biometrika*
+34(1-2), 28-35, https://doi.org/10.1093/biomet/34.1-2.28) matters because the
+concordant sample is usually much the larger and the two variances differ: a
+permutation test of the raw mean difference does not hold its level under
+that combination, while the studentized one stays asymptotically valid
+(Janssen 1997, *Statistics & Probability Letters* 36(1), 9-21,
+https://doi.org/10.1016/S0167-7152(97)00043-6).
 
-**The null.** Pool all `nx + ny` heights and randomly reassign them to two
-groups of the original sizes. Recompute `T` — including recomputing both
-variances from the permuted groups, which is what preserves the studentization —
-and repeat. The resulting distribution is the null distribution of `T` under the
-hypothesis that group membership carries no information.
-
-**p-values.** Three counts accumulate over the resamples: how many permuted
-statistics are `>= T_obs`, how many are `<= T_obs`, and how many exceed
-`|T_obs|` in absolute value. Each becomes a p-value with the add-one estimator
+**Permutation null.** The pooled heights are randomly reassigned to two
+groups of the original sizes and `T` is recomputed, variances included; the
+distribution of those values is the null under exchangeability. Each tail
+gets the add-one estimator
 
 ```
 p = (1 + count) / (1 + resamples)
 ```
 
-which counts the observed arrangement itself. The naive `count / resamples`
-ratio can report exactly zero and understates the true type-I error rate;
-the add-one form is the correctly-sized estimator for a Monte Carlo permutation
-p-value (Phipson & Smyth 2010, *Statistical Applications in Genetics and
-Molecular Biology* 9(1), Article 39, https://doi.org/10.2202/1544-6115.1585).
+which counts the observed arrangement itself and is the correctly sized
+Monte Carlo p-value (Phipson & Smyth 2010, *Statistical Applications in
+Genetics and Molecular Biology* 9(1), Article 39,
+https://doi.org/10.2202/1544-6115.1585). `perm_p_greater` is the upper tail,
+`perm_p_less` the lower. The two form a family of size two and are corrected
+against each other with the run's `p_value_correction` (under `bfn`,
+`min(1, 2p)`); a direction is called when exactly one corrected tail is at or
+below `alpha_perm`. Permutation p-values are never corrected across triplets:
+a Monte Carlo p-value cannot fall below `1/(resamples + 1)`, and a Bonferroni
+threshold of `alpha / (2 n_triplets)` sits below that floor for any sizable
+run. The direction test therefore carries no run-wide error control; a
+direction is conditional on the triplet having passed the first two gates.
 
-**Correction inside the test.** The two one-tailed p-values form a testing
-family of size two and are corrected against each other with the configured
-`p_value_correction` method before being compared to `alpha_perm`. With the
-default `bfn` this compares `2p` to `alpha_perm`, which is the conventional
-relationship between a two-sided level and its two one-sided halves. This
-correction is separate from and additional to the run-wide correction applied
-across triplets, which covers only the DCT and KS p-values.
+**Adaptive stopping.** The first batch draws `min_resamples`. After each
+batch a 95% binomial confidence interval (`ci_method`, default Wilson; Wilson
+1927, *Journal of the American Statistical Association* 22(158), 209-212,
+https://doi.org/10.1080/01621459.1927.10502953; Brown, Cai & DasGupta 2001,
+*Statistical Science* 16(2), 101-133, https://doi.org/10.1214/ss/1009213286)
+is placed around each tail's p-value and mapped onto the corrected scale. If
+`alpha_perm` lies outside both intervals the decision cannot flip and the test
+stops with `perm_converged = True`; otherwise the batch grows by a quarter and
+the test continues until the total reaches `max_resamples`, the last batch
+drawn whole. The interval is computed on the same `count` and `n` as the
+p-value, so it brackets the value reported.
 
-**Adaptive stopping.** A Monte Carlo p-value is an estimate, so the run keeps
-resampling until the *decision* is safe rather than until a fixed budget is
-spent. The first batch draws `min_resamples`. After each batch, a binomial
-confidence interval at 95% is placed around each one-tailed p-value and
-rescaled onto the corrected scale. If `alpha_perm` lies outside both intervals,
-no further resampling can flip the comparison and the run stops with
-`perm_converged = True`. Otherwise the batch size grows by 25% and the run
-continues until the total reaches `max_resamples`, after which it stops with
-`perm_converged = False` and a `max_resamples_reached` note. `metrics.txt`
-reports how many triplets landed there; which ones is in the results TSV's
-`perm_converged` and `perm_note` columns.
+**Guards.** Four conditions skip the test and report `inconclusive` with a
+`perm_note`: a group with fewer than two observations
+(`insufficient_group_size`), a pooled sample with no spread
+(`zero_pooled_variance`), two internally constant groups with different means
+(`degenerate_observed_scale`), and fewer distinct group assignments than
+`min_resamples` (`insufficient_permutation_support`, checked up to a pooled
+size of 40). `both_tails_significant` marks an inconsistency a coherent null
+cannot produce; no direction is reported.
 
-`max_resamples` is the point at which the run stops asking for more, not a hard
-cap on the total. The batch that crosses it is drawn at its full grown size
-rather than trimmed to the remaining budget: sampling is vectorized, so a batch
-costs the same per permutation however large it is, and the extra draws tighten
-the interval that decides convergence instead of being spent on a stub that can
-barely move it. `perm_n_resamples` can therefore exceed `max_resamples` by up to
-one batch — about a quarter of the total when the budget spans several batches,
-and more when `max_resamples` sits close to `min_resamples`, where a single
-grown batch is comparable to the whole budget.
+**Null skewness.** `perm_null_skew` is the sample skewness of the permuted
+statistics. It never drives a decision; a large magnitude means a few extreme
+heights in the smaller group dominate the resampling, which is worth a look
+at the underlying alignments.
 
-The confidence level is fixed at 95%. It governs how sure the stopping rule must
-be before it commits — an internal precision knob rather than a statistical
-choice the analysis turns on — so it is not exposed as a config key. It is also
-a different quantity from `alpha_perm`, which is the threshold the p-value is
-compared *against*.
+**Equivalence.** A non-significant pair of tails means only that no direction
+was established. Whether the two means were *shown* to be close needs its own
+test, because absence of evidence is not evidence of absence. TOST (two
+one-sided tests; Schuirmann 1987, *Journal of Pharmacokinetics and
+Biopharmaceutics* 15(6), 657-680, https://doi.org/10.1007/BF01068419) turns
+the null around: with margin `delta`, it tests `mean(x) - mean(y) <= -delta`
+and `>= +delta` one-sidedly, and rejecting both confines the difference to
+`(-delta, +delta)`. Each null is tested at its boundary by shifting the
+concordant sample by `±delta` on the same permutations the direction test
+drew; the TOST p-value is the larger of the two, and `equivalent` needs it at
+or below `alpha_perm`. No multiplicity correction is needed: rejecting a union
+of nulls only when every component rejects is an intersection-union test,
+which holds its level whenever its components do (Berger 1982,
+*Technometrics* 24(4), 295-300, https://doi.org/10.2307/1267823). See Lakens
+2017 (*Social Psychological and Personality Science* 8(4), 355-362,
+https://doi.org/10.1177/1948550617697177) on pairing it with a significance
+test.
 
-#### How the interval is computed, and why it matches the p-value
-
-The randomness in a Monte Carlo permutation test lives entirely in one place:
-how many of the `n` drawn permutations landed beyond the observed statistic.
-That count is `Binomial(n, p_true)`, where `p_true` is the exact permutation
-p-value that full enumeration would give. Everything the stopping rule needs is
-a statement about how far the count could be from `n · p_true`.
-
-`statsmodels.stats.proportion.proportion_confint(count, nobs, alpha, method)`
-answers exactly that. Its point estimate is `q = count / nobs`, and the default
-`wilson` method inverts the **score test**: it returns every `p₀` for which the
-score statistic stays inside the normal critical value,
-
-```
-|q - p₀| / sqrt(p₀(1 - p₀) / n)  ≤  z
-```
-
-Solving that quadratic in `p₀` gives the closed form statsmodels implements:
-
-```
-center = (q + z²/2n) / (1 + z²/n)
-half   = z · sqrt( q(1-q)/n + z²/4n² ) / (1 + z²/n)
-```
-
-Note the interval is *not* centered on `q` — it is pulled toward ½ by the
-`z²/2n` term, which is precisely why Wilson keeps close-to-nominal coverage near
-0 and 1 where the plain normal ("Wald") interval fails and can even run outside
-[0, 1] (Brown, Cai & DasGupta 2001, *Statistical Science* 16(2), 101–133,
-https://doi.org/10.1214/ss/1009213286). That matters here because the p-values
-this test produces are routinely near the floor. Clopper–Pearson (`beta`) is
-also available and is guaranteed-coverage rather than approximate, but it is
-conservative, so it would keep resampling past the point where the decision is
-already settled.
-
-**On method alignment.** The p-value and its interval are not two independent
-estimates that might disagree — they are two summaries of the *same* pair of
-numbers, `count` and `n`. GhostParser reports the add-one p-value
-`(1 + count) / (1 + n)`, and passes `(count + 1, n + 1)` to
-`proportion_confint`, whose own point estimate `count / nobs` then works out to
-that identical value. So the interval brackets the quantity actually reported,
-not one differing from it by `1/n`. The one approximation is that the interval
-treats all `n + 1` arrangements as random when one of them — the observed
-arrangement the add-one term accounts for — is fixed; this makes the interval
-very slightly conservative, which is the safe direction for a stopping rule.
-
-Because both corrections are monotone in each p-value, the interval is mapped
-onto the corrected scale by the same factor the point estimate received before
-being compared against `alpha_perm`.
-
-**The sampling optimization.** A naive implementation shuffles the pooled array
-once per permutation in Python, which is far too slow to run inside every
-bootstrap iteration. `permutation._permutation_statistics` instead draws a whole
-batch at once with three changes:
-
-1. *Only the smaller group is sampled; the larger one is derived exactly.* A
-   permutation partitions the pooled values into two groups, so the larger group
-   is precisely the complement of the smaller — nothing about it is unknown or
-   estimated. The Welch statistic needs only a mean and a variance from each
-   group, and both are functions of two running totals. Writing `S` and `Q` for
-   the pooled sum and sum-of-squares (computed once, before the loop) and `s`
-   and `q` for the drawn group's:
-
-   ```
-   S = sum(pooled)        Q = sum(pooled²)
-   s = sum(drawn)         q = sum(drawn²)
-   ```
-
-   the drawn group of size `k` and its complement of size `m = n - k` have
-
-   ```
-   mean_drawn      = s / k
-   var_drawn       = (q - k · mean_drawn²) / (k - 1)
-
-   mean_complement = (S - s) / m
-   var_complement  = ((Q - q) - m · mean_complement²) / (m - 1)
-   ```
-
-   The variance lines are the `E[X²] - E[X]²` identity in unbiased (`ddof=1`)
-   form. This is an exact algebraic rearrangement, not an approximation: the
-   recovered `var_complement` equals what `numpy.var(complement, ddof=1)` would
-   return from the values themselves. The larger group's values are therefore
-   never gathered at all. Since the discordant1 sample is usually the smaller
-   one, the gathered data shrinks by roughly the size ratio.
-2. *A partial partition replaces the shuffle.* Taking the `k` smallest of `n`
-   uniform random keys yields a uniformly random size-`k` subset, and
-   `numpy.argpartition` finds them in one linear pass rather than sorting the
-   row or running Fisher–Yates over it.
-3. *The pooled array is mean-centered once up front.* Centering leaves the mean
-   difference and both variances unchanged, but it is what makes the subtraction
-   above safe in floating point. `Q - q` is a difference of two positive sums of
-   squares, and `m · mean²` is near zero once the pooled mean is zero, so
-   neither step cancels significant digits. Without centering,
-   `sum_of_squares - m · mean²` becomes a difference of two nearly equal large
-   numbers and loses most of its precision — the same failure mode as the
-   degenerate-scale guard, but silent.
-
-The exactness of step 1 is not taken on trust:
-`test_permutation_statistics_match_exhaustive_enumeration` enumerates all
-`C(9, 4) = 126` group assignments of a small case, evaluates each through the
-plain scalar statistic, and requires the vectorized sampler to emit exactly that
-set of values and nothing else. Measured directly on a 40-element pooled sample,
-the reconstructed complement variance differs from `numpy.var(complement,
-ddof=1)` by about `7e-18` — floating-point rounding, not method error — and
-centering roughly halves even that.
-
-Batches are chunked so the matrix of random keys stays near 16 MB, which matters
-because every pool worker runs its own tests concurrently.
-
-**Guards.** Four conditions short-circuit the test to `inconclusive` before any
-resampling, each recorded in the `perm_note` column:
-
-| Note | Condition | Why |
-| --- | --- | --- |
-| `insufficient_group_size` | Either group has fewer than 2 observations | No unbiased variance exists, so the statistic is undefined. |
-| `zero_pooled_variance` | All pooled values are effectively identical | Nothing to detect and no scale to measure it on. |
-| `degenerate_observed_scale` | Both groups internally constant, means differ | The statistic divides a real difference by numerical noise and reports the p-value floor regardless of how little data backs it. |
-| `insufficient_permutation_support` | `C(n, k) < min_resamples` | The permutation distribution has fewer distinct values than the requested batch, so its resolution is capped well short of `alpha_perm`. |
-
-The scale guards compare against a small fraction of the data's own magnitude
-rather than against exact zero, because a sample of nominally identical values
-such as `[0.9] * 10` has a floating-point variance around `1e-33`, not `0`.
-
-**Null skewness.** The direction comes from the pair of corrected one-tailed
-tests, each of which is valid whatever shape the permutation null takes. The
-shape is still worth knowing, so the sample skewness of the null is accumulated
-across the batches and reported as `perm_null_skew`. It never drives a decision.
-
-The value is a plain skewness of the drawn statistics: `0` for a symmetric null,
-positive for a long right tail, negative for a long left tail. It is computed
-from running power sums rather than by retaining the draws, so it costs nothing
-in memory, and it is reported for **every** test that resampled — including the
-`equivalent` and `inconclusive` ones, where the null can be just as asymmetric as
-anywhere else.
-
-What makes a null asymmetric here is a handful of extreme heights in the smaller
-group. A permutation reassigns them, and the statistic depends sharply on *how
-many* land in the small group, so the null separates into clusters rather than
-forming one smooth curve. On a 700-vs-19 case carrying four extreme heights,
-90% of permutations put all four in the large group and land near `T = +1.9`,
-10% put one in the small group and land near `T = -0.9`, and 0.5% put two and
-land near `T = -1.4`. Skewness of `-2.2` is that cluster structure showing up in
-the third moment.
-
-Reading it: values near zero mean the null behaved like a symmetric reference
-distribution and the p-values can be read at face value. Large magnitudes mean a
-few gene trees dominate the smaller group's height distribution, so the group is
-heterogeneous — a subset of gene trees far taller or shorter than the rest. That
-is worth following up on the underlying alignments, but it does not invalidate
-the directional call: the one-tailed permutation p-values are computed against
-the true null whatever its shape. Tree heights are bounded below by zero and
-routinely right-skewed, so mild asymmetry is the norm; `metrics.txt` reports the
-median and maximum magnitude and how many triplets reach `|skew| >= 0.5`.
-
-**Equivalence: separating "no difference found" from "shown to be the same".**
-A non-significant directional pair means only that the data did not establish a
-direction. It does not mean the two means are alike — that conclusion needs its
-own test, because absence of evidence is not evidence of absence. When neither
-tail is significant, the run therefore performs two one-sided tests (TOST) at an
-equivalence margin `EQUIVALENCE_DELTA = 0.5` and splits the outcome:
-
-| `perm_decision` | Meaning |
-| --- | --- |
-| `equivalent` | Both shifted nulls rejected: the mean heights were *shown* to differ by less than the margin. |
-| `inconclusive` | At least one was not: nothing was established in either direction. |
-
-Both classify the triplet as `ambiguous`; the distinction is what the column
-reports, not a fourth classification.
-
-The two nulls are `mean(x) - mean(y) <= -delta` and `>= +delta`. Each is tested
-by shifting the concordant sample by the margin — which makes the two samples
-exchangeable under that null — and then running the ordinary permutation
-machinery on the shifted data. The TOST p-value is `max(p_lower, p_upper)`, and
-this pair needs *no* multiplicity correction: rejecting a union of nulls only
-when every component test rejects is an intersection-union test, which holds its
-nominal level whenever its components do (Berger 1982, *Technometrics* 24(4),
-295–300, https://doi.org/10.2307/1267823). See Schuirmann 1987 (*Journal of
-Pharmacokinetics and Biopharmaceutics* 15(6), 657–680,
-https://doi.org/10.1007/BF01068419) for the procedure and Lakens 2017 (*Social
-Psychological and Personality Science* 8(4), 355–362,
-https://doi.org/10.1177/1948550617697177) for its use as a routine companion to
-a significance test.
-
-**Why the margin is an effect size and not a number of standard errors.** The
-margin is `0.5` *pooled standard deviations* — a Cohen's *d* of 0.5, the
-conventional "medium" effect. Being dimensionless, it applies unchanged to every
-triplet however large its tree heights are, which is what a per-triplet margin
-has to do.
-
-Expressing it in standard-error units would be dimensionless too, and it is the
-obvious thing to reach for given that the test statistic is already studentized
-— but it does not work. `T` is a pivot: its null distribution has a spread near
-1 at *every* sample size. A margin of half a standard error would therefore sit
-permanently inside the null's own scatter, and no quantity of data would move
-it. Measured directly on samples drawn from one distribution, with 4000
-resamples:
-
-| observations per group | `p_tost`, margin in SE units | `p_tost`, margin in pooled SD |
-| --- | --- | --- |
-| 8 | 0.997 | 0.993 |
-| 30 | 0.464 | 0.071 |
-| 100 | 0.623 | 0.004 |
-| 400 | 0.709 | 0.0002 |
-| 2000 | 0.918 | 0.0002 |
-
-The SE-unit column never approaches `alpha_perm` and does not trend with sample
-size; equivalence would be unreachable by construction. The effect-size margin
+The margin is `delta = 0.5 sqrt((var(x) + var(y)) / 2)`: a Cohen's *d* of 0.5,
+the conventional medium effect (Cohen 1988, *Statistical Power Analysis for the
+Behavioral Sciences*, 2nd ed., Lawrence Erlbaum). An effect-size margin
 shrinks relative to the standard error as gene trees accumulate, so more data
-makes equivalence easier to establish, which is the behaviour the test needs.
-`test_equivalence_needs_enough_data_to_conclude` pins both ends of that.
+makes equivalence easier to establish; a margin in standard-error units would
+sit permanently inside the null's own spread, because the studentized
+statistic is a pivot, and equivalence could never be reached. `equivalent` and
+`inconclusive` both classify as `ambiguous`; the distinction is what the
+column reports.
 
-The equivalence step runs only in the point estimate, and only when no direction
-was found. Bootstrap iterations skip it: `equivalent` and `inconclusive` classify
-identically, so an iteration's vote can never depend on which of the two it is.
+**Known limitation.** The studentized permutation test is asymptotically
+valid, not exact: its type-I error rate inflates when the smaller group falls
+below roughly 30 observations *and* carries the larger spread. Treat
+directional calls on triplets with very few discordant1 gene trees as
+provisional; `n_dis1` is in the results for that reason.
 
-**The interval on the studentized difference.** `perm_stat_ci_low` and
-`perm_stat_ci_high` bracket `perm_statistic` — the observed `T` — at the
-`1 - 2 * alpha_perm` percentile level of its bootstrap distribution. Each
-bootstrap iteration recomputes `T` on its own resample of the gene trees, and
-the interval is the empirical percentile range of those values.
+## Decisions
 
-This is a different object from the `perm_p_*` intervals used by the stopping
-rule, which are binomial intervals around a p-value. This one is an interval on
-the *effect*, and it answers the question a p-value cannot: how large the
-separation might plausibly be, in standard errors. The `1 - 2 * alpha_perm`
-level is the one at which an interval and a one-sided test agree, so an interval
-excluding zero corresponds to a directional rejection at `alpha_perm`. Reading
-it alongside `perm_decision` distinguishes a direction that is well separated
-from one that only just cleared the threshold. It is reported only when the
-bootstrap is enabled and at least one iteration produced two observations in
-both groups; otherwise both columns are empty.
+### The cascade
 
-**Known limitation.** The studentized permutation test is *asymptotically*
-valid, not exact. Its type-I error rate sits close to `alpha_perm` across most
-sample shapes, but it inflates when the smaller group falls below roughly 30
-observations *and* carries the larger spread. At `n_dis1 = 20` against
-`n_con = 200` with a 3× spread ratio the empirical rate reaches about 10% at a
-nominal 5%. Treat directional calls on triplets with very few discordant1 gene
-trees as provisional; the `n_dis1` column is in the results TSV for exactly this
-reason.
+"Significant" means `corrected p <= alpha` at every gate. The first gate that
+is not significant settles the call:
 
-**Inside the bootstrap.** Each bootstrap iteration re-runs the whole decision, so
-the direction test runs there at one fifth of the configured `min_resamples` and
-`max_resamples` (`permutation.bootstrap_resample_budget`), and only for
-iterations that reach gate 3 at all. The bootstrap aggregates many iterations
-into a single support value, which absorbs the extra per-iteration Monte Carlo
-noise the reduced budget introduces. The point estimate runs the full budget and
-runs for every triplet, including ones the earlier gates already settled, so the
-permutation columns are populated throughout the results TSV. How the iterations'
-own DCT and KS p-values are corrected is described under
-[Correction inside the bootstrap](#correction-inside-the-bootstrap).
-
-**Why this correction is within-triplet only.** The one-tailed pair is
-corrected against itself and never across triplets. That is a hard constraint,
-not a preference: a Monte Carlo p-value cannot fall below `1/(n_resamples + 1)`
-(the add-one estimator's floor), which is `4.0e-4` at `min_resamples = 2500`.
-Correcting across `n` triplets would require the raw p-value to clear
-`alpha / (2n)` — already `2.5e-4` at only 100 triplets, below what the test can
-express, so every triplet would come back `ambiguous` no matter how strong the
-signal. At `C(83, 3) = 91,881` triplets the threshold is `2.7e-7` and would need
-roughly 3.7 million resamples per triplet.
-
-The DCT and KS p-values have no such floor because they are analytic rather than
-sampled: a chi-square on counts `1000/50` gives `p = 6.2e-189`, and multiplying
-by 91,881 still leaves `5.7e-184`. Correcting an exact p-value costs nothing;
-correcting a sampled one spends resolution that had to be bought with compute.
-That is why those two are corrected run-wide and this one is not.
-
-A consequence worth stating plainly: gate 3 therefore carries no across-triplet
-error control. Selecting triplets on gates 1 and 2 and then testing gate 3 at
-`alpha` is post-selection inference and does not inherit the earlier gates'
-control, so a direction call is conditional on that selection — descriptive
-rather than confirmatory.
-
-**What a direction means.** Every triplet reaching gate 3 is decided here, so
-an `outflow` or `ghost` call always rests on a corrected one-tailed p-value
-below `alpha_perm`. A separation the data cannot resolve at that threshold is
-reported `equivalent` or `inconclusive` and classified `ambiguous`.
-
-### Correction inside the bootstrap
-
-`bootstrap_value` is only meaningful if the iterations answer to the same
-decision rule the reported classification does. The point estimate compares
-*corrected* p-values to `alpha_dct` and `alpha_ks`, so every bootstrap iteration
-must too — judging iterations on raw p-values while reporting a classification
-made on corrected ones measures two different rules and produces rows whose
-support contradicts their own classification.
-
-The obstacle is that a correction is a property of a *family*, not of a single
-p-value, and the family here spans triplets: iteration `i` of triplet A belongs
-with iteration `i` of every other triplet. A streaming engine that finishes one
-triplet before starting the next does not have the rest of the family in hand.
-The orchestrator therefore splits methods by what they need:
-
-| `p_value_correction` | When the iteration is corrected | Direction test skipped once a gate fails |
+| Gate | Not significant | Significant |
 | --- | --- | --- |
-| `no` | Inline — nothing to apply | Yes |
-| `bfn` | Inline — the multiplier is the triplet count, known before streaming | Yes |
-| `holm`, `fdr_bh`, `fdr_by` | Deferred — raw p-values parked per iteration, corrected across triplets after the stream | Yes |
-| `fdr_tsbh` | Deferred | **No** |
+| 1 · DCT | `no_introgression` | continue |
+| 2 · THT | `inflow_introgression` | continue |
+| 3 · direction | `equivalent`/`inconclusive` → `ambiguous` | `greater` → `outflow_introgression`; `less` → `ghost_introgression` |
 
-Deferred iterations store their raw DCT and KS p-values and their direction code
-in a `DeferredBootstrapRecord`; `_resolve_deferred_bootstrap` then corrects
-iteration `i` across every triplet at once, classifies the whole grid, and tallies
-each triplet's votes. The DCT and KS tests always run in a deferred iteration,
-even below a failed gate, so each per-iteration family holds exactly one p-value
-per triplet — the same family the point estimate is corrected over.
+`decision_gate` names the gate that settled the triplet (`DCT`, `THT`,
+`PERM`). A test reported on a row below its gate took no part in the call.
+Nothing is classified while the triplets are measured: the decision is made
+once, after the run-wide correction, and is the single decision point.
 
-**Why skipping the direction test is sound.** Once a raw gate has failed, the
-cascade's answer is already fixed for any correction that cannot *lower* a
-p-value: `p_raw > alpha` implies `p_adjusted > alpha`, so the corrected gate
-fails too and nothing below it can change the classification. Skipping the
-direction test there costs nothing, and it is the run's largest cost centre.
+Only what the cascade can read is measured. The direction test is skipped
+below a settled gate, and under `no`/`bfn` the tree-height test is skipped
+below a settled count gate; those rows leave the columns empty, with
+`perm_note = direction_test_not_consulted` on a skipped direction test.
+`diagnostic: true` measures every test for every triplet and changes no
+result. Both skips are safe because every supported correction is monotone
+(no corrected p-value is below its raw value, so a gate that failed raw cannot
+clear corrected) and because permutation p-values are corrected within the
+test only, so an unrun direction test moves no other triplet's numbers.
 
-That property holds for four of the five methods by construction:
+### Correction across the run
 
-- **Bonferroni** multiplies by the family size `n >= 1`, so `p_adj = min(1, np) >= p`.
-- **Holm** (Holm 1979, *Scandinavian Journal of Statistics* 6(2), 65–70,
-  https://www.jstor.org/stable/4615733) adjusts the `j`-th smallest by
-  `(n - j + 1) · p_(j)` under a running maximum; the multiplier is at least 1 for
-  every `j <= n`.
-- **Benjamini–Hochberg** (Benjamini & Hochberg 1995, *JRSS B* 57(1), 289–300,
-  https://doi.org/10.1111/j.2517-6161.1995.tb02031.x) uses `n/j · p_(j)` under a
-  running minimum, and `n/j >= 1` for every `j <= n`.
-- **Benjamini–Yekutieli** (Benjamini & Yekutieli 2001, *Annals of Statistics*
-  29(4), 1165–1188, https://doi.org/10.1214/aos/1013699998) multiplies BH by the
-  harmonic factor `sum(1/i) >= 1`, so it is uniformly larger still.
+The DCT p-values of all triplets form one family and the KS p-values another;
+each is corrected once, by `p_value_correction`, with the family size equal
+to the triplet count. For the `j`-th smallest of `n` p-values:
 
-`fdr_tsbh` is the exception and is excluded. Two-stage BH (Benjamini, Krieger &
-Yekutieli 2006, *Biometrika* 93(3), 491–507,
-https://doi.org/10.1093/biomet/93.3.491) first *estimates* the number of true
-null hypotheses `n₀ <= n` and substitutes it for `n`, so the multiplier `n₀/j`
-can fall below 1 and an adjusted p-value can land beneath its raw value. Measured
-over 20,000 random p-value families, `bonferroni`, `holm`, `fdr_bh` and `fdr_by`
-produced zero such cases while `fdr_tsbh` did so in 19,747 of them, with a worst
-gap of `-0.987`. An iteration that failed a raw gate under `fdr_tsbh` could
-genuinely pass the corrected one, so under that method every test runs
-unconditionally. `test_short_circuiting_methods_never_lower_a_p_value` and
-`test_two_stage_bh_can_lower_a_p_value_and_so_never_short_circuits` assert both
-halves of this.
+| Method | Adjusted value | Controls |
+| --- | --- | --- |
+| `bfn` | `min(1, n p)` (Dunn 1961, *JASA* 56(293), 52-64, https://doi.org/10.1080/01621459.1961.10482090) | family-wise error rate |
+| `holm` | `(n - j + 1) p_(j)` under a running maximum (Holm 1979, *Scandinavian Journal of Statistics* 6(2), 65-70) | family-wise error rate |
+| `fdr_bh` | `(n / j) p_(j)` under a running minimum (Benjamini & Hochberg 1995, *JRSS B* 57(1), 289-300, https://doi.org/10.1111/j.2517-6161.1995.tb02031.x) | false discovery rate, independent or positively dependent tests |
+| `fdr_by` | BH times `sum_(i=1..n) 1/i` (Benjamini & Yekutieli 2001, *Annals of Statistics* 29(4), 1165-1188, https://doi.org/10.1214/aos/1013699998) | false discovery rate under any dependence |
+| `no` | `p` | nothing |
 
-The family size is the triplet count regardless of any skipping, so the
-correction never depends on the optimization. Whichever tier applies, the
-resample stream is untouched: the bootstrap draws its resamples from a generator
-independent of the permutation tests', so a fixed `bootstrap_seed` reproduces the
-same resamples — and the same `perm_stat_ci_*` interval — under every correction
-method.
+Every multiplier is at least 1, which is the monotonicity the skips above rely
+on. Under `no` and `bfn` a member's corrected value follows from its own raw
+value and the count, so a member nothing reads can be left unmeasured; the
+rank-based methods read every member, so the tree-height test is measured
+for every triplet under them.
+
+### Bootstrap support
+
+`bootstrap_value` is the fraction of `bootstrap_options.iterations` resamples
+of the triplet's gene trees (drawn with replacement; Efron 1979, *Annals of
+Statistics* 7(1), 1-26, https://doi.org/10.1214/aos/1176344552) whose rerun of
+the cascade lands on the reported classification; `all_bootstrap` gives the
+fraction for every class. Iterations are judged against the same corrected
+thresholds as the reported classification (under `no`/`bfn` as they run,
+under the rank-based methods once every triplet's p-value for the same
+iteration index is in), so the support measures the decision actually made.
+Each iteration's direction test runs at a fifth of the resample budget without
+the equivalence step, and a guard vote counts as `ambiguous`.
+
+`bootstrap_perm_stat_ci_low` / `bootstrap_perm_stat_ci_high` bracket the
+observed `T` between the `alpha_perm` and `1 - alpha_perm` percentiles of its
+bootstrap distribution: the level at which an interval and a one-sided test
+agree, so an interval excluding zero corresponds to a directional rejection,
+and a direction can be read as an effect size in standard errors rather than
+only as a threshold crossing.
+
+`seed` drives every random draw. Each triplet derives its own stream from
+`(seed, triplet)`, so a run is reproducible at any worker count.
 
 ## Shape diagnostics
 
-Off by default, enabled with `shape_diagnostics: true`. Fifteen columns
-describing the shape of each height group — `con_*`, `dis1_*`, `dis2_*`, the
-same three groups the tests are built on. Nothing here feeds a classification;
-they exist to say what the height distributions actually look like.
+`shape_diagnostics: true` adds five descriptive columns per height group
+(`con_*`, `dis1_*`, `dis2_*`) to the results TSV; nothing in the cascade reads
+them.
 
 | Column | Meaning |
 | --- | --- |
-| `<group>_n_modes` | Peaks in a Gaussian KDE at Scott's bandwidth. |
-| `<group>_modes_p` | Silverman p-value for "the density is unimodal". |
+| `<group>_n_modes` | Peaks in a Gaussian kernel density estimate at Scott's bandwidth (Scott 1992, *Multivariate Density Estimation*, Wiley). A count at one bandwidth: a strongly skewed unimodal sample can read as several. |
+| `<group>_modes_p` | Silverman's critical-bandwidth bootstrap p-value for unimodality (Silverman 1981, *JRSS B* 43(1), 97-99, https://doi.org/10.1111/j.2517-6161.1981.tb01155.x): the smallest bandwidth giving one mode is found, and resamples from that smoothed density are counted for still needing more. At or below `alpha` is evidence of a second mode; it needs about three standard deviations of separation to see one. |
 | `<group>_skew` | Sample skewness. |
-| `<group>_excess_kurtosis` | Sample excess kurtosis (`0` for a normal). |
-| `<group>_tail_xi` | Generalized-Pareto shape of the upper decile. |
+| `<group>_excess_kurtosis` | Sample excess kurtosis, `0` for a normal. |
+| `<group>_tail_xi` | Shape parameter of a generalized Pareto distribution fitted to the exceedances over the group's 90th percentile (peaks over threshold; Pickands 1975, *Annals of Statistics* 3(1), 119-131, https://doi.org/10.1214/aos/1176343003): positive is a power-law tail, `0` exponential decay, negative a bounded tail. |
 
-**Counting peaks.** `n_modes` is a raw count at one bandwidth, and a KDE mode
-count is a property of the bandwidth as much as of the data. On a sample of 400
-draws the count reads 3 for an exponential and 4 for a Pareto, both of which are
-unimodal by construction. Read it as a description of the smoothed density, not
-as a number of components.
+Groups with fewer than 20 observations, or no spread, leave the columns empty;
+`tail_xi` also needs 10 exceedances. The modality bootstrap is the expensive
+part, which is why the diagnostics are off by default.
 
-Two unrelated resampling procedures are both called a bootstrap in this
-codebase. The **run bootstrap** (`bootstrap_options.iterations`) resamples gene
-trees to produce `bootstrap_value`, and never touches these diagnostics. The
-**smoothed bootstrap** below is internal to the modality test: it resamples from
-a smoothed density to calibrate one p-value, and is what
-`MODALITY_BOOTSTRAP_RESAMPLES` counts.
+## Preflight data check
 
-`modes_p` is the inferential column. It is Silverman's critical-bandwidth
-bootstrap test (Silverman 1981, *Journal of the Royal Statistical Society B*
-43(1), 97–99, https://doi.org/10.1111/j.2517-6161.1981.tb01155.x): find the
-smallest bandwidth `h` whose KDE has one mode, then resample from the density
-smoothed at exactly that `h` and count how often a resample still needs more
-smoothing. A `p` at or below `alpha` says the observed `h` was implausibly large
-for a unimodal density — evidence of a second mode. Each replicate costs one
-mode count rather than a second bisection, because mode count is monotone in
-bandwidth: a resample needs a larger critical bandwidth exactly when it still
-has too many modes at `h`.
-
-Its calibration, on samples of 400:
-
-| Sample | `modes_p` | Correct? |
-| --- | --- | --- |
-| normal | 0.53–0.60 | unimodal, not rejected |
-| lognormal | 0.38–0.45 | unimodal, not rejected |
-| exponential | 0.16–0.25 | unimodal, not rejected |
-| gamma(2) | 0.35–0.40 | unimodal, not rejected |
-| Pareto(3) | 0.10–0.11 | unimodal, not rejected |
-| two normals, 2 SD apart | 0.28–0.29 | missed |
-| two normals, 3 SD apart | 0.005 | detected |
-| two normals, 4 SD apart | 0.005 | detected |
-
-So it holds its level on strongly skewed unimodal shapes — the case a mode count
-or a BIC-selected Gaussian mixture gets wrong — at the price of needing roughly
-three standard deviations of separation before it sees two components. A
-non-significant `modes_p` is therefore weak evidence of unimodality and a
-significant one is strong evidence against it.
-
-One known failure: a uniform density has no interior mode at all, and its hard
-edges cannot be reproduced by a Gaussian smoothed bootstrap, so the test rejects
-it. Tree heights are not uniform, but a group whose heights are near-constant
-across an interval will read as multimodal.
-
-**Tail weight.** `tail_xi` fits `scipy.stats.genpareto` to the exceedances over
-the group's 90th percentile, with the location pinned at the threshold. The
-shape parameter is the tail index: positive is a power-law tail whose moments
-above order `1 / xi` do not exist, `0` is exponential decay, negative is a tail
-with a finite upper endpoint at `threshold - sigma / xi`. Peaks-over-threshold is
-the estimator to use here rather than Hill's, which is non-negative by
-construction — it cannot represent a bounded tail at all, and it reads about
-`0.34` for an exponential and `0.25` for a lognormal, both of which have
-`xi = 0`.
-
-**Guards.** Groups with fewer than `SHAPE_MIN_OBSERVATIONS` (20) observations,
-or with no spread, leave all five columns empty. `tail_xi` additionally needs
-`SHAPE_MIN_TAIL_EXCEEDANCES` (10) points above the threshold, so it stays empty
-below 100 observations even when the moments are reported. Below a few hundred
-observations the tail index is noisy enough that its sign is the only part worth
-reading.
-
-**Where they appear.** The results TSV carries them as `con_*`/`dis1_*`/`dis2_*`,
-matching its other per-group naming. `summary_statistics.tsv` repeats the same
-values as `concordant_*`/`discordant1_*`/`discordant2_*`, matching *its* naming,
-so a model trained on that file gets the shape of each height group alongside
-the 63 metric columns. Both column sets are derived from what the run measured
-rather than from the setting, so neither file can advertise a measurement that
-did not happen.
-
-**Cost.** The modality bootstrap is the expensive part: about 0.2 s per group,
-so roughly 0.6 s of extra CPU per triplet. That is why the default is off —
-across a large taxon set it dominates everything else the run does. The
-diagnostics are measured once per triplet, in the point estimate, from the
-observed heights. Bootstrap iterations never recompute them: an iteration
-resamples the gene trees, so its groups are a different sample, and measuring
-each one would multiply the cost by the iteration count.
+`--preflight-data-check` roots and reads the trees exactly as a run would,
+collects every structural problem instead of stopping at the first, writes
+`preflight_data_check.txt` and exits without analysis. The report groups the
+issues by category with counts and examples, attributes them to the species
+tree or the gene trees, accounts for every triplet/gene-tree pair (measured,
+unresolved, or skipped for a missing taxon), and reports the gene-tree
+rooting counts described under *Rooting*. It walks at most
+`preflight_triplet_cap` triplets (default 15,000; `0` lifts it) and says so
+when the cap binds. Passing means the data can be processed, not that the
+result is meaningful. `sample_configs/orchestrator_preflight.yaml` is a
+ready-made check.
 
 ## Outputs
 
 The output folder is reset before the run under the default `overwrite: true`,
-so it must be a directory of its own. Pointing it at a directory that holds
-input trees deletes them. Consolidation resets its own `consolidation/`
-subfolder the same way, which is why it gets a subfolder rather than writing
-beside the results TSV.
+so give it a directory of its own, never one holding the input trees.
 
-Written under the output folder:
+- `orchestrator_triplet_results.tsv`: one row per triplet (columns below).
+- `summary_statistics.tsv`: with `generate_summary_stats`: per triplet, the
+  mean, median, mode, variance, entropy, minimum and maximum of the average
+  tree height, the internal branch and the sister distance, for the
+  concordant, discordant1 and discordant2 gene trees (63 columns), plus the
+  identity columns, the counts, the classification and `bootstrap_value`.
+- `processed_<species tree>` / `processed_<gene trees>`: the cleaned, rooted
+  and pruned trees, in the input labels.
+- `metrics.txt`: the run parameters, then one block per stage (species tree,
+  gene trees, inference, introgression maps) giving what it processed, its
+  timings and what it found: the rooting counts, the classification and gate
+  counts and the permutation-test convergence summary.
+- `consolidation/`: the introgression maps and their TSV matrices.
 
-- `orchestrator_triplet_results.tsv` — one row per triplet.
-- `summary_statistics.tsv` — only when `generate_summary_stats` is set;
-  per-triplet topology/metric summary statistics (63 metric columns covering
-  mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/
-  sister-distance for concordant/discordant1/discordant2). The `discordant1_*`
-  columns describe whichever discordant topology is more frequent — the same
-  group named by the `dis1_topology` column and used by all three tests — and
-  `discordant2_*` the other one. The roles are resolved per triplet from the
-  observed counts, not fixed to a topology label, so a triplet where `AC|B`
-  outnumbers `BC|A` has its `AC|B` gene trees under `discordant1_*`. With
-  `shape_diagnostics` also set, the fifteen shape columns follow the same
-  naming and are appended after the metric columns.
-- `processed_<species tree>` / `processed_<gene trees>` — cleaned, rooted trees.
-- `metrics.txt` — per-stage wall/CPU timing and run parameters.
-- `consolidation/` — the combined heatmap/bar-chart plot and TSV matrices from
-  `consolidation.py`, unless `--no-consolidation` is given. Consolidation
-  writes into this dedicated subfolder so its own output-directory reset never
-  removes the run folder's results TSV, processed trees, or the open
-  `metrics.txt`.
+### Results columns
 
-### How each results column is produced
+| Column | Meaning |
+| --- | --- |
+| `triplet`, `abc_mapping`, `species_tree` | The `(A, B, C)` labels with A and B the species-tree sisters, the same as `A=…;B=…;C=…`, and the triplet's species subtree. |
+| `dis1_topology` | `BC` or `AC`: the more frequent discordant topology (ties to `BC`). |
+| `n_con`, `n_dis1`, `n_dis2`, `analyzed_trees` | Gene trees per topology, and the number carrying all three taxa with a resolved topology. |
+| `most_frequent_matches_concordant` | Whether the concordant count is at least both discordant counts. |
+| `dct_chi_stats` or `dct_z_score`, `dct_p_value` | Count-test statistic (named after the backend) and raw p-value. |
+| `dct_p_val_<method>_corr`, `dct_significant` | The run-wide corrected p-value (omitted under `no`) and the gate-1 flag. |
+| `ks_statistic`, `ks_p_value`, `ks_p_val_<method>_corr`, `ks_significant` | The KS test, its correction and the gate-2 flag; empty where the test was not measured. |
+| `perm_statistic`, `perm_p_greater`, `perm_p_less` | The observed `T` and the raw one-tailed p-values. |
+| `perm_p_greater_<method>_corr`, `perm_p_less_<method>_corr` | The tails corrected against each other; the values compared to `alpha_perm`. |
+| `perm_p_tost` | The equivalence p-value, populated only when neither tail was significant. |
+| `perm_n_resamples`, `perm_converged`, `perm_null_skew`, `perm_note` | Permutations drawn, whether the stopping rule settled before the budget, the null's skewness, and a guard or skip note. |
+| `perm_decision` | `greater`, `less`, `equivalent` or `inconclusive`; consulted only when `decision_gate` is `PERM`. |
+| `decision_gate`, `classification`, `inference` | The gate that settled the call, the class, and the direction in words naming the species. |
+| `bootstrap_value`, `all_bootstrap` | Support for the classification and the fraction per class. |
+| `bootstrap_perm_stat_ci_low`, `bootstrap_perm_stat_ci_high` | The bootstrap percentile interval on `T`. |
+| `con_*`, `dis1_*`, `dis2_*` | The shape diagnostics, with `shape_diagnostics`. |
+| `bootstrap_*` | Per-iteration records, with `bootstrap_options.diagnostic`. |
 
-| Column | Source | Method |
-| --- | --- | --- |
-| `triplet` | Triplet setup | The normalized `(A, B, C)` labels, A and B being the species-tree sisters. |
-| `species_tree` | Triplet setup | The triplet's species subtree, serialized topology-only (branch lengths omitted). |
-| `dis1_topology` | Topology ranking | `BC` or `AC` — whichever discordant topology is more frequent; ties resolve to the first listed. |
-| `most_frequent_matches_concordant` | Topology counts | True when the concordant count is at least both discordant counts. |
-| `n_con` / `n_dis1` / `n_dis2` | Topology counts | Gene trees observed with each topology. |
-| `analyzed_trees` | Extraction | Gene trees from which a subtree for this triplet was extracted. |
-| `dct_statistic` / `dct_p_value` | DCT | SciPy chi-square or statsmodels z-test over `[n_dis1, n_dis2]`. An all-zero discordant split short-circuits to `(0.0, 1.0)`. |
-| `dct_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's DCT p-value. Omitted under `no`. |
-| `dct_significant` | Decision gate 1 | Corrected DCT p-value below `alpha_dct`. |
-| `ks_statistic` / `ks_p_value` | Tree-height test | Two-sample KS between concordant and discordant1 heights; an empty sample yields `(0.0, 1.0)`. |
-| `ks_p_val_<method>_corr` | Correction | Run-wide correction over every triplet's KS p-value. Omitted under `no`. |
-| `ks_significant` | Decision gate 2 | Corrected KS p-value below `alpha_ks`. |
-| `perm_statistic` | Direction test | Observed Welch-studentized mean difference. Empty when a guard fired. |
-| `perm_p_greater` / `perm_p_less` | Direction test | Raw one-tailed p-values, add-one estimator. |
-| `perm_p_greater_<method>_corr` / `perm_p_less_<method>_corr` | Direction test | The one-tailed p-values corrected against each other, and the values compared to `alpha_perm`. Omitted under `no`. |
-| `perm_p_tost` | Equivalence test | TOST (two one-sided tests) p-value: `max(p_lower, p_upper)` over the two shifted-null permutation tests, one per side of the equivalence margin. Below `alpha_perm` the two mean heights were shown to differ by less than half a pooled standard deviation, which is what makes `perm_decision` read `equivalent` rather than `inconclusive`. Populated only when neither direction was significant. |
-| `perm_stat_ci_low` / `perm_stat_ci_high` | Bootstrap | Percentile interval on the studentized difference at the `1 - 2 * alpha_perm` level. Empty without bootstrap, or when no iteration had two observations in both groups. |
-| `perm_n_resamples` | Direction test | Permutations drawn; `0` when a guard fired. Can exceed `max_resamples` by up to one batch, since the final batch is not trimmed. |
-| `perm_converged` | Direction test | True when the confidence interval excluded `alpha_perm` before the budget ran out. |
-| `perm_null_skew` | Direction test | Sample skewness of the permutation null: the third standardized moment of the `perm_n_resamples_skew` studentized statistics drawn while testing this triplet. It describes the *reference distribution the test built*, not the tree heights themselves. `0` is a symmetric null and the p-values behave like a textbook two-sample test; a large magnitude means a few extreme heights in the smaller group dominate the resampling, so the null breaks into clusters by how many of them land where, and the sign names the long tail. Reported for every test that resampled, including `equivalent` and `inconclusive` ones. Never consulted by any decision — see "Null skewness" above for the worked 700-vs-19 case. |
-| `perm_note` | Direction test | Guard slug, or `max_resamples_reached`; empty on a clean run. |
-| `perm_decision` | Decision gate 3 | `greater`, `less`, `equivalent`, or `inconclusive` for concordant relative to discordant1. Always populated; consulted only when `decision_gate` is `PERM`. |
-| `decision_gate` | Decision logic | Which test settled the classification: `DCT`, `THT`, or `PERM`. |
-| `classification` | Decision logic | `no_introgression`, `inflow_introgression`, `outflow_introgression`, `ghost_introgression`, or `ambiguous`. |
-| `inference_description` | Reporting | Human-readable direction naming the actual species. |
-| `bootstrap_value` / `all_bootstrap` | Bootstrap | Fraction of iterations agreeing with the final classification, plus the full class-fraction map. Iterations are judged against the same corrected thresholds as the point estimate. Present unless `--no-bootstrap`. |
-| `con_*` / `dis1_*` / `dis2_*` shape columns | Shape diagnostics | Mode count, Silverman modality p-value, skewness, excess kurtosis and generalized-Pareto tail index per height group. Present only with `shape_diagnostics`; see above for how to read each. |
-| `bootstrap_*` debug columns | Bootstrap debug | Per-iteration DCT/KS statistics, con/dis means, and gene-tree heights. Present only with `bootstrap_debug_mode`. |
+The results TSV carries statistics and p-values only; descriptive per-group
+statistics are in `summary_statistics.tsv`, whose `*_avg_tree_height_*`
+columns always average the three root-to-tip distances whatever the height
+strategy.
 
-This file reports the *tests*: the direction is read off `perm_p_greater` and
-`perm_p_less` after correction, so it carries no per-group mean or median
-columns. Descriptive per-group statistics live in `summary_statistics.tsv`,
-which `generate_summary_stats` enables, under their own per-topology headers
-(`concordant_avg_tree_height_mean`, `discordant1_avg_tree_height_median`, and
-so on).
+## Consolidation
 
-Note that the two files measure different things and will not agree numerically:
-the `*_avg_tree_height_*` summary columns always average the three root-to-tip
-distances, whereas the result fields average H(T) as selected by
-`tree_height_calculation_strategy`. They coincide only under the default `AVG`.
+The final stage turns the classified triplets into a directed introgression
+map over the ingroup taxa. For a triplet `(A, B, C)` whose discordant1
+topology pairs `C` with one sister `S`:
 
-The results TSV is named `orchestrator_triplet_results.tsv`. Consolidation
-writes its own artifacts into a `consolidation/` subfolder, so the two never
-collide in the run's output folder.
+| Classification | Event recorded |
+| --- | --- |
+| `inflow_introgression` | edge `C → S` |
+| `outflow_introgression` | edge `S → C` |
+| `ghost_introgression` | ghost target: the sister `discordant1` leaves out |
+| `no_introgression`, `ambiguous` | nothing |
 
-## Parallelization modes
-
-- `taxon` — triplets are split into chunks and dispatched across workers; each
-  worker runs the fused extract-then-infer loop for its chunk over the shared
-  gene-tree list.
-- `gene` — triplets are processed serially in the parent; within a single
-  triplet, per-gene-tree subtree extraction is parallelized across cores.
-- `auto` — selects `gene` when the ingroup taxa count is below
-  `AUTO_TAXA_SMALL_THRESHOLD` (15) or the gene-tree count exceeds
-  `AUTO_GENE_TREES_THRESHOLD` (3500), otherwise `taxon`.
-
-With one worker (or one triplet) the engine runs the fused loop serially in the
-parent process regardless of mode.
-
-## Internal design
-
-### File layout
+Each heatmap cell and ghost bar is the mean `bootstrap_value` over the
+triplets that produced that edge or target, and nothing else:
 
 ```
-ghostparser/orchestrator/
-  __init__.py    exports run_orchestrator
-  __main__.py    python -m ghostparser.orchestrator entry point: main() wires parsing -> run_orchestrator
-  config.py      orchestrator defaults/choices, validation, CLI parser, and CLI/config resolution
-  correction.py  multiple-testing correction shared by inference.py and permutation.py
-  permutation.py adaptive studentized permutation test (decision gate 3)
-  shape.py       optional per-group modality/skew/tail diagnostics
-  trees.py       tree/triplet preprocessing
-  inference.py   per-triplet inference + summary stats + result type + TSV writers
-  stream.py      fused extract+infer streaming engine
-  preflight.py   structural data check reached via --preflight-data-check
-  consolidation.py  introgression maps and TSV matrices (the final stage)
-  runner.py      run_orchestrator coordinator (cleaning -> streaming -> correction -> writing -> consolidation)
-  ORCHESTRATOR.md    this document
+avg(source → target) = sum(bootstrap_value over triplets producing the edge) / count(those triplets)
 ```
 
-### Shared dependencies
+The `*_raw_sum.tsv` and `*_supporting_count.tsv` matrices hold the numerator
+and denominator, and `introgression_matrix_sampled_non_sister.tsv` counts, per
+taxon pair, the triplets in which the two are not the species-tree sisters,
+so the averages can be reweighted against co-occurrence. Without a bootstrap
+every classified triplet weighs 1. The figure `introgression_combined.png`
+draws the heatmap (rows targets, columns sources, `cividis`) under the species
+tree, with the ghost bars beside it: bar length is the ghost support and bar
+colour says whether the taxon is also the target of a sampled edge. Taxa in
+`outgroup` never appear.
 
-The orchestrator owns its tree preprocessing, inference, consolidation, and
-configuration. It imports only three things from the rest of the package:
+## Parallelization
 
-- `ghostparser.config` — the shared configuration trunk (`ConfigError`, path
-  resolution, raw config-file loading, required-path validation, overwrite
-  resolution, `prepare_output_directory`). Orchestrator-specific defaults, choices,
-  and validators live in `orchestrator/config.py`, which is why the orchestrator can set
-  its own `bfn`/`mean` defaults without affecting the ML subpackage.
-- `ghostparser.cli_config` — the generic `resolve_cli_or_config_args` resolver
-  implementing config-file-wins precedence.
-- `ghostparser.triplet_utils` — pure topology helpers.
-
-### Fused streaming engine
-
-The per-triplet unit is `inference.analyze_triplet_from_observations(triplet,
-observations, species_subtree, ...)`, which takes precomputed `(topology,
-tree-height, metrics)` observations. The third element carries the per-tree
-summary metrics and is `None` unless `generate_summary_stats` is enabled.
-
-The processing unit is a chunk of triplets that share one parse pass over the
-gene trees. For each parsed gene tree the engine extracts every in-chunk
-triplet's subtree and computes its observation directly from the subtree object
-(`inference.observation_from_subtree`) — there is **no** serialize-to-Newick and
-reparse round trip. It then runs `analyze_triplet_from_observations` for each
-triplet in the chunk and drops the observations. This bounds live memory to one
-chunk while amortizing the DendroPy parse cost across the chunk's triplets. Gene
-trees are loaded once in the parent and shared read-only to workers via a
-fork/forkserver initializer.
-
-Bootstrap resampling is vectorized with NumPy: per-triplet resample indices are
-drawn with a seeded `numpy.random.Generator`, and topology counts and
-per-topology height groups are computed with array operations. Bootstrap values
-are deterministic under a fixed `bootstrap_seed` — the per-triplet seed is
-derived from the run seed and the triplet, so every parallelization mode agrees
-exactly.
-
-### Memory rationale
-
-- No intermediate triplet-gene-trees file is written or reloaded.
-- Peak memory is roughly the shared gene-tree Newick list, plus one chunk of
-  transient subtrees, plus the accumulating list of small result objects.
-- Result objects must be accumulated because global p-value correction needs all
-  p-values in a single pass.
-
-### Consolidation interface contract
-
-`generate_introgression_maps` reads only four fields from each result
-(`triplet`, `classification`, `dis1_topology`, `bootstrap_value`) via its
-duck-typed `_extract_result_fields`. `TripletPipelineResult` keeps those four
-fields; treat field parity on them as a maintenance constraint.
+Triplets are split into chunks across `processes` workers on one machine;
+`0` uses the CPUs the process may run on, which under a scheduler or container
+is the allocation rather than the machine's cores. The gene-tree cache is
+built once and shared with the workers. A job spanning several machines uses
+only the one the run starts on.

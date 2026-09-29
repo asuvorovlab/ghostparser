@@ -3,7 +3,7 @@
 #
 #   python -m ghostparser.orchestrator -c sample_configs/orchestrator_full.yaml
 #
-# Full reference: CONFIG.md#orchestrator-primary-module
+# Full reference and the other scenarios: CONFIG.md
 
 # --- Required inputs -------------------------------------------------------
 species_tree_path: ./data/species.tree
@@ -21,12 +21,25 @@ output_folder: ./results
 overwrite: true
 # Restrict the run to specific triplets; one comma-separated triplet per line.
 triplet_filter: null
+# Or to every triplet among specific species; comma-separated names, any
+# number per line. Not combinable with triplet_filter.
+species_filter: null
+species_rename_map: null        # two-column TSV or YAML: tree label -> output name
 
 # --- Execution -------------------------------------------------------------
-processes: 0                      # 0 = all available cores
-parallelization_mode: auto        # auto | taxon | gene
+processes: 0
+seed: null                        # run-wide RNG seed; null draws a fresh one and reports it
 
 # --- Statistical tests -----------------------------------------------------
+# false measures only what the decision cascade reads: the direction test is
+# skipped below a settled gate under every correction, and the tree-height
+# test below a settled count gate under no/bfn (holm/fdr_bh/fdr_by rank every
+# triplet's value, so it is measured for every triplet). true measures all
+# three tests for every triplet, filling every ks_* and perm_* column. Both
+# reach the same classifications and bootstrap values; the bootstrap
+# iterations skip the same tests either way.
+diagnostic: false
+
 # Gate 1: discordant count test.
 discordant_test: chi-square       # chi-square | z-test
 alpha_dct: 0.05
@@ -45,7 +58,7 @@ permutation_options:
 
 # Applied run-wide across triplets (DCT and KS), and inside each permutation
 # test across its pair of one-tailed p-values.
-p_value_correction: bfn           # no | bfn | holm | fdr_bh | fdr_by | fdr_tsbh
+p_value_correction: bfn           # no | bfn | holm | fdr_bh | fdr_by
 
 # How H(T) is computed per gene tree.
 tree_height_calculation_strategy: AVG   # AVG | A | B | C | SIS | INT
@@ -57,8 +70,7 @@ min_support_value: 0.5
 bootstrap: true
 bootstrap_options:
   iterations: 100
-  seed: null                      # set an integer for a reproducible run
-  debug_mode: false
+  diagnostic: false
   summary_only: false
 
 # --- Extra outputs ---------------------------------------------------------
@@ -69,3 +81,6 @@ consolidation: true               # writes the consolidation/ subfolder
 # --- Data check ------------------------------------------------------------
 # When true, only the structural check runs and every key above is ignored.
 preflight_data_check: false
+# How many ingroup triplets that check walks; 0 checks every one. A real run
+# always processes every triplet regardless.
+preflight_triplet_cap: 15000

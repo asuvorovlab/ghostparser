@@ -4,6 +4,9 @@ Owns the ML defaults, choices, and validation rules; shared helpers come from
 the :mod:`ghostparser.config` trunk.
 """
 
+import argparse
+
+from ..cli_config import resolve_cli_or_config_args
 from ..config import (
     DEFAULT_OVERWRITE,
     ConfigError,
@@ -17,19 +20,23 @@ DEFAULT_ML_OUTPUT_DIR = "ml_results"
 DEFAULT_TARGET_COLUMN = "class"
 DEFAULT_TEST_SIZE = 0.2
 DEFAULT_CV_FOLDS = 5
-DEFAULT_RANDOM_STATE = None
+DEFAULT_SEED = None
 DEFAULT_RARE_CLASS_POLICY = "warn_reduce_cv"
 DEFAULT_EVALUATION_METRICS = "all"
 DEFAULT_REPORT_CLASS_DISTRIBUTION = True
 DEFAULT_REPORT_CONFUSION_MATRIX = True
 DEFAULT_REPORT_FEATURE_IMPORTANCE = True
+# Null resolves to each trainer's own estimator: impurity for the forest,
+# which has one, and permutation for the neighbours classifier, which has not.
+DEFAULT_FEATURE_IMPORTANCE_METHOD = None
+DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD = 0.7
 DEFAULT_SAVE_LABEL_MAP = True
 DEFAULT_SAVE_PREDICTIONS = True
 DEFAULT_N_ESTIMATORS = 200
 DEFAULT_MAX_DEPTH = None
 DEFAULT_MIN_SAMPLES_SPLIT = 2
 DEFAULT_MIN_SAMPLES_LEAF = 1
-DEFAULT_MAX_FEATURES = "sqrt"
+DEFAULT_MAX_FEATURES = None
 DEFAULT_CLASS_WEIGHT = None
 DEFAULT_N_JOBS = -1
 DEFAULT_N_NEIGHBORS = 5
@@ -43,9 +50,24 @@ RARE_CLASS_POLICY_CHOICES = ("warn_reduce_cv", "warn_skip_cv", "error")
 KNN_WEIGHT_CHOICES = ("uniform", "distance")
 KNN_ALGORITHM_CHOICES = ("auto", "ball_tree", "kd_tree", "brute")
 EVALUATION_METRICS_CHOICES = ("all", "primary", "diagnostic", "per_bit")
+FEATURE_IMPORTANCE_METHOD_CHOICES = ("mdi", "permutation", "grouped_permutation")
+MAX_FEATURES_STRING_CHOICES = ("sqrt", "log2")
+CLASS_WEIGHT_STRING_CHOICES = ("balanced", "balanced_subsample")
 
+# `auto` was scikit-learn's max_features default until 1.1 and was removed in
+# 1.3 for being ambiguous between classifiers and regressors. It is worth its
+# own message because it is the value most users reach for first.
+_REMOVED_MAX_FEATURES_SPELLINGS = frozenset({"auto"})
+
+# Both keys default to null and accept it, but YAML reads the bare words `None`
+# and `none` as strings, so a rejection has to say how null is actually written.
+_HOW_TO_WRITE_NULL = (
+    "To use null, omit the key or write null (YAML also accepts ~); the bare "
+    "words None and none are read as strings and rejected."
+)
 
 def _validate_optional_path(payload: dict, key: str, default: str) -> str:
+    """Resolve an optional path key, falling back to ``default``."""
     value = payload.get(key, default)
     if value is None:
         value = default
@@ -59,6 +81,7 @@ def _validate_optional_path(payload: dict, key: str, default: str) -> str:
 def _validate_optional_string(
     payload: dict, key: str, default: str | None
 ) -> str | None:
+    """Validate an optional non-empty string key."""
     value = payload.get(key, default)
     if value is None:
         return None
@@ -70,6 +93,8 @@ def _validate_optional_string(
 
 
 def _validate_optional_float(payload: dict, key: str, default: float) -> float:
+    """Validate an optional float key that must be a fraction strictly between 0 and 1.
+    """
     value = payload.get(key, default)
     if value is None:
         value = default
@@ -82,18 +107,28 @@ def _validate_optional_float(payload: dict, key: str, default: float) -> float:
     return value
 
 
+def _validate_positive_int(payload: dict, key: str, default: int | None) -> int:
+    """Require an integer >= 1, taking ``default`` when the key is absent."""
+    value = payload.get(key, default)
+    if not isinstance(value, int) or value < 1:
+        raise ConfigError(f"Config field {key} must be an integer >= 1")
+    return value
+
+
 def _validate_optional_positive_int(
     payload: dict, key: str, default: int | None
 ) -> int | None:
+    """Allow ``None``, else require an integer >= 1."""
     value = payload.get(key, default)
     if value is None:
-        raise ConfigError(f"Config field {key} must be an integer >= 1")
+        return None
     if not isinstance(value, int) or value < 1:
         raise ConfigError(f"Config field {key} must be an integer >= 1")
     return value
 
 
 def _validate_optional_int(payload: dict, key: str, default: int | None) -> int | None:
+    """Validate an optional integer key, ``None`` allowed."""
     value = payload.get(key, default)
     if value is None:
         return None
@@ -103,35 +138,145 @@ def _validate_optional_int(payload: dict, key: str, default: int | None) -> int 
 
 
 def _validate_optional_choice(
-    payload: dict, key: str, default: str, choices: tuple[str, ...]
-) -> str:
+    payload: dict,
+    key: str,
+    default: str | None,
+    choices: tuple[str, ...],
+    *,
+    allow_none: bool = False,
+) -> str | None:
+    """Validate an optional enumerated string key.
+
+    Args:
+        payload: The section the key is read from.
+        key: The key to validate.
+        default: Value taken when the key is absent or null.
+        choices: The accepted spellings.
+        allow_none: Whether a null default passes through as ``None``, for a
+            key whose meaning is settled later.
+
+    Returns:
+        The validated value.
+
+    Raises:
+        ConfigError: If the value is not one of ``choices``.
+    """
     value = payload.get(key, default)
     if value is None:
         value = default
+    if allow_none and value is None:
+        return None
     if not isinstance(value, str) or value not in choices:
         raise ConfigError(f"Config field {key} must be one of: {', '.join(choices)}")
     return value
 
 
 def _validate_optional_bool(payload: dict, key: str, default: bool) -> bool:
+    """Validate an optional boolean key."""
     value = payload.get(key, default)
     if not isinstance(value, bool):
         raise ConfigError(f"Config field {key} must be a boolean")
     return value
 
 
+def normalize_max_features(value: object, *, where: str) -> object:
+    """Validate one ``max_features`` value against what scikit-learn accepts.
+
+    Args:
+        value: The configured value, straight from the config file.
+        where: Dotted config location used in the error message.
+
+    Returns:
+        ``None``, one of :data:`MAX_FEATURES_STRING_CHOICES`, an ``int >= 1``,
+        or a ``float`` in ``(0.0, 1.0]``.
+
+    Raises:
+        ConfigError: If the value is anything else, naming what was received,
+            every accepted form, and how to write null: the strings ``"None"``
+            and ``"none"`` that YAML produces from the bare words land here.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped in MAX_FEATURES_STRING_CHOICES:
+            return stripped
+        if stripped.lower() in _REMOVED_MAX_FEATURES_SPELLINGS:
+            raise ConfigError(
+                f"Config field {where} got {value!r}, which scikit-learn removed "
+                "in 1.3. Use 'sqrt' for the same behaviour on a classifier, or "
+                "null to use every feature at each split."
+            )
+        raise ConfigError(_max_features_message(where, value))
+    # bool is a subclass of int, so it has to be rejected before the int check.
+    if isinstance(value, bool):
+        raise ConfigError(_max_features_message(where, value))
+    if isinstance(value, int):
+        if value < 1:
+            raise ConfigError(_max_features_message(where, value))
+        return value
+    if isinstance(value, float):
+        if not 0.0 < value <= 1.0:
+            raise ConfigError(_max_features_message(where, value))
+        return value
+    raise ConfigError(_max_features_message(where, value))
+
+
+def _max_features_message(where: str, value: object) -> str:
+    """Word the rejection of a ``max_features`` value, naming every accepted form."""
+    choices = ", ".join(repr(choice) for choice in MAX_FEATURES_STRING_CHOICES)
+    return (
+        f"Config field {where} got {value!r}. Valid values are {choices}, an "
+        "integer >= 1 (that many features per split), a float in (0.0, 1.0] "
+        "(that fraction of the features), or null to use every feature at each "
+        f"split. {_HOW_TO_WRITE_NULL}"
+    )
+
+
+def normalize_class_weight(value: object, *, where: str) -> object:
+    """Validate one ``class_weight`` value against what scikit-learn accepts.
+
+    Args:
+        value: The configured value, straight from the config file.
+        where: Dotted config location used in the error message.
+
+    Returns:
+        ``None``, one of :data:`CLASS_WEIGHT_STRING_CHOICES`, a mapping of
+        class label to weight, or a list of such mappings (one per label).
+
+    Raises:
+        ConfigError: If the value is anything else, naming what was received,
+            every accepted form, and how to write null: the strings ``"None"``
+            and ``"none"`` that YAML produces from the bare words land here.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped in CLASS_WEIGHT_STRING_CHOICES:
+            return stripped
+        raise ConfigError(_class_weight_message(where, value))
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+        return value
+    raise ConfigError(_class_weight_message(where, value))
+
+
+def _class_weight_message(where: str, value: object) -> str:
+    """Word the rejection of a ``class_weight`` value, naming every accepted form."""
+    choices = ", ".join(repr(choice) for choice in CLASS_WEIGHT_STRING_CHOICES)
+    return (
+        f"Config field {where} got {value!r}. Valid values are {choices}, a "
+        "mapping of class label to weight, a list of such mappings (one per "
+        f"label), or null for no class weighting. {_HOW_TO_WRITE_NULL}"
+    )
+
+
 def normalize_ml_payload(payload: dict) -> dict:
-    """Normalize ML config payload using a strict top-level + nested layout.
-
-    Required top-level keys:
-      - `input_path`, `output_dir`
-
-    Top-level runtime keys:
-      - `target_column`, `test_size`, `cv_folds`, `rare_class_policy`,
-        `random_state`, `n_jobs`
-
-    Model hyperparameters must be provided under `model`.
-    Evaluation reporting controls must be provided under `evaluation`.
+    """Validate a trainer config with runtime keys at the top level,
+    hyperparameters under ``model`` and reporting controls under
+    ``evaluation``.
     """
     input_path = _validate_required_path(payload, "input_path")
     output_dir = _validate_required_path(payload, "output_dir")
@@ -168,6 +313,8 @@ def normalize_ml_payload(payload: dict) -> dict:
         "report_class_distribution",
         "report_confusion_matrix",
         "report_feature_importance",
+        "feature_importance_method",
+        "feature_importance_correlation_threshold",
         "save_label_map",
         "save_predictions",
     }
@@ -179,13 +326,13 @@ def normalize_ml_payload(payload: dict) -> dict:
             f"{', '.join(sorted(present_forbidden))}"
         )
 
-    forbidden_model_runtime_keys = {"random_state", "n_jobs"}
+    forbidden_model_runtime_keys = {"seed", "n_jobs"}
     present_forbidden_model_runtime = forbidden_model_runtime_keys & set(
         model_section.keys()
     )
     if present_forbidden_model_runtime:
         raise ConfigError(
-            "Place 'random_state' and 'n_jobs' at the top level, not under 'model'. Offending keys: "
+            "Place 'seed' and 'n_jobs' at the top level, not under 'model'. Offending keys: "
             f"{', '.join(sorted(present_forbidden_model_runtime))}"
         )
 
@@ -195,7 +342,7 @@ def normalize_ml_payload(payload: dict) -> dict:
         "overwrite": _validate_overwrite_flag(payload, DEFAULT_OVERWRITE),
         "target_column": target_column,
         "test_size": _validate_optional_float(payload, "test_size", DEFAULT_TEST_SIZE),
-        "cv_folds": _validate_optional_positive_int(
+        "cv_folds": _validate_positive_int(
             payload, "cv_folds", DEFAULT_CV_FOLDS
         ),
         "rare_class_policy": _validate_optional_choice(
@@ -204,25 +351,29 @@ def normalize_ml_payload(payload: dict) -> dict:
             DEFAULT_RARE_CLASS_POLICY,
             RARE_CLASS_POLICY_CHOICES,
         ),
-        "random_state": _validate_optional_int(
-            payload, "random_state", DEFAULT_RANDOM_STATE
-        ),
+        "seed": _validate_optional_int(payload, "seed", DEFAULT_SEED),
         "n_jobs": _validate_optional_int(payload, "n_jobs", DEFAULT_N_JOBS),
-        "n_estimators": _validate_optional_positive_int(
+        "n_estimators": _validate_positive_int(
             model_section, "n_estimators", DEFAULT_N_ESTIMATORS
         ),
         "max_depth": _validate_optional_int(
             model_section, "max_depth", DEFAULT_MAX_DEPTH
         ),
-        "min_samples_split": _validate_optional_positive_int(
+        "min_samples_split": _validate_positive_int(
             model_section, "min_samples_split", DEFAULT_MIN_SAMPLES_SPLIT
         ),
-        "min_samples_leaf": _validate_optional_positive_int(
+        "min_samples_leaf": _validate_positive_int(
             model_section, "min_samples_leaf", DEFAULT_MIN_SAMPLES_LEAF
         ),
-        "max_features": model_section.get("max_features", DEFAULT_MAX_FEATURES),
-        "class_weight": model_section.get("class_weight", DEFAULT_CLASS_WEIGHT),
-        "n_neighbors": _validate_optional_positive_int(
+        "max_features": normalize_max_features(
+            model_section.get("max_features", DEFAULT_MAX_FEATURES),
+            where="model.max_features",
+        ),
+        "class_weight": normalize_class_weight(
+            model_section.get("class_weight", DEFAULT_CLASS_WEIGHT),
+            where="model.class_weight",
+        ),
+        "n_neighbors": _validate_positive_int(
             model_section, "n_neighbors", DEFAULT_N_NEIGHBORS
         ),
         "weights": _validate_optional_choice(
@@ -231,13 +382,13 @@ def normalize_ml_payload(payload: dict) -> dict:
         "algorithm": _validate_optional_choice(
             model_section, "algorithm", DEFAULT_KNN_ALGORITHM, KNN_ALGORITHM_CHOICES
         ),
-        "leaf_size": _validate_optional_positive_int(
+        "leaf_size": _validate_positive_int(
             model_section, "leaf_size", DEFAULT_KNN_LEAF_SIZE
         ),
         "metric": _validate_optional_string(
             model_section, "metric", DEFAULT_KNN_METRIC
         ),
-        "p": _validate_optional_positive_int(model_section, "p", DEFAULT_KNN_P),
+        "p": _validate_positive_int(model_section, "p", DEFAULT_KNN_P),
         "evaluation_metrics": _validate_optional_choice(
             evaluation_section,
             "metrics",
@@ -259,6 +410,18 @@ def normalize_ml_payload(payload: dict) -> dict:
             "report_feature_importance",
             DEFAULT_REPORT_FEATURE_IMPORTANCE,
         ),
+        "feature_importance_method": _validate_optional_choice(
+            evaluation_section,
+            "feature_importance_method",
+            DEFAULT_FEATURE_IMPORTANCE_METHOD,
+            FEATURE_IMPORTANCE_METHOD_CHOICES,
+            allow_none=True,
+        ),
+        "feature_importance_correlation_threshold": _validate_optional_float(
+            evaluation_section,
+            "feature_importance_correlation_threshold",
+            DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD,
+        ),
         "save_label_map": _validate_optional_bool(
             evaluation_section,
             "save_label_map",
@@ -275,3 +438,53 @@ def normalize_ml_payload(payload: dict) -> dict:
 def load_ml_config(config_file: str) -> dict:
     """Load and normalize an ML config file."""
     return normalize_ml_payload(_load_raw_config(config_file))
+
+
+def build_trainer_argument_parser(description: str) -> argparse.ArgumentParser:
+    """Build the argument parser both trainers expose.
+
+    Args:
+        description: The trainer's own ``--help`` description.
+
+    Returns:
+        A parser carrying the shared config/input/output/overwrite flags.
+    """
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "-c", "--config-file", type=str, default=None,
+        help="Path to a JSON or YAML config file",
+    )
+    parser.add_argument(
+        "-i", "--input-path", type=str, default=None,
+        help="Path to summary_statistics.tsv",
+    )
+    parser.add_argument(
+        "-o", "--output-dir", type=str, default=None,
+        help="Directory for ML outputs",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="RNG seed for the train/test split, the folds and the model; omit "
+        "for the config file's value, or a fresh draw each run",
+    )
+    parser.add_argument(
+        "--no-overwrite", dest="no_overwrite", action="store_true", default=None,
+        help="Append a numeric suffix when the output directory already exists",
+    )
+    return parser
+
+
+def resolve_trainer_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
+    """Resolve a trainer's CLI/config arguments; a flag given overrides the file's value.
+
+    Args:
+        args: The parsed CLI namespace.
+
+    Returns:
+        The resolved namespace.
+    """
+    return resolve_cli_or_config_args(
+        args,
+        normalize_payload=normalize_ml_payload,
+        payload_arg_names=["input_path", "output_dir", "seed", "no_overwrite"],
+    )

@@ -1,10 +1,17 @@
+# Random-forest grid search, logging nothing to Weights & Biases.
+#
+#   python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_random_forest.yaml
+#
+# Full reference: CONFIG.md#hyperparameter-tuning-parameters
+
+# --- Runtime ---------------------------------------------------------------
 input_path: ./results/summary_statistics.tsv
 output_dir: ./results/hyper_tune_rf_out
 target_column: class
 test_size: 0.2
 cv_folds: 5
 rare_class_policy: warn_reduce_cv
-random_state: 42
+seed: 42
 n_jobs: -1
 
 hyperparameter_tuning:
@@ -13,10 +20,21 @@ hyperparameter_tuning:
   objective: bitwise_accuracy
   top_k: 5
   max_candidates: 1000
-  wandb_detailed_payloads: false
+
+  # REQUIRED, no default: state whether this run logs to Weights & Biases.
+  # false needs no W&B account and no `wandb` install; the run still writes the
+  # full local report (hyper_tune_results.txt, the ranked-candidate and
+  # per-parameter TSVs, and hyper_tune_search_report.png).
+  # Set true only after `pip install .[wandb]` and `wandb login`; the extra
+  # per-candidate payloads below are allowed only in that case.
+  use_wandb: false
+  # wandb_detailed_payloads: false
+
+  # Omit a parameter to hold it at the trainer default during the search.
   search_space:
     n_estimators: [ 100, 200, 400 ]
     max_depth: [ null, 10, 20 ]
     min_samples_split: [ 2, 5 ]
     min_samples_leaf: [ 1, 2 ]
+    # Add null (not None) as a candidate to also try every feature per split.
     max_features: [ sqrt, log2 ]

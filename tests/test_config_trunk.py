@@ -22,6 +22,8 @@ from ghostparser.config import (
     prepare_output_directory,
 )
 
+pytestmark = pytest.mark.config
+
 
 def test_resolve_path_handles_absolute_relative_and_home(tmp_path, monkeypatch):
     """Absolute paths pass through; relative resolve from cwd; ``~`` expands."""
@@ -36,22 +38,18 @@ def test_resolve_path_handles_absolute_relative_and_home(tmp_path, monkeypatch):
     assert "~" not in home_resolved
 
 
-@pytest.mark.parametrize("suffix", [".json", ".yaml", ".yml"])
-def test_load_raw_config_reads_json_and_yaml(tmp_path, suffix):
-    """JSON and YAML config files load into an equivalent mapping."""
+def test_load_raw_config_reads_json_and_yaml_and_rejects_the_rest(tmp_path):
+    """JSON and YAML files load into one mapping; missing files, unknown suffixes and non-mapping roots are rejected."""
     payload = {"input_path": "data.tsv", "cv_folds": 5}
-    config_path = tmp_path / f"config{suffix}"
-    if suffix == ".json":
-        config_path.write_text(json.dumps(payload))
-    else:
-        config_path.write_text("input_path: data.tsv\ncv_folds: 5\n")
+    for suffix in (".json", ".yaml", ".yml"):
+        config_path = tmp_path / f"config{suffix}"
+        if suffix == ".json":
+            config_path.write_text(json.dumps(payload))
+        else:
+            config_path.write_text("input_path: data.tsv\ncv_folds: 5\n")
+        assert _load_raw_config(str(config_path)) == payload, suffix
 
-    assert _load_raw_config(str(config_path)) == payload
-
-
-def test_load_raw_config_rejects_missing_unsupported_and_non_mapping(tmp_path):
-    """Missing files, unknown suffixes, and non-mapping roots are rejected."""
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ConfigError, match="Config file not found"):
         _load_raw_config(str(tmp_path / "absent.json"))
 
     unsupported = tmp_path / "config.txt"

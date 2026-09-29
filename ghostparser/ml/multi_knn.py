@@ -2,68 +2,41 @@
 
 import argparse
 import pickle
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
-from sklearn.inspection import permutation_importance
-from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.neighbors import KNeighborsClassifier
 
-from ..cli_config import resolve_cli_or_config_args
-from ..config import ConfigError, prepare_output_directory
+from ..cli_config import run_cli
+from ..config import prepare_output_directory
 from . import ml_utils as shared
-from .config import DEFAULT_N_JOBS, load_ml_config, normalize_ml_payload
+from .config import (
+    DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD,
+    DEFAULT_N_JOBS,
+    build_trainer_argument_parser,
+    resolve_trainer_runtime_args,
+)
 
 BIT_LABELS = shared.BIT_LABELS
 BIT_COUNT = shared.BIT_COUNT
 
 
-def _build_argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Ghostparser ML multi-label KNN baseline for summary statistics."
-    )
-    parser.add_argument(
-        "-c",
-        "--config-file",
-        type=str,
-        default=None,
-        help="Path to a JSON or YAML config file",
-    )
-    parser.add_argument(
-        "-i",
-        "--input-path",
-        type=str,
-        default=None,
-        help="Path to summary_statistics.tsv",
-    )
-    parser.add_argument(
-        "-o", "--output-dir", type=str, default=None, help="Directory for ML outputs"
-    )
-    parser.add_argument(
-        "--no-overwrite",
-        dest="no_overwrite",
-        action="store_true",
-        default=None,
-        help="Append a numeric suffix when the output directory already exists",
-    )
-    return parser
-
-
-def _resolve_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
-    return resolve_cli_or_config_args(
-        args,
-        load_config=load_ml_config,
-        normalize_payload=normalize_ml_payload,
-        payload_arg_names=["input_path", "output_dir", "no_overwrite"],
-    )
-
-
 def _build_model(
     config: argparse.Namespace, train_size: int
 ) -> tuple[MultiOutputClassifier, int]:
+    """Build the one-vs-rest KNN, capping ``n_neighbors`` at the training size.
+
+    Args:
+        config: The resolved trainer config.
+        train_size: Number of training rows.
+
+    Returns:
+        ``(model, effective_n_neighbors)``.
+    """
     effective_n_neighbors = max(1, min(int(config.n_neighbors), int(train_size)))
     classifier = KNeighborsClassifier(
         n_neighbors=effective_n_neighbors,
@@ -81,23 +54,6 @@ def _build_model(
     return model, effective_n_neighbors
 
 
-def _model_factory(
-    config: argparse.Namespace, train_size: int
-) -> tuple[MultiOutputClassifier, int]:
-    return _build_model(config, train_size)
-
-
-def _build_confusion_matrices(
-    y_true: np.ndarray, y_pred: np.ndarray
-) -> dict[str, list[list[int]]]:
-    return {
-        bit_label: confusion_matrix(
-            y_true[:, bit_index], y_pred[:, bit_index], labels=[0, 1]
-        ).tolist()
-        for bit_index, bit_label in enumerate(BIT_LABELS)
-    }
-
-
 def _cross_validate(
     x_train: np.ndarray,
     y_train: np.ndarray,
@@ -106,6 +62,20 @@ def _cross_validate(
     random_state: int | None,
     config: argparse.Namespace,
 ) -> dict:
+    """Cross-validate the KNN over stratified folds of the training partition.
+
+    Args:
+        x_train: The training features.
+        y_train: The training binary targets.
+        labels_train: The training combination labels, for stratification.
+        folds: Number of folds.
+        random_state: Seed for the fold shuffle.
+        config: The resolved trainer config.
+
+    Returns:
+        A dict with the per-fold metrics and their ``aggregate`` means and
+        standard deviations.
+    """
     splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=random_state)
     fold_metrics: list[dict] = []
     for fold_index, (fit_index, val_index) in enumerate(
@@ -144,6 +114,14 @@ def _cross_validate(
 
 
 def train_multi_knn(config: argparse.Namespace) -> dict:
+    """Train and evaluate the multi-label KNN baseline end to end.
+
+    Args:
+        config: The resolved trainer config.
+
+    Returns:
+        A dict of the metrics and the paths of the artifacts written.
+    """
     run_start = time.perf_counter()
     load_start = time.perf_counter()
     rows = shared.read_tsv_rows(config.input_path)
@@ -158,13 +136,13 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
             matrix.train_targets,
             labels,
             config.test_size,
-            config.random_state,
+            config.seed,
         )
     )
     split_seconds = time.perf_counter() - split_start
 
     def model_factory(train_size: int) -> tuple[MultiOutputClassifier, int]:
-        return _model_factory(config, train_size)
+        return _build_model(config, train_size)
 
     cv_start = time.perf_counter()
     cv_folds, cv_warnings = shared.auto_cv_folds(
@@ -173,7 +151,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     cv_results = {"folds": [], "aggregate": {}}
     if cv_folds is not None:
         cv_results = _cross_validate(
-            x_train, y_train, labels_train, cv_folds, config.random_state, config
+            x_train, y_train, labels_train, cv_folds, config.seed, config
         )
     cv_seconds = time.perf_counter() - cv_start
 
@@ -192,6 +170,16 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     report_class_distribution = getattr(config, "report_class_distribution", True)
     report_confusion_matrix = getattr(config, "report_confusion_matrix", True)
     report_feature_importance = getattr(config, "report_feature_importance", True)
+    # A neighbours classifier measures no impurity, so it has to permute; mdi
+    # is rejected rather than quietly swapped for something else.
+    feature_importance_method = (
+        getattr(config, "feature_importance_method", None) or "permutation"
+    )
+    correlation_threshold = getattr(
+        config,
+        "feature_importance_correlation_threshold",
+        DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD,
+    )
     save_predictions = getattr(config, "save_predictions", True)
     include_diagnostic = metric_set in {"diagnostic", "all"}
     include_per_bit = metric_set in {"per_bit", "all"}
@@ -204,22 +192,20 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
         y_test,
         split_notes,
         config.test_size,
-        config.random_state,
+        config.seed,
     )
 
     feature_start = time.perf_counter()
     feature_rows = None
     if report_feature_importance:
-        permutation = permutation_importance(
+        feature_rows = shared.feature_importance_rows(
             model,
-            x_test,
-            y_test,
-            n_repeats=10,
-            random_state=config.random_state,
-            scoring="f1_micro",
-        )
-        feature_rows = shared.build_feature_importance_rows(
-            matrix.feature_names, permutation.importances_mean
+            method=feature_importance_method,
+            feature_names=matrix.feature_names,
+            features=x_test,
+            targets=y_test,
+            seed=config.seed,
+            correlation_threshold=correlation_threshold,
         )
     feature_importance_seconds = time.perf_counter() - feature_start
 
@@ -232,7 +218,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     confusion_matrices = None
     confusion_matrix_64_classes = None
     if report_confusion_matrix and include_diagnostic:
-        confusion_matrices = _build_confusion_matrices(y_test, test_predictions)
+        confusion_matrices = shared.build_confusion_matrices(y_test, test_predictions)
         confusion_matrix_64_classes = shared.build_64_class_confusion_matrix(
             y_test, test_predictions
         )
@@ -267,7 +253,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
         "metric": config.metric,
         "p": int(config.p),
         "n_jobs": config.n_jobs if config.n_jobs is not None else DEFAULT_N_JOBS,
-        "random_state": config.random_state,
+        "seed": config.seed,
         "test_size": config.test_size,
         "cv_folds_requested": config.cv_folds,
         "cv_folds_effective": cv_folds,
@@ -314,6 +300,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
         metrics_payload["per_bit"] = test_metrics["per_bit"]
     if feature_rows is not None:
         metrics_payload["feature_importance"] = feature_rows
+        metrics_payload["feature_importance_method"] = feature_importance_method
     if confusion_matrix_plot_path is not None:
         metrics_payload["confusion_matrix_plot"] = confusion_matrix_plot_path
     if confusion_matrix_64_plot_path is not None:
@@ -384,7 +371,8 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
                     "",
                     "64-class confusion matrix:",
                     f"  Plot: {confusion_matrix_64_plot_path}",
-                    "  Note: matrix includes all 64 possible 6-bit labels (000000 to 111111).",
+                    "  Note: matrix includes all 64 possible 6-bit labels, ordered by the number of set bits (000000 first, 111111 last).",
+                    "  Note: plotted cells are row-normalized fractions of each true class.",
                 ]
             )
     if report_class_distribution:
@@ -437,25 +425,24 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     }
 
 
-def main() -> None:
-    parser = _build_argument_parser()
-    parsed_args = parser.parse_args()
+def _run(parsed_args) -> None:
+    """Resolve the config, train, and print where the outputs went.
 
-    try:
-        args = _resolve_runtime_args(parsed_args)
-    except (ValueError, ConfigError) as exc:
-        print(f"Error: {exc}")
-        return
-
-    try:
-        result = train_multi_knn(args)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Error: {exc}")
-        return
-
+    Args:
+        parsed_args: The parsed command line.
+    """
+    result = train_multi_knn(resolve_trainer_runtime_args(parsed_args))
     print(f"Saved model: {result['model_path']}")
     print(f"Saved metrics: {result['metrics_txt_path']}")
     print(f"Saved JSON metrics: {result['metrics_json_path']}")
+
+
+def main() -> None:
+    """Run the KNN trainer from the command line and exit with its status."""
+    parser = build_trainer_argument_parser(
+        "Ghostparser ML multi-label KNN baseline for summary statistics."
+    )
+    sys.exit(run_cli(parser, _run))
 
 
 if __name__ == "__main__":

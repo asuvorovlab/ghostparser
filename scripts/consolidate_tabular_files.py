@@ -70,12 +70,17 @@ def consolidate_files(
     input_root: Path,
     source_column_name: str,
 ) -> tuple[int, int]:
-    """Consolidate files with pandas and append source folder column.
+    """Concatenate the files into one output file with a source-folder column.
 
-    Returns
-    -------
-    tuple[int, int]
-        (number_of_files_used, number_of_data_rows_written)
+    Args:
+        files: Files to read, in the order they are stacked.
+        output_file: Path of the consolidated file to write.
+        delimiter: Field delimiter of the input and output files.
+        input_root: Root the source-folder column is written relative to.
+        source_column_name: Name of the source-folder column.
+
+    Returns:
+        A tuple ``(files_used, rows_written)``.
     """
     dataframes: list[pd.DataFrame] = []
     expected_columns: list[str] | None = None

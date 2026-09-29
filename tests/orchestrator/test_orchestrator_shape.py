@@ -153,10 +153,10 @@ def _shape_result(seed=9, enabled=True):
         enabled: Whether to measure the shape diagnostics.
 
     Returns:
-        The resulting ``TripletPipelineResult``.
+        The decided ``TripletPipelineResult``.
     """
     rng = np.random.default_rng(seed)
-    return pinf.analyze_triplet_from_observations(
+    result = pinf.analyze_triplet_from_observations(
         _TRIPLET,
         _observations(
             rng.lognormal(0.0, 0.4, 60),
@@ -168,6 +168,10 @@ def _shape_result(seed=9, enabled=True):
         bootstrap_options={"iterations": 5},
         shape_diagnostics=enabled,
     )
+    # The writers take decided results, as they do from the runner.
+    return pinf._apply_triplet_result_p_value_correction(
+        [result], alpha_dct=0.05, alpha_ks=0.05, method="no"
+    )[0]
 
 
 def test_shape_is_measured_once_and_not_per_bootstrap_iteration():
@@ -195,51 +199,26 @@ def test_shape_is_measured_once_and_not_per_bootstrap_iteration():
     assert few.shape_statistics["con_modes_p"] == many.shape_statistics["con_modes_p"]
 
 
+@pytest.mark.output
 @pytest.mark.parametrize("enabled", [False, True])
-def test_summary_statistics_tsv_carries_shape_columns_only_when_enabled(
-    enabled, tmp_path
-):
-    """The summary TSV repeats the diagnostics under its own group names.
-
-    Its other per-topology columns spell the groups out in full, so these do
-    too; the values are the same numbers the results TSV carries.
-    """
-    result = _shape_result(enabled=enabled)
-    path = tmp_path / "summary.tsv"
-    pinf.write_summary_statistics_tsv([result], str(path))
-
-    lines = path.read_text().strip().splitlines()
-    header = lines[0].split("\t")
-    expected = [
-        f"{label}_{field}"
-        for label in pinf.SHAPE_SUMMARY_GROUP_LABELS
-        for field in pshape.SHAPE_FIELD_NAMES
-    ]
-    assert all((column in header) is enabled for column in expected)
-    assert len(lines[1].split("\t")) == len(header)
-    # The short-prefixed results-TSV names never leak into this file.
-    assert not any(column.startswith("con_") for column in header)
-
-    if enabled:
-        row = dict(zip(header, lines[1].split("\t")))
-        assert float(row["concordant_skew"]) == pytest.approx(
-            result.shape_statistics["con_skew"]
-        )
-        assert row["discordant2_tail_xi"] == ""
-
-
-@pytest.mark.parametrize("enabled", [False, True])
-def test_results_tsv_carries_shape_columns_only_when_enabled(enabled, tmp_path):
-    """The fifteen shape columns follow the setting and never shift the row.
+def test_shape_columns_reach_the_results_tsv_only_and_only_when_enabled(enabled, tmp_path):
+    """The fifteen shape columns follow the setting in the results TSV and never reach the summary.
 
     They are read off the results rather than passed to the writer, so a run
-    that did not measure them cannot emit empty columns claiming it did.
+    that did not measure them cannot emit empty columns claiming it did, and
+    the row never shifts against the header. The summary TSV is a feature
+    matrix, and the diagnostics are undefined for groups below their
+    observation floors: a group of 12 has no modality p-value and a thin
+    upper tail has no tail index, so carrying them there would punch holes
+    in every row that hit one; nothing of theirs reaches that file even when
+    they were measured.
     """
     result = _shape_result(enabled=enabled)
-    path = tmp_path / "results.tsv"
-    pinf.write_pipeline_results([result], str(path), p_value_correction="no")
+    assert (result.shape_statistics is not None) is enabled
 
-    lines = path.read_text().strip().splitlines()
+    results_path = tmp_path / "results.tsv"
+    pinf.write_pipeline_results([result], str(results_path), p_value_correction="no")
+    lines = results_path.read_text().strip().splitlines()
     header = lines[0].split("\t")
     expected = [
         f"{label}_{field}"
@@ -249,7 +228,6 @@ def test_results_tsv_carries_shape_columns_only_when_enabled(enabled, tmp_path):
     assert len(expected) == 15
     assert all((column in header) is enabled for column in expected)
     assert len(lines[1].split("\t")) == len(header)
-
     if enabled:
         row = dict(zip(header, lines[1].split("\t")))
         # 60 concordant heights clear the minimum; 30 discordant2 heights clear
@@ -258,5 +236,14 @@ def test_results_tsv_carries_shape_columns_only_when_enabled(enabled, tmp_path):
         assert int(row["con_n_modes"]) >= 1
         assert 0.0 < float(row["con_modes_p"]) <= 1.0
         assert row["dis2_tail_xi"] == ""
-    else:
-        assert result.shape_statistics is None
+
+    summary_path = tmp_path / "summary.tsv"
+    pinf.write_summary_statistics_tsv([result], str(summary_path))
+    lines = summary_path.read_text().strip().splitlines()
+    header = lines[0].split("\t")
+    assert not any(column.endswith(f"_{field}") for column in header
+                   for field in pshape.SHAPE_FIELD_NAMES)
+    assert len(lines[1].split("\t")) == len(header)
+    # The descriptive per-topology columns the file does carry are unaffected.
+    assert "concordant_avg_tree_height_mean" in header
+    assert "classification" in header

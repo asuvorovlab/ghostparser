@@ -35,6 +35,7 @@ venv/
 *.parquet
 *.pkl
 **/wandb/
+*.html
 
 # Scripts and Test Notebooks
 ghost*.sh
@@ -45,6 +46,10 @@ test*.ipynb
 
 # Configurations
 configs/
+*.yaml
+
+# The shipped sample configs are never ignored
+!sample_configs/**
 
 # Everything except GitHub Actions
 .github/*
