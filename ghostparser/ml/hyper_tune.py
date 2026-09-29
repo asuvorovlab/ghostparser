@@ -10,6 +10,7 @@ import json
 import os
 import pickle
 import random
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -20,8 +21,10 @@ from ..config import (
     DEFAULT_OVERWRITE,
     ConfigError,
     _validate_overwrite_flag,
+    _validate_required_path,
     prepare_output_directory,
 )
+from ..cli_config import resolve_cli_or_config_args, run_cli
 from . import ml_utils as shared
 from . import multi_knn as knn_module
 from . import random_forest as rf_module
@@ -40,9 +43,15 @@ from .config import (
     DEFAULT_N_ESTIMATORS,
     DEFAULT_N_JOBS,
     DEFAULT_N_NEIGHBORS,
-    DEFAULT_RANDOM_STATE,
+    DEFAULT_SEED,
     DEFAULT_TARGET_COLUMN,
     _load_raw_config,
+    _validate_optional_bool,
+    _validate_optional_choice,
+    _validate_optional_float,
+    _validate_optional_int,
+    _validate_optional_positive_int,
+    _validate_optional_string,
     normalize_class_weight,
     normalize_max_features,
 )
@@ -61,6 +70,7 @@ DEFAULT_TOP_K = 10
 DEFAULT_RANDOM_ITERATIONS = 20
 DEFAULT_MAX_CANDIDATES = 5000
 DEFAULT_WANDB_PROJECT = "ghostparser-hyper-tune"
+DEFAULT_USE_WANDB = False
 
 SUPPORTED_MODELS = ("multi_knn", "random_forest")
 SUPPORTED_SEARCH_METHODS = ("grid", "random")
@@ -114,14 +124,17 @@ MODEL_DEFAULTS = {
 
 
 def _format_seconds(seconds: float) -> str:
+    """Format a duration in seconds for the progress log."""
     return f"{seconds:.2f}s"
 
 
 def _pluralize(word: str, count: int) -> str:
+    """Pluralize ``word`` unless ``count`` is one."""
     return word if count == 1 else f"{word}s"
 
 
 def _log_progress(message: str) -> None:
+    """Print a progress line prefixed with the tuner's name."""
     print(f"[hyper_tune] {message}", flush=True)
 
 
@@ -140,6 +153,7 @@ def _import_wandb():
 
 
 def _get_wandb_project() -> str:
+    """Read the W&B project from ``WANDB_PROJECT``, falling back to the default."""
     value = os.getenv("WANDB_PROJECT")
     if value is None:
         return DEFAULT_WANDB_PROJECT
@@ -148,6 +162,7 @@ def _get_wandb_project() -> str:
 
 
 def _get_wandb_entity() -> str | None:
+    """Read the W&B entity from ``WANDB_ENTITY``, or ``None``."""
     value = os.getenv("WANDB_ENTITY")
     if value is None:
         return None
@@ -156,6 +171,7 @@ def _get_wandb_entity() -> str | None:
 
 
 def _build_wandb_run_name(config: argparse.Namespace) -> str:
+    """Name the W&B run after the model, the search method and the time."""
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return (
         f"ghostparser-{config.model_name}-{config.search_method}-"
@@ -170,15 +186,19 @@ class _NullRunLogger:
     detailed_payloads = False
 
     def log(self, payload: dict) -> None:
+        """Discard the payload."""
         return None
 
     def log_table(self, name: str, rows: list[dict[str, object]]) -> None:
+        """Discard the table."""
         return None
 
     def set_summary(self, key: str, value: object) -> None:
+        """Discard the summary value."""
         return None
 
     def finish(self) -> None:
+        """Do nothing."""
         return None
 
 
@@ -188,11 +208,13 @@ class _WandbRunLogger:
     enabled = True
 
     def __init__(self, wandb_module, run, detailed_payloads: bool) -> None:
+        """Wrap a live W&B run."""
         self._wandb = wandb_module
         self._run = run
         self.detailed_payloads = detailed_payloads
 
     def log(self, payload: dict) -> None:
+        """Log a payload to the run."""
         self._wandb.log(payload)
 
     def log_table(self, name: str, rows: list[dict[str, object]]) -> None:
@@ -217,9 +239,11 @@ class _WandbRunLogger:
         self._wandb.log({name: table})
 
     def set_summary(self, key: str, value: object) -> None:
+        """Set a run-summary value."""
         self._run.summary[key] = value
 
     def finish(self) -> None:
+        """Finish the run."""
         self._run.finish()
 
 
@@ -237,7 +261,7 @@ def _create_run_logger(
         output_dir: Run output directory; hosts the ``wandb/`` scratch folder.
         total_candidates: Number of candidates the search will evaluate.
         cv_folds: Effective cross-validation fold count.
-        use_wandb: Explicit ``hyperparameter_tuning.use_wandb`` choice.
+        use_wandb: Resolved ``hyperparameter_tuning.use_wandb`` choice.
 
     Returns:
         A no-op logger when W&B is off, otherwise a live W&B-backed logger.
@@ -262,7 +286,7 @@ def _create_run_logger(
         "cv_folds": int(cv_folds),
         "test_size": float(config.test_size),
         "rare_class_policy": config.rare_class_policy,
-        "random_state": config.random_state,
+        "seed": config.seed,
         "n_jobs": config.n_jobs,
     }
 
@@ -300,93 +324,9 @@ RUNTIME_KEYS = {
     "test_size",
     "cv_folds",
     "rare_class_policy",
-    "random_state",
+    "seed",
     "n_jobs",
 }
-
-
-def _validate_required_path(payload: dict, key: str) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ConfigError(f"Missing required config field: {key}")
-    return str(Path(value.strip()).expanduser().resolve())
-
-
-def _validate_optional_string(
-    payload: dict, key: str, default: str | None
-) -> str | None:
-    value = payload.get(key, default)
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise ConfigError(
-            f"Config field {key} must be a non-empty string when provided"
-        )
-    return value.strip()
-
-
-def _validate_optional_float(payload: dict, key: str, default: float) -> float:
-    value = payload.get(key, default)
-    if value is None:
-        value = default
-    try:
-        value = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ConfigError(f"Config field {key} must be numeric") from exc
-    if not 0 < value < 1:
-        raise ConfigError(f"Config field {key} must be a fraction between 0 and 1")
-    return value
-
-
-def _validate_optional_positive_int(
-    payload: dict, key: str, default: int | None
-) -> int | None:
-    value = payload.get(key, default)
-    if value is None:
-        return None
-    if not isinstance(value, int) or value < 1:
-        raise ConfigError(f"Config field {key} must be an integer >= 1")
-    return value
-
-
-def _validate_optional_int(payload: dict, key: str, default: int | None) -> int | None:
-    value = payload.get(key, default)
-    if value is None:
-        return None
-    if not isinstance(value, int):
-        raise ConfigError(f"Config field {key} must be an integer when provided")
-    return value
-
-
-def _validate_optional_choice(
-    payload: dict, key: str, default: str, choices: tuple[str, ...]
-) -> str:
-    value = payload.get(key, default)
-    if value is None:
-        value = default
-    if not isinstance(value, str) or value not in choices:
-        raise ConfigError(f"Config field {key} must be one of: {', '.join(choices)}")
-    return value
-
-
-def _validate_optional_bool(payload: dict, key: str, default: bool) -> bool:
-    value = payload.get(key, default)
-    if not isinstance(value, bool):
-        raise ConfigError(f"Config field {key} must be a boolean")
-    return value
-
-
-def _validate_required_bool(payload: dict, key: str, section: str) -> bool:
-    """Read a boolean that must be spelled out; there is deliberately no default."""
-    if key not in payload:
-        raise ConfigError(
-            f"Missing required config field: {section}.{key}. "
-            f"Set {section}.{key} to true or false explicitly."
-        )
-    value = payload[key]
-    if not isinstance(value, bool):
-        raise ConfigError(f"Config field {section}.{key} must be a boolean")
-    return value
 
 
 def _normalize_search_space_values(search_space: dict[str, object]) -> dict:
@@ -418,6 +358,8 @@ def _normalize_search_space_values(search_space: dict[str, object]) -> dict:
 
 
 def _normalize_search_values(value: object) -> list[object]:
+    """Turn a search-space entry into a non-empty candidate list, accepting a lone value.
+    """
     if isinstance(value, (list, tuple)):
         candidates = list(value)
         if not candidates:
@@ -429,6 +371,18 @@ def _normalize_search_values(value: object) -> list[object]:
 def _build_candidate_grid(
     search_space: dict[str, object],
 ) -> tuple[list[dict[str, object]], list[str]]:
+    """Expand the search space into every candidate combination.
+
+    Args:
+        search_space: Parameter name to candidate list.
+
+    Returns:
+        ``(candidates, parameter_names)``: one dict per combination, and the
+        parameter names in order.
+
+    Raises:
+        ConfigError: If the search space is empty or a list has no values.
+    """
     if not search_space:
         raise ConfigError(
             "Config field search_space must define at least one parameter"
@@ -443,10 +397,16 @@ def _build_candidate_grid(
 
 
 def _objective_direction(metric_name: str) -> str:
+    """Return ``min`` for the objectives that are losses, else ``max``."""
     return "min" if metric_name in MINIMIZE_OBJECTIVES else "max"
 
 
 def _candidate_score(cv_results: dict, objective_metric: str) -> float:
+    """Read the candidate's cross-validated objective mean.
+
+    Raises:
+        ConfigError: If the objective is not among the CV metrics.
+    """
     aggregate = cv_results.get("aggregate", {})
     key = f"{objective_metric}_mean"
     if key not in aggregate:
@@ -461,6 +421,8 @@ def _build_training_namespace(
     candidate_params: dict[str, object],
     model_name: str,
 ) -> argparse.Namespace:
+    """Build a trainer config from the runtime keys, the model defaults and one candidate's parameters.
+    """
     payload = dict(base_config)
     payload.update(MODEL_DEFAULTS[model_name])
     payload.update(candidate_params)
@@ -468,11 +430,23 @@ def _build_training_namespace(
 
 
 def load_hyper_tune_config(config_file: str) -> dict[str, object]:
+    """Load and normalize a tuner config file."""
     payload = _load_raw_config(config_file)
     return normalize_hyper_tune_payload(payload)
 
 
 def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
+    """Validate a tuner config: the runtime keys plus the ``hyperparameter_tuning`` block.
+
+    Args:
+        payload: The raw config mapping.
+
+    Returns:
+        The resolved tuner config dict.
+
+    Raises:
+        ConfigError: If a key is missing, misplaced or invalid.
+    """
     input_path = _validate_required_path(payload, "input_path")
     output_dir = _validate_required_path(payload, "output_dir")
 
@@ -556,10 +530,10 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
     max_candidates = _validate_optional_positive_int(
         tuning_section, "max_candidates", DEFAULT_MAX_CANDIDATES
     )
-    use_wandb = _validate_required_bool(
+    use_wandb = _validate_optional_bool(
         tuning_section,
         "use_wandb",
-        "hyperparameter_tuning",
+        DEFAULT_USE_WANDB,
     )
     wandb_detailed_payloads = _validate_optional_bool(
         tuning_section,
@@ -602,9 +576,7 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
             "warn_reduce_cv",
             ("warn_reduce_cv", "warn_skip_cv", "error"),
         ),
-        "random_state": _validate_optional_int(
-            payload, "random_state", DEFAULT_RANDOM_STATE
-        ),
+        "seed": _validate_optional_int(payload, "seed", DEFAULT_SEED),
         "n_jobs": _validate_optional_int(payload, "n_jobs", DEFAULT_N_JOBS),
         "model_name": model_name,
         "search_method": search_method,
@@ -631,6 +603,20 @@ def _evaluate_candidate(
     labels_train: np.ndarray,
     folds: int,
 ) -> tuple[argparse.Namespace, dict, float]:
+    """Cross-validate one candidate and return its score and results.
+
+    Args:
+        base_config: The runtime keys.
+        candidate_params: The candidate's hyperparameters.
+        model_name: ``random_forest`` or ``multi_knn``.
+        x_train: The training features.
+        y_train: The training binary targets.
+        labels_train: The training combination labels.
+        folds: Number of folds.
+
+    Returns:
+        ``(candidate_config, cv_results, score)``.
+    """
     candidate_config = _build_training_namespace(
         base_config, candidate_params, model_name
     )
@@ -645,7 +631,7 @@ def _evaluate_candidate(
             y_train,
             labels_train,
             folds,
-            candidate_config.random_state,
+            candidate_config.seed,
         )
     elif model_name == "multi_knn":
         cv_results = knn_module._cross_validate(
@@ -653,7 +639,7 @@ def _evaluate_candidate(
             y_train,
             labels_train,
             folds,
-            candidate_config.random_state,
+            candidate_config.seed,
             candidate_config,
         )
     else:
@@ -663,13 +649,17 @@ def _evaluate_candidate(
 
 
 def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
+    """Search the hyperparameter space, refit the best candidate and write the reports.
+
+    Args:
+        config: The resolved tuner config.
+
+    Returns:
+        A dict with the ranked candidates, the best parameters, the test
+        metrics, the parameter marginals and the artifact paths.
+    """
     run_start = time.perf_counter()
-    if not hasattr(config, "use_wandb"):
-        raise ConfigError(
-            "Missing required config field: hyperparameter_tuning.use_wandb. "
-            "Set hyperparameter_tuning.use_wandb to true or false explicitly."
-        )
-    use_wandb = bool(config.use_wandb)
+    use_wandb = bool(getattr(config, "use_wandb", DEFAULT_USE_WANDB))
     # The ranked-candidate table, the parameter marginals, the per-row
     # predictions and the full results payload are the bulky outputs. With W&B
     # on they go to the run instead of the output directory, which then keeps
@@ -696,7 +686,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             matrix.train_targets,
             labels,
             config.test_size,
-            config.random_state,
+            config.seed,
         )
     )
     split_seconds = time.perf_counter() - split_start
@@ -723,7 +713,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
             )
         candidates = candidate_grid
     else:
-        rng = random.Random(config.random_state)
+        rng = random.Random(config.seed)
         sample_size = min(config.n_iter, len(candidate_grid))
         candidates = rng.sample(candidate_grid, sample_size)
 
@@ -897,7 +887,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
         y_test,
         split_notes,
         config.test_size,
-        config.random_state,
+        config.seed,
     )
     prediction_rows = shared.build_prediction_rows(y_test, test_predictions)
 
@@ -1122,6 +1112,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
 
 
 def _build_argument_parser() -> argparse.ArgumentParser:
+    """Build the tuner's argument parser."""
     parser = argparse.ArgumentParser(
         description="Ghostparser ML hyperparameter tuner for supported model modules."
     )
@@ -1133,22 +1124,40 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="Path to a JSON or YAML hyperparameter tuning config file",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="RNG seed for the split, the folds, the models and a random "
+        "search's draws; overrides the config file's seed",
+    )
+    parser.add_argument(
         "--no-overwrite",
         dest="no_overwrite",
         action="store_true",
-        default=False,
+        default=None,
         help="Append a numeric suffix when the output directory already exists",
     )
     return parser
 
 
-def main() -> None:
-    args = _build_argument_parser().parse_args()
-    config = load_hyper_tune_config(args.config_file)
-    if args.no_overwrite:
-        config["overwrite"] = False
-    result = tune_hyperparameters(argparse.Namespace(**config))
+def _run(parsed_args) -> None:
+    """Resolve the config, run the search, and print where the results went.
+
+    Args:
+        parsed_args: The parsed command line.
+    """
+    config = resolve_cli_or_config_args(
+        parsed_args,
+        normalize_payload=normalize_hyper_tune_payload,
+        payload_arg_names=["seed", "no_overwrite"],
+    )
+    result = tune_hyperparameters(config)
     print(result["results_txt_path"])
+
+
+def main() -> None:
+    """Run the tuner from the command line and exit with its status."""
+    sys.exit(run_cli(_build_argument_parser(), _run))
 
 
 if __name__ == "__main__":

@@ -1,8 +1,5 @@
-"""Configuration for the orchestrator.
-
-Owns the orchestrator's defaults, choices, validation rules, CLI parser, and
-CLI/config resolution; shared helpers come from the :mod:`ghostparser.config`
-trunk. Every key is documented in the configuration guide.
+"""The orchestrator's defaults, choices, validation, CLI parser and config
+resolution.
 """
 
 import argparse
@@ -16,6 +13,7 @@ from ..config import (
     _validate_required_path,
     prepare_output_directory,
 )
+from .trees import load_species_rename_map
 
 __all__ = ["ConfigError", "prepare_output_directory", "build_argument_parser",
            "resolve_config", "load_orchestrator_config", "normalize_orchestrator_payload"]
@@ -35,18 +33,19 @@ DEFAULT_PERMUTATION_MAX_RESAMPLES = 25000
 DEFAULT_PERMUTATION_CI_METHOD = "wilson"
 DEFAULT_BOOTSTRAP = True
 DEFAULT_BOOTSTRAP_ITERATIONS = 100
-DEFAULT_BOOTSTRAP_DEBUG_MODE = False
+DEFAULT_BOOTSTRAP_DIAGNOSTIC = False
 DEFAULT_BOOTSTRAP_SUMMARY_ONLY = False
 DEFAULT_GENERATE_SUMMARY_STATS = False
 DEFAULT_SHAPE_DIAGNOSTICS = False
-DEFAULT_PIPELINE_MODE = "efficient"
+DEFAULT_DIAGNOSTIC = False
 DEFAULT_CONSOLIDATION = True
 DEFAULT_PREFLIGHT_DATA_CHECK = False
+# Caps the triplets the preflight check walks so it stays quick on large
+# inputs; 0 lifts the cap. Analysis-only: a real run always processes every
+# triplet.
+DEFAULT_PREFLIGHT_TRIPLET_CAP = 15000
 
 DISCORDANT_TEST_CHOICES = ("chi-square", "z-test")
-PIPELINE_MODE_EFFICIENT = "efficient"
-PIPELINE_MODE_DETAILED = "detailed"
-PIPELINE_MODE_CHOICES = (PIPELINE_MODE_EFFICIENT, PIPELINE_MODE_DETAILED)
 TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES = ("AVG", "A", "B", "C", "SIS", "INT")
 P_VALUE_CORRECTION_CHOICES = ("no", "bfn", "holm", "fdr_bh", "fdr_by")
 
@@ -64,16 +63,11 @@ PERMUTATION_CI_METHOD_CHOICES = (
 )
 
 # Parallelization knobs specific to this package.
-PARALLELIZATION_MODE_CHOICES = ("auto", "taxon", "gene")
-DEFAULT_PARALLELIZATION_MODE = "auto"
-# `auto` picks `gene` for small-taxa/large-gene-tree runs, else `taxon`.
-AUTO_TAXA_SMALL_THRESHOLD = 15
-AUTO_GENE_TREES_THRESHOLD = 3500
 
 # CLI argument dest names that also map to config-file payload keys. These are
 # the config+CLI options; config-file-only keys (discordant_test,
 # tree_height_calculation_strategy, min_support_value, bootstrap_iterations,
-# bootstrap_seed, generate_summary_stats, shape_diagnostics, bootstrap_debug_mode,
+# generate_summary_stats, shape_diagnostics, bootstrap_diagnostic,
 # bootstrap_summary_only, permutation_options) are intentionally absent so they
 # are read only from a config file and otherwise take their defaults.
 _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
@@ -82,17 +76,20 @@ _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "outgroup",
     "output_folder",
     "triplet_filter",
+    "species_filter",
+    "species_rename_map",
+    "seed",
     "no_overwrite",
     "processes",
-    "parallelization_mode",
     "alpha_dct",
     "alpha_ks",
     "alpha_perm",
     "p_value_correction",
-    "pipeline_mode",
+    "diagnostic",
     "consolidation",
     "bootstrap",
     "preflight_data_check",
+    "preflight_triplet_cap",
 ]
 
 
@@ -119,6 +116,56 @@ def _validate_optional_path(payload: dict, key: str) -> str | None:
     return _resolve_path(value.strip())
 
 
+def _validate_triplet_selection(payload: dict) -> tuple[str | None, str | None]:
+    """Resolve the triplet filter and the species filter, at most one of which may be set.
+
+    Args:
+        payload: The config/CLI payload.
+
+    Returns:
+        The resolved ``(triplet_filter, species_filter)`` paths, each ``None``
+        when absent.
+
+    Raises:
+        ConfigError: If either path is not a non-empty string, or both are set.
+    """
+    triplet_filter = _validate_optional_path(payload, "triplet_filter")
+    species_filter = _validate_optional_path(payload, "species_filter")
+    if triplet_filter is not None and species_filter is not None:
+        raise ConfigError(
+            "Config fields triplet_filter and species_filter cannot both be set; "
+            "name the triplets or the species, not both"
+        )
+    return triplet_filter, species_filter
+
+
+def _validate_species_rename_map(payload: dict) -> str | None:
+    """Resolve the optional rename-map path and read the file it names.
+
+    The file is read here, not at run time, so a map that is missing,
+    malformed, or gives a taxon a name the outputs cannot carry fails before
+    any tree is cleaned rather than after.
+
+    Args:
+        payload: The config/CLI payload.
+
+    Returns:
+        The resolved absolute path, or ``None`` when the field is absent.
+
+    Raises:
+        ConfigError: If the field is present but not a non-empty string, or
+            the file cannot be loaded as a rename map.
+    """
+    path = _validate_optional_path(payload, "species_rename_map")
+    if path is None:
+        return None
+    try:
+        load_species_rename_map(path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise ConfigError(f"Config field species_rename_map: {exc}") from exc
+    return path
+
+
 def _validate_non_negative_int(payload: dict, key: str, default: int) -> int:
     """Validate a non-negative integer field.
 
@@ -138,6 +185,27 @@ def _validate_non_negative_int(payload: dict, key: str, default: int) -> int:
         value = default
     if not isinstance(value, int) or value < 0:
         raise ConfigError(f"Config field {key} must be an integer >= 0")
+    return value
+
+
+def _validate_optional_int(payload: dict, key: str) -> int | None:
+    """Validate an optional integer field.
+
+    Args:
+        payload: The config/CLI payload.
+        key: The field name.
+
+    Returns:
+        The integer, or ``None`` when the field is absent.
+
+    Raises:
+        ConfigError: If the field is present but not an integer.
+    """
+    value = payload.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"Config field {key} must be an integer when provided")
     return value
 
 
@@ -249,18 +317,15 @@ def _validate_choice(
 
 
 def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
-    """Validate the bootstrap toggle and its nested/flat options.
-
-    Accepts the canonical ``bootstrap`` toggle plus either a nested
-    ``bootstrap_options`` block or the flat ``bootstrap_iterations``/
-    ``bootstrap_seed``/``bootstrap_debug_mode``/``bootstrap_summary_only`` keys.
+    """Validate the ``bootstrap`` toggle and its options, given nested under
+    ``bootstrap_options`` or flat as ``bootstrap_<key>``.
 
     Args:
         payload: The config/CLI payload.
 
     Returns:
         A tuple ``(bootstrap, options)`` where ``options`` has
-        ``iterations``/``seed``/``debug_mode``/``summary_only``.
+        ``iterations``/``seed``/``diagnostic``/``summary_only``.
 
     Raises:
         ConfigError: If any value is malformed.
@@ -286,21 +351,15 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
             "Config field bootstrap_options.iterations must be an integer >= 1"
         )
 
-    seed = payload.get("bootstrap_seed", raw_options.get("seed"))
-    if seed is not None and not isinstance(seed, int):
-        raise ConfigError(
-            "Config field bootstrap_options.seed must be an integer when provided"
-        )
-
-    debug_mode = payload.get(
-        "bootstrap_debug_mode",
-        raw_options.get("debug_mode", DEFAULT_BOOTSTRAP_DEBUG_MODE),
+    diagnostic = payload.get(
+        "bootstrap_diagnostic",
+        raw_options.get("diagnostic", DEFAULT_BOOTSTRAP_DIAGNOSTIC),
     )
-    if debug_mode is None:
-        debug_mode = DEFAULT_BOOTSTRAP_DEBUG_MODE
-    if not isinstance(debug_mode, bool):
+    if diagnostic is None:
+        diagnostic = DEFAULT_BOOTSTRAP_DIAGNOSTIC
+    if not isinstance(diagnostic, bool):
         raise ConfigError(
-            "Config field bootstrap_options.debug_mode must be a boolean when provided"
+            "Config field bootstrap_options.diagnostic must be a boolean when provided"
         )
 
     summary_only = payload.get(
@@ -316,18 +375,13 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
 
     return bootstrap, {
         "iterations": iterations,
-        "seed": seed,
-        "debug_mode": debug_mode,
+        "diagnostic": diagnostic,
         "summary_only": summary_only,
     }
 
 
 def _validate_permutation_options(payload: dict) -> dict:
-    """Validate the nested permutation-test options block.
-
-    The tuning knobs inside ``permutation_options`` are config-file-only. There
-    is no ``initial_batch`` knob: the first adaptive batch is always
-    ``min_resamples``.
+    """Validate the config-file-only ``permutation_options`` block.
 
     Args:
         payload: The config/CLI payload.
@@ -437,7 +491,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "-c",
         "--config-file",
         default=None,
-        help="Path to a JSON or YAML config file (config-file mode; other CLI flags are ignored)",
+        help="Path to a JSON or YAML config file; any other flag given alongside it overrides the file's value",
     )
     parser.add_argument(
         "-st",
@@ -468,6 +522,27 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Path to triplet filter file (comma-separated taxa per line)",
     )
     parser.add_argument(
+        "--species-filter",
+        default=None,
+        help="Path to a species filter file (comma-separated taxa, any number "
+        "per line); every triplet among the listed species is analyzed. "
+        "Cannot be combined with --triplet-filter",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Base RNG seed for the whole run; every random draw derives from "
+        "it. Omit for a fresh seed each run (the value used is reported in "
+        "metrics.txt either way)",
+    )
+    parser.add_argument(
+        "--species-rename-map",
+        default=None,
+        help="Path to a species rename map (two-column TSV, or YAML mapping) "
+        "giving the name each taxon should appear under in the outputs",
+    )
+    parser.add_argument(
         "--no-overwrite",
         dest="no_overwrite",
         action="store_true",
@@ -479,16 +554,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Number of worker processes (0 = all cores)",
-    )
-    parser.add_argument(
-        "--parallelization-mode",
-        choices=PARALLELIZATION_MODE_CHOICES,
-        default=None,
-        help=(
-            "Parallelization strategy: 'taxon' dispatches triplet chunks across "
-            "workers, 'gene' parallelizes subtree extraction within a triplet, "
-            f"'auto' selects one from the input size (default: {DEFAULT_PARALLELIZATION_MODE})"
-        ),
     )
     parser.add_argument(
         "--alpha-dct",
@@ -515,13 +580,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=f"Multiple-testing correction for triplet p-values (default: {DEFAULT_P_VALUE_CORRECTION})",
     )
     parser.add_argument(
-        "--pipeline-mode",
-        choices=PIPELINE_MODE_CHOICES,
+        "--diagnostic",
+        dest="diagnostic",
+        action="store_true",
         default=None,
         help=(
-            "efficient skips tests the decision cascade cannot consult; "
-            "detailed runs every test for every triplet "
-            f"(default: {DEFAULT_PIPELINE_MODE})"
+            "Measure every test for every triplet so every ks_* and perm_* "
+            "column is filled; by default a test the decision cascade cannot "
+            "consult is skipped (default: disabled)"
         ),
     )
     parser.add_argument(
@@ -549,16 +615,23 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "running any analysis (default: disabled)"
         ),
     )
+    parser.add_argument(
+        "--preflight-triplet-cap",
+        dest="preflight_triplet_cap",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of ingroup triplets the preflight data check walks; "
+            "0 checks every triplet (default: "
+            f"{DEFAULT_PREFLIGHT_TRIPLET_CAP})"
+        ),
+    )
     return parser
 
 
 def normalize_orchestrator_payload(payload: dict) -> dict:
-    """Normalize an orchestrator config/CLI payload into the runtime config dict.
-
-    Validates and fills every runtime key from the payload (a parsed config file
-    or a CLI-derived dict), applying orchestrator defaults for anything omitted.
-    Config-file-only keys default when absent, which is what happens in CLI mode
-    since they have no corresponding flag.
+    """Validate a config-file or CLI payload and fill every runtime key,
+    applying the defaults for anything omitted.
 
     Args:
         payload: Raw config/CLI key-value mapping.
@@ -581,36 +654,35 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
 
     bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
     permutation_options = _validate_permutation_options(payload)
-    pipeline_mode = _validate_choice(
-        payload, "pipeline_mode", DEFAULT_PIPELINE_MODE, PIPELINE_MODE_CHOICES
-    )
-
+    triplet_filter, species_filter = _validate_triplet_selection(payload)
     return {
         "species_tree": species_tree,
         "gene_trees": gene_trees,
         "outgroup": outgroup,
-        "triplet_filter": _validate_optional_path(payload, "triplet_filter"),
+        "triplet_filter": triplet_filter,
+        "species_filter": species_filter,
+        "species_rename_map": _validate_species_rename_map(payload),
         "output": output,
         "overwrite": _validate_overwrite_flag(payload),
         "processes": _validate_non_negative_int(
             payload, "processes", DEFAULT_PROCESSES
         ),
-        "parallelization_mode": _validate_choice(
-            payload,
-            "parallelization_mode",
-            DEFAULT_PARALLELIZATION_MODE,
-            PARALLELIZATION_MODE_CHOICES,
-        ),
+        "seed": _validate_optional_int(payload, "seed"),
         "consolidation": _validate_optional_bool(
             payload, "consolidation", DEFAULT_CONSOLIDATION
         ),
         "preflight_data_check": _validate_optional_bool(
             payload, "preflight_data_check", DEFAULT_PREFLIGHT_DATA_CHECK
         ),
+        "preflight_triplet_cap": _validate_non_negative_int(
+            payload, "preflight_triplet_cap", DEFAULT_PREFLIGHT_TRIPLET_CAP
+        ),
         "shape_diagnostics": _validate_optional_bool(
             payload, "shape_diagnostics", DEFAULT_SHAPE_DIAGNOSTICS
         ),
-        "pipeline_mode": pipeline_mode,
+        "diagnostic": _validate_optional_bool(
+            payload, "diagnostic", DEFAULT_DIAGNOSTIC
+        ),
         "generate_summary_stats": _validate_optional_bool(
             payload, "generate_summary_stats", DEFAULT_GENERATE_SUMMARY_STATS
         ),
@@ -642,8 +714,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "permutation_ci_method": permutation_options["ci_method"],
         "bootstrap": bootstrap,
         "bootstrap_iterations": bootstrap_options["iterations"],
-        "bootstrap_seed": bootstrap_options["seed"],
-        "bootstrap_debug_mode": bootstrap_options["debug_mode"],
+        "bootstrap_diagnostic": bootstrap_options["diagnostic"],
         "bootstrap_summary_only": bootstrap_options["summary_only"],
     }
 
@@ -666,11 +737,8 @@ def load_orchestrator_config(config_file: str) -> dict:
 
 
 def resolve_config(args: argparse.Namespace) -> dict:
-    """Resolve a parsed CLI namespace into the orchestrator runtime config.
-
-    In config-file mode (``-c/--config-file``) the file is loaded and the other
-    CLI flags are ignored with a warning; otherwise the exposed CLI flags are
-    normalized directly. Config-file-only keys take their defaults in CLI mode.
+    """Resolve a parsed CLI namespace into the runtime config, laying any given
+    flags over the config file when one is named.
 
     Args:
         args: Parsed ``argparse.Namespace`` from :func:`build_argument_parser`.
@@ -684,7 +752,6 @@ def resolve_config(args: argparse.Namespace) -> dict:
     """
     resolved = resolve_cli_or_config_args(
         args,
-        load_config=load_orchestrator_config,
         normalize_payload=normalize_orchestrator_payload,
         payload_arg_names=_ORCHESTRATOR_PAYLOAD_ARG_NAMES,
     )

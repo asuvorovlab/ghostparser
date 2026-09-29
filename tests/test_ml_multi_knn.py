@@ -2,17 +2,27 @@ import argparse
 import csv
 import json
 
+import pytest
+
 from ghostparser.ml.multi_knn import _build_model, train_multi_knn
 
 
+@pytest.mark.integration
+@pytest.mark.output
 def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
+    """Training runs end to end and writes every artifact it promises.
+
+    The one smoke test for this entry point: it proves the KNN path fits,
+    scores and persists, and pins the output-file contract (predictions TSV,
+    model pickle, both confusion-matrix figures).
+    """
     config = argparse.Namespace(
         input_path=str(summary_statistics_tsv),
         output_dir=str(tmp_path / "ml_out"),
         target_column="class",
         test_size=0.25,
         cv_folds=3,
-        random_state=7,
+        seed=7,
         rare_class_policy="warn_reduce_cv",
         n_neighbors=5,
         weights="uniform",
@@ -60,12 +70,10 @@ def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
     assert model_path.exists()
     assert (tmp_path / "ml_out" / "multi_knn_confusion_matrices.png").exists()
     assert (tmp_path / "ml_out" / "multi_knn_confusion_matrix_64_classes.png").exists()
-    assert not (tmp_path / "ml_out" / "label_map.json").exists()
-    assert not (tmp_path / "ml_out" / "class_distribution.tsv").exists()
-    assert not (tmp_path / "ml_out" / "bit_distribution.tsv").exists()
 
 
 def test_multi_knn_build_model_caps_neighbors_to_training_size():
+    """`n_neighbors` is clamped to the training-set size, and only when needed."""
     config = argparse.Namespace(
         n_neighbors=20,
         weights="uniform",

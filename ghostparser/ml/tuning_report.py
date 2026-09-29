@@ -43,6 +43,7 @@ def _value_group_key(value: object) -> str:
 
 
 def _is_number(value: object) -> bool:
+    """Say whether ``value`` is an int or float but not a bool."""
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
@@ -64,10 +65,6 @@ def _render_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     lines = [render_row(headers).rstrip(), "  ".join("-" * width for width in widths)]
     lines.extend(render_row(row).rstrip() for row in rows)
     return lines
-
-
-def _better(score: float, other: float, objective_direction: str) -> bool:
-    return score < other if objective_direction == "min" else score > other
 
 
 def compute_parameter_marginals(
@@ -440,6 +437,8 @@ def _padded_limits(values: np.ndarray, pad_fraction: float = 0.08) -> tuple[floa
 
 
 def _plot_search_progress(ax, ranked_candidates, objective_metric, objective_direction):
+    """Plot every candidate's score in evaluation order with the running best over it.
+    """
     ordered = sorted(ranked_candidates, key=lambda row: int(row["candidate_index"]))
     indices = np.asarray([int(row["candidate_index"]) for row in ordered], dtype=int)
     scores = np.asarray([float(row["cv_score"]) for row in ordered], dtype=float)
@@ -543,6 +542,8 @@ def _plot_top_candidates(
 
 
 def _plot_parameter_marginal(ax, parameter, ranked_candidates, objective_metric):
+    """Plot the score distribution for each value of one parameter, as a box plus the candidates.
+    """
     groups: dict[str, dict[str, object]] = {}
     for row in ranked_candidates:
         if parameter not in row:

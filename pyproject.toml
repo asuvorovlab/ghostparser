@@ -33,5 +33,9 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 markers = [
+	"core: the statistics and decisions -- added automatically to every test not marked config, output or integration",
+	"config: a loader, normalizer or validator; asserts on the resolved config or a ConfigError",
+	"output: what was written -- files present, TSV columns, report fields, artifact routing -- not the numbers in them",
+	"integration: drives an entry point end to end (run_orchestrator, train_random_forest, train_multi_knn, tune_hyperparameters)",
 	"parity: cross-library parity checks (DendroPy vs BioPython tree operations)",
 ]

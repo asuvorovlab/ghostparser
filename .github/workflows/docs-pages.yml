@@ -67,6 +67,7 @@ jobs:
             --exclude 'site_docs/' \
             --include '*/' \
             --include '*.md' \
+            --include '*.svg' \
             --exclude '*' \
             ./ site_docs/
 

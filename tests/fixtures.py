@@ -72,24 +72,6 @@ def simple_gene_trees(tmp_path):
 
 
 @pytest.fixture()
-def triplet_comparison_cases():
-    return [
-        (
-            "((A:1.0,B:1.0):2.0,C:3.0,D:4.0);",
-            ("A", "B", "C"),
-        ),
-        (
-            "(((A:0.1,X:0.1):0.2,(B:0.1,Y:0.1):0.2):0.3,(C:0.1,Z:0.1):0.4);",
-            ("A", "B", "C"),
-        ),
-        (
-            "((A:0.5,B:0.5):0.5,(C:0.2,D:0.2):0.8);",
-            ("A", "B", "C"),
-        ),
-    ]
-
-
-@pytest.fixture()
 def summary_statistics_tsv(tmp_path):
     rows = [
         {

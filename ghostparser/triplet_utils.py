@@ -69,16 +69,3 @@ def classify_triplet_topology_string(tree, abc_triplet):
     """Classify rooted triplet topology as one of the three canonical strings."""
     sister_pair = find_sister_pair(tree)
     return topology_from_sister_pair(sister_pair, abc_triplet)
-
-
-def rank_topologies_by_frequency(topology_counts, rng=None):
-    """Rank topologies as (con, dis1, dis2) by descending frequency.
-
-    Ties are broken deterministically using ``ALL_TOPOLOGIES`` order.
-    """
-    ranked = sorted(
-        ALL_TOPOLOGIES,
-        key=lambda topology: (-int(topology_counts.get(topology, 0)), ALL_TOPOLOGIES.index(topology)),
-    )
-
-    return ranked[0], ranked[1], ranked[2]

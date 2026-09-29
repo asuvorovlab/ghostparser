@@ -1,26 +1,32 @@
 """Command-line entry point wiring argument parsing and config resolution to the runner."""
 
-from .config import ConfigError, build_argument_parser, resolve_config
+import sys
+
+from ..cli_config import EXIT_CHECK_FAILED, run_cli
+from .config import build_argument_parser, resolve_config
+from .preflight import PreflightResult
 from .runner import run_orchestrator
 
 
-def main() -> None:
-    """Run the orchestrator from the command line.
+def _run(parsed_args):
+    """Resolve the config and run the orchestrator.
 
-    Parses process argv, resolves the config, and invokes
-    :func:`ghostparser.orchestrator.runner.run_orchestrator`. On a ``ConfigError`` the
-    parser prints the error and exits.
+    Args:
+        parsed_args: The parsed command line.
+
+    Returns:
+        ``EXIT_CHECK_FAILED`` when a preflight check finds defects, else
+        ``None``.
     """
-    parser = build_argument_parser()
-    parsed_args = parser.parse_args()
+    result = run_orchestrator(resolve_config(parsed_args))
+    if isinstance(result, PreflightResult) and not result.passed:
+        return EXIT_CHECK_FAILED
+    return None
 
-    try:
-        config = resolve_config(parsed_args)
-    except ConfigError as exc:
-        parser.error(str(exc))
-        return
 
-    run_orchestrator(config)
+def main() -> None:
+    """Run the orchestrator from the command line and exit with its status."""
+    sys.exit(run_cli(build_argument_parser(), _run))
 
 
 if __name__ == "__main__":

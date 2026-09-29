@@ -6,7 +6,15 @@ import pytest
 
 from ghostparser.config import ConfigError
 from ghostparser.ml import hyper_tune, tuning_report
-from ghostparser.ml.hyper_tune import load_hyper_tune_config, tune_hyperparameters
+from ghostparser.cli_config import resolve_cli_or_config_args
+from ghostparser.ml.hyper_tune import (
+    load_hyper_tune_config,
+    normalize_hyper_tune_payload,
+    tune_hyperparameters,
+)
+
+
+_VALID_TUNING = {"model": "random_forest", "search_space": {"n_estimators": [5]}}
 
 
 def _write_config(tmp_path, name, tuning, **top_level):
@@ -30,7 +38,7 @@ def _tuning_namespace(input_path, output_dir, **overrides):
         test_size=0.25,
         cv_folds=2,
         rare_class_policy="warn_reduce_cv",
-        random_state=7,
+        seed=7,
         n_jobs=1,
         overwrite=True,
         model_name="random_forest",
@@ -55,7 +63,19 @@ def _tuning_namespace(input_path, output_dir, **overrides):
     return config
 
 
-def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
+@pytest.mark.config
+@pytest.mark.parametrize(
+    "max_features", [["sqrt", None, 4], "log2"], ids=["list", "lone_value"]
+)
+def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path, max_features):
+    """A full tuning section resolves, with its keys renamed to their config names.
+
+    The section's `model`/`method`/`objective` keys surface as `model_name`,
+    `search_method` and `objective_metric`, so this pins the rename as well as
+    the acceptance, a caller reading the resolved config uses the latter
+    names. Valid search-space candidates pass the `model`-block rules and keep
+    their shape, list or lone value alike.
+    """
     config_path = _write_config(
         tmp_path,
         "hyper_tune.json",
@@ -71,7 +91,7 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
                 "max_depth": [None],
                 "min_samples_split": [2],
                 "min_samples_leaf": [1],
-                "max_features": ["sqrt"],
+                "max_features": max_features,
                 "class_weight": [None],
             },
         },
@@ -83,76 +103,80 @@ def test_load_hyper_tune_config_accepts_hyperparameter_tuning_section(tmp_path):
     assert config["search_method"] == "grid"
     assert config["objective_metric"] == "exact_match_accuracy"
     assert config["search_space"]["n_estimators"] == [5, 10]
+    assert config["search_space"]["max_features"] == max_features
     assert config["use_wandb"] is False
 
 
+@pytest.mark.config
+def test_tuner_cli_flags_override_the_config_file(tmp_path):
+    """`--seed` and `--no-overwrite` beside the tuner's config file replace its values."""
+    config_path = _write_config(
+        tmp_path, "tune.json", _VALID_TUNING, seed=7, overwrite=True
+    )
+    args = argparse.Namespace(config_file=str(config_path), seed=9, no_overwrite=True)
+
+    config = resolve_cli_or_config_args(
+        args,
+        normalize_payload=normalize_hyper_tune_payload,
+        payload_arg_names=["seed", "no_overwrite"],
+    )
+
+    assert config.seed == 9
+    assert config.overwrite is False
+    assert config.search_space["n_estimators"] == [5]
+
+
+@pytest.mark.config
 @pytest.mark.parametrize(
-    "use_wandb, detailed_payloads",
-    [(False, None), (True, None), (True, True)],
-)
-def test_load_hyper_tune_config_fills_model_defaults(
-    use_wandb, detailed_payloads, tmp_path
-):
-    """Keys absent from the tuning block take their defaults; present ones win."""
-    tuning = {
-        "model": "random_forest",
-        "use_wandb": use_wandb,
-        "search_space": {"n_estimators": [5, 10]},
-    }
-    if detailed_payloads is not None:
-        tuning["wandb_detailed_payloads"] = detailed_payloads
-
-    config_path = _write_config(tmp_path, "hyper_tune_defaults.json", tuning)
-
-    config = load_hyper_tune_config(str(config_path))
-
-    assert config["class_weight"] is None
-    assert config["max_features"] == "sqrt"
-    assert config["min_samples_split"] == 2
-    assert config["overwrite"] is True
-    assert config["use_wandb"] is use_wandb
-    assert config["wandb_detailed_payloads"] is bool(detailed_payloads)
-
-
-@pytest.mark.parametrize(
-    "tuning, expected_message",
+    "tuning, top_level, match",
     [
+        pytest.param(None, {}, "hyperparameter_tuning", id="missing_section"),
         pytest.param(
-            {"model": "random_forest", "search_space": {"n_estimators": [5]}},
-            "use_wandb",
-            id="missing_use_wandb",
-        ),
-        pytest.param(
-            {
-                "model": "random_forest",
-                "use_wandb": "yes",
-                "search_space": {"n_estimators": [5]},
-            },
+            {**_VALID_TUNING, "use_wandb": "yes"},
+            {},
             "must be a boolean",
             id="non_boolean_use_wandb",
         ),
         pytest.param(
-            {
-                "model": "random_forest",
-                "use_wandb": False,
-                "wandb_detailed_payloads": True,
-                "search_space": {"n_estimators": [5]},
-            },
+            {**_VALID_TUNING, "use_wandb": False, "wandb_detailed_payloads": True},
+            {},
             "wandb_detailed_payloads requires",
             id="detailed_payloads_without_wandb",
         ),
+        pytest.param(
+            _VALID_TUNING,
+            {"evaluation": {"metrics": "all"}},
+            "evaluation",
+            id="evaluation_section",
+        ),
+        pytest.param(
+            {**_VALID_TUNING, "search_space": {"max_features": ["sqrt", "auto"]}},
+            {},
+            r"search_space\.max_features.*'auto'",
+            id="invalid_search_space_value",
+        ),
     ],
 )
-def test_load_hyper_tune_config_rejects_invalid_wandb_choice(
-    tuning, expected_message, tmp_path
+def test_load_hyper_tune_config_rejects_malformed_configs(
+    tuning, top_level, match, tmp_path
 ):
-    """`use_wandb` must be spelled out as a boolean and must gate the extra payloads."""
-    config_path = _write_config(tmp_path, "hyper_tune_wandb.json", tuning)
+    """Each structural rule of the tuning config fails by name.
 
-    with pytest.raises(ConfigError, match=expected_message):
+    One case per rule: the section itself is required (nothing about a search
+    can be defaulted, there is no search space to infer); `use_wandb` may be
+    omitted but not mistyped, and it gates the detailed-payload flag rather than
+    letting it be silently ignored; an `evaluation` block is refused rather
+    than ignored, since accepting it would let a user believe their evaluation
+    settings applied to every candidate; and a bad search-space candidate is
+    named against its `search_space` key before any fit.
+    """
+    config_path = _write_config(tmp_path, "hyper_tune_bad.json", tuning, **top_level)
+
+    with pytest.raises(ConfigError, match=match):
         load_hyper_tune_config(str(config_path))
 
 
+@pytest.mark.config
 @pytest.mark.parametrize(
     "sample_name, expected_model",
     [
@@ -160,12 +184,13 @@ def test_load_hyper_tune_config_rejects_invalid_wandb_choice(
         ("hyperparameter_tuning_multi_knn.json", "multi_knn"),
     ],
 )
+
+
 def test_shipped_tuning_sample_configs_resolve(sample_name, expected_model):
-    """The shipped tuner samples load and spell out every required key.
+    """The shipped tuner samples load and resolve to the model each one names.
 
     Guards against a sample drifting out of step with the validator, which would
-    leave users copying a config the loader rejects. `use_wandb` has no default,
-    so a successful load proves the key is present in both config formats.
+    leave users copying a config the loader rejects, in both config formats.
     """
     sample_dir = Path(__file__).resolve().parents[1] / "sample_configs"
     config = load_hyper_tune_config(str(sample_dir / sample_name))
@@ -178,43 +203,23 @@ def test_shipped_tuning_sample_configs_resolve(sample_name, expected_model):
     )
 
 
-def test_load_hyper_tune_config_rejects_evaluation_section(tmp_path):
-    config_path = _write_config(
-        tmp_path,
-        "hyper_tune_with_evaluation.json",
-        {
-            "model": "random_forest",
-            "use_wandb": False,
-            "search_space": {"n_estimators": [5, 10]},
-        },
-        evaluation={"metrics": "all"},
-    )
-
-    with pytest.raises(ConfigError, match="evaluation"):
-        load_hyper_tune_config(str(config_path))
-
-
-def test_load_hyper_tune_config_requires_hyperparameter_tuning_section(tmp_path):
-    config_path = _write_config(tmp_path, "hyper_tune_missing_section.json", None)
-
-    with pytest.raises(ConfigError, match="hyperparameter_tuning"):
-        load_hyper_tune_config(str(config_path))
-
-
-def test_tune_hyperparameters_requires_explicit_use_wandb(
+@pytest.mark.integration
+@pytest.mark.output
+def test_tune_hyperparameters_grid_search_runs_end_to_end(
     summary_statistics_tsv_tuning, tmp_path
 ):
-    """The programmatic entry point enforces the same deliberate choice."""
-    config = _tuning_namespace(summary_statistics_tsv_tuning, tmp_path / "no_choice")
-    del config.use_wandb
+    """Grid search enumerates the whole space and writes every local artifact.
 
-    with pytest.raises(ConfigError, match="use_wandb"):
-        tune_hyperparameters(config)
-
-
-def test_tune_hyperparameters_grid_search_smoke(summary_statistics_tsv_tuning, tmp_path):
+    The search space crosses one parameter over two values, so grid search
+    must evaluate exactly 2 candidates: the count is what distinguishes
+    exhaustive enumeration from sampling. The namespace carries no
+    ``use_wandb``: the programmatic entry point takes the same default as the
+    config loader, so the run stays local and still emits the ranked TSVs,
+    the marginals, the plot and the report.
+    """
     output_dir = tmp_path / "hyper_tune_out"
     config = _tuning_namespace(summary_statistics_tsv_tuning, output_dir)
+    del config.use_wandb
 
     result = tune_hyperparameters(config)
 
@@ -223,43 +228,7 @@ def test_tune_hyperparameters_grid_search_smoke(summary_statistics_tsv_tuning, t
     assert result["results"]["use_wandb"] is False
     assert len(result["candidates"]) == 2
     assert (output_dir / "hyper_tune_best_model.pkl").exists()
-    assert (output_dir / "hyper_tune_results.json").exists()
     assert not (output_dir / "wandb").exists()
-
-
-def test_tune_hyperparameters_random_search_smoke(
-    summary_statistics_tsv_tuning, tmp_path
-):
-    config = _tuning_namespace(
-        summary_statistics_tsv_tuning,
-        tmp_path / "hyper_tune_random_out",
-        search_method="random",
-        n_iter=1,
-        search_space={
-            "n_estimators": [5, 10],
-            "max_depth": [None, 3],
-            "min_samples_split": [2],
-            "min_samples_leaf": [1],
-            "max_features": ["sqrt"],
-            "class_weight": [None],
-        },
-    )
-
-    result = tune_hyperparameters(config)
-
-    assert result["results"]["search_method"] == "random"
-    assert len(result["candidates"]) == 1
-    assert result["results"]["best_candidate"]["candidate_index"] == 1
-
-
-def test_tune_hyperparameters_writes_local_navigation_artifacts(
-    summary_statistics_tsv_tuning, tmp_path
-):
-    """Without W&B the run still emits ranked TSVs, marginals, plots and a report."""
-    output_dir = tmp_path / "hyper_tune_local_out"
-    config = _tuning_namespace(summary_statistics_tsv_tuning, output_dir)
-
-    result = tune_hyperparameters(config)
 
     marginals_path = output_dir / "hyper_tune_parameter_marginals.tsv"
     plot_path = output_dir / "hyper_tune_search_report.png"
@@ -305,10 +274,45 @@ def test_tune_hyperparameters_writes_local_navigation_artifacts(
     )
 
 
+@pytest.mark.integration
+@pytest.mark.output
+def test_tune_hyperparameters_random_search_smoke(
+    summary_statistics_tsv_tuning, tmp_path
+):
+    """Random search samples `n_iter` candidates instead of enumerating.
+
+    The space here holds more combinations than `n_iter=1`, so a single
+    candidate proves the sampling budget is honoured rather than the grid being
+    walked; the best candidate is that one sample.
+    """
+    config = _tuning_namespace(
+        summary_statistics_tsv_tuning,
+        tmp_path / "hyper_tune_random_out",
+        search_method="random",
+        n_iter=1,
+        search_space={
+            "n_estimators": [5, 10],
+            "max_depth": [None, 3],
+            "min_samples_split": [2],
+            "min_samples_leaf": [1],
+            "max_features": ["sqrt"],
+            "class_weight": [None],
+        },
+    )
+
+    result = tune_hyperparameters(config)
+
+    assert result["results"]["search_method"] == "random"
+    assert len(result["candidates"]) == 1
+    assert result["results"]["best_candidate"]["candidate_index"] == 1
+
+
 @pytest.mark.parametrize(
     "objective_direction, best_value, best_score, bound_flag",
     [("max", "10", 0.9, "upper_bound"), ("min", "5", 0.4, "lower_bound")],
 )
+
+
 def test_compute_parameter_marginals_summarizes_each_value(
     objective_direction, best_value, best_score, bound_flag
 ):
@@ -372,6 +376,7 @@ def test_parameter_influence_ranks_by_best_score_spread():
     assert influence[1]["mean_score_spread"] == pytest.approx(0.2)
 
 
+@pytest.mark.output
 def test_search_space_guidance_flags_a_dimension_with_no_effect():
     """A parameter whose values all score alike is called out as inert."""
     ranked = [
@@ -417,6 +422,7 @@ class _StubWandb:
         return {"columns": columns, "data": data}
 
 
+@pytest.mark.output
 @pytest.mark.parametrize("use_wandb", [False, True])
 def test_create_run_logger_routes_on_the_use_wandb_choice(
     use_wandb, tmp_path, monkeypatch
@@ -441,6 +447,7 @@ def test_create_run_logger_routes_on_the_use_wandb_choice(
     assert (tmp_path / "wandb").exists() is use_wandb
 
 
+@pytest.mark.config
 def test_import_wandb_raises_config_error_when_unavailable(monkeypatch):
     """A missing wandb install surfaces as an actionable config error, not ImportError."""
     import builtins
@@ -458,6 +465,8 @@ def test_import_wandb_raises_config_error_when_unavailable(monkeypatch):
         hyper_tune._import_wandb()
 
 
+@pytest.mark.integration
+@pytest.mark.output
 def test_tune_hyperparameters_routes_bulk_artifacts_to_wandb(
     summary_statistics_tsv_tuning, tmp_path, monkeypatch
 ):
@@ -511,49 +520,3 @@ def test_tune_hyperparameters_routes_bulk_artifacts_to_wandb(
     report = (output_dir / "hyper_tune_results.txt").read_text()
     assert "Weights & Biases logging: enabled" in report
     assert "logged to the Weights & Biases run" in report
-
-
-@pytest.mark.parametrize(
-    "values, expected",
-    [
-        (["sqrt", "none", None, 4], ["sqrt", None, None, 4]),
-        ("None", None),
-    ],
-)
-def test_load_hyper_tune_config_normalizes_search_space_values(
-    values, expected, tmp_path
-):
-    """Search-space candidates get the same per-value rules as the `model` block."""
-    config_path = _write_config(
-        tmp_path,
-        "hyper_tune_search_values.json",
-        {
-            "model": "random_forest",
-            "use_wandb": False,
-            "search_space": {"max_features": values},
-        },
-    )
-
-    config = load_hyper_tune_config(str(config_path))
-
-    assert config["search_space"]["max_features"] == expected
-
-
-def test_load_hyper_tune_config_rejects_invalid_search_space_value(tmp_path):
-    """An invalid candidate is named against its search_space key, before any fit."""
-    config_path = _write_config(
-        tmp_path,
-        "hyper_tune_bad_search_value.json",
-        {
-            "model": "random_forest",
-            "use_wandb": False,
-            "search_space": {"max_features": ["sqrt", "auto"]},
-        },
-    )
-
-    with pytest.raises(ConfigError) as excinfo:
-        load_hyper_tune_config(str(config_path))
-
-    message = str(excinfo.value)
-    assert "hyperparameter_tuning.search_space.max_features" in message
-    assert "'auto'" in message

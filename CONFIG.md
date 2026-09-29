@@ -1,98 +1,90 @@
 # Configuration Guide
 
-This guide is the complete reference for every GhostParser configuration key. It is organized around the main entry point, `ghostparser.orchestrator`, followed by the machine-learning subpackage (`ghostparser.ml`).
+Every GhostParser key, for `ghostparser.orchestrator` first and the
+`ghostparser.ml` trainers and tuner after. The method behind the orchestrator
+keys is in [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md); the
+trainers are described in [ML.md](ghostparser/ml/ML.md).
 
-Both `ghostparser.orchestrator` and the `ghostparser.ml` trainers support config files. For how each module works internally, see [ghostparser/orchestrator/ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md) and [ghostparser/ml/ML.md](ghostparser/ml/ML.md).
+## Config files and the command line
 
-## Path Resolution
+Every module accepts `-c/--config-file` with a JSON or YAML file. The file
+supplies the settings, and any flag given beside it overrides the file's value
+for that setting; the run prints which settings it overrode. Keys without a
+flag can only be set in a file. [sample_configs/](sample_configs/) holds a
+loadable file for each common scenario to copy from (listed at the end).
 
-GhostParser automatically resolves all path fields (input files, output directories, filter files) following standard operating system conventions:
+Paths are resolved when the config is read: absolute paths as given, `~` to
+the home directory, and relative paths from the directory the command runs
+in, not from the config file's location. The output folder is reset before
+a run under `overwrite: true`, so keep it separate from the directories
+holding the input trees.
 
-### Path Types
+Every command also takes `--debug`, on the command line only and off by
+default: a failed run then shows the full traceback instead of one line. The
+exit statuses are listed under Errors in the [README](README.md#errors).
 
-#### 1. Absolute paths (start with `/`)
+## Orchestrator
+
+### Arguments at a glance
+
+| Argument | Config key | Meaning |
+| --- | --- | --- |
+| `-st`, `--species-tree-path` | `species_tree_path` | Species tree, Newick. Required. |
+| `-gt`, `--gene-trees-path` | `gene_trees_path` | Gene trees, Newick, one per line. Required. |
+| `-og`, `--outgroup` | `outgroup` | Outgroup label(s), comma-separated or a list. Required. |
+| `--output-folder`, `--no-overwrite` | `output_folder`, `overwrite` | Output directory, reset before the run unless `overwrite` is false. |
+| `--triplet-filter` | `triplet_filter` | Analyze only the listed triplets. |
+| `--species-filter` | `species_filter` | Analyze every triplet among the listed species. |
+| `--species-rename-map` | `species_rename_map` | Names to show in the outputs instead of the tree labels. |
+| `--seed` | `seed` | RNG seed for every random draw. |
+| `--processes` | `processes` | Worker processes on one machine; `0` = every available CPU. |
+| `--alpha-dct`, `--alpha-ks`, `--alpha-perm` | `alpha_dct`, `alpha_ks`, `alpha_perm` | The three gates' thresholds. |
+| `--p-value-correction` | `p_value_correction` | `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`. |
+| `--diagnostic` | `diagnostic` | Measure every test for every triplet. |
+| `--no-consolidation`, `--no-bootstrap` | `consolidation`, `bootstrap` | Skip the maps; skip the bootstrap. |
+| `--preflight-data-check`, `--preflight-triplet-cap` | `preflight_data_check`, `preflight_triplet_cap` | Check the inputs and exit; how many triplets the check walks. |
+| `--debug` | (command line only) | Show the full traceback when the run fails. |
+| (no flag) | `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, `bootstrap_options`, `permutation_options` | Config-file only. |
+
+### Input file formats
+
+The trees are Newick. Support values on internal nodes are read for
+`min_support_value` and stripped from the processed trees; labels a bare
+Newick token cannot hold are single-quoted.
+
+A **triplet filter** names one triplet per line, comma-separated, in the
+trees' labels; order within a line does not matter:
+
+```text
+A,B,C
+A,B,D
+C,D,E
+```
+
+A **species filter** names taxa, comma-separated, any number per line; every
+triplet among them is analyzed:
+
+```text
+A, B
+C
+D, E
+```
+
+A **rename map** gives, per tree label, the name to show in the outputs, as a
+two-column TSV (`#` comments and blank lines ignored) or a YAML mapping,
+chosen by the file extension:
+
+```text
+A	Homo sapiens
+B	Pan troglodytes
+```
 
 ```yaml
-species_tree_path: /home/user/data/species.tree
-output_folder: /scratch/results
+A: Homo sapiens
+B: Pan troglodytes
 ```
 
-- Used as-is without modification
-- Platform-independent representation
-
-#### 2. Relative paths (no leading `/`)
-
-```yaml
-species_tree_path: data/species.tree
-gene_trees_path: ./genes.tree
-output_folder: results
-```
-
-- Resolved from the **current working directory** where the command is executed
-- Example: If you run the command from `/home/user/project/`, then `data/species.tree` resolves to `/home/user/project/data/species.tree`
-
-#### 3. User home directory (starts with `~`)
-
-```yaml
-species_tree_path: ~/data/species.tree
-output_folder: ~/results
-triplet_filter: ~/filters/triplets.txt
-```
-
-- `~` expands to your home directory (e.g., `/home/username/`)
-- Example: `~/data/species.tree` becomes `/home/username/data/species.tree`
-
-### Important Notes
-
-- **Path resolution happens at runtime** when the config/CLI is parsed
-- **All path types work in both CLI and config file modes**
-- **Relative paths are NOT relative to the config file location** - they are relative to the directory where you execute the command
-- For portability, consider using relative paths in configs and running commands from a consistent location
-- **Keep `output_folder` separate from the directories holding your input trees.** With `overwrite: true` the output directory is reset before the run, which deletes whatever is already in it — including a species tree or gene-tree file sitting there. Point `output_folder` at a directory of its own.
-
-### Examples
-
-**Config file at** `~/project/configs/run.yaml`:
-```yaml
-species_tree_path: ../data/species.tree    # Relative to execution directory, not config file
-gene_trees_path: ~/data/genes.tree         # User home directory
-output_folder: /scratch/results            # Absolute path
-```
-
-**Executed from** `/home/user/project/`:
-```bash
-python -m ghostparser.orchestrator -c configs/run.yaml
-```
-
-**Resolved paths:**
-
-- `species_tree_path` -> `/home/user/project/../data/species.tree` -> `/home/user/data/species.tree`
-- `gene_trees_path` -> `/home/user/data/genes.tree`
-- `output_folder` -> `/scratch/results`
-
----
-
-## Orchestrator (Primary Module)
-
-`ghostparser.orchestrator` is the end-to-end entry point. It fuses tree preprocessing, triplet subtree extraction, and per-triplet inference into a single streaming pass, then optionally consolidates the results into introgression maps.
-
-For how the module works internally, see [ghostparser/orchestrator/ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md).
-
-### Run With a Config File
-
-`-c/--config-file` is the only CLI-only option. It accepts a JSON or YAML file:
-
-```bash
-python -m ghostparser.orchestrator -c run_config.yaml
-python -m ghostparser.orchestrator -c run_config.json
-
-# or start from a shipped sample
-python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
-```
-
-When a config file is given, **the file supplies every setting and the other CLI flags are ignored with a warning** (config wins). This is the only way to set the config-file-only keys listed below.
-
-Minimal YAML:
+Minimal file:
 
 ```yaml
 species_tree_path: data/species.tree
@@ -101,30 +93,36 @@ outgroup: OutGroup
 output_folder: results
 ```
 
-Fuller YAML showing the config-file-only keys and the nested blocks:
+Every key at its default, as `sample_configs/orchestrator_full.yaml` ships it:
 
 ```yaml
-species_tree_path: data/species.tree
-gene_trees_path: data/genes.tree
-outgroup: Out1,Out2
+species_tree_path: data/species.tree     # Newick species tree
+gene_trees_path: data/genes.tree         # one Newick gene tree per line
+outgroup: Out1,Out2                      # comma-separated, or a list
 output_folder: results
-processes: 0
-parallelization_mode: auto
+overwrite: true                          # false = write to a suffixed sibling
+triplet_filter: null                     # not with species_filter
+species_filter: null
+species_rename_map: null
+processes: 0                             # 0 = every CPU available to the process
+seed: null                               # null = drawn and reported
 alpha_dct: 0.05
 alpha_ks: 0.05
 alpha_perm: 0.05
-p_value_correction: bfn
-discordant_test: chi-square
-tree_height_calculation_strategy: AVG
-min_support_value: 0.5
-generate_summary_stats: true
-shape_diagnostics: false
+p_value_correction: bfn                  # no, bfn, holm, fdr_bh, fdr_by
+diagnostic: false
 consolidation: true
 bootstrap: true
+preflight_data_check: false
+preflight_triplet_cap: 15000             # 0 = no cap
+discordant_test: chi-square              # chi-square or z-test
+tree_height_calculation_strategy: AVG    # AVG, A, B, C, SIS, INT
+min_support_value: 0.5
+generate_summary_stats: false
+shape_diagnostics: false
 bootstrap_options:
   iterations: 100
-  seed: 42
-  debug_mode: false
+  diagnostic: false
   summary_only: false
 permutation_options:
   min_resamples: 2500
@@ -132,458 +130,308 @@ permutation_options:
   ci_method: wilson
 ```
 
-### Required Keys
+### Required
 
-These must be supplied either on the CLI or in the config file.
+##### `species_tree_path` (`-st`)
 
-##### `species_tree_path`
+Species tree in Newick format. The file must hold exactly one tree. Branch
+lengths are optional: the topology alone places the triplets, and lengths
+only rank the outgroups (see `outgroup`).
 
-- CLI: `-st, --species-tree-path`
-- Species tree in Newick format.
+##### `gene_trees_path` (`-gt`)
 
-##### `gene_trees_path`
+Gene trees in Newick format, one per line. Every branch should carry a length,
+since the tests compare tree heights: a missing length is read as 0, and
+`metrics.txt` counts the trees lacking any.
 
-- CLI: `-gt, --gene-trees-path`
-- Gene trees in Newick format, one per line.
+##### `outgroup` (`-og`)
 
-##### `outgroup`
+One label, a comma-separated string, or a list. The species tree is rooted
+where the outgroups branch off and pruned of them; if other taxa sit between
+the outgroups the run stops and names them.
 
-- CLI: `-og, --outgroup`
-- Outgroup taxon identifier(s). One key covers both the single- and multiple-outgroup cases: give a single label (`OutGroup`), a comma-separated string (`Out1,Out2`), or a YAML/JSON list (`["Out1", "Out2"]`). List entries may themselves be comma-separated. The species tree is rooted and pruned on the outgroup MRCA; gene trees are rooted on the outgroup.
+Each gene tree is rooted from its farthest outgroup: the one with the longest
+mean path to the ingroup taxa in that gene tree. The outgroups that sit among
+the ingroup taxa once the tree is rooted there are pruned without being used,
+and the tree is rooted at the common ancestor of the farthest and the others
+outside the ingroup.
 
-### Config + CLI Keys
+When two outgroups tie in a gene tree (as they all do in a tree without
+branch lengths), the species tree decides: it ranks the
+outgroups by the summed branch lengths from the ingroup root, the listed order
+breaking exact ties. A species tree lacking any branch length keeps the listed
+order. An outgroup the species tree lacks ranks last. `metrics.txt` gives the ranking and counts, per outgroup,
+the trees in which it was the farthest and the trees in which it was pruned
+unused.
 
-Settable either on the CLI or in a config file.
+### Config + CLI
 
-##### `output_folder`
+##### `output_folder` (`--output-folder`)
 
-- CLI: `--output-folder`
-- Default: `results`
-- Directory for all run outputs.
-- Must not be a directory containing your input trees: with `overwrite: true` it is reset before the run and its existing contents are removed. Consolidation writes into a `consolidation/` subfolder of it, which is likewise reset.
+Default `results`. Reset before the run under `overwrite: true`; consolidation
+writes into its `consolidation/` subfolder.
 
-##### `overwrite`
+##### `overwrite` (`--no-overwrite` sets `false`)
 
-- CLI: `--no-overwrite` (sets `overwrite: false`)
-- Default: `true`
-- When `true`, an existing output directory is reset. When `false`, the run writes to an auto-suffixed sibling (`results_1`, `results_2`, ...) using the smallest missing suffix.
+Default `true`. With `false` the run writes to the smallest free suffixed
+sibling (`results_1`, `results_2`, ...).
 
-##### `triplet_filter`
+##### `triplet_filter` (`--triplet-filter`)
 
-- CLI: `--triplet-filter`
-- Default: none (all triplets)
-- Path to a file of comma-separated taxa triplets, one per line. Only the listed triplets are analyzed.
+Path to a file of comma-separated triplets, one per line (see *Input file
+formats*); only those are analyzed. A triplet naming a taxon that is not an ingroup taxon is skipped
+with a warning. Not with `species_filter`.
 
-##### `processes`
+##### `species_filter` (`--species-filter`)
 
-- CLI: `--processes`
-- Default: `0`
-- Worker process count. `0` uses all available cores; `1` runs serially in the parent process.
+Path to a file of taxon names, comma-separated, any number per line, spelled
+as in the trees (see *Input file formats*). Every triplet among the listed species is analyzed. A name
+that is not an ingroup taxon is skipped with a warning; fewer than three left
+stops the run. Not with `triplet_filter`.
 
-##### `parallelization_mode`
+##### `species_rename_map` (`--species-rename-map`)
 
-- CLI: `--parallelization-mode`
-- Default: `auto`
-- Allowed: `auto`, `taxon`, `gene`
-- `taxon` dispatches chunks of triplets across workers; `gene` parallelizes per-gene-tree subtree extraction within one triplet; `auto` selects `gene` when the ingroup taxa count is below 15 or the gene-tree count exceeds 3500, otherwise `taxon`.
+Path to a two-column TSV (tree label, display name; `#` comments and blank
+lines ignored) or a YAML mapping, chosen by extension (see *Input file
+formats*). Read when the config loads, so the file must exist. Display names appear in
+the results TSV, `summary_statistics.tsv` and the consolidation outputs; the
+outgroup, the filters, the processed trees and `metrics.txt` use the tree
+labels. The file is rejected if it maps a label twice, gives two labels one
+name, or a name holds a tab, line break, comma, semicolon or `=`.
 
-##### `alpha_dct`
+##### `seed` (`--seed`)
 
-- CLI: `--alpha-dct`
-- Default: `0.05`
-- Significance threshold for the discordant count test (the first gate of the decision logic).
+Base seed for every random draw: the direction test, the bootstrap, its own
+permutations and the modality bootstrap. Each triplet derives its stream from
+`(seed, triplet)`, so results are identical at any worker count. When omitted
+a seed is drawn and written to `metrics.txt` as `Seed: <n> (generated)`.
 
-##### `alpha_ks`
+##### `processes` (`--processes`)
 
-- CLI: `--alpha-ks`
-- Default: `0.05`
-- Significance threshold for the KS tree-height test (the second gate).
+Default `0`: every CPU the process may run on, which under a scheduler or a
+container is the allocation, not the machine. `1` runs serially. Workers are
+processes on the machine the run starts on; a job spanning several machines
+uses one.
 
-##### `alpha_perm`
+##### `alpha_dct`, `alpha_ks`, `alpha_perm` (`--alpha-dct`, `--alpha-ks`, `--alpha-perm`)
 
-- CLI: `--alpha-perm`
-- Default: `0.05`
-- Significance threshold for the studentized permutation test (the third gate). Applied to each of the two one-tailed p-values after they are corrected against each other, and to the two-tailed cross-check.
+Default `0.05` each: the thresholds of the three gates, compared against the
+corrected p-values. `alpha_perm` also bounds the equivalence p-value.
 
-##### `p_value_correction`
+##### `p_value_correction` (`--p-value-correction`)
 
-- CLI: `--p-value-correction`
-- Default: `bfn`
-- Allowed: `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`
-- Multiple-testing correction, applied in three places. Run-wide, it adjusts every triplet's DCT and KS p-value in a single pass. Inside each permutation test, it adjusts that test's pair of one-tailed p-values against each other — never across triplets, because a Monte Carlo p-value has a resolution floor that across-triplet correction would fall through. Inside the bootstrap, each iteration's DCT and KS p-values are corrected across triplets for that iteration index, so iterations answer to the same thresholds the reported classification does. Corrected p-values drive the significance decisions; the uncorrected values are retained in the output for reporting. Under `no` the results TSV carries the raw p-values and the significance flags only.
-- The choice affects run time. `no` and `bfn` are applied inline while triplets stream; the others must hold every triplet's per-iteration p-values until the stream finishes.
-- Every supported method is monotone — none can adjust a p-value *below* its raw value — which is what lets both the point estimate and the bootstrap skip a test once an earlier gate has failed. See [`pipeline_mode`](#pipeline_mode).
-- In YAML, `p_value_correction: no` may be written with or without quotes. YAML resolves the bare word `no` to a boolean, and enumerated fields map booleans back to the choice they spell (`no`/`off`/`n`/`false`, `yes`/`on`/`y`/`true`), so both forms select the same value.
+Default `bfn`; `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`. Applied once across
+every triplet to the count-test p-values and again to the tree-height
+p-values, and inside each direction test to its two one-tailed p-values.
+Bootstrap iterations are judged against the same corrected thresholds. Under
+`no` the results carry raw p-values and the flags only. The rank-based
+methods hold every triplet's per-iteration p-values until the run finishes
+and measure the tree-height test for every triplet, so they cost more memory
+and time than `no`/`bfn`. In YAML, `no` may be written bare or quoted.
 
-##### `pipeline_mode`
+##### `diagnostic` (`--diagnostic` sets `true`)
 
-- CLI: `--pipeline-mode`
-- Default: `efficient`
-- Allowed: `efficient`, `detailed`
-- `efficient` stops measuring a triplet once the decision cascade is settled: a triplet the count gate settled skips the tree-height test, and one either of the first two gates settled skips the permutation direction test, rather than computing a result nothing reads. `detailed` runs all three gates for every triplet.
-- **Both modes produce identical results.** No supported correction can lower a p-value, so a gate that failed on the raw value cannot clear on the corrected one — the efficient mode only ever declines a test the cascade could not have consulted. Neither does the extra work change any correction family: the tree-height family is always the triplets that cleared the count gate, so whatever `detailed` measures below a settled gate is never enrolled. `classification`, `decision_gate`, the `dct_*` columns, `ks_p_value_corrected`, `ks_significant`, and every bootstrap column match exactly.
-- What differs is which columns are populated, never their values. Triplets the efficient mode settled early leave the `perm_*` block empty and carry `perm_note: direction_test_not_consulted`, which distinguishes a deliberate skip from a test that ran and hit a guard; they also leave the raw `ks_statistic`/`ks_p_value` empty, since the tree-height test below a settled count gate decides nothing and takes no part in its correction family either way.
-- The direction test is the most expensive of the three, so not running it where it cannot matter is where the time goes. How much that is worth depends on how many of your triplets stop at an earlier gate.
-- Choose `detailed` when you want the direction test's statistics for every triplet regardless of whether they decided anything, which is a debugging need rather than an analysis one.
-- The bootstrap already skipped a settled gate per iteration in both modes; this key governs the point estimate.
+Default `false`: a triplet is measured only as far as the cascade reads, so
+rows settled by an earlier gate leave the later tests' columns empty
+(`perm_note: direction_test_not_consulted`). `true` measures every test for
+every triplet and changes no result. It does not reach the bootstrap, whose
+own switch is `bootstrap_options.diagnostic`.
 
-##### `consolidation`
+##### `consolidation` (`--no-consolidation` sets `false`)
 
-- CLI: `--no-consolidation` (sets `consolidation: false`)
-- Default: `true`
-- Generates the introgression map artifacts into a `consolidation/` subfolder of the output directory.
+Default `true`: write the introgression maps.
 
-##### `bootstrap`
+##### `bootstrap` (`--no-bootstrap` sets `false`)
 
-- CLI: `--no-bootstrap` (sets `bootstrap: false`)
-- Default: `true`
-- Enables bootstrap resampling per triplet and adds the `bootstrap_value` and `all_bootstrap` columns to the results TSV. Setting it false skips the iterations entirely, so `bootstrap_stat_ci_low`/`bootstrap_stat_ci_high` are empty too — that interval is a bootstrap percentile interval, not a permutation output.
-- This is an instruction about what to compute, so it holds under `pipeline_mode: detailed` as well: `detailed` declines to skip work the cascade cannot consult, which is not the same as reinstating work you switched off. The same is true of `generate_summary_stats` and `shape_diagnostics`.
+Default `true`. `false` skips the iterations, so `bootstrap_value`,
+`all_bootstrap` and the `bootstrap_perm_stat_ci_*` interval are absent and
+consolidation weighs every classified triplet as 1.
 
-##### `preflight_data_check`
+##### `preflight_data_check` (`--preflight-data-check` sets `true`)
 
-- CLI: `--preflight-data-check` (sets `preflight_data_check: true`)
-- Default: `false`
-- Runs only the structural sanity check on the species tree, gene trees, and triplets, writes `preflight_data_check.txt` into the output folder, and exits without any analysis. No results TSV, processed trees, `metrics.txt`, or consolidation artifacts are produced. Every other analysis key is ignored for that run.
-- The report lists each detected issue by category (for example `gene_tree.rooting_failed`, `triplet.unresolved_rooted_sister_pair`), a count per category, up to 25 example messages naming the offending gene-tree index and triplet, and a species-tree-versus-gene-tree attribution summary.
-- The checks are structural: they establish whether the data can be processed, not whether the result will be biologically meaningful.
+Default `false`. `true` runs only the structural check, writes
+`preflight_data_check.txt` and exits; no other output is produced.
 
-### Config-File-Only Keys
+##### `preflight_triplet_cap` (`--preflight-triplet-cap`)
 
-These have no CLI flag. They take their default unless set in a config file.
+Default `15000`; `0` lifts it. The most triplets the check walks; a bound cap
+is reported in the check. A `triplet_filter` is never capped.
+
+### Config-file only
 
 ##### `discordant_test`
 
-- Default: `chi-square`
-- Allowed: `chi-square`, `z-test`
-- The discordant count test: SciPy's Pearson chi-square, or a statsmodels two-proportion z-test.
+Default `chi-square`; or `z-test`. Pearson's chi-square, or a two-proportion
+z-test for which `z^2 = 2 chi^2` on the same counts, so it rejects more
+readily.
 
 ##### `tree_height_calculation_strategy`
 
-- Default: `AVG`
-- Allowed: `AVG`, `A`, `B`, `C`, `SIS`, `INT`
-- How H(T) is computed per gene tree: `AVG` averages the three root-to-tip distances; `A`/`B`/`C` take a single taxon's root-to-tip distance; `SIS` is the sister-pair patristic distance; `INT` is the sister-MRCA-to-root internal branch.
+Default `AVG`; `A`, `B`, `C`, `SIS`, `INT`. `AVG` averages the three
+root-to-tip distances of the triplet, `A`/`B`/`C` take one taxon's, `SIS` is
+the patristic distance between the sisters and `INT` the internal branch from
+the triplet's root to the sisters' node.
 
 ##### `min_support_value`
 
-- Default: `0.5`
-- Trees whose mean internal-node support falls below this threshold are dropped during cleaning. Trees without support labels are always kept.
+Default `0.5`. Trees whose mean internal-node support is below it are
+dropped; trees without support labels are kept.
 
 ##### `generate_summary_stats`
 
-- Default: `false`
-- Also writes `summary_statistics.tsv` with 63 metric columns (mean/median/mode/variance/entropy/min/max over avg-tree-height/internal-branch/sister-distance for concordant/discordant1/discordant2). The `discordant1_*` columns describe whichever discordant topology is more frequent — the same group the `dis1_topology` column names and the statistical tests use — and `discordant2_*` the other one.
-- The results TSV carries no per-group mean or median columns regardless of this setting; the introgression direction comes from the permutation p-values.
+Default `false`. `true` also writes `summary_statistics.tsv`: mean, median,
+mode, variance, entropy, minimum and maximum of the average tree height, the
+internal branch and the sister distance, per topology group (63 columns).
 
 ##### `shape_diagnostics`
 
-- Default: `false`
-- Appends fifteen columns describing the shape of each height group: a KDE mode count, a Silverman modality p-value, skewness, excess kurtosis, and a generalized-Pareto tail index. They are descriptive only and never affect a classification.
-- They land in the results TSV as `con_*`/`dis1_*`/`dis2_*`, and nowhere else. `summary_statistics.tsv` never carries them: it is a feature matrix, and these columns are undefined for groups below their observation floors, so including them would leave holes in it.
-- Off by default because the modality p-value is a smoothed bootstrap: it costs about 0.2s per group, so roughly 0.6s of extra CPU per triplet. On a large taxon set that dominates the run.
-- Measured once per triplet from the observed heights. Bootstrap iterations do not recompute them.
-- Groups with fewer than 20 observations are left empty, as are the tail indices of groups whose upper decile holds fewer than 10 points. See "Shape diagnostics" in the [orchestrator guide](ghostparser/orchestrator/ORCHESTRATOR.md) for how to read each column.
+Default `false`. `true` adds the mode count, Silverman modality p-value,
+skewness, excess kurtosis and generalized-Pareto tail index of each height
+group to the results TSV. Descriptive only; the modality bootstrap makes it
+expensive.
 
 ##### `bootstrap_options`
 
-A nested block; each key may also be given flat as `bootstrap_<key>`.
+Nested, or flat as `bootstrap_<key>`.
 
-- `iterations` (flat: `bootstrap_iterations`) — default `100`. Bootstrap iterations per triplet; must be an integer >= 1.
-- `seed` (flat: `bootstrap_seed`) — default none. Base RNG seed; each triplet derives a deterministic per-triplet seed from it, so results are reproducible and independent of the parallelization mode.
-- `debug_mode` (flat: `bootstrap_debug_mode`) — default `false`. Appends the per-iteration bootstrap-debug columns to the results TSV.
-- `summary_only` (flat: `bootstrap_summary_only`) — default `false`. With debug mode on, emits compact summaries instead of full per-iteration lists.
+- `iterations`: default `100`, integer `>= 1`.
+- `diagnostic`: default `false`. Measures all three tests in every iteration
+  and writes them per iteration (`bootstrap_dct_*`, `bootstrap_ks_*`,
+  `bootstrap_perm_*`, `bootstrap_con_mean`, `bootstrap_dis_mean`,
+  `bootstrap_gene_tree_heights`) without moving any vote. Costly; pair it
+  with a filter.
+- `summary_only`: default `false`. With `diagnostic`, write per-column
+  summaries (`count`, `non_null_count`, `mean`, `median`, `min`, `max`)
+  instead of full lists.
 
 ##### `permutation_options`
 
-A nested block tuning the permutation test, the third decision gate. There is no `initial_batch` key — the first adaptive batch is always `min_resamples`, and each subsequent batch is 1.25x the previous one — and no `ci_level` key, since the interval is fixed at 95%.
+- `min_resamples`: default `2500`. The first batch and the minimum total.
+- `max_resamples`: default `25000`, at least `min_resamples`. The budget;
+  the batch that crosses it is drawn whole, so `perm_n_resamples` can exceed
+  it by up to one batch. Keep the two a few multiples apart.
+- `ci_method`: default `wilson`; `wilson`, `beta`, `agresti_coull`,
+  `jeffreys`, `binom_test`, `normal`. The binomial interval of the stopping
+  rule; Wilson keeps its coverage near the small p-values the test produces,
+  `normal` does not, and `beta` (Clopper-Pearson) is conservative and
+  resamples longer.
 
-- `min_resamples` — default `2500`. Size of the first batch and the minimum total permutations. Must be an integer >= 1. A triplet whose pooled sample admits fewer than this many distinct group assignments is skipped with an `insufficient_permutation_support` note, because its permutation distribution cannot resolve `alpha_perm`.
-- `max_resamples` — default `25000`. Resample budget. Must be an integer >= `min_resamples`. Reaching it without the confidence interval excluding `alpha_perm` sets `perm_converged` to false and records the triplet in `metrics.txt`. It is the point at which the run stops asking for more rather than a hard cap: the batch that crosses it is drawn whole rather than trimmed, so `perm_n_resamples` can exceed it by up to one batch. Keep the two values a few multiples apart — with `max_resamples` close to `min_resamples` a single grown batch is comparable to the whole budget, so the overshoot is proportionally much larger.
-- `ci_method` — default `wilson`. Binomial interval method passed to `statsmodels.stats.proportion.proportion_confint`. Allowed: `wilson`, `beta`, `agresti_coull`, `jeffreys`, `binom_test`, `normal`. `wilson` inverts the score test, stays inside [0, 1], and holds close-to-nominal coverage for the very small proportions this test produces; `normal` degrades badly there and `beta` (Clopper–Pearson) is guaranteed-coverage but conservative, so it resamples longer than necessary. An unrecognized value is rejected when the config is parsed. See [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#how-the-interval-is-computed-and-why-it-matches-the-p-value) for how the interval is derived and why it is consistent with the reported p-value.
+Bootstrap iterations run the direction test at a fifth of both resample
+counts.
 
-Bootstrap iterations re-run the direction test at one fifth of `min_resamples` and `max_resamples`, since the bootstrap aggregate absorbs the extra per-iteration Monte Carlo noise.
+## Machine learning
 
-### Orchestrator CLI Example
+The trainers read `summary_statistics.tsv`, treat the 6-bit `class` column
+as six binary labels, use every other column as a feature (numeric columns
+directly, string columns with at most seven distinct values one-hot encoded,
+more are rejected), and report per-label and exact-match metrics. Install with
+`pip install .[ml]`.
 
-```bash
-python -m ghostparser.orchestrator \
-  -st data/species.tree \
-  -gt data/genes.tree \
-  -og Out1,Out2 \
-  --output-folder results \
-  --processes 0 \
-  --parallelization-mode auto \
-  --alpha-dct 0.05 \
-  --alpha-ks 0.05 \
-  --alpha-perm 0.05 \
-  --p-value-correction bfn
-```
-
-## Machine Learning (ghostparser.ml)
-
-The ML subpackage exposes explicit trainer modules. Invoke a trainer directly (for example `python -m ghostparser.ml.random_forest` or `python -m ghostparser.ml.multi_knn`). The random forest baseline is the main example path in this section.
-
-The loaders treat the 6-bit label column as a multi-label target: each bit becomes one binary label, so the trainer can report both per-label scores and the stricter exact-match result for the whole bitstring.
-
-Install the optional ML dependency set with `pip install .[ml]` when you want these trainers available; the core package can be installed without scikit-learn.
-
-The loader uses a strict layout:
-
-- top-level keys for core run inputs and split/runtime controls
-- `model` for trainer hyperparameters
-- `evaluation` for metric selection and report/save toggles
-
-The only trainer CLI flags are `-c/--config-file`, `-i/--input-path`, and `-o/--output-dir`. Other settings are config-file keys.
-
-### Top-Level Config Keys
-
-##### `input_path`
-
-- Type: string
-- Parallel CLI: `--input-path` (alias `-i`)
-- Description: path to `summary_statistics.tsv` produced by the orchestrator.
-
-##### `output_dir`
-
-- Type: string
-- Parallel CLI: `--output-dir` (alias `-o`)
-- Description: directory where trained model and metric artifacts will be written.
-
-##### `overwrite`
-
-- Type: boolean
-- Parallel CLI: `--no-overwrite` disables overwrite when set on the trainer CLI
-- Description: controls whether an existing trainer output directory is cleared before artifacts are written.
-- Default: `true`
-
-##### `target_column`
-
-- Type: string
-- Default: `class`
-- Description: column name in the TSV containing the fixed-length binary target string. The loader reads that value as a string bitstring, expands it into one binary label per position for multi-label training, and expects six positions.
-
-##### `test_size`
-
-- Type: float in (0,1)
-- Default: `0.2`
-- Description: fraction of the dataset reserved for the hold-out test set.
-
-##### `cv_folds`
-
-- Type: int >= 1 or null
-- Default: `5`
-- Description: number of stratified cross-validation folds to run on the training partition.
-
-##### `rare_class_policy`
-
-- Type: string
-- Default: `warn_reduce_cv`
-- Description: behaviour when stratified CV is not feasible. Choices: `warn_reduce_cv`, `warn_skip_cv`, `error`.
-
-##### `random_state`
-
-- Type: int or null
-- Default: `null`
-- Description: optional RNG seed for deterministic splits and model behaviour.
-
-##### `n_jobs`
-
-- Type: int or null
-- Default: `-1`
-- Description: number of CPU worker jobs used by estimators. `-1` means all available CPU cores for operations that support parallelism; it does not enable GPU acceleration.
-
-### Config Layout
-
-The loader expects a top-level layout like this:
+Flags: `-c/--config-file`, `-i/--input-path`, `-o/--output-dir`, `--seed`,
+`--no-overwrite`, `--debug`. The tuner takes `-c`, `--seed`, `--no-overwrite`
+and `--debug`.
 
 ```yaml
 input_path: ./results/summary_statistics.tsv
 output_dir: ./results/ml_out
-target_column: class
-test_size: 0.2
-cv_folds: 5
-rare_class_policy: warn_reduce_cv
-random_state: 42
-n_jobs: -1
+overwrite: true
+target_column: class                 # the 6-bit label column
+test_size: 0.2                       # hold-out fraction, in (0, 1)
+cv_folds: 5                          # integer >= 1, or null for no CV
+rare_class_policy: warn_reduce_cv    # warn_reduce_cv, warn_skip_cv, error
+seed: null
+n_jobs: -1                           # -1 = every core
 
-model:
+model:                               # random forest; the KNN keys are below
   n_estimators: 200
-  max_depth: 10
+  max_depth: null                    # null = unlimited
   min_samples_split: 2
   min_samples_leaf: 1
-  max_features: sqrt
-  class_weight: null
-  n_neighbors: 5
-  weights: uniform
-  algorithm: auto
-  leaf_size: 30
-  metric: minkowski
-  p: 2
+  max_features: null                 # null = every feature; sqrt, log2, int, float in (0, 1]
+  class_weight: null                 # null, balanced, balanced_subsample, mapping, or list
 
 evaluation:
-  metrics: all
+  metrics: all                       # all, primary, diagnostic, per_bit
   report_class_distribution: true
   report_confusion_matrix: true
   report_feature_importance: true
+  feature_importance_method: null    # null = mdi on the forest, permutation on KNN
+  feature_importance_correlation_threshold: 0.7   # grouped_permutation only
   save_label_map: true
   save_predictions: true
 ```
 
-### Model Parameters
+For `multi_knn` the `model` block holds `n_neighbors` (`5`), `weights`
+(`uniform` or `distance`), `algorithm` (`auto`, `ball_tree`, `kd_tree`,
+`brute`), `leaf_size` (`30`), `metric` (`minkowski`) and `p` (`2`).
 
-Feature handling:
+Runtime keys sit at the top level, hyperparameters under `model`, reporting
+controls under `evaluation`; a key in the wrong section is rejected.
+`rare_class_policy` says what to do when a label combination is too rare to
+stratify: reduce the fold count, skip cross-validation, or stop. Write null
+as `null` or `~`, never the bare word `None`; `max_features: auto` is
+rejected (scikit-learn removed it; `sqrt` is the equivalent). Omit
+`min_samples_split` and `min_samples_leaf` to take their defaults.
 
-- The loader uses every non-target column as a feature.
-- Numeric feature columns are used directly.
-- String-valued feature columns with 7 or fewer distinct values are one-hot encoded automatically.
-- String-valued feature columns with more than 7 distinct values are rejected.
-- The configured `target_column` is excluded from the feature matrix automatically, and its raw TSV value is still read as the multi-label target bitstring.
+`feature_importance_method` chooses how influence is measured, and the three
+answers differ when features are correlated, as the summary statistics of one
+height distribution are:
 
-If you want to avoid a string column being encoded, remove it from the TSV before calling the trainer.
+| Value | Measure |
+| --- | --- |
+| `mdi` | Mean decrease in impurity, summed over the splits a feature makes and averaged over the six estimators. Fast, read off the fitted trees, but scored in-sample: it favours features with many split points, and correlated features divide the credit for one signal between them. Needs a tree-based model, so the neighbours classifier rejects it. |
+| `permutation` | The drop in hold-out micro-F1 when a feature's column is shuffled. Scores the metric actually reported, on rows the model never saw. Correlated features still score low, because shuffling one leaves its twin to carry the signal. |
+| `grouped_permutation` | The same shuffle applied to a whole group of correlated features at once, so one signal is scored once. Features are grouped by average-linkage clustering on `1 - abs(Spearman rho)`, cut at `feature_importance_correlation_threshold`; a lower threshold builds larger groups. |
 
-- RandomForest (`ghostparser.ml.random_forest`):
-  - `n_estimators` (int, default: `200`)
-  - `max_depth` (int or null, default: `null`) — `null` leaves tree depth unconstrained.
-  - `min_samples_split` (int, default: `2`) — controls how many samples are required before a split is allowed. Larger values make the trees more conservative when the data is noisy or small.
-  - `min_samples_leaf` (int, default: `1`) — controls how many samples must remain in a leaf. Larger values smooth the model and can reduce noise.
-  - `max_features` (string, int, float or null, default: `sqrt`) — how many features each split may consider. Accepts `sqrt`, `log2`, an integer `>= 1` (that many features per split), a float in `(0.0, 1.0]` (that fraction of the features), or `null` to use **every** feature at each split. `auto` is rejected: scikit-learn removed it in 1.3, and `sqrt` is its classifier equivalent.
-  - `class_weight` (string, dict, list or null, default: `null`) — accepts `balanced`, `balanced_subsample`, a mapping of class label to weight, a list of such mappings (one per label), or `null` for no class weighting.
+Null takes each trainer's own measure: `mdi` for `random_forest`, which reads
+impurity off its trees, and `permutation` for `multi_knn`, which has no
+impurity to read. The permutation measures shuffle ten times and report the
+mean drop with its standard deviation; on a small hold-out partition the
+scores are noisy, and an uninformative feature can score slightly negative.
+No measure is unbiased for correlated features in the strict sense, because
+two features carrying one signal have no unique split of the credit between
+them; `grouped_permutation` sidesteps the question by scoring the signal
+rather than the columns.
 
-  In YAML, write the null value as `null` or `~`. The bare words `None` and `none` are read as plain strings, not null, so GhostParser maps them (and `null` written as a string) back to null for `max_features` and `class_weight` rather than passing the literal text to the estimator. Any other value is rejected with a message naming what it received and every accepted form.
+### Hyperparameter tuning
 
-  Leave `min_samples_split` and `min_samples_leaf` out of the config if you want the defaults. The loader does not infer them from the dataset, and explicit `null` values are rejected.
-
-- Multi-label KNN (`ghostparser.ml.multi_knn`):
-  - `n_neighbors` (int >= 1, default: `5`)
-  - `weights` (string, default: `uniform`) — `uniform` or `distance`.
-  - `algorithm` (string, default: `auto`) — `auto`, `ball_tree`, `kd_tree`, `brute`.
-  - `leaf_size` (int >= 1, default: `30`)
-  - `metric` (string, default: `minkowski`)
-  - `p` (int >= 1, default: `2`)
-
-The top-level `n_jobs` and `random_state` keys apply to both trainers.
-
-### Evaluation Parameters
-
-- `metrics`: string metric-set selector. Choices: `all`, `primary`, `diagnostic`, `per_bit`. Default: `all`.
-- `report_class_distribution`: boolean, default `true`. When enabled, the text report includes the dataset summary block.
-- `report_confusion_matrix`: boolean, default `true`.
-- `report_feature_importance`: boolean, default `true`.
-- `save_label_map`: boolean, default `true`. The label map is embedded in the overall metrics JSON.
-- `save_predictions`: boolean, default `true`. The prediction TSV includes the matched-bit count.
-
-Use `metrics: all` when you want both per-label metrics and exact-match accuracy in the same run. The `diagnostic` set is the strict whole-bitstring view, while `primary` and `per_bit` expose narrower slices of the same evaluation.
-
-### Hyperparameter Tuning Parameters
-
-The `hyperparameter_tuning` section configures `python -m ghostparser.ml.hyper_tune`. It is separate from `model` and `evaluation` so tuning stays explicit. The tuner config only accepts the runtime keys listed above plus `hyperparameter_tuning`; do not provide `model`, `evaluation`, or model hyperparameters at the top level. Those sections belong to the trainer config, not the tuner config.
-
-Inside `hyperparameter_tuning`, the following keys are expected:
-
-- `model` (string, default `random_forest`): tuner target. Choices: `random_forest`, `multi_knn`.
-- `method` (string, default `grid`): `grid` or `random`.
-- `objective` (string, default `exact_match_accuracy`): metric used to rank candidates. Choices: `exact_match_accuracy`, `hamming_loss`, `bitwise_accuracy`, `micro_f1`, `macro_f1`, `weighted_f1`.
-- `top_k` (int, default `10`): number of top candidates to include in the text summary.
-- `n_iter` (int, default `20`): number of sampled candidates when `method: random`.
-- `max_candidates` (int, default `5000`): hard cap for full grid evaluation.
-- `use_wandb` (bool, **required**, no default): whether the run logs to Weights & Biases. There is deliberately no default — every tuning config states the choice, and the loader rejects a config that omits it or gives a non-boolean. With `false` the tuner needs neither a W&B account nor the `wandb` package, makes no network calls, writes no `wandb/` directory, and writes the full local artifact set. With `true` the `wandb` package must be installed (`pip install .[wandb]`) and authenticated, and the bulk outputs (`hyper_tune_results.json`, `hyper_tune_results.tsv`, `hyper_tune_parameter_marginals.tsv`, `predictions.tsv`) are logged to the W&B run instead of the output directory, which then keeps only the model pickle, the plaintext report, and the search-report plot.
-- `wandb_detailed_payloads` (bool, default `false`): when `true`, log additional per-candidate CV payloads (aggregate and fold-level JSON) and extra summary JSON blobs to Weights & Biases. Requires `use_wandb: true`; combining it with `use_wandb: false` is rejected. Keep `false` when network/storage overhead matters.
-- `search_space` (mapping): model hyperparameter candidates. Each parameter should map to a list of values. Omit a parameter from `search_space` if you want the trainer default to apply during tuning.
-
-Allowed `search_space` keys depend on `model`:
-
-- `random_forest`: `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`, `class_weight`
-- `multi_knn`: `n_neighbors`, `weights`, `algorithm`, `leaf_size`, `metric`, `p`
-
-Do not place runtime fields such as `input_path`, `output_dir`, `target_column`, `test_size`, `cv_folds`, `rare_class_policy`, `random_state`, or `n_jobs` inside `search_space`.
-
-Example:
+`python -m ghostparser.ml.hyper_tune -c file` reads the runtime keys above
+plus a `hyperparameter_tuning` block, and no `model` or `evaluation` section:
 
 ```yaml
 hyperparameter_tuning:
-  model: random_forest
-  method: random
-  objective: exact_match_accuracy
-  top_k: 5
-  n_iter: 20
-  max_candidates: 5000
-  use_wandb: false
-  search_space:
+  model: random_forest             # random_forest or multi_knn
+  method: grid                     # grid or random
+  objective: exact_match_accuracy  # exact_match_accuracy, hamming_loss, bitwise_accuracy, micro_f1, macro_f1, weighted_f1
+  top_k: 10                        # candidates in the text summary
+  n_iter: 20                       # candidates sampled by random
+  max_candidates: 5000             # cap on a full grid
+  use_wandb: false                 # true = log to Weights & Biases
+  wandb_detailed_payloads: false   # per-candidate CV payloads; needs use_wandb
+  search_space:                    # the model's hyperparameters, each a list
     n_estimators: [100, 200, 400]
     max_depth: [null, 10, 20]
-    min_samples_split: [2, 5]
-    min_samples_leaf: [1, 2]
     max_features: [sqrt, log2]
-    class_weight: [null]
 ```
 
-`max_features` and `class_weight` candidates are validated value by value against
-the same rules as the `model` block above, so an invalid entry is reported against
-its `search_space` key before the search starts rather than at the first fit.
+A parameter omitted from `search_space` keeps the trainer default; runtime
+keys inside it are rejected. With `use_wandb: true` (`pip install .[wandb]`,
+`wandb login`) the ranked candidates, parameter marginals, predictions and the
+results JSON are logged to the run instead of written to disk.
 
-To log the run to Weights & Biases instead, install and authenticate the extra
-(`pip install .[wandb]`, then `wandb login`) and swap the two flags:
+## Sample configs
 
-```yaml
-hyperparameter_tuning:
-  use_wandb: true
-  wandb_detailed_payloads: true
-```
+Every file under `sample_configs/` loads as shipped; change the paths and the
+outgroup labels to your data.
 
-Runnable samples for both formats ship as
-`sample_configs/hyperparameter_tuning_random_forest.yaml` and
-`sample_configs/hyperparameter_tuning_multi_knn.json`.
-
-Use `method: grid` to evaluate every combination in the search space. Use `method: random` when you want to sample a fixed number of combinations from a larger space.
-
-While it runs, the tuner prints progress to the console: it announces the search method, reports the total candidate cases it will evaluate, estimates the total model fits implied by CV, and logs per-candidate timing updates.
-
-### CLI examples
-
-Run RandomForest via module entrypoint:
-
-```bash
-python -m ghostparser.ml.random_forest -i ./results/summary_statistics.tsv -o ./results/ml_rf_out
-```
-
-Run Multi-KNN via module entrypoint:
-
-```bash
-python -m ghostparser.ml.multi_knn -i ./results/summary_statistics.tsv -o ./results/ml_knn_out
-```
-
-### Sample Config Files
-
-- `sample_configs/random_forest_minimal.yaml`
-- `sample_configs/multi_knn_minimal.yaml`
-- `sample_configs/hyperparameter_tuning_random_forest.yaml`
-
-The ML sample configs illustrate the `input_path`, `output_dir`, `model`, `evaluation`, and `hyperparameter_tuning` sections that the ML loaders expect.
-
-Orchestrator samples live alongside them:
-
-- `sample_configs/orchestrator_minimal.yaml` — the three required inputs plus an output folder; everything else defaults.
-- `sample_configs/orchestrator_full.yaml` — every key at its default value, including the config-file-only ones, as a starting point to trim.
-
----
-
-## Consolidation Outputs
-
-Consolidation is a stage of the orchestrator, not a separate entry point, and is
-controlled by the [`consolidation`](#consolidation) key. It writes into a
-`consolidation/` subfolder of the run's output folder:
-
-- `introgression_combined.png` — combined inflow/outflow heatmap and ghost target-strength bar chart.
-- `introgression_matrix_inflow_outflow.tsv` — target × source matrix of average bootstrap support values.
-- `introgression_ghost_target_strength.tsv` — per-taxon average ghost bootstrap support, plus a `has_sampled_introgression` flag (`1` when that taxon is also the target of a sampled introgression edge) that sets the bar colour.
-- `introgression_taxa_order.tsv` — ordered taxa list matching the plot axes.
-
-Taxa named in [`outgroup`](#outgroup) are excluded from every plot and TSV here.
-
----
-
-## Notes
-
-- Path values are resolved at runtime to absolute paths.
-- Config-file mode (`-c/--config-file`) is available in `ghostparser.orchestrator` and the `ghostparser.ml` trainers.
-- Use `--processes 1` to run single-worker mode.
+| File | Scenario |
+| --- | --- |
+| `orchestrator_minimal.yaml` | The three required inputs and an output folder; everything else at its default. |
+| `orchestrator_full.yaml` | Every orchestrator key at its default, with a comment on each; trim it to the keys you change. |
+| `orchestrator_preflight.yaml` | Check the trees and the outgroup order before a run; nothing else is produced. |
+| `orchestrator_species_filter.yaml` | Every triplet among a chosen set of species, a fixed seed, and `summary_statistics.tsv` for the trainers. |
+| `orchestrator_triplet_filter_diagnostic.yaml` | A few named triplets in depth: every test for every triplet, every bootstrap iteration recorded, shape diagnostics, a different height strategy. |
+| `orchestrator_screen.json` | A fast screen of a large taxon set, in JSON: no bootstrap, no maps, `fdr_bh`, the z-test, a smaller permutation budget. |
+| `random_forest_minimal.yaml`, `multi_knn_minimal.yaml` | One trainer run each on a run's `summary_statistics.tsv`. |
+| `hyperparameter_tuning_random_forest.yaml` | A grid search over the random forest, reported locally. |
+| `hyperparameter_tuning_multi_knn.json` | A random search over the KNN, in JSON. |

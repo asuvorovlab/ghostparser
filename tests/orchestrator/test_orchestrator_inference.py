@@ -104,26 +104,25 @@ def _expected_dct(n_dis1, n_dis2, discordant_test):
     return float(statistic), float(p_value)
 
 
-def _expected_result(strategy, discordant_test, pipeline_mode="detailed", alpha=0.05):
+def _expected_result(strategy, discordant_test, diagnostic=True, alpha=0.05):
     """Derive every asserted inference field for the shared fixture.
 
     Groups the hand-derived heights by topology, ranks the two discordant
     topologies, runs the DCT and the con-vs-dis1 KS test through SciPy /
-    statsmodels, and applies the GhostParser decision logic. The efficient mode
-    stops measuring once the cascade is settled, so the expectation carries
-    ``None`` for whatever that mode never computes.
+    statsmodels, and applies the GhostParser decision logic. A non-diagnostic
+    run stops measuring once the cascade is settled, so the expectation carries
+    ``None`` for whatever it never computes.
 
     Args:
         strategy: The tree-height strategy.
         discordant_test: ``chi-square``/``z-test``.
-        pipeline_mode: ``efficient`` skips the tests the cascade cannot consult;
-            ``detailed`` measures all three.
+        diagnostic: ``True`` measures all three tests; ``False`` skips the
+            tests the cascade cannot consult.
         alpha: Significance threshold shared by both tests.
 
     Returns:
         A dict of the expected field values.
     """
-    efficient = pipeline_mode == "efficient"
     heights = {topology: [] for topology in _SISTER_TAXA}
     for entry in _LEAF_GEOMETRY:
         heights[entry[0]].append(_expected_height(entry, strategy))
@@ -145,26 +144,25 @@ def _expected_result(strategy, discordant_test, pipeline_mode="detailed", alpha=
     dct_statistic, dct_p_value = _expected_dct(n_dis1, n_dis2, discordant_test)
     dct_significant = dct_p_value < alpha
 
-    # A failed count gate settles the call on its own, so the tree-height test
-    # below it decides nothing and joins no correction family: its significance
-    # is undefined in both modes. The efficient mode goes further and does not
-    # measure the raw value either.
+    # A failed count gate settles the call on its own. The decision pass here
+    # runs under ``no``, an inline correction, so a non-diagnostic run leaves
+    # the tree-height test below it unmeasured; a diagnostic run measures and
+    # corrects it like any other member of the family.
     ks_statistic = ks_p_value = ks_significant = None
-    if dct_significant or not efficient:
+    if dct_significant or diagnostic:
         ks_result = stats.ks_2samp(
             heights[_CONCORDANT], heights[dis1], alternative="two-sided", method="auto"
         )
         ks_statistic, ks_p_value = float(ks_result.statistic), float(ks_result.pvalue)
-    if dct_significant:
         ks_significant = ks_p_value < alpha
 
     # This fixture has 5 concordant and 3 discordant1 trees, so the pooled
-    # sample admits only C(8, 3) = 56 distinct group assignments -- far fewer
+    # sample admits only C(8, 3) = 56 distinct group assignments, far fewer
     # than the 2500-resample minimum. The support guard fires and reports no
-    # conclusion without any resampling. The efficient mode does not even get
+    # conclusion without any resampling. A non-diagnostic run does not even get
     # that far unless both earlier gates cleared.
     direction = "inconclusive"
-    if efficient and not (dct_significant and ks_significant):
+    if not diagnostic and not (dct_significant and ks_significant):
         direction = None
 
     # GhostParser decision logic: DCT gate, then the tree-height test, then the
@@ -213,34 +211,53 @@ def _assert_matches_expected(result, expected):
             assert actual == expected_value, field
 
 
-@pytest.mark.parametrize("pipeline_mode", ["efficient", "detailed"])
-@pytest.mark.parametrize("discordant_test", ["chi-square", "z-test"])
-@pytest.mark.parametrize("strategy", ["AVG", "A", "B", "C", "SIS", "INT"])
-def test_analyze_triplet_matches_derived_expectation(
-    discordant_test, strategy, pipeline_mode
-):
-    """analyze_triplet reproduces values derived from the definitions.
+def _decided(observations, **kwargs):
+    """Measure a triplet and run the decision pass over it as a family of one.
 
-    Covers every tree-height strategy and discordant-count test on the shared
-    10-gene-subtree fixture, in both pipeline modes: the derived statistics are
-    the same wherever a mode measures them, and the efficient mode leaves the
-    rest unmeasured.
+    Args:
+        observations: The observation list.
+        **kwargs: Forwarded to ``analyze_triplet_from_observations``.
+
+    Returns:
+        The decided ``TripletPipelineResult``.
     """
-    result = pinf.analyze_triplet(
+    result = pinf.analyze_triplet_from_observations(
         _TRIPLET,
-        _GENE_SUBTREES,
+        observations,
         species_subtree=_SPECIES_SUBTREE,
-        alpha_dct=0.05,
-        alpha_ks=0.05,
-        discordant_test=discordant_test,
-        tree_height_calculation_strategy=strategy,
         bootstrap_options={"iterations": _ITERATIONS},
         triplet_seed=_SEED,
-        pipeline_mode=pipeline_mode,
+        **kwargs,
+    )
+    return pinf._apply_triplet_result_p_value_correction(
+        [result], alpha_dct=0.05, alpha_ks=0.05, method="no"
+    )[0]
+
+
+@pytest.mark.parametrize("diagnostic", [False, True])
+@pytest.mark.parametrize("discordant_test", ["chi-square", "z-test"])
+def test_inference_matches_derived_expectation(discordant_test, diagnostic):
+    """The tests and the decision reproduce values derived from the definitions.
+
+    Runs the shared 10-gene-subtree fixture through the reference serializer,
+    the per-triplet measurement and the decision pass, and checks every
+    asserted field against SciPy / statsmodels and the cascade written out by
+    hand, with ``diagnostic`` both off and on: the derived statistics are the
+    same wherever a run measures them, and a non-diagnostic run leaves the rest
+    unmeasured.
+    The heights themselves are pinned per strategy by
+    ``test_observation_heights_match_derived_geometry``, so one strategy is
+    enough here.
+    """
+    observations = pinf._serialize_triplet_gene_trees(
+        _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy="AVG"
+    )
+    result = _decided(
+        observations, discordant_test=discordant_test, diagnostic=diagnostic
     )
 
     _assert_matches_expected(
-        result, _expected_result(strategy, discordant_test, pipeline_mode)
+        result, _expected_result("AVG", discordant_test, diagnostic)
     )
     assert tuple(result.triplet) == _TRIPLET
     assert result.species_tree == "((A,B),C);"
@@ -248,70 +265,21 @@ def test_analyze_triplet_matches_derived_expectation(
     assert sum(result.all_bootstrap.values()) == pytest.approx(1.0)
 
 
-@pytest.mark.parametrize("strategy", ["AVG", "A", "B", "C", "SIS", "INT"])
-def test_observation_heights_match_derived_geometry(strategy):
-    """Serialized observations carry the hand-derived topology and H(T) per strategy."""
-    observations = pinf._serialize_triplet_gene_trees(
-        _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy=strategy
-    )
-    assert len(observations) == len(_LEAF_GEOMETRY)
-    for observation, entry in zip(observations, _LEAF_GEOMETRY):
-        assert observation[0] == entry[0]
-        assert observation[1] == pytest.approx(_expected_height(entry, strategy))
+def test_observation_heights_match_derived_geometry():
+    """Serialized observations carry the hand-derived topology and H(T) under every strategy."""
+    for strategy in ("AVG", "A", "B", "C", "SIS", "INT"):
+        observations = pinf._serialize_triplet_gene_trees(
+            _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy=strategy
+        )
+        assert len(observations) == len(_LEAF_GEOMETRY)
+        for observation, entry in zip(observations, _LEAF_GEOMETRY):
+            assert observation[0] == entry[0], strategy
+            assert observation[1] == pytest.approx(_expected_height(entry, strategy)), strategy
 
 
-def test_analyze_triplet_from_observations_matches_newick_path():
-    """analyze_triplet_from_observations equals analyze_triplet on equivalent inputs."""
-    observations = pinf._serialize_triplet_gene_trees(
-        _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy="AVG"
-    )
-    from_obs = pinf.analyze_triplet_from_observations(
-        _TRIPLET,
-        observations,
-        species_subtree=_SPECIES_SUBTREE,
-        bootstrap_options={"iterations": _ITERATIONS},
-        triplet_seed=_SEED,
-        pipeline_mode="detailed",
-    )
-    from_newick = pinf.analyze_triplet(
-        _TRIPLET,
-        _GENE_SUBTREES,
-        species_subtree=_SPECIES_SUBTREE,
-        tree_height_calculation_strategy="AVG",
-        bootstrap_options={"iterations": _ITERATIONS},
-        triplet_seed=_SEED,
-        pipeline_mode="detailed",
-    )
-    expected = _expected_result("AVG", "chi-square")
-    _assert_matches_expected(from_obs, expected)
-    _assert_matches_expected(from_newick, expected)
-    # Same observations + same seed -> identical NumPy bootstrap.
-    assert from_obs.bootstrap_value == from_newick.bootstrap_value
-    assert from_obs.all_bootstrap == from_newick.all_bootstrap
-
-
-def test_bootstrap_is_deterministic_under_seed():
-    """A fixed seed yields identical bootstrap aggregates across runs."""
-    kwargs = dict(
-        species_subtree=_SPECIES_SUBTREE,
-        bootstrap_options={"iterations": _ITERATIONS},
-        triplet_seed=_SEED,
-    )
-    first = pinf.analyze_triplet(_TRIPLET, _GENE_SUBTREES, **kwargs)
-    second = pinf.analyze_triplet(_TRIPLET, _GENE_SUBTREES, **kwargs)
-    assert first.all_bootstrap == second.all_bootstrap
-    assert first.bootstrap_value == second.bootstrap_value
-
-
-def test_analyze_triplet_empty_observations():
-    """analyze_triplet on zero gene subtrees returns a no-introgression result."""
-    result = pinf.analyze_triplet(
-        _TRIPLET,
-        [],
-        species_subtree=_SPECIES_SUBTREE,
-        bootstrap_options={"iterations": _ITERATIONS},
-        triplet_seed=_SEED,
-    )
+def test_empty_observations_decide_no_introgression():
+    """Zero observations measure as empty groups and decide ``no_introgression``."""
+    result = _decided([])
     assert result.analyzed_trees == 0
     assert result.n_con == 0
     assert result.classification == "no_introgression"

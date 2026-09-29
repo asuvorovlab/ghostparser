@@ -29,7 +29,7 @@ _METHOD_MAP = {
 # raw gate has failed, in the point estimate and in the bootstrap alike. Keep it
 # true of anything added to ``P_VALUE_CORRECTION_CHOICES``: a method whose
 # adjusted value can fall below the raw one silently breaks both short-circuits.
-# The argument is under "Skipping a settled gate" in the orchestrator guide.
+# The argument is under "The cascade" in the orchestrator guide.
 
 # Corrections that can be applied to a single p-value knowing only the family
 # size, without the other members. Everything else is rank-based and needs the
@@ -74,10 +74,8 @@ def adjust_p_value_inline(p_value, method, family_size):
 
 
 def adjust_p_values(p_values, method=DEFAULT_P_VALUE_CORRECTION, alpha=0.05):
-    """Adjust a family of p-values by the selected correction method.
-
-    Uses the statsmodels ``multipletests`` backend. The ``no`` method returns
-    the inputs unchanged as floats.
+    """Adjust a family of p-values with the selected statsmodels correction;
+    ``no`` returns them unchanged.
 
     Args:
         p_values: Sequence of raw p-values forming one testing family.
