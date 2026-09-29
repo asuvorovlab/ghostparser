@@ -264,7 +264,7 @@ def _read_and_root_species_tree(
 
     metadata = {
         "species_outgroup_missing_count": len(rooting.missing),
-        "species_outgroup_excluded_count": len(rooting.distances),
+        "species_outgroup_excluded_count": len(rooting.ranked),
         "species_ingroup_taxa_count": len(rooting.ingroup),
     }
     return _biophylo_to_dendropy(rooting.tree), metadata, rooting.outgroup_order
