@@ -127,11 +127,7 @@ def test_ml_config_rejects_invalid_estimator_values(
 
 
 def test_seed_is_a_top_level_key_with_a_cli_flag(tmp_path):
-    """`seed` resolves from the config file or `--seed`, and only from the top level.
-
-    The scikit-learn name `random_state` is refused wherever it appears, so a
-    config written with it cannot run unseeded by accident.
-    """
+    """`seed` resolves from the config file or `--seed`, and only from the top level."""
     assert _load(tmp_path, seed=7)["seed"] == 7
 
     parser = build_trainer_argument_parser("test")
@@ -148,12 +144,8 @@ def test_seed_is_a_top_level_key_with_a_cli_flag(tmp_path):
     assert resolved.seed == 9
     assert resolved.test_size == 0.3
 
-    with pytest.raises(ConfigError, match="'seed'"):
-        _load(tmp_path, random_state=7)
     with pytest.raises(ConfigError, match="top level"):
         _load(tmp_path, model={"seed": 7})
-    with pytest.raises(ConfigError, match="top level"):
-        _load(tmp_path, model={"random_state": 7})
 
 
 def test_feature_importance_method_resolves_under_evaluation(tmp_path):

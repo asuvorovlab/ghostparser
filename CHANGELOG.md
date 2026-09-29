@@ -35,7 +35,7 @@
 ### Configuration
 
 - A CLI flag given beside a config file overrides the file's value, in every module; previously the file won and other flags were ignored. The run prints which settings it overrode.
-- Replaced `bootstrap_options.seed`/`bootstrap_seed` with a run-wide `seed` (`--seed`) driving every random draw; when unset, one is drawn and reported. The ML trainers and tuner take `seed` (`--seed`) instead of `random_state`, and a config carrying `random_state` is refused with a message naming `seed`.
+- Replaced `bootstrap_options.seed`/`bootstrap_seed` with a run-wide `seed` (`--seed`) driving every random draw; when unset, one is drawn and reported. The ML trainers and tuner take `seed` (`--seed`) instead of `random_state`.
 - Added `species_rename_map` (`--species-rename-map`), a TSV or YAML map from tree labels to the names shown in the outputs; the run works in tree labels, so display names may hold spaces, dots or quotes, and Newick writers quote any label the format cannot carry bare.
 - Every command reports a failure as one line on stderr and exits with a status naming its kind: 1 for an unusable input, 2 for a config error, 3 for a preflight check that found defects, 70 for an internal error and 130 for an interrupt. Previously a failed orchestrator run logged the error and exited 0, a config error printed the whole usage text, and the ML trainers exited 0 after any error. `run_orchestrator` raises instead of returning `None`, after writing the error to `metrics.txt`, and a missing config file is a config error.
 - Added `--debug` to every command, on the command line only, to show the full traceback of a failure.

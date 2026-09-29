@@ -326,7 +326,7 @@ def normalize_ml_payload(payload: dict) -> dict:
             f"{', '.join(sorted(present_forbidden))}"
         )
 
-    forbidden_model_runtime_keys = {"seed", "random_state", "n_jobs"}
+    forbidden_model_runtime_keys = {"seed", "n_jobs"}
     present_forbidden_model_runtime = forbidden_model_runtime_keys & set(
         model_section.keys()
     )
@@ -334,11 +334,6 @@ def normalize_ml_payload(payload: dict) -> dict:
         raise ConfigError(
             "Place 'seed' and 'n_jobs' at the top level, not under 'model'. Offending keys: "
             f"{', '.join(sorted(present_forbidden_model_runtime))}"
-        )
-    if "random_state" in payload:
-        raise ConfigError(
-            "Config field random_state is not recognized; the RNG seed is the "
-            "top-level 'seed' key (--seed on the command line)"
         )
 
     return {

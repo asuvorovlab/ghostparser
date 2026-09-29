@@ -1053,13 +1053,10 @@ pinned.
 - `test_seed_is_a_top_level_key_with_a_cli_flag`. Inputs: a config with
   `seed: 7`; the trainer parser given `--seed 7` in CLI mode; the parser
   given `-c` for a file holding `seed: 7` and `test_size: 0.3` plus
-  `--seed 9`; then `random_state: 7` at the top level, `seed` under `model`,
-  and `random_state` under `model`. Expected outputs: `seed == 7` from the
-  file and from the flag; `seed == 9` with `test_size == 0.3` when both are
-  given; `ConfigError` naming `'seed'` for the top-level `random_state`, and
-  naming the top level for either key under `model`. Purpose: the seed has one
-  name and one place, and a config written with scikit-learn's name is refused
-  rather than run unseeded.
+  `--seed 9`; then `seed` under `model`. Expected outputs: `seed == 7` from
+  the file and from the flag; `seed == 9` with `test_size == 0.3` when both
+  are given; `ConfigError` naming the top level for `seed` under `model`.
+  Purpose: the seed has one place, and the flag overrides only that key.
 - `test_feature_importance_method_resolves_under_evaluation`. Inputs: an
   `evaluation` block holding `feature_importance_method: grouped_permutation`
   and `feature_importance_correlation_threshold: 0.9`; a config naming
