@@ -52,6 +52,10 @@
 
 - Every test carries a category marker (`core`, `config`, `output`, `integration`, `parity`). Default-value pins are replaced by two invariants, near-duplicate cases are merged and grids are looped inside one test, so the suite collects about half as many cases, every expected value derived by hand.
 
+### Packaging
+
+- `requirements.txt` lists only the core dependencies; scikit-learn, Weights & Biases and pytest come from the `ml`, `wandb` and `dev` extras.
+
 ## v0.1.2 - August 18, 2026
 
 ### Architecture
