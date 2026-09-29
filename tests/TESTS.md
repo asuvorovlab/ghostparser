@@ -136,11 +136,11 @@ Marked `integration` throughout (every test drives `run_orchestrator`) and `outp
   reading `A, B` / `D` / a blank line / `OUT` / `NOPE` / `B`, and one reading
   `A,B,NOPE`. Expected outputs: the first run's results are exactly the one
   triplet `(A, B, D)`, with the hand-derived counts and species subtree of the
-  unfiltered run; the second returns `None`. Purpose: the filter's names are
+  unfiltered run; the second raises `InputError`. Purpose: the filter's names are
   matched against the pruned ingroup (the outgroup and an unknown name are
   skipped, a repeat counts once); every triplet among the survivors and no
   other is run, unchanged in how it is measured, and fewer than three
-  survivors cannot start a run.
+  survivors is an input error.
 - `test_species_rename_map_reaches_every_output`. Inputs: the shared fixture
   run with `species_rename_map` mapping `A -> Homo sapiens` and `B -> Pan sp.`,
   with consolidation on. Expected outputs: the triplet taxa are
@@ -785,10 +785,10 @@ The checks themselves are `core`; `test_clean_inputs_pass_and_the_report_lands_w
   `passed is False`, `triplets_checked == 3`, an
   `analysis.triplet_cap_applied` issue, and the output directory contains only
   `preflight_data_check.txt`; with the absent outgroup `run_orchestrator`
-  returns `None` and the output directory is empty. Purpose: the flag runs the
-  check and nothing else, the configured cap is what the check receives (set
-  below the triplet count so the module default could not pass in its place),
-  and an impossible check is reported, not raised out of the runner.
+  raises `InputError` and the output directory is empty. Purpose: the flag
+  runs the check and nothing else, the configured cap is what the check
+  receives (set below the triplet count so the module default could not pass
+  in its place), and an impossible check raises out of the runner.
 
 ### tests/orchestrator/test_orchestrator_config.py
 
@@ -871,6 +871,19 @@ them.
   builds a namespace directly, so this is the only place the flag names are
   pinned; resolving covers the override path in the same pass.
 
+### tests/test_cli.py
+
+The shared command-line wrapper in `ghostparser.cli_config`.
+
+- `test_run_cli_maps_each_outcome_to_its_exit_status`. Inputs (parametrized,
+  7 rows): a run returning `None`, returning `EXIT_CHECK_FAILED`, or raising
+  `ConfigError`, `InputError`, `OutgroupRootingError`, `TypeError` or
+  `KeyboardInterrupt`. Expected outputs: exit statuses 0, 3, 2, 1, 1, 70 and
+  130; no traceback on stderr for a failure; and with `--debug` the same
+  exception raised out of the wrapper. Purpose: every entry point shares one
+  mapping from how a run ends to its exit status, the package's own errors
+  are told from bugs, and the debug switch restores the traceback.
+
 ### tests/test_config_trunk.py
 
 The shared configuration trunk in `ghostparser.config`.
@@ -884,8 +897,7 @@ Marked `config` throughout.
 - `test_load_raw_config_reads_json_and_yaml_and_rejects_the_rest`. Inputs:
   equivalent payloads as `.json`, `.yaml` and `.yml`; then a missing path, a
   `.txt` file, and a JSON list. Expected outputs: the same mapping from each
-  format; `FileNotFoundError`, then `ConfigError` twice with the documented
-  messages. Purpose: config-file loading and its validation.
+  format; then `ConfigError` three times with the documented messages. Purpose: config-file loading and its validation.
 - `test_validate_required_path_resolves_or_raises`. Inputs: a present path, then
   absent/empty/whitespace values. Expected outputs: resolution, then
   `ConfigError` for each invalid case. Purpose: required-path validation.

@@ -26,7 +26,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
 
-from ..config import ConfigError
+from ..config import ConfigError, InputError
 
 BIT_LABELS = (
     "ghost_into_A",
@@ -76,15 +76,15 @@ def read_tsv_rows(input_path: str) -> list[dict[str, str]]:
         The rows, each keyed by column name.
 
     Raises:
-        ValueError: If the file has no header row or no data rows.
+        InputError: If the file has no header row or no data rows.
     """
     with open(input_path, "r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
         if reader.fieldnames is None:
-            raise ValueError("Input TSV is missing a header row")
+            raise InputError("Input TSV is missing a header row")
         rows = list(reader)
     if not rows:
-        raise ValueError("Input TSV contains no data rows")
+        raise InputError("Input TSV contains no data rows")
     return rows
 
 
@@ -104,14 +104,14 @@ def parse_classes(raw_labels: Iterable[str]) -> tuple[np.ndarray, list[str]]:
         stripped label strings.
 
     Raises:
-        ValueError: If a label is not a 6-character bitstring.
+        InputError: If a label is not a 6-character bitstring.
     """
     labels: list[str] = []
     binary_rows: list[list[int]] = []
     for raw_label in raw_labels:
         label = str(raw_label).strip()
         if not is_valid_bitstring(label):
-            raise ValueError(
+            raise InputError(
                 f"Invalid classes label: {label!r}; expected a {BIT_COUNT}-character 0/1 bitstring"
             )
         labels.append(label)
@@ -146,7 +146,7 @@ def _encode_feature_column(
         column names.
 
     Raises:
-        ValueError: If a value is empty, or a string column has more distinct
+        InputError: If a value is empty, or a string column has more distinct
             values than the one-hot cap.
     """
     parsed_numeric = _parse_numeric_column(values)
@@ -155,7 +155,7 @@ def _encode_feature_column(
 
     categories = sorted({str(value).strip() for value in values})
     if len(categories) > MAX_STRING_CATEGORIES:
-        raise ValueError(
+        raise InputError(
             f"Non-numeric feature value for {feature_name!r}: {values[0]!r}; "
             f"string-valued columns must have at most {MAX_STRING_CATEGORIES} distinct values"
         )
@@ -185,16 +185,16 @@ def rows_to_matrix(rows: list[dict[str, str]], target_column: str) -> DatasetSpl
         the targets and the label strings.
 
     Raises:
-        ValueError: If the target column is missing, no feature column remains,
+        InputError: If the target column is missing, no feature column remains,
             or a column cannot be encoded.
     """
     fieldnames = list(rows[0].keys())
     if target_column not in fieldnames:
-        raise ValueError(f"Missing required target column: {target_column}")
+        raise InputError(f"Missing required target column: {target_column}")
 
     feature_names = select_feature_names(fieldnames, target_column)
     if not feature_names:
-        raise ValueError("No feature columns found after excluding the target column")
+        raise InputError("No feature columns found after excluding the target column")
 
     raw_labels: list[str] = []
     encoded_blocks: list[np.ndarray] = []
@@ -205,7 +205,7 @@ def rows_to_matrix(rows: list[dict[str, str]], target_column: str) -> DatasetSpl
         for feature_name in feature_names:
             raw_value = row.get(feature_name, "")
             if raw_value is None or str(raw_value).strip() == "":
-                raise ValueError(f"Missing feature value for {feature_name!r}")
+                raise InputError(f"Missing feature value for {feature_name!r}")
             column_values[feature_name].append(str(raw_value).strip())
 
     for feature_name in feature_names:
@@ -374,7 +374,7 @@ def auto_cv_folds(
         skipped.
 
     Raises:
-        ValueError: Under the ``error`` policy when a label occurs fewer than
+        InputError: Under the ``error`` policy when a label occurs fewer than
             twice.
     """
     counts = Counter(labels.tolist())
@@ -385,7 +385,7 @@ def auto_cv_folds(
     warnings: list[str] = []
     if min_count < 2:
         if policy == "error":
-            raise ValueError(
+            raise InputError(
                 "Cannot run stratified cross-validation because at least one class has fewer than 2 samples"
             )
         return None, [

@@ -14,6 +14,7 @@ import dendropy
 import pytest
 from scipy import stats
 
+from ghostparser.config import InputError
 from ghostparser.orchestrator.config import resolve_config
 from ghostparser.orchestrator.runner import run_orchestrator
 from ghostparser.orchestrator.trees import read_tree_file
@@ -300,7 +301,8 @@ def test_no_bootstrap_skips_the_bootstrap_and_its_columns(
         # Names on their own lines and sharing one, a repeat, the outgroup and
         # an unknown name: A, B and D survive, and C is left out of the run.
         ("A, B\nD\n\nOUT\nNOPE\nB\n", {("A", "B", "D")}),
-        # Two usable species cannot form a triplet, so the run does not start.
+        # Two usable species cannot form a triplet, so the run stops with an
+        # input error.
         ("A,B,NOPE\n", None),
     ],
     ids=["three_species", "too_few"],
@@ -316,8 +318,8 @@ def test_species_filter_runs_every_triplet_among_the_named_species(
 
     The names are matched against the pruned species tree's ingroup: the
     outgroup and an unknown name are skipped rather than failing the run, a
-    repeated name counts once, and fewer than three survivors is a run that
-    cannot produce a triplet. The triplets that do run carry the same counts
+    repeated name counts once, and fewer than three survivors is an input
+    error, since the run could produce no triplet. The triplets that do run carry the same counts
     as in the unfiltered run, since the filter changes which triplets are
     measured and nothing about how.
     """
@@ -330,11 +332,11 @@ def test_species_filter_runs_every_triplet_among_the_named_species(
         processes=1,
         species_filter=str(species_filter),
     )
-    results = run_orchestrator(config)
-
     if expected_triplets is None:
-        assert results is None
+        with pytest.raises(InputError, match="at least 3 are needed"):
+            run_orchestrator(config)
         return
+    results = run_orchestrator(config)
     assert {result.triplet for result in results} == expected_triplets
     for result in results:
         n_con, n_dis1, n_dis2, species_topology = _EXPECTED_COUNTS[result.triplet]

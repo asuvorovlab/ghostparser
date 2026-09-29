@@ -2,6 +2,7 @@
 
 import pytest
 
+from ghostparser.config import InputError
 from ghostparser.orchestrator import runner
 from ghostparser.orchestrator.preflight import (
     PREFLIGHT_REPORT_FILENAME,
@@ -247,30 +248,28 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path, outgroup):
     The cap is set below the four ingroup triplets so its effect is visible in
     the result, proving the config value reaches the check rather than the
     module default. An impossible check (an outgroup the species tree lacks)
-    is reported without raising out of the runner, which returns ``None``
-    and writes no report.
+    raises an input error out of the runner and writes no report.
     """
     species, genes = dirty_inputs
     output_dir = tmp_path / "results"
-
-    result = runner.run_orchestrator(
-        {
-            "species_tree": str(species),
-            "gene_trees": str(genes),
-            "outgroup": outgroup,
-            "output": str(output_dir),
-            "overwrite": True,
-            "triplet_filter": None,
-            "species_filter": None,
-            "preflight_data_check": True,
-            "preflight_triplet_cap": 3,
-        }
-    )
+    config = {
+        "species_tree": str(species),
+        "gene_trees": str(genes),
+        "outgroup": outgroup,
+        "output": str(output_dir),
+        "overwrite": True,
+        "triplet_filter": None,
+        "species_filter": None,
+        "preflight_data_check": True,
+        "preflight_triplet_cap": 3,
+    }
 
     if outgroup == "NOT_PRESENT":
-        assert result is None
+        with pytest.raises(InputError, match="none of the outgroup taxa"):
+            runner.run_orchestrator(config)
         assert list(output_dir.iterdir()) == []
         return
+    result = runner.run_orchestrator(config)
     assert result.passed is False
     assert result.triplets_checked == 3
     assert any(

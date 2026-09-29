@@ -2,6 +2,7 @@
 
 import argparse
 import pickle
+import sys
 import time
 from pathlib import Path
 
@@ -10,7 +11,8 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.multioutput import MultiOutputClassifier
 from sklearn.neighbors import KNeighborsClassifier
 
-from ..config import ConfigError, prepare_output_directory
+from ..cli_config import run_cli
+from ..config import prepare_output_directory
 from . import ml_utils as shared
 from .config import (
     DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD,
@@ -423,28 +425,24 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     }
 
 
-def main() -> None:
-    """Run the KNN trainer from the command line."""
-    parser = build_trainer_argument_parser(
-        "Ghostparser ML multi-label KNN baseline for summary statistics."
-    )
-    parsed_args = parser.parse_args()
+def _run(parsed_args) -> None:
+    """Resolve the config, train, and print where the outputs went.
 
-    try:
-        args = resolve_trainer_runtime_args(parsed_args)
-    except (ValueError, ConfigError) as exc:
-        print(f"Error: {exc}")
-        return
-
-    try:
-        result = train_multi_knn(args)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Error: {exc}")
-        return
-
+    Args:
+        parsed_args: The parsed command line.
+    """
+    result = train_multi_knn(resolve_trainer_runtime_args(parsed_args))
     print(f"Saved model: {result['model_path']}")
     print(f"Saved metrics: {result['metrics_txt_path']}")
     print(f"Saved JSON metrics: {result['metrics_json_path']}")
+
+
+def main() -> None:
+    """Run the KNN trainer from the command line and exit with its status."""
+    parser = build_trainer_argument_parser(
+        "Ghostparser ML multi-label KNN baseline for summary statistics."
+    )
+    sys.exit(run_cli(parser, _run))
 
 
 if __name__ == "__main__":

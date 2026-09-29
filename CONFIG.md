@@ -19,6 +19,10 @@ in, not from the config file's location. The output folder is reset before
 a run under `overwrite: true`, so keep it separate from the directories
 holding the input trees.
 
+Every command also takes `--debug`, on the command line only and off by
+default: a failed run then shows the full traceback instead of one line. The
+exit statuses are listed under Errors in the [README](README.md#errors).
+
 ## Orchestrator
 
 ### Arguments at a glance
@@ -39,6 +43,7 @@ holding the input trees.
 | `--diagnostic` | `diagnostic` | Measure every test for every triplet. |
 | `--no-consolidation`, `--no-bootstrap` | `consolidation`, `bootstrap` | Skip the maps; skip the bootstrap. |
 | `--preflight-data-check`, `--preflight-triplet-cap` | `preflight_data_check`, `preflight_triplet_cap` | Check the inputs and exit; how many triplets the check walks. |
+| `--debug` | (command line only) | Show the full traceback when the run fails. |
 | (no flag) | `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, `bootstrap_options`, `permutation_options` | Config-file only. |
 
 ### Input file formats
@@ -323,7 +328,8 @@ more are rejected), and report per-label and exact-match metrics. Install with
 `pip install .[ml]`.
 
 Flags: `-c/--config-file`, `-i/--input-path`, `-o/--output-dir`, `--seed`,
-`--no-overwrite`. The tuner takes `-c`, `--seed` and `--no-overwrite`.
+`--no-overwrite`, `--debug`. The tuner takes `-c`, `--seed`, `--no-overwrite`
+and `--debug`.
 
 ```yaml
 input_path: ./results/summary_statistics.tsv

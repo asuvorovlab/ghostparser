@@ -2,6 +2,7 @@
 
 import argparse
 import pickle
+import sys
 import time
 from pathlib import Path
 
@@ -10,7 +11,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.multioutput import MultiOutputClassifier
 
-from ..config import ConfigError, prepare_output_directory
+from ..cli_config import run_cli
+from ..config import prepare_output_directory
 from . import ml_utils as shared
 from .config import (
     DEFAULT_FEATURE_IMPORTANCE_CORRELATION_THRESHOLD,
@@ -22,14 +24,6 @@ from .config import (
 BIT_LABELS = shared.BIT_LABELS
 BIT_COUNT = shared.BIT_COUNT
 DatasetSplit = shared.DatasetSplit
-
-
-def _rows_to_matrix(rows, target_column: str):
-    """Build the feature matrix, reporting a malformed TSV as a :class:`ConfigError`."""
-    try:
-        return shared.rows_to_matrix(rows, target_column)
-    except ValueError as exc:
-        raise ConfigError(str(exc)) from exc
 
 
 def _build_model(config: argparse.Namespace) -> MultiOutputClassifier:
@@ -125,7 +119,7 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     run_start = time.perf_counter()
     load_start = time.perf_counter()
     rows = shared.read_tsv_rows(config.input_path)
-    matrix = _rows_to_matrix(rows, config.target_column)
+    matrix = shared.rows_to_matrix(rows, config.target_column)
     labels = shared.combination_labels(matrix.train_labels)
     load_seconds = time.perf_counter() - load_start
 
@@ -423,28 +417,24 @@ def train_random_forest(config: argparse.Namespace) -> dict:
     }
 
 
-def main() -> None:
-    """Run the random forest trainer from the command line."""
-    parser = build_trainer_argument_parser(
-        "Ghostparser ML random forest baseline for summary statistics."
-    )
-    parsed_args = parser.parse_args()
+def _run(parsed_args) -> None:
+    """Resolve the config, train, and print where the outputs went.
 
-    try:
-        args = resolve_trainer_runtime_args(parsed_args)
-    except (ValueError, ConfigError) as exc:
-        print(f"Error: {exc}")
-        return
-
-    try:
-        result = train_random_forest(args)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Error: {exc}")
-        return
-
+    Args:
+        parsed_args: The parsed command line.
+    """
+    result = train_random_forest(resolve_trainer_runtime_args(parsed_args))
     print(f"Saved model: {result['model_path']}")
     print(f"Saved metrics: {result['metrics_txt_path']}")
     print(f"Saved JSON metrics: {result['metrics_json_path']}")
+
+
+def main() -> None:
+    """Run the random forest trainer from the command line and exit with its status."""
+    parser = build_trainer_argument_parser(
+        "Ghostparser ML random forest baseline for summary statistics."
+    )
+    sys.exit(run_cli(parser, _run))
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import dendropy
 
+from ..config import InputError
 from ..triplet_utils import normalize_abc_from_sister_pair
 from .config import DEFAULT_PREFLIGHT_TRIPLET_CAP
 from .trees import (
@@ -96,7 +97,7 @@ def _load_single_species_tree(path):
     """Read a species-tree file that must contain exactly one tree."""
     trees = read_tree_file(path)
     if len(trees) != 1:
-        raise ValueError(
+        raise InputError(
             f"Species tree file must contain exactly one tree; found {len(trees)}"
         )
     return trees[0]
@@ -703,14 +704,14 @@ def run_preflight_data_check(
         A :class:`PreflightResult`.
 
     Raises:
-        ValueError: If no outgroups are given, the species-tree file does not
+        InputError: If no outgroups are given, the species-tree file does not
             hold exactly one tree, or the outgroups do not root the species
             tree (an :class:`~ghostparser.orchestrator.trees.OutgroupRootingError`,
             whose message names the taxa in the way): all conditions that
             make the check itself impossible.
     """
     if not outgroups:
-        raise ValueError("No outgroup taxa were provided")
+        raise InputError("No outgroup taxa were provided")
 
     issues: list[Issue] = []
 

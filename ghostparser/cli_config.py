@@ -1,8 +1,76 @@
 """Shared CLI/config resolution helpers for GhostParser commands."""
 
 import argparse
+import sys
 
-from .config import _load_raw_config
+from .config import ConfigError, GhostParserError, _load_raw_config
+
+# Exit statuses shared by every command-line entry point, so a job script can
+# tell a finished run from each kind of failure.
+EXIT_OK = 0
+EXIT_RUN_FAILED = 1
+EXIT_CONFIG_ERROR = 2
+EXIT_CHECK_FAILED = 3
+EXIT_INTERNAL_ERROR = 70
+EXIT_INTERRUPTED = 130
+
+
+def run_cli(parser: argparse.ArgumentParser, run, argv=None) -> int:
+    """Parse the command line, call ``run`` and turn its outcome into an exit
+    status, reporting a failure as one line unless ``--debug`` is given.
+
+    A :class:`~ghostparser.config.ConfigError` exits with
+    ``EXIT_CONFIG_ERROR``, any other
+    :class:`~ghostparser.config.GhostParserError` with ``EXIT_RUN_FAILED``, an
+    interrupt with ``EXIT_INTERRUPTED``, and anything else, a bug, with
+    ``EXIT_INTERNAL_ERROR``.
+
+    Args:
+        parser: The entry point's argument parser; ``--debug`` is added to it.
+        run: Called with the parsed namespace; returns an exit status, or
+            ``None`` for ``EXIT_OK``.
+        argv: Arguments to parse instead of ``sys.argv[1:]``.
+
+    Returns:
+        The exit status.
+
+    Raises:
+        Exception: Whatever ``run`` raised, when ``--debug`` is given, so the
+            full traceback is shown.
+    """
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Show the full traceback when the run fails, instead of one line",
+    )
+    args = parser.parse_args(argv)
+    try:
+        status = run(args)
+    except KeyboardInterrupt:
+        if args.debug:
+            raise
+        print("Interrupted.", file=sys.stderr)
+        return EXIT_INTERRUPTED
+    except ConfigError as exc:
+        if args.debug:
+            raise
+        print(f"Config error: {exc}", file=sys.stderr)
+        return EXIT_CONFIG_ERROR
+    except GhostParserError as exc:
+        if args.debug:
+            raise
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_RUN_FAILED
+    except Exception as exc:  # noqa: BLE001
+        if args.debug:
+            raise
+        print(
+            f"Internal error ({type(exc).__name__}): {exc}\n"
+            "This is a bug; rerun with --debug for the full traceback.",
+            file=sys.stderr,
+        )
+        return EXIT_INTERNAL_ERROR
+    return EXIT_OK if status is None else status
 
 
 def _flag_name(arg_name: str) -> str:

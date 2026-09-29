@@ -8,7 +8,8 @@ ghostparser/
   orchestrator/     the introgression engine and its consolidation stage
   ml/               optional multi-label classifiers over summary_statistics.tsv
   config.py         configuration helpers shared by every module
-  cli_config.py     config file + command line resolution shared by every module
+  cli_config.py     config file + command line resolution, error reporting and
+                    exit statuses shared by every module
   triplet_utils.py  triplet topology helpers
   __main__.py       usage banner for `python -m ghostparser`
 ```
@@ -24,7 +25,8 @@ and `python -m ghostparser.ml.hyper_tune`; `python -m ghostparser` and
 `python -m ghostparser.ml` print usage.
 
 The two modules own their own defaults, choices and validation, so their
-settings can diverge; what they share is the configuration error type, path
+settings can diverge; what they share is the error types (a config error and
+an input error, both reported as one line with their own exit status), path
 resolution, config-file loading, the overwrite flag and output-directory
 preparation, and one resolution rule: a config file supplies the settings and
 any flag given beside it overrides the file's value. Every key is documented

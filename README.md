@@ -149,7 +149,22 @@ python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_rand
 
 ## Errors
 
-A run stops with a message naming the cause. The ones worth knowing:
+A failed run prints one line naming the cause on stderr and exits with a
+status that says what kind of failure it was, so a job script can tell a
+finished run from a failed one. Once a run has started, the same line is the
+last entry in `metrics.txt`. `--debug` (command line only) shows the full
+traceback instead, for reporting a bug.
+
+| Exit status | Meaning |
+| --- | --- |
+| 0 | The run finished, or the preflight check passed. |
+| 1 | An input could not be used: a missing or malformed tree or filter file, outgroups that do not root the species tree, or unusable ML input data. |
+| 2 | A config error: a missing or invalid key, or an unknown flag. |
+| 3 | The preflight check ran and found defects; its report lists them. |
+| 70 | An internal error, which is a bug; rerun with `--debug` for the traceback. |
+| 130 | Interrupted with Ctrl-C. |
+
+The messages worth knowing:
 
 | Message | Cause |
 | --- | --- |

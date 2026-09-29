@@ -11,6 +11,7 @@ from itertools import combinations
 from Bio import Phylo
 from Bio.Phylo.BaseTree import Clade, Tree
 
+from ghostparser.config import InputError
 from ghostparser.triplet_utils import normalize_abc_from_sister_pair
 
 from .triplet_geometry import (
@@ -101,26 +102,23 @@ def read_tree_file(filepath):
         A list of ``Bio.Phylo`` tree objects.
 
     Raises:
-        FileNotFoundError: If the file does not exist.
-        ValueError: If the file contains invalid Newick or a tree has no
-            terminal nodes.
+        InputError: If the file does not exist, contains invalid Newick, or
+            holds a tree with no terminal nodes.
     """
     try:
         trees = list(Phylo.parse(filepath, "newick"))
-        if not trees:
-            raise ValueError(f"Invalid Newick format in {filepath}")
-        for idx, tree in enumerate(trees, start=1):
-            if not tree.get_terminals():
-                raise ValueError(
-                    f"Invalid Newick format in {filepath}: Tree {idx} has no terminal nodes"
-                )
-        return trees
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Tree file not found: {filepath}")
-    except ValueError:
-        raise
-    except Exception as e:
-        raise ValueError(f"Invalid Newick format in {filepath}: {e}")
+    except FileNotFoundError as exc:
+        raise InputError(f"Tree file not found: {filepath}") from exc
+    except Exception as exc:
+        raise InputError(f"Invalid Newick format in {filepath}: {exc}") from exc
+    if not trees:
+        raise InputError(f"Invalid Newick format in {filepath}")
+    for idx, tree in enumerate(trees, start=1):
+        if not tree.get_terminals():
+            raise InputError(
+                f"Invalid Newick format in {filepath}: Tree {idx} has no terminal nodes"
+            )
+    return trees
 
 
 def calculate_average_support(tree):
@@ -376,7 +374,7 @@ def _copy_clade_for_taxa(clade, taxa_set):
     return new_clade
 
 
-class OutgroupRootingError(ValueError):
+class OutgroupRootingError(InputError):
     """The outgroups do not root the tree.
 
     Attributes:

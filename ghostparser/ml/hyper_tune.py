@@ -10,6 +10,7 @@ import json
 import os
 import pickle
 import random
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +24,7 @@ from ..config import (
     _validate_required_path,
     prepare_output_directory,
 )
-from ..cli_config import resolve_cli_or_config_args
+from ..cli_config import resolve_cli_or_config_args, run_cli
 from . import ml_utils as shared
 from . import multi_knn as knn_module
 from . import random_forest as rf_module
@@ -1139,16 +1140,24 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    """Run the tuner from the command line."""
-    args = _build_argument_parser().parse_args()
+def _run(parsed_args) -> None:
+    """Resolve the config, run the search, and print where the results went.
+
+    Args:
+        parsed_args: The parsed command line.
+    """
     config = resolve_cli_or_config_args(
-        args,
+        parsed_args,
         normalize_payload=normalize_hyper_tune_payload,
         payload_arg_names=["seed", "no_overwrite"],
     )
     result = tune_hyperparameters(config)
     print(result["results_txt_path"])
+
+
+def main() -> None:
+    """Run the tuner from the command line and exit with its status."""
+    sys.exit(run_cli(_build_argument_parser(), _run))
 
 
 if __name__ == "__main__":

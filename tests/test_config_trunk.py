@@ -49,7 +49,7 @@ def test_load_raw_config_reads_json_and_yaml_and_rejects_the_rest(tmp_path):
             config_path.write_text("input_path: data.tsv\ncv_folds: 5\n")
         assert _load_raw_config(str(config_path)) == payload, suffix
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ConfigError, match="Config file not found"):
         _load_raw_config(str(tmp_path / "absent.json"))
 
     unsupported = tmp_path / "config.txt"

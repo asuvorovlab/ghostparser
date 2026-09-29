@@ -1126,10 +1126,10 @@ Had the runner ignored the config and used the module default (15,000), all 4
 would be checked and the cap issue would be absent, so both assertions would
 fail, which is what makes `3` rather than the default the right value here.
 
-With `NOT_PRESENT` the rooting error raised above is caught in
-`_run_preflight_only`, which returns `None` before any report is written, so
-the runner returns `None` rather than propagating and the prepared output
-directory stays empty.
+With `NOT_PRESENT` the species tree cannot be rooted, so
+`run_preflight_data_check` raises `OutgroupRootingError`, an `InputError`,
+before any report is written; the runner lets it propagate, and the prepared
+output directory stays empty.
 
 ## tests/orchestrator/test_orchestrator_config.py
 
@@ -1277,6 +1277,26 @@ the documented "no cap" spelling. `--species-filter` goes through
 `_resolve_path`, so only the tail of the resolved path is pinned, and
 `triplet_filter` must stay `None` because the flag was not given.
 
+## tests/test_cli.py
+
+### `test_run_cli_maps_each_outcome_to_its_exit_status`
+
+**Inputs (parametrized):** a bare `argparse.ArgumentParser` and a `run`
+callable that returns `None` or `EXIT_CHECK_FAILED`, or raises one of
+`ConfigError`, `InputError`, `OutgroupRootingError`, `TypeError` or
+`KeyboardInterrupt`; parsed from `[]` and, for the raising rows, again from
+`["--debug"]`.
+
+**Derivation:** the wrapper adds `--debug` to the parser, so both argument
+lists parse. A `None` return is success, `0`; a returned status passes
+through, so `EXIT_CHECK_FAILED` stays `3`. The handlers are tried from the
+most specific: `ConfigError` → `2`; any other `GhostParserError` → `1`, which
+`OutgroupRootingError` reaches through `InputError`; `KeyboardInterrupt`,
+which is not an `Exception`, has its own handler → `130`; and `TypeError`,
+outside the package's errors, is a bug → `70`. Each failure is printed as one
+line, so stderr holds no `Traceback`. With `--debug` every handler re-raises,
+so the original exception type leaves the wrapper.
+
 ## tests/test_config_trunk.py
 
 ### `test_resolve_path_handles_absolute_relative_and_home`
@@ -1296,7 +1316,8 @@ path, a `.txt` file, and a JSON file whose root is `["a","b"]`.
 
 **Derivation:** all three formats must parse to the identical Python mapping:
 the loader's only job is format dispatch. For the rejections the existence
-check runs first → `FileNotFoundError`; the suffix check runs next →
+check runs first → `ConfigError("Config file not found: ...")`; the suffix
+check runs next →
 `ConfigError("Config file must be .json, .yaml, or .yml")`; the root-type
 check runs last → `ConfigError("Config root must be a key/value object")`.
 
@@ -2153,7 +2174,8 @@ four. Its counts are `12/0/0` with species subtree `((A,B),D);`, exactly as in
 `test_run_orchestrator_matches_derived_expectation`: the filter changes which
 triplets are set up, not the extraction or inference that follows. The second
 file leaves only `A` and `B`, which cannot form a triplet, so the runner
-returns `None` before any tree is measured.
+raises `InputError` ("at least 3 are needed") before any gene tree is
+measured.
 
 ### `test_species_rename_map_reaches_every_output`
 

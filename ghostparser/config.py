@@ -5,8 +5,20 @@ import shutil
 from pathlib import Path
 
 
-class ConfigError(ValueError):
+class GhostParserError(Exception):
+    """Base for the errors a user can fix: a bad config, input file or data.
+
+    The command-line entry points report these as one line with a failure
+    exit status; anything else is treated as a bug.
+    """
+
+
+class ConfigError(GhostParserError, ValueError):
     """Raised when a config payload is invalid or missing required fields."""
+
+
+class InputError(GhostParserError, ValueError):
+    """Raised when an input file, or the data in it, cannot be used as given."""
 
 
 DEFAULT_OVERWRITE = True
@@ -37,13 +49,12 @@ def _load_raw_config(config_file: str) -> dict:
         The parsed config as a dict.
 
     Raises:
-        FileNotFoundError: If the file does not exist.
-        ConfigError: If the suffix is unsupported, YAML support is unavailable,
-            or the root is not a mapping.
+        ConfigError: If the file does not exist, the suffix is unsupported,
+            YAML support is unavailable, or the root is not a mapping.
     """
     path = Path(config_file)
     if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_file}")
+        raise ConfigError(f"Config file not found: {config_file}")
 
     suffix = path.suffix.lower()
     if suffix == ".json":

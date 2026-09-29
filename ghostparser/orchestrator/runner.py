@@ -8,6 +8,7 @@ from pathlib import Path
 
 import dendropy
 
+from ..config import GhostParserError, InputError
 from .config import prepare_output_directory, resolve_config
 from .consolidation import generate_introgression_maps
 from .inference import (
@@ -19,7 +20,6 @@ from .preflight import run_preflight_data_check
 from .stream import available_cpu_count, resolve_worker_count, stream_triplet_results
 from .trees import (
     MetricsLogger,
-    OutgroupRootingError,
     _build_species_triplet_metadata,
     _parse_outgroup_arg,
     _read_gene_trees_file,
@@ -202,6 +202,20 @@ def _rename_result_taxa(results, rename_map):
     ]
 
 
+def _log_failure(metrics, exc):
+    """Record why a run stopped, so ``metrics.txt`` says so before the error
+    propagates.
+
+    Args:
+        metrics: The ``MetricsLogger`` to write to.
+        exc: The exception ending the run.
+    """
+    if isinstance(exc, GhostParserError):
+        metrics.log(f"✗ Error: {exc}")
+    else:
+        metrics.log(f"✗ Internal error ({type(exc).__name__}): {exc}")
+
+
 def _run_preflight_only(config, output_dir):
     """Run the structural preflight check and stop before any analysis.
 
@@ -210,25 +224,23 @@ def _run_preflight_only(config, output_dir):
         output_dir: Prepared output directory the report is written into.
 
     Returns:
-        The :class:`~ghostparser.orchestrator.preflight.PreflightResult`, or
-        ``None`` when the check could not run at all (unrootable species tree,
-        missing outgroups); the reason is printed in that case.
+        The :class:`~ghostparser.orchestrator.preflight.PreflightResult`.
+
+    Raises:
+        InputError: If the check cannot run at all (unrootable species tree,
+            missing outgroups).
     """
     outgroup_taxa = _parse_outgroup_arg(config["outgroup"])
     print("Preflight data check enabled: no analysis will be run.")
-    try:
-        result = run_preflight_data_check(
-            species_tree_path=config["species_tree"],
-            gene_trees_path=config["gene_trees"],
-            outgroups=outgroup_taxa,
-            output_dir=output_dir,
-            triplet_filter=config["triplet_filter"],
-            species_filter=config["species_filter"],
-            max_triplets=config["preflight_triplet_cap"],
-        )
-    except ValueError as exc:
-        print(f"✗ Error: Preflight data check could not run: {exc}")
-        return None
+    result = run_preflight_data_check(
+        species_tree_path=config["species_tree"],
+        gene_trees_path=config["gene_trees"],
+        outgroups=outgroup_taxa,
+        output_dir=output_dir,
+        triplet_filter=config["triplet_filter"],
+        species_filter=config["species_filter"],
+        max_triplets=config["preflight_triplet_cap"],
+    )
 
     print(result.report_text, end="")
     print(f"Saved preflight report: {result.report_path}")
@@ -248,8 +260,15 @@ def run_orchestrator(config):
             resolved via :func:`ghostparser.orchestrator.config.resolve_config`.
 
     Returns:
-        The list of ``TripletPipelineResult`` objects, or ``None`` if the run
-        exits early on an input or preprocessing error.
+        The list of ``TripletPipelineResult`` objects, or the
+        :class:`~ghostparser.orchestrator.preflight.PreflightResult` when
+        ``preflight_data_check`` is set.
+
+    Raises:
+        InputError: If an input file is missing or unusable, or the outgroups
+            do not root the species tree; the reason is also written to
+            ``metrics.txt`` once it is open.
+        Exception: Anything else that stops the run, likewise recorded.
     """
     if not isinstance(config, dict):
         config = resolve_config(config)
@@ -258,11 +277,9 @@ def run_orchestrator(config):
     gene_trees_path = Path(config["gene_trees"])
 
     if not species_tree_path.exists():
-        print(f"Error: Species tree file not found: {config['species_tree']}")
-        return None
+        raise InputError(f"Species tree file not found: {config['species_tree']}")
     if not gene_trees_path.exists():
-        print(f"Error: Gene trees file not found: {config['gene_trees']}")
-        return None
+        raise InputError(f"Gene trees file not found: {config['gene_trees']}")
 
     output_dir = Path(
         prepare_output_directory(config["output"], overwrite=config["overwrite"])
@@ -348,21 +365,17 @@ def run_orchestrator(config):
                 )
             species_trees = read_tree_file(species_tree_clean)
         except Exception as exc:
-            metrics.log(f"✗ Error processing species tree: {exc}")
-            return None
+            _log_failure(metrics, exc)
+            raise
 
         try:
             if species_trees:
                 taxa = get_taxa_from_tree(species_trees[0])
                 species_summary.append(f"  Found {len(taxa)} taxa")
 
-                try:
-                    species_rooting = _root_tree_on_outgroup(
-                        species_trees[0], outgroup_taxa
-                    )
-                except OutgroupRootingError as exc:
-                    metrics.log(f"✗ Error: {exc}")
-                    return None
+                species_rooting = _root_tree_on_outgroup(
+                    species_trees[0], outgroup_taxa
+                )
                 pruned_tree = species_rooting.tree
                 ingroup_taxa = species_rooting.ingroup
                 gene_tree_outgroups = species_rooting.outgroup_order
@@ -399,10 +412,9 @@ def run_orchestrator(config):
                 if config["triplet_filter"]:
                     filter_path = Path(config["triplet_filter"])
                     if not filter_path.exists():
-                        metrics.log(
-                            f"✗ Error: Triplet filter file not found: {config['triplet_filter']}"
+                        raise InputError(
+                            f"Triplet filter file not found: {config['triplet_filter']}"
                         )
-                        return None
 
                     raw_triplets, invalid_lines = read_triplet_filter_file(
                         str(filter_path)
@@ -427,10 +439,9 @@ def run_orchestrator(config):
                 elif config["species_filter"]:
                     filter_path = Path(config["species_filter"])
                     if not filter_path.exists():
-                        metrics.log(
-                            f"✗ Error: Species filter file not found: {config['species_filter']}"
+                        raise InputError(
+                            f"Species filter file not found: {config['species_filter']}"
                         )
-                        return None
 
                     requested_species = read_species_filter_file(str(filter_path))
                     ingroup_set = set(ingroup_taxa)
@@ -449,11 +460,10 @@ def run_orchestrator(config):
                                 "not found in the species tree"
                             )
                     if len(kept_species) < 3:
-                        metrics.log(
-                            f"✗ Error: Species filter names {len(kept_species)} "
+                        raise InputError(
+                            f"Species filter names {len(kept_species)} "
                             "ingroup taxa; at least 3 are needed to form a triplet"
                         )
-                        return None
 
                     plot_taxa = sorted(kept_species)
                     triplets = generate_triplets(plot_taxa, [])
@@ -491,8 +501,8 @@ def run_orchestrator(config):
                 species_summary.append(f"  Saved to: {species_tree_clean}")
 
         except Exception as exc:
-            metrics.log(f"✗ Error generating triplets: {exc}")
-            return None
+            _log_failure(metrics, exc)
+            raise
         species_wall_time, species_cpu_time = _elapsed_times(
             species_start_wall, species_start_cpu
         )
@@ -564,8 +574,8 @@ def run_orchestrator(config):
                 )
             metrics.log(f"  Saved to: {gene_trees_clean}")
         except Exception as exc:
-            metrics.log(f"✗ Error processing gene trees: {exc}")
-            return None
+            _log_failure(metrics, exc)
+            raise
 
         try:
             gene_trees_newick = _read_gene_trees_file(gene_trees_clean)
@@ -712,8 +722,8 @@ def run_orchestrator(config):
             metrics.log(f"  Total time (wall): {total_wall_time:.2f}s")
             metrics.log(f"  Total time (CPU): {total_cpu_time:.2f}s")
         except Exception as exc:
-            metrics.log(f"✗ Error in inference stage: {exc}")
-            return None
+            _log_failure(metrics, exc)
+            raise
 
         metrics.log("\nProcessing complete!")
         metrics.log(f"\nMetrics saved to: {metrics_filepath}")
