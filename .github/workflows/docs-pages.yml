@@ -43,7 +43,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip cache purge || true
           pip install --no-cache-dir \
-            mkdocs \
+            "mkdocs<2" \
             mkdocs-material \
             mkdocs-awesome-pages-plugin
 
@@ -73,6 +73,10 @@ jobs:
 
           # Avoid duplicate home page entry.
           rm -f site_docs/README.md
+
+          # The README is the site's index.md, so point links at it there.
+          find site_docs -name '*.md' -exec \
+            sed -i 's#\](\(\(\.\./\)*\)README\.md#](\1index.md#g' {} +
 
       - name: Build static site
         run: |
