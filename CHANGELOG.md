@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.3 - Unreleased
+## v0.1.3 - September 30, 2026
 
 ### Triplet geometry
 
