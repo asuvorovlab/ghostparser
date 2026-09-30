@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ghostparser"
-version = "0.1.2"
+version = "0.1.3"
 description = "Module to infer introgression patterns from species triplets using gene tree topologies and branch lengths."
 readme = "README.md"
 requires-python = ">=3.10"
