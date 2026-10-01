@@ -1,62 +1,53 @@
 # Python
 __pycache__/
-
-# Distribution
+*.egg-info/
 build/
 dist/
-*.egg-info/
-
-# Testing
 .pytest_cache/
 .coverage
+.ipynb_checkpoints/
 
-# Virtual environments
+# Environments and editors
 .env
-.venv
+.venv/
 venv/
 .conda/
-
-# IDE
 .vscode/
-
-# OS
 .DS_Store
 
-# Phylogenetic analysis outputs
-*.nwk
-*.tre
-*.tree
-*.trees
-*.txt
-*.tsv
-*.out
-*.png
-*.json
-*.parquet
-*.pkl
+# Run inputs and outputs
+/configs/
+/data/
+/ml_data/
+/logs/
+/job_scripts/
+/reports/
+/ml_results/
+/ghost_results/
+/ghost_tests/
+/ghostparser_results/
+/consolidated_results/
+/consolidated_11_cases/
 **/wandb/
-*.html
 
-# Scripts and Test Notebooks
-ghost*.sh
-test*.ipynb
+# Root-level scratch files
+/*.tsv
+/*.txt
+!/requirements.txt
+/*.png
+/*.pdf
+/*.ipynb
+/ghost*.sh
 
-# Documents
-*.pdf
-
-# Configurations
-configs/
-*.yaml
-
-# The shipped sample configs are never ignored
-!sample_configs/**
-
-# Everything except GitHub Actions
-.github/*
-!.github/workflows/
-*UDE.md
+# Local-only notes and assets
 *.local.md
+*.local.html
+/docs/assets/*.png
+
+# Everything under .github except GitHub Actions
+/.github/*
+!/.github/workflows/
 
 # Generated docs build artifacts
-site/
-site_docs/
+/site/
+/site_docs/
