@@ -18,6 +18,7 @@ venv/
 # Run inputs and outputs
 /configs/
 /data/
+/empirical_data/
 /ml_data/
 /logs/
 /job_scripts/
@@ -25,6 +26,7 @@ venv/
 /ml_results/
 /ghost_results/
 /ghost_tests/
+/empirical_results/
 /ghostparser_results/
 /consolidated_results/
 /consolidated_11_cases/
