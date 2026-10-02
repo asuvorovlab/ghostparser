@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- DendroPy is no longer a runtime dependency; it installs with the `dev` extra, for the parity tests. Gene trees are parsed once, with BioPython, instead of a second time with DendroPy.
+- `processes` also parallelizes gene-tree cleaning and rooting, the gene-tree cache and the preflight check; results are identical at any worker count.
+- The preflight report lists every gene tree lacking some branch length by its position in the input file, instead of only counting them.
+- The `species_tree` column quotes only labels that need it: `((D_a,D_b),D_c);`, not `(('D_a','D_b'),'D_c');`.
+- A tree using one leaf label twice is an input error naming the tree and the label, instead of an internal error.
+- Removed the helper scripts in `scripts/`. To run many datasets, use one shared config file and pass each dataset's `-gt`/`--output-folder` as flags.
+
 ## v0.1.3 - September 30, 2026
 
 ### Triplet geometry

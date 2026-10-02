@@ -2,8 +2,9 @@
 
 The parity tests hold the cached-geometry path to agreement with the DendroPy
 subtree extraction it replaced and with a BioPython implementation written
-here from the definitions alone: root distances, pairwise distances and common
-ancestors as ``Bio.Phylo`` computes them on the unpruned tree. A hand-derived
+from the definitions alone: root distances, pairwise distances and common
+ancestors as ``Bio.Phylo`` computes them on the unpruned tree. Both live in
+``tests/orchestrator/tree_references.py``. A hand-derived
 table pins absolute values, so the three implementations cannot agree on a
 shared mistake.
 """
@@ -11,12 +12,9 @@ shared mistake.
 import itertools
 from io import StringIO
 
-import dendropy
 import pytest
 from Bio import Phylo
 
-from ghostparser.orchestrator.inference import observation_from_subtree
-from ghostparser.orchestrator.trees import extract_triplet_subtree
 from ghostparser.orchestrator.triplet_geometry import (
     TRIPLET_MISSING_TAXON,
     TRIPLET_RESOLVED,
@@ -26,7 +24,11 @@ from ghostparser.orchestrator.triplet_geometry import (
     geometry_observation,
     triplet_resolution,
 )
-from ghostparser.triplet_utils import TOPOLOGY_AB, TOPOLOGY_AC, TOPOLOGY_BC
+from ghostparser.triplet_utils import TOPOLOGY_AB
+from tests.orchestrator.tree_references import (
+    biopython_observation,
+    dendropy_observation,
+)
 
 _STRATEGIES = ("AVG", "A", "B", "C", "SIS", "INT")
 
@@ -55,84 +57,20 @@ _LARGE_TREE = (
 _LARGE_LABELS = ("T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "OUT")
 
 
-def _parse(newick):
-    return dendropy.Tree.get(data=newick, schema="newick", preserve_underscores=True)
-
-
-def _dendropy_observation(newick, triplet, strategy, collect):
-    """Run the DendroPy extract-then-measure reference path."""
-    subtree = extract_triplet_subtree(_parse(newick), triplet)
-    if subtree is None:
-        return None
-    return observation_from_subtree(subtree, triplet, strategy, collect)
-
-
-def _biopython_observation(newick, triplet, strategy, collect):
-    """Measure a triplet with Bio.Phylo alone, straight from the definitions.
-
-    Nothing here touches the package's tree code. The sister pair is the one
-    pair of the three whose common ancestor is not the common ancestor of all
-    three; a triplet whose three pairs share one ancestor is a polytomy and
-    yields nothing, as does one with a taxon absent from the tree. Every
-    distance is a Bio.Phylo path sum from the triplet's own common ancestor,
-    which is the root of the subtree the other two paths would extract.
-    """
-    tree = Phylo.read(StringIO(newick), "newick")
-    leaf = {terminal.name: terminal for terminal in tree.get_terminals()}
-    if any(label not in leaf for label in triplet):
-        return None
-
-    a, b, c = triplet
-    ancestor = tree.common_ancestor(leaf[a], leaf[b], leaf[c])
-    pair_ancestor = {
-        frozenset((a, b)): tree.common_ancestor(leaf[a], leaf[b]),
-        frozenset((a, c)): tree.common_ancestor(leaf[a], leaf[c]),
-        frozenset((b, c)): tree.common_ancestor(leaf[b], leaf[c]),
-    }
-    below = [pair for pair, node in pair_ancestor.items() if node is not ancestor]
-    if len(below) != 1:
-        return None
-    sisters = below[0]
-    topology = {
-        frozenset((a, b)): TOPOLOGY_AB,
-        frozenset((a, c)): TOPOLOGY_AC,
-        frozenset((b, c)): TOPOLOGY_BC,
-    }[sisters]
-
-    depth = {label: ancestor.distance(leaf[label]) for label in triplet}
-    internal_branch = ancestor.distance(pair_ancestor[sisters])
-    left, right = tuple(sisters)
-    sister_distance = tree.distance(leaf[left], leaf[right])
-    avg_tree_height = sum(depth.values()) / 3.0
-
-    height = {
-        "AVG": avg_tree_height,
-        "A": depth[a],
-        "B": depth[b],
-        "C": depth[c],
-        "SIS": sister_distance,
-        "INT": internal_branch,
-    }[strategy]
-    metrics = None
-    if collect:
-        metrics = {
-            "avg_tree_height": avg_tree_height,
-            "internal_branch": internal_branch,
-            "sister_distance": sister_distance,
-        }
-    return (topology, height, metrics)
+def _parse_for_geometry(newick):
+    return Phylo.read(StringIO(newick), "newick")
 
 
 _REFERENCES = {
-    "dendropy": _dendropy_observation,
-    "biopython": _biopython_observation,
+    "dendropy": dendropy_observation,
+    "biopython": biopython_observation,
 }
 
 
 def _geometry_observation(newick, triplet, strategy, collect):
     """Run the cached-geometry path."""
     taxon_index = build_taxon_index([triplet])
-    geometry = build_triplet_geometry(_parse(newick), taxon_index)
+    geometry = build_triplet_geometry(_parse_for_geometry(newick), taxon_index)
     positions = tuple(taxon_index[label] for label in triplet)
     return geometry_observation(geometry, positions, strategy, collect)
 
@@ -178,7 +116,7 @@ def test_geometry_matches_each_reference_across_a_nine_taxon_tree():
     assert len(triplets) == 84
 
     taxon_index = build_taxon_index([_LARGE_LABELS])
-    geometry = build_triplet_geometry(_parse(_LARGE_TREE), taxon_index)
+    geometry = build_triplet_geometry(_parse_for_geometry(_LARGE_TREE), taxon_index)
 
     for triplet in triplets:
         positions = tuple(taxon_index[label] for label in triplet)
@@ -269,7 +207,7 @@ def test_geometry_skips_exactly_what_each_reference_skips(newick, triplet, statu
     shares code between them, so this is what stops them drifting apart.
     """
     taxon_index = build_taxon_index([triplet])
-    geometry = build_triplet_geometry(_parse(newick), taxon_index)
+    geometry = build_triplet_geometry(_parse_for_geometry(newick), taxon_index)
     positions = tuple(taxon_index[label] for label in triplet)
     resolved = status == TRIPLET_RESOLVED
 

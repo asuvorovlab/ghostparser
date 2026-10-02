@@ -6,8 +6,6 @@ from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
-import dendropy
-
 from ..config import GhostParserError, InputError
 from .config import prepare_output_directory, resolve_config
 from .consolidation import generate_introgression_maps
@@ -16,18 +14,17 @@ from .inference import (
     write_pipeline_results,
     write_summary_statistics_tsv,
 )
+from .parallel import available_cpu_count, resolve_worker_count
 from .preflight import run_preflight_data_check
-from .stream import available_cpu_count, resolve_worker_count, stream_triplet_results
+from .stream import stream_triplet_results
 from .trees import (
     MetricsLogger,
     _build_species_triplet_metadata,
     _parse_outgroup_arg,
-    _read_gene_trees_file,
     clean_and_save_gene_trees,
     clean_and_save_trees,
     filter_triplets_by_taxa,
     load_species_rename_map,
-    format_newick_with_precision,
     generate_triplets,
     get_taxa_from_tree,
     read_tree_file,
@@ -240,6 +237,7 @@ def _run_preflight_only(config, output_dir):
         triplet_filter=config["triplet_filter"],
         species_filter=config["species_filter"],
         max_triplets=config["preflight_triplet_cap"],
+        processes=config["processes"],
     )
 
     print(result.report_text, end="")
@@ -472,19 +470,12 @@ def run_orchestrator(config):
                     triplets = generate_triplets(sorted(ingroup_taxa), [])
                     triplet_source = ""
 
-                species_tree_newick = format_newick_with_precision(pruned_tree)
-                species_dendro_tree = dendropy.Tree.get(
-                    data=species_tree_newick,
-                    schema="newick",
-                    preserve_underscores=True,
-                )
-
                 # Each triplet is ordered (A, B, C) with A and B the species
                 # tree's sister pair; a triplet the tree leaves unresolved is
                 # skipped.
                 triplets, species_triplet_trees, skipped_species_triplets = (
                     _build_species_triplet_metadata(
-                        species_dendro_tree,
+                        pruned_tree,
                         triplets,
                     )
                 )
@@ -519,12 +510,15 @@ def run_orchestrator(config):
                 gene_trees_clean,
                 gene_tree_outgroups,
                 min_avg_support=support_threshold,
+                processes=config["processes"],
             )
             gene_trees = cleaning.trees
             genes_wall_time, genes_cpu_time = _elapsed_times(
                 genes_start_wall, genes_start_cpu
             )
+            genes_cpu_time += cleaning.worker_cpu_seconds
             _log_stage_timing(metrics, genes_wall_time, genes_cpu_time)
+            metrics.log(f"  Worker processes: {cleaning.worker_count}")
             if cleaning.dropped_trees:
                 metrics.log(
                     f"  ⚠ Dropped {len(cleaning.dropped_trees)} tree(s) with avg support < {support_threshold}"
@@ -539,7 +533,8 @@ def run_orchestrator(config):
                 metrics.log(
                     f"  ⚠ {len(cleaning.missing_length_indices)} kept tree(s) lack "
                     "some branch length; each missing length is read as 0, which "
-                    "may affect their tree heights and the inferences"
+                    "may affect their tree heights and the inferences; run with "
+                    "--preflight-data-check to list them"
                 )
             metrics.log(
                 f"  Rooted {cleaning.rooted_count} tree(s) at the common ancestor "
@@ -578,7 +573,7 @@ def run_orchestrator(config):
             raise
 
         try:
-            gene_trees_newick = _read_gene_trees_file(gene_trees_clean)
+            gene_trees_newick = gene_trees
 
             inference_kwargs = {
                 "alpha_dct": config["alpha_dct"],

@@ -197,7 +197,9 @@ All `core`.
   with the setting off and on; the heights per strategy are pinned separately
   by the geometry test below, so one strategy suffices here.
 - `test_observation_heights_match_derived_geometry`. Inputs:
-  `_serialize_triplet_gene_trees` under each of the 6 strategies in turn.
+  `serialize_triplet_gene_trees` (the DendroPy reference serializer in
+  `tests/orchestrator/tree_references.py`) under each of the 6 strategies
+  in turn.
   Expected outputs: each observation's topology and H(T) match the
   hand-derived geometry for that strategy. Purpose: pins each tree-height
   strategy to its definition.
@@ -545,8 +547,9 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   outputs: the cleaned file carries the three quoted labels quoted and the
   underscore label bare, byte for byte; read back with both Bio.Phylo and
   DendroPy, the leaves are `Homo sapiens`, `Pan sp.`, `O'Brien`, `Mus_musculus`.
-  Purpose: the processed trees are reread by the run, so the writer must quote
-  exactly the labels a bare token cannot hold and leave the rest as they were.
+  Purpose: the processed trees are reread by the run and may be read by other
+  tools, so the writer must quote exactly the labels a bare token cannot hold
+  and leave the rest as they were.
 - `test_root_species_tree_roots_where_the_outgroups_branch_off`. Inputs
   (parametrized, 4 rows): the fixture species tree
   `(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2)` with outgroup `OUT`;
@@ -583,16 +586,23 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   pruned species tree, with its branch lengths and with them removed.
   Expected outputs: the 4 sorted triplets from 4 ingroup taxa, no skipped
   triplets, identity ABC normalization, and the exact per-triplet species
-  subtree Newick strings, which carry no lengths when the tree has none.
-  Purpose: triplet enumeration and species-subtree construction, which need
-  no species-tree branch lengths.
+  subtree topology Newick strings, the same either way. Purpose: triplet
+  enumeration and species-subtree construction, which need no species-tree
+  branch lengths.
+- `test_read_tree_file_rejects_a_repeated_leaf_label`. Inputs (parametrized,
+  2 rows): one tree using leaf label `A` twice; a two-tree file whose second
+  tree uses `B` twice. Expected outputs: `InputError` naming the label, and
+  `Tree 2` for the second file. Purpose: every geometry and rooting step maps
+  a label to one leaf, so a repeated label is refused when the file is read,
+  as an input the user can fix.
 - `test_read_species_filter_file_collects_names_in_order`. Inputs: a file
   reading ` A, B ` / a blank line / `C` / `B,,D` / a whitespace line / `A`.
   Expected outputs: `["A", "B", "C", "D"]`. Purpose: the species filter's file
   contract; names may share a line or take one each, surrounding whitespace
   and empty entries are dropped, and a repeat keeps its first position.
 - `test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup`.
-  Inputs: `orchestrator_gene_trees` with outgroup `OUT`; then nine gene
+  Inputs (parametrized over `processes` 1 and 2): `orchestrator_gene_trees`
+  with outgroup `OUT`; then nine gene
   trees with outgroups `["OUT1", "OUT2", "OUT3"]` in species-tree rank:
   `OUT1` alone; `OUT1` with `OUT2` nested among the ingroup; `OUT1` nested
   beside `C` with `OUT2` and `OUT3` sisters; the same with `OUT1` on a
@@ -607,7 +617,8 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   "OUT3": 0}`, `rooted_on == {"OUT1": 5, "OUT2": 2, "OUT3": 1}`, `tangled ==
   {"OUT1": 1, "OUT2": 4, "OUT3": 1}`, `tangled_trees == 5`,
   `missing_length_indices == [6, 7]`, `unrootable_indices == [8, 9]`, no
-  support drops, and the seven written trees as exact Newick. Purpose:
+  support drops, the seven written trees as exact Newick, and the returned
+  `trees` equal to the written lines, with either worker count. Purpose:
   gene-tree rooting semantics; the farthest outgroup is read from the gene
   tree's own branch lengths, a missing one counting as 0, so it can differ
   from the species-tree rank either way, and the rank breaks ties, as in a
@@ -616,16 +627,19 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   on the farthest is pruned without being used, even when two others sit
   together; the tree is rooted at the common ancestor of the outgroups
   outside the ingroup; every outgroup is pruned; and the counts report, per
-  outgroup, the trees it was the farthest in, rooted and was tangled in.
+  outgroup, the trees it was the farthest in, rooted and was tangled in;
+  and workers change nothing.
 
 ### tests/orchestrator/test_orchestrator_triplet_geometry.py
 
 Covers `orchestrator/triplet_geometry.py`, which reads a triplet's geometry out
 of a cached tree instead of extracting its subtree, the path every run takes,
-for gene trees and the species tree alike. The parity tests compare it against
-two references: `extract_triplet_subtree` + `observation_from_subtree`, the
-DendroPy extraction the cache replaced, and `_biopython_observation`, written
-in this module with `Bio.Phylo` alone: the sister pair is the one pair whose
+for gene trees and the species tree alike; the cache is built from a
+`Bio.Phylo` tree. The parity tests compare it against two references, both in
+`tests/orchestrator/tree_references.py`: `dendropy_observation`, the DendroPy
+extraction the cache replaced (`extract_triplet_subtree` +
+`observation_from_subtree`), and `biopython_observation`, written with
+`Bio.Phylo` alone: the sister pair is the one pair whose
 common ancestor is not the common ancestor of all three, and every distance is
 a `Bio.Phylo` path sum from that three-way ancestor.
 
@@ -749,16 +763,19 @@ The checks themselves are `core`; `test_clean_inputs_pass_and_the_report_lands_w
   roots it, and in the tree carrying both outgroups its own branch lengths
   make `OUT1` the farthest, which leaves `OUT2` among the ingroup, counted
   rather than reported as a defect.
-- `test_detects_polytomy_and_missing_outgroup`. Inputs: gene tree 1 well
-  formed, gene tree 2 a polytomy over A/B/C, gene tree 3 with no outgroup
-  label, gene tree 4 without branch lengths. Expected outputs: exactly one
-  `gene_tree.rooting_failed` and one `triplet.unresolved_rooted_sister_pair`,
-  a `gene_tree.missing_branch_lengths` count of 1 with no issue raised for it,
+- `test_detects_polytomy_and_missing_outgroup`. Inputs (parametrized over
+  `processes` 1 and 2): gene tree 1 well formed, gene tree 2 a polytomy over
+  A/B/C, gene tree 3 with no outgroup label, gene tree 4 without branch
+  lengths. Expected outputs: exactly one `gene_tree.rooting_failed` and one
+  `triplet.unresolved_rooted_sister_pair`, a
+  `gene_tree.missing_branch_lengths` count of 1 with no issue raised for it,
+  `missing_length_indices == [4]` and the report section listing `4`,
   three trees rooted out of four checked, the polytomy message naming
   `Gene tree #2` and `A,B,C`, and the pair counters accounting for all 12 triplet/gene-tree pairs as 11 usable, 1
-  unresolved, 0 with an absent taxon. Purpose: each defect class is detected
-  once and located precisely, and every pair the check looked at is accounted
-  for.
+  unresolved, 0 with an absent taxon, with either worker count. Purpose: each
+  defect class is detected once and located precisely, the tree lacking a
+  length is named by its input position, every pair the check looked at is
+  accounted for, and workers change nothing.
 - `test_filter_entries_are_validated`. Inputs (parametrized, 2 rows): a
   triplet filter with one valid line, one naming an unknown taxon and one
   naming the outgroup; and a species filter reading `A,B` / `C` / `NOPE` /
@@ -789,6 +806,11 @@ The checks themselves are `core`; `test_clean_inputs_pass_and_the_report_lands_w
   runs the check and nothing else, the configured cap is what the check
   receives (set below the triplet count so the module default could not pass
   in its place), and an impossible check raises out of the runner.
+- `test_index_ranges_collapse_consecutive_runs`. Inputs (parametrized, 3
+  rows): `[4]`, `[3, 17, 18, 19, 250]`, `[1, 2, 4, 5, 6]`. Expected outputs:
+  `4`, `3, 17-19, 250`, `1-2, 4-6`. Purpose: the report's list of gene trees
+  lacking a branch length writes each run of consecutive positions as one
+  range and every other position on its own.
 
 ### tests/orchestrator/test_orchestrator_config.py
 

@@ -13,9 +13,10 @@ from scipy import stats
 from statsmodels.stats.proportion import proportions_ztest
 
 from ghostparser.orchestrator import inference as pinf
+from tests.orchestrator.tree_references import serialize_triplet_gene_trees
 
 _TRIPLET = ("A", "B", "C")
-_SPECIES_SUBTREE = "((A:1.0,B:1.0):1.0,C:2.0);"
+_SPECIES_SUBTREE = "((A,B),C);"
 _GENE_SUBTREES = [
     "((A:0.10,B:0.10):0.10,C:0.30);",
     "((A:0.12,B:0.11):0.09,C:0.32);",
@@ -249,7 +250,7 @@ def test_inference_matches_derived_expectation(discordant_test, diagnostic):
     ``test_observation_heights_match_derived_geometry``, so one strategy is
     enough here.
     """
-    observations = pinf._serialize_triplet_gene_trees(
+    observations = serialize_triplet_gene_trees(
         _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy="AVG"
     )
     result = _decided(
@@ -268,7 +269,7 @@ def test_inference_matches_derived_expectation(discordant_test, diagnostic):
 def test_observation_heights_match_derived_geometry():
     """Serialized observations carry the hand-derived topology and H(T) under every strategy."""
     for strategy in ("AVG", "A", "B", "C", "SIS", "INT"):
-        observations = pinf._serialize_triplet_gene_trees(
+        observations = serialize_triplet_gene_trees(
             _TRIPLET, _GENE_SUBTREES, tree_height_calculation_strategy=strategy
         )
         assert len(observations) == len(_LEAF_GEOMETRY)

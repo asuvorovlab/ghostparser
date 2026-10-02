@@ -22,7 +22,7 @@ from ghostparser.orchestrator import inference as pinf
 from ghostparser.orchestrator import shape as pshape
 
 _TRIPLET = ("A", "B", "C")
-_SPECIES_SUBTREE = "((A:1.0,B:1.0):1.0,C:2.0);"
+_SPECIES_SUBTREE = "((A,B),C);"
 
 _CON = "((A,B),C)"
 _DIS1 = "((B,C),A)"

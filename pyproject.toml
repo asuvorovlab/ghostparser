@@ -10,7 +10,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
 	"biopython>=1.79",
-	"dendropy>=4.5.2",
 	"numpy>=1.24",
 	"scipy>=1.11",
 	"statsmodels>=0.14",
@@ -20,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "dendropy>=4.5.2"]
 ml = ["scikit-learn>=1.3.2"]
 wandb = ["wandb>=0.18"]
 
@@ -37,5 +36,5 @@ markers = [
 	"config: a loader, normalizer or validator; asserts on the resolved config or a ConfigError",
 	"output: what was written -- files present, TSV columns, report fields, artifact routing -- not the numbers in them",
 	"integration: drives an entry point end to end (run_orchestrator, train_random_forest, train_multi_knn, tune_hyperparameters)",
-	"parity: cross-library parity checks (DendroPy vs BioPython tree operations)",
+	"parity: the cached geometry held to a DendroPy subtree-extraction reference and a BioPython distance reference",
 ]

@@ -13,6 +13,17 @@ for that setting; the run prints which settings it overrode. Keys without a
 flag can only be set in a file. [sample_configs/](sample_configs/) holds a
 loadable file for each common scenario to copy from (listed at the end).
 
+To run many datasets with the same settings, keep those in one file and pass
+each dataset's paths as flags:
+
+```bash
+for folder in /path/to/datasets/*/; do
+  [ -f "$folder/genes.tre" ] || continue
+  python -m ghostparser.orchestrator -c shared.yaml \
+    -gt "$folder/genes.tre" --output-folder "$folder/results"
+done
+```
+
 Paths are resolved when the config is read: absolute paths as given, `~` to
 the home directory, and relative paths from the directory the command runs
 in, not from the config file's location. The output folder is reset before
@@ -209,7 +220,9 @@ a seed is drawn and written to `metrics.txt` as `Seed: <n> (generated)`.
 ##### `processes` (`--processes`)
 
 Default `0`: every CPU the process may run on, which under a scheduler or a
-container is the allocation, not the machine. `1` runs serially. Workers are
+container is the allocation, not the machine. `1` runs serially. The workers
+clean and root the gene trees, build the gene-tree cache, run the triplet
+inference and, under `preflight_data_check`, walk the gene trees. Workers are
 processes on the machine the run starts on; a job spanning several machines
 uses one.
 

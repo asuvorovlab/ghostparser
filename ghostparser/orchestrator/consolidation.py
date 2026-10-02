@@ -9,9 +9,10 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
-import dendropy
 import numpy as np
 import seaborn as sns
+from Bio import Phylo
+from Bio.Phylo.BaseTree import Tree
 from matplotlib import pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
@@ -19,6 +20,8 @@ from matplotlib.colors import Normalize
 from matplotlib.patches import Patch
 
 from ghostparser.config import prepare_output_directory
+
+from .trees import _copy_clade_for_taxa, _preorder, _terminals
 
 # Colormap shared by the heatmap fill and the colorbar.
 CONSOLIDATION_COLORMAP = "cividis"
@@ -115,17 +118,15 @@ def _load_species_tree(species_tree_path, rename_map=None):
         species_tree_path: Path to the processed species tree, in the labels
             the run measured in.
         rename_map: Optional mapping of those labels to the display names the
-            results carry; applied to the taxon namespace in memory only.
+            results carry; applied to the leaves in memory only.
 
     Returns:
-        The DendroPy tree.
+        The ``Bio.Phylo`` tree.
     """
-    tree = dendropy.Tree.get(
-        path=str(species_tree_path), schema="newick", preserve_underscores=True
-    )
+    tree = Phylo.read(str(species_tree_path), "newick")
     if rename_map:
-        for taxon in tree.taxon_namespace:
-            taxon.label = rename_map.get(taxon.label, taxon.label)
+        for leaf in _terminals(tree.root):
+            leaf.name = rename_map.get(leaf.name, leaf.name)
     return tree
 
 
@@ -138,10 +139,10 @@ def _species_tree_taxa_order(tree, allowed_taxa=None):
     allowed = None if not allowed_taxa else {str(taxon) for taxon in allowed_taxa}
     order = []
     seen = set()
-    for leaf in tree.leaf_node_iter():
-        if leaf.taxon is None or not leaf.taxon.label:
+    for leaf in _terminals(tree.root):
+        if not leaf.name:
             continue
-        label = str(leaf.taxon.label)
+        label = str(leaf.name)
         if label in seen or (allowed is not None and label not in allowed):
             continue
         seen.add(label)
@@ -304,18 +305,19 @@ def _write_taxa_order_tsv(path, taxa_order):
             out_f.write(f"{idx}\t{taxon}\n")
 
 
-def _node_edge_length(node):
-    """Return a node's edge length, ``0.0`` when it has none."""
-    if node.edge_length is None:
+def _node_edge_length(clade):
+    """Return a clade's branch length, ``0.0`` when it has none."""
+    if clade.branch_length is None:
         return 0.0
-    return float(node.edge_length)
+    return float(clade.branch_length)
 
 
 def _species_tree_layout(tree, taxa_order, orientation):
     """Lay out the species tree along one axis for the plot strip.
 
     Args:
-        tree: The DendroPy species tree, pruned in place to ``taxa_order``.
+        tree: The ``Bio.Phylo`` species tree; a pruned copy keeps only
+            ``taxa_order``.
         taxa_order: The leaf order along the axis.
         orientation: ``horizontal`` or ``vertical``.
 
@@ -324,31 +326,31 @@ def _species_tree_layout(tree, taxa_order, orientation):
         across the axis, the deepest root distance, and the leaves.
     """
     if taxa_order:
-        tree.retain_taxa_with_labels(sorted(set(taxa_order)))
+        pruned_root = _copy_clade_for_taxa(tree.root, set(taxa_order))
+        if pruned_root is not None:
+            tree = Tree(root=pruned_root, rooted=True)
     leaf_positions = {taxon: idx for idx, taxon in enumerate(taxa_order)}
 
     # A tree without branch lengths is drawn as a cladogram, one unit per
     # branch, rather than collapsing onto its root.
     has_lengths = any(
-        node.edge_length is not None
-        for node in tree.preorder_node_iter()
-        if node is not tree.seed_node
+        clade.branch_length is not None for clade in _preorder(tree.root)[1:]
     )
     root_dist = {}
 
-    def _record_root_dist(node, distance):
-        root_dist[id(node)] = distance
-        for child in node.child_node_iter():
+    def _record_root_dist(clade, distance):
+        root_dist[id(clade)] = distance
+        for child in clade.clades:
             step = _node_edge_length(child) if has_lengths else 1.0
             _record_root_dist(child, distance + step)
 
-    _record_root_dist(tree.seed_node, 0.0)
+    _record_root_dist(tree.root, 0.0)
 
     leaf_depths = []
-    for leaf in tree.leaf_node_iter():
-        if leaf.taxon is None or not leaf.taxon.label:
+    for leaf in _terminals(tree.root):
+        if not leaf.name:
             continue
-        label = str(leaf.taxon.label)
+        label = str(leaf.name)
         if label in leaf_positions:
             leaf_depths.append(root_dist[id(leaf)])
 
@@ -359,8 +361,8 @@ def _species_tree_layout(tree, taxa_order, orientation):
 
     def _place(node):
         depth_value = root_dist[id(node)]
-        if node.is_leaf():
-            label = str(node.taxon.label) if node.taxon and node.taxon.label else None
+        if not node.clades:
+            label = str(node.name) if node.name else None
             leaf_index = leaf_positions.get(label, 0)
             if orientation == "top":
                 pos = (float(leaf_index), float(max_depth - depth_value))
@@ -370,7 +372,7 @@ def _species_tree_layout(tree, taxa_order, orientation):
             leaf_nodes.append(node)
             return pos
 
-        child_positions = [_place(child) for child in node.child_node_iter()]
+        child_positions = [_place(child) for child in node.clades]
         if orientation == "top":
             x = sum(position[0] for position in child_positions) / len(child_positions)
             y = float(max_depth - depth_value)
@@ -380,7 +382,7 @@ def _species_tree_layout(tree, taxa_order, orientation):
         positions[id(node)] = (x, y)
         return positions[id(node)]
 
-    _place(tree.seed_node)
+    _place(tree.root)
     return tree, positions, max_depth, leaf_nodes
 
 
@@ -392,9 +394,9 @@ def _draw_species_tree_strip(
         species_tree, taxa_order, orientation
     )
     segments = []
-    for node in tree.preorder_node_iter():
+    for node in _preorder(tree.root):
         parent_pos = positions[id(node)]
-        for child in node.child_node_iter():
+        for child in node.clades:
             child_pos = positions[id(child)]
             segments.append([parent_pos, child_pos])
 
@@ -413,7 +415,7 @@ def _draw_species_tree_strip(
                     linewidth=0.8,
                 )
             if show_leaf_labels:
-                label = str(leaf.taxon.label) if leaf.taxon and leaf.taxon.label else ""
+                label = str(leaf.name) if leaf.name else ""
                 ax.text(
                     x_pos, -0.04, label, rotation=90, ha="center", va="top", fontsize=7
                 )
@@ -555,8 +557,8 @@ def _plot_combined(
 
     Args:
         path: Output image path.
-        species_tree: Processed species tree (DendroPy) drawn as the top strip;
-            pruned in place to ``taxa_order``.
+        species_tree: Processed species tree (``Bio.Phylo``) drawn as the top
+            strip, pruned to ``taxa_order`` on a copy.
         taxa_order: Ordered taxa for both panels.
         matrix_avg: Target x source matrix of sampled-introgression averages.
         ghost_avg: Mapping of taxon to ghost strength; sets bar length.

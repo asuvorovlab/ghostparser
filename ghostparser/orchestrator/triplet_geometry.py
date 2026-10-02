@@ -41,10 +41,6 @@ class TripletGeometry(NamedTuple):
         mrca: Flattened ``n_taxa x n_taxa`` table of pairwise LCA node indices,
             ``-1`` where either taxon is unusable.
         n_taxa: Row stride of ``mrca``.
-        root_edge: The tree root's own edge length, or ``None`` when the Newick
-            gives it none. Held separately because ``edge_len`` carries ``0.0``
-            there: no distance walk passes through the root, but writing a
-            subtree out needs the real value.
     """
 
     parent: list
@@ -52,7 +48,6 @@ class TripletGeometry(NamedTuple):
     leaf_node: list
     mrca: array
     n_taxa: int
-    root_edge: float | None
 
 
 def build_taxon_index(triplets):
@@ -70,10 +65,10 @@ def build_taxon_index(triplets):
 
 def build_triplet_geometry(tree, taxon_index):
     """Cache one gene tree as parent, edge-length, leaf and pairwise-LCA
-    arrays, from one pre-order and one post-order walk.
+    arrays, from one pre-order walk and one pass back over it.
 
     Args:
-        tree: A rooted DendroPy tree.
+        tree: A rooted ``Bio.Phylo`` tree.
         taxon_index: Mapping of taxon label to position, from
             :func:`build_taxon_index`.
 
@@ -82,49 +77,56 @@ def build_triplet_geometry(tree, taxon_index):
     """
     parent = []
     edge_len = []
-    index_of = {}
-    root_edge = None
-    for node in tree.preorder_node_iter():
-        index_of[id(node)] = len(parent)
-        parent_node = node.parent_node
-        if parent_node is None:
-            parent.append(-1)
-            edge_len.append(0.0)
-            if node.edge_length is not None:
-                root_edge = float(node.edge_length)
-            continue
-        parent.append(index_of[id(parent_node)])
-        length = node.edge_length
-        edge_len.append(0.0 if length is None else float(length))
-
+    children = []
     n_taxa = len(taxon_index)
-    # Labels are unique: DendroPy rejects duplicate taxa when parsing, so a
-    # tree that reached here has at most one leaf per label.
+    # Labels are unique: reading a tree file rejects a repeated leaf label,
+    # so a tree that reached here has at most one leaf per label.
     leaf_node = [-1] * n_taxa
-    for leaf in tree.leaf_node_iter():
-        taxon = leaf.taxon
-        if taxon is not None and taxon.label in taxon_index:
-            leaf_node[taxon_index[taxon.label]] = index_of[id(leaf)]
+    position_of = []
+
+    stack = [(tree.root, -1)]
+    while stack:
+        clade, parent_index = stack.pop()
+        index = len(parent)
+        parent.append(parent_index)
+        length = clade.branch_length
+        edge_len.append(
+            0.0 if parent_index < 0 or length is None else float(length)
+        )
+        children.append([])
+        if parent_index >= 0:
+            children[parent_index].append(index)
+        position = None
+        if not clade.clades:
+            position = taxon_index.get(clade.name)
+            if position is not None:
+                leaf_node[position] = index
+        position_of.append(position)
+        # Pushed in reverse so the first child is popped, and numbered, first.
+        stack.extend((child, index) for child in reversed(clade.clades))
 
     mrca = array("i", [-1]) * (n_taxa * n_taxa)
-    members_of = {}
-    for node in tree.postorder_node_iter():
-        if node.is_leaf():
-            taxon = node.taxon
-            position = None if taxon is None else taxon_index.get(taxon.label)
-            members_of[id(node)] = [] if position is None else [position]
+    members_of = [None] * len(parent)
+    # Every descendant has a higher pre-order rank than its ancestor, so
+    # walking the ranks backwards reaches a node after all of its children.
+    for node_position in range(len(parent) - 1, -1, -1):
+        child_indices = children[node_position]
+        if not child_indices:
+            position = position_of[node_position]
+            members_of[node_position] = [] if position is None else [position]
             continue
 
-        groups = [members_of.pop(id(child)) for child in node.child_node_iter()]
-        node_position = index_of[id(node)]
+        groups = [members_of[child] for child in child_indices]
+        for child in child_indices:
+            members_of[child] = None
         for left_group, right_group in combinations(groups, 2):
             for left in left_group:
                 for right in right_group:
                     mrca[left * n_taxa + right] = node_position
                     mrca[right * n_taxa + left] = node_position
-        members_of[id(node)] = [member for group in groups for member in group]
+        members_of[node_position] = [member for group in groups for member in group]
 
-    return TripletGeometry(parent, edge_len, leaf_node, mrca, n_taxa, root_edge)
+    return TripletGeometry(parent, edge_len, leaf_node, mrca, n_taxa)
 
 
 def _path_sum(parent, edge_len, start, stop):
@@ -254,9 +256,9 @@ def geometry_observation(
     parent = geometry.parent
     edge_len = geometry.edge_len
 
-    # The extracted subtree puts each sister leaf two edges below its root and
+    # An extracted subtree puts each sister leaf two edges below its root and
     # the odd leaf one, so the sister heights are summed as two terms to match
-    # how _distance_to_root accumulates them there.
+    # how a root-distance walk over that subtree accumulates them.
     internal_branch = _path_sum(parent, edge_len, sister_node, root_node)
     first_height = _path_sum(parent, edge_len, first_leaf, sister_node)
     second_height = _path_sum(parent, edge_len, second_leaf, sister_node)
@@ -273,8 +275,8 @@ def geometry_observation(
     else:
         a_height, b_height, c_height = odd_height, first_height, second_height
 
-    # _compute_triplet_tree_metrics averages in the subtree's own leaf order,
-    # which is ascending pre-order index.
+    # An extracted subtree averages in its own leaf order, which is ascending
+    # pre-order index.
     ordered = sorted(
         (
             (first_leaf, first_height),
@@ -349,7 +351,7 @@ def triplet_resolution(geometry, triplet_positions):
 
 
 class TripletSubtreeShape(NamedTuple):
-    """A triplet's induced subtree, as the edges and ordering needed to write it.
+    """A triplet's induced subtree, as the ordering needed to write it.
 
     The induced subtree is always ``((s1,s2),odd)``: two sister leaves under
     their own LCA, and the third leaf attached directly to the triplet's LCA.
@@ -357,25 +359,14 @@ class TripletSubtreeShape(NamedTuple):
     Attributes:
         sister_positions: The two sister taxa's positions, in the order the
             subtree lists them.
-        sister_edges: Each sister leaf's edge up to the sister LCA, aligned with
-            ``sister_positions``.
-        internal_edge: The sister LCA's edge up to the triplet LCA.
         odd_position: The remaining taxon's position.
-        odd_edge: The odd leaf's edge up to the triplet LCA.
         sister_clade_first: Whether the sister clade is listed before the odd
             leaf among the triplet LCA's children.
-        root_edge: The triplet LCA's own depth, which a copied-out subtree keeps
-            on its root, or ``None`` when the triplet LCA is the tree's root and
-            so has no edge above it.
     """
 
     sister_positions: tuple
-    sister_edges: tuple
-    internal_edge: float
     odd_position: int
-    odd_edge: float
     sister_clade_first: bool
-    root_edge: float | None
 
 
 def triplet_subtree_shape(geometry, triplet_positions):
@@ -397,8 +388,6 @@ def triplet_subtree_shape(geometry, triplet_positions):
     if resolved is None:
         return None
 
-    parent = geometry.parent
-    edge_len = geometry.edge_len
     a_position, b_position, c_position = triplet_positions
     if resolved.topology == TOPOLOGY_AB:
         sisters, odd_position = (a_position, b_position), c_position
@@ -407,37 +396,11 @@ def triplet_subtree_shape(geometry, triplet_positions):
     else:
         sisters, odd_position = (b_position, c_position), a_position
 
-    internal_edge = _path_sum(parent, edge_len, resolved.sister_node, resolved.root_node)
-    first_edge = _path_sum(parent, edge_len, resolved.first_leaf, resolved.sister_node)
-    second_edge = _path_sum(parent, edge_len, resolved.second_leaf, resolved.sister_node)
-    odd_edge = _path_sum(parent, edge_len, resolved.odd_leaf, resolved.root_node)
-    if None in (internal_edge, first_edge, second_edge, odd_edge):
-        return None
-
-    sister_leaves = (resolved.first_leaf, resolved.second_leaf)
-    sister_edges = (first_edge, second_edge)
-    if sister_leaves[0] > sister_leaves[1]:
+    if resolved.first_leaf > resolved.second_leaf:
         sisters = (sisters[1], sisters[0])
-        sister_edges = (sister_edges[1], sister_edges[0])
-
-    # A copied-out subtree keeps an edge above its root: unifurcation
-    # suppression collapses the whole path from the tree's root down to the
-    # triplet LCA into it, the tree root's own edge included. When the triplet
-    # LCA *is* the tree root, only that root edge remains, and if the Newick
-    # gave none, the subtree has none either.
-    root_edge = geometry.root_edge
-    if parent[resolved.root_node] >= 0:
-        depth = _path_sum(parent, edge_len, resolved.root_node, -1)
-        if depth is None:
-            return None
-        root_edge = depth + (geometry.root_edge or 0.0)
 
     return TripletSubtreeShape(
         sister_positions=sisters,
-        sister_edges=sister_edges,
-        internal_edge=internal_edge,
         odd_position=odd_position,
-        odd_edge=odd_edge,
         sister_clade_first=resolved.sister_node < resolved.odd_leaf,
-        root_edge=root_edge,
     )

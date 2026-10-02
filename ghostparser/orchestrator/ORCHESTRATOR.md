@@ -131,8 +131,9 @@ and the trees in which it was pruned unused. A distant outgroup on a long
 branch can attach inside the ingroup in a single gene and still be the
 farthest, so a closer outgroup that is often pruned unused is the sign to
 compare with a run that leaves the distant one out. A gene tree carrying no
-outgroup, or nothing but outgroups, is dropped. `metrics.txt` and the
-preflight report count the gene trees lacking some branch length.
+outgroup, or nothing but outgroups, is dropped. `metrics.txt` counts the gene
+trees lacking some branch length, and the preflight report lists each one by
+its position in the input file.
 
 ## Reading a triplet from a gene tree
 
@@ -166,7 +167,7 @@ internal branch is still a resolved topology, not a polytomy.
 Every quantity is a sum along one path, never the difference of two depths
 measured from the tree's root, so nothing cancels in floating point. The
 same tables serve the species tree, from which each triplet's `(A, B, C)`
-order and its `species_tree` subtree are read.
+order and its `species_tree` subtree topology are read.
 
 ## The tests
 
@@ -407,7 +408,10 @@ collects every structural problem instead of stopping at the first, writes
 issues by category with counts and examples, attributes them to the species
 tree or the gene trees, accounts for every triplet/gene-tree pair (measured,
 unresolved, or skipped for a missing taxon), and reports the gene-tree
-rooting counts described under *Rooting*. It walks at most
+rooting counts described under *Rooting*. Every gene tree lacking some branch
+length is listed by its 1-based position in the input file, runs of
+consecutive trees written as ranges (`3, 17-19, 250`), so the trees can be
+found and fixed. It walks at most
 `preflight_triplet_cap` triplets (default 15,000; `0` lifts it) and says so
 when the cap binds. Passing means the data can be processed, not that the
 result is meaningful. `sample_configs/orchestrator_preflight.yaml` is a
@@ -436,7 +440,7 @@ so give it a directory of its own, never one holding the input trees.
 
 | Column | Meaning |
 | --- | --- |
-| `triplet`, `abc_mapping`, `species_tree` | The `(A, B, C)` labels with A and B the species-tree sisters, the same as `A=…;B=…;C=…`, and the triplet's species subtree. |
+| `triplet`, `abc_mapping`, `species_tree` | The `(A, B, C)` labels with A and B the species-tree sisters, the same as `A=…;B=…;C=…`, and the topology of the triplet's species subtree as Newick, quoting only a label that needs it. |
 | `dis1_topology` | `BC` or `AC`: the more frequent discordant topology (ties to `BC`). |
 | `n_con`, `n_dis1`, `n_dis2`, `analyzed_trees` | Gene trees per topology, and the number carrying all three taxa with a resolved topology. |
 | `most_frequent_matches_concordant` | Whether the concordant count is at least both discordant counts. |
@@ -491,8 +495,11 @@ colour says whether the taxon is also the target of a sampled edge. Taxa in
 
 ## Parallelization
 
-Triplets are split into chunks across `processes` workers on one machine;
-`0` uses the CPUs the process may run on, which under a scheduler or container
-is the allocation rather than the machine's cores. The gene-tree cache is
-built once and shared with the workers. A job spanning several machines uses
-only the one the run starts on.
+`processes` workers on one machine share every stage whose work splits per
+gene tree or per triplet: cleaning and rooting the gene trees, building the
+gene-tree cache, the triplet inference, and the preflight check's gene-tree
+pass. `0` uses the CPUs the process may run on, which under a scheduler or
+container is the allocation rather than the machine's cores. The cache is
+built once and shared with the inference workers, and results are identical
+at any worker count. A job spanning several machines uses only the one the
+run starts on.

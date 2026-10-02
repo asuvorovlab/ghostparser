@@ -62,7 +62,8 @@ concordant topology: counts are **12 / 0 / 0**.
 ### Inference fixture: 10 gene subtrees
 
 `tests/orchestrator/test_orchestrator_inference.py` uses 10 three-taxon subtrees with
-species subtree `((A:1.0,B:1.0):1.0,C:2.0);` (concordant topology `((A,B),C)`).
+species subtree `((A,B),C);`, the topology-only Newick a run hands each
+triplet (concordant topology `((A,B),C)`).
 Each subtree's geometry is tabulated in `_LEAF_GEOMETRY` as
 `(topology, dist_A, dist_B, dist_C, internal_branch)`, where a leaf's
 root-to-tip distance is its own edge plus the internal branch if it is in the
@@ -152,7 +153,7 @@ result is measured by `analyze_triplet_from_observations` and decided by
 7. **Classification**, gate 1 fails, so `no_introgression` in every case.
 
 Also asserted: `triplet == ("A","B","C")`, `species_tree == "((A,B),C);"` (the
-species subtree serialized topology-only), and that the bootstrap class
+topology-only species subtree, stored as given), and that the bootstrap class
 fractions sum to 1.
 
 ### `test_observation_heights_match_derived_geometry`
@@ -787,27 +788,24 @@ first two listed taxa are already the species-tree sister pair, so ABC
 normalization is the identity and `triplets == raw_triplets`.
 
 One cached geometry over the species tree answers all four triplets:
-`triplet_subtree_shape` reports each one's sister pair and the edges its induced
-subtree carries, and `_format_triplet_subtree_newick` writes that out. Each
-subtree keeps the triplet's taxa and sums the edges along the paths that
-collapse when the taxa between them are dropped, which is what the `Why` column
-below states. The subtree's root edge is its own case: suppressing the
-unifurcations above the triplet's LCA collapses the whole path from the tree
-root into one edge, so `(A,B,C)` carries `0.3 + 0.5 = 0.8` (the LCA's depth
-plus the tree root's own edge) while the three triplets containing `D` are
-rooted at the tree root itself and keep its `0.5` unchanged:
+`triplet_subtree_shape` reports each one's sister pair and the order its induced
+subtree lists the children in, and `_format_triplet_subtree_newick` writes the
+topology: `((A,B),C);`, `((A,B),D);`, `((A,C),D);` and `((B,C),D);`. In the
+pruned tree `(((A,B),C),D)` the sister clade comes first under every triplet's
+LCA, and within it the leaves keep the tree's order. Only the topology is
+written, so the tree with its branch lengths and the tree without them give the
+same four strings.
 
-| Triplet | Species subtree | Why |
-| --- | --- | --- |
-| (A,B,C) | `((A:0.1,B:0.1):0.1,C:0.2):0.8;` | root edge `0.3 + 0.5 = 0.8` |
-| (A,B,D) | `((A:0.1,B:0.1):0.4,D:0.1):0.5;` | A,B clade edge `0.1 + 0.3 = 0.4` |
-| (A,C,D) | `((A:0.2,C:0.2):0.3,D:0.1):0.5;` | A absorbs `0.1 + 0.1 = 0.2` |
-| (B,C,D) | `((B:0.2,C:0.2):0.3,D:0.1):0.5;` | B absorbs `0.1 + 0.1 = 0.2` |
+### `test_read_tree_file_rejects_a_repeated_leaf_label`
 
-Without branch lengths each subtree is the same topology written without any:
-`((A,B),C);`, `((A,B),D);`, `((A,C),D);` and `((B,C),D);`. Rerooting on the
-outgroup gives the new root a zero-length edge, which would read as a length
-the file never had, so a tree that carries no lengths stays without them.
+**Inputs (parametrized):** `((A:1,B:1):1,(A:1,C:1):1);`, one tree with two
+leaves labelled `A`; and a two-tree file whose second tree,
+`((A:1,B:1):1,(B:1,C:1):1);`, has two leaves labelled `B`.
+
+**Derivation:** the reader counts each tree's leaf labels and refuses any used
+more than once, numbering trees from 1 in file order. The first row's message
+names `A` (`uses the leaf label(s) A more than once`); in the second, tree 1 is
+clean, so the message names `Tree 2`.
 
 ### `test_read_species_filter_file_collects_names_in_order`
 
@@ -823,9 +821,9 @@ their first position: `B` and `A` are already present, so the result is
 
 ### `test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup`
 
-**Inputs:** `orchestrator_gene_trees` (12 trees, outgroup `OUT`); then
-a gene-tree file of nine trees, checked against `["OUT1", "OUT2", "OUT3"]`,
-the species-tree rank:
+**Inputs (parametrized over `processes` 1 and 2):** `orchestrator_gene_trees`
+(12 trees, outgroup `OUT`); then a gene-tree file of nine trees, checked
+against `["OUT1", "OUT2", "OUT3"]`, the species-tree rank:
 
 1. `((((A:1,B:1):1,C:1):1,D:1):1,OUT1:1);`: `OUT1` alone.
 2. `(((A:1,B:1):1,(C:1,OUT2:1):1):1,OUT1:1);`: `OUT1` at the root, `OUT2`
@@ -1044,13 +1042,18 @@ resolve (tree 2's `A,B,C` has `A,B` as sisters with `C` outside), so
 
 ### `test_detects_polytomy_and_missing_outgroup`
 
-**Inputs:** the defective four, `outgroups=["OUT"]`.
+**Inputs (parametrized over `processes` 1 and 2):** the defective four,
+`outgroups=["OUT"]`.
 
 **Derivation:** gene tree 3 contains no `OUT`, so it has no outgroup to root
 on → one `gene_tree.rooting_failed`, and that tree is skipped before any
 triplet check. Gene tree 4 has no branch lengths, which a run reads as 0: it
 roots and is counted (`gene_tree.missing_branch_lengths == 1`) without an
-issue. Trees 1, 2 and 4 root, so `gene_tree.rooted == 3` while
+issue, and it is the 4th tree in the file, so `missing_length_indices == [4]`
+and the report lists it as
+`Gene trees lacking some branch length (1; 1-based, in input file order):`
+followed by `  4`. Each tree's checks depend on that tree alone, so two
+workers give the same counters, issues and listing as one. Trees 1, 2 and 4 root, so `gene_tree.rooted == 3` while
 `gene_tree.total_checked == 4`. Tree 2 collapses
 A, B and C into a single polytomous clade, so all three pairwise LCAs of triplet
 `A,B,C` are the same node and `triplet_resolution` reports it unresolved → one
@@ -1130,6 +1133,14 @@ With `NOT_PRESENT` the species tree cannot be rooted, so
 `run_preflight_data_check` raises `OutgroupRootingError`, an `InputError`,
 before any report is written; the runner lets it propagate, and the prepared
 output directory stays empty.
+
+### `test_index_ranges_collapse_consecutive_runs`
+
+**Inputs (parametrized):** `[4]`, `[3, 17, 18, 19, 250]`, `[1, 2, 4, 5, 6]`.
+
+**Derivation:** a run of consecutive positions is written `first-last` and a
+position with no neighbour on its own, joined by `, `: `4`; `3`, then
+`17, 18, 19` as `17-19`, then `250`; `1, 2` as `1-2` and `4, 5, 6` as `4-6`.
 
 ## tests/orchestrator/test_orchestrator_config.py
 
@@ -1961,9 +1972,10 @@ sister).
 
 **Derivation:** there is no closed form to compare against here: the expected
 value *is* what an independent implementation produces, which is the point,
-and there are two of them. `_dendropy_observation` copies the triplet's
-subtree out with `extract_triplet_subtree` and measures it with
-`observation_from_subtree`. `_biopython_observation` never prunes: on the
+and there are two of them, both in `tests/orchestrator/tree_references.py`.
+`dendropy_observation` copies the triplet's subtree out with
+`extract_triplet_subtree` and measures it with `observation_from_subtree`.
+`biopython_observation` never prunes: on the
 `Bio.Phylo` tree it takes the common ancestor of all three leaves and of each
 pair, calls the one pair whose ancestor is a different node the sisters (all
 three coinciding is a polytomy, so `None`), and reads every distance as a
@@ -1999,7 +2011,7 @@ tree, under each of the six tree-height strategies against each reference.
 
 **Derivation:** the expected values are whatever the reference produces (
 `extract_triplet_subtree` + `observation_from_subtree`, or
-`_biopython_observation`), so the test is a differential one: it asserts the
+`biopython_observation`), so the test is a differential one: it asserts the
 implementations agree rather than restating the arithmetic. The tree is shaped
 so the sweep covers the cases that distinguish them: `(T3,T4)` sit above a
 zero-length internal branch, `T1..T4` and `T5..T7` sit in sibling clades so
@@ -2085,9 +2097,9 @@ restates `geometry_observation`'s guards without sharing code with it, so
 agreeing on all three rows is what stops the preflight's reasons drifting
 from the hot path's decisions.
 
-A duplicated taxon label is deliberately not covered: DendroPy raises
-`NewickReaderDuplicateTaxonError` while parsing, so neither path can be reached
-with one.
+A duplicated taxon label is deliberately not covered: reading a tree file
+refuses one (see `test_read_tree_file_rejects_a_repeated_leaf_label`), so no
+cached geometry can be built from such a tree.
 
 ## tests/orchestrator/test_orchestrator_rename_map.py
 
