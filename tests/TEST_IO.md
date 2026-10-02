@@ -1784,8 +1784,25 @@ explicitly:
   `[0.25, 0.25, 0.5]`; row 1 has a zero total, so the `where=row_totals > 0`
   guard leaves it at the `[0, 0, 0]` the output buffer was initialized with
   rather than producing `nan`. That is also why the row sums come out `1, 0, 1`:
-  a class with no test samples contributes nothing, and the plot masks the whole
-  row.
+  a class with no test samples contributes nothing, and the plot draws its row
+  at the low end of the scale.
+- **Per-class recall without absent classes**: the hold-out set is `000000`
+  twice and `111111` once. Class `000000` has row total 2 with one row on its
+  own column, so its recall is `1 / 2 = 0.5`; class `111111` has one row,
+  predicted correctly, so `1.0`. The other 62 rows of the matrix total 0, so
+  they are dropped instead of contributing a recall of 0. In the matrix's
+  set-bit order `000000` comes first and `111111` last, giving set-bit counts
+  `[0, 6]`.
+- **Class balance**: the limit is largest count at most 1.5 times the
+  smallest. `_ALL_CLASSES * 4` gives each class 4 rows. Adding the first ten
+  classes twice makes counts 6 and 4, a ratio of exactly 1.5: balanced, since
+  the bound is inclusive. From 3 rows each, the same addition makes 5 and 3,
+  a ratio of 1.67: not balanced. In the hold-out set, one row per class plus
+  ten classes once more makes 2 and 1, a ratio of 2: not balanced, so either
+  partition alone can fail the check. Dropping `000000` from either partition
+  leaves a count of 0 for it: not balanced.
+- **No figures, no folder**: with both matrices `None` there is no figure to
+  save, so the helper returns `{}` before creating `figures/`.
 - **W&B artifact routing**: the expected split is read straight off the
   `write_bulk_artifacts = not use_wandb` switch: the model pickle, the plaintext
   report and the search plot are written unconditionally, while the results

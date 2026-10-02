@@ -7,6 +7,7 @@
 - The preflight report lists every gene tree lacking some branch length by its position in the input file, instead of only counting them.
 - The `species_tree` column quotes only labels that need it: `((D_a,D_b),D_c);`, not `(('D_a','D_b'),'D_c');`.
 - A tree using one leaf label twice is an input error naming the tree and the label, instead of an internal error.
+- The ML trainers and `hyper_tune` write their figures to a `figures/` subfolder of the output directory, created only when a figure is written; `<model>_metrics.txt` lists every figure path. The trainers add `<model>_per_bit_accuracy.png` and `<model>_per_class_accuracy.png` (per-class recall grouped by number of set bits, leaving out classes without hold-out rows, with a 1/64 chance line only when every class occurs in both partitions and no class count exceeds 1.5 times another); the per-bit confusion matrices are row-normalized with counts in brackets, and the 64-class matrix uses a square-root colour scale with its axes grouped by number of set bits. All ML figures, the search report included, use the `Blues` palette at 300 dpi.
 - Removed the helper scripts in `scripts/`. To run many datasets, use one shared config file and pass each dataset's `-gt`/`--output-folder` as flags.
 
 ## v0.1.3 - September 30, 2026

@@ -231,7 +231,7 @@ def test_tune_hyperparameters_grid_search_runs_end_to_end(
     assert not (output_dir / "wandb").exists()
 
     marginals_path = output_dir / "hyper_tune_parameter_marginals.tsv"
-    plot_path = output_dir / "hyper_tune_search_report.png"
+    plot_path = output_dir / "figures" / "hyper_tune_search_report.png"
     assert marginals_path.exists()
     assert plot_path.exists()
     assert result["plot_path"] == str(plot_path)
@@ -484,7 +484,7 @@ def test_tune_hyperparameters_routes_bulk_artifacts_to_wandb(
     for kept in (
         "hyper_tune_best_model.pkl",
         "hyper_tune_results.txt",
-        "hyper_tune_search_report.png",
+        "figures/hyper_tune_search_report.png",
     ):
         assert (output_dir / kept).exists()
     for skipped in (
@@ -502,7 +502,9 @@ def test_tune_hyperparameters_routes_bulk_artifacts_to_wandb(
     assert result["results"]["artifact_paths"] == {
         "best_model": str(output_dir / "hyper_tune_best_model.pkl"),
         "results_txt": str(output_dir / "hyper_tune_results.txt"),
-        "search_report_plot": str(output_dir / "hyper_tune_search_report.png"),
+        "search_report_plot": str(
+            output_dir / "figures" / "hyper_tune_search_report.png"
+        ),
     }
 
     logged_keys = {key for payload in stub.logged for key in payload}

@@ -10,12 +10,13 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Two-slot categorical palette for the search-report figure: candidate scores and
-# the running-best trace are distinct series, not a magnitude ramp. The pair
-# clears the lightness-band, chroma, CVD-separation and contrast checks against
-# the light chart surface below.
-SERIES_CANDIDATE = "#2a78d6"
-SERIES_RUNNING_BEST = "#eb6834"
+from .ml_utils import FIGURE_BLUE_DARK, FIGURE_BLUE_LIGHT, FIGURE_DPI
+
+# The search report shares the ML module's Blues palette: candidate scores are
+# the light shade and the running-best trace the dark one, a line against
+# points, so lightness alone keeps the two series apart.
+SERIES_CANDIDATE = FIGURE_BLUE_LIGHT
+SERIES_RUNNING_BEST = FIGURE_BLUE_DARK
 CHART_SURFACE = "#fcfcfb"
 PRIMARY_INK = "#0b0b0b"
 SECONDARY_INK = "#52514e"
@@ -616,7 +617,8 @@ def save_tuning_plots(
             varied gets its own marginal panel.
         objective_metric: Metric name used for the axis labels.
         objective_direction: ``max`` or ``min``, drives the running-best trace.
-        output_path: Destination image path.
+        output_path: Destination image path; its folder is created when
+            missing.
         top_k: Number of candidates in the top-candidate panel.
 
     Returns:
@@ -624,6 +626,7 @@ def save_tuning_plots(
     """
     if not ranked_candidates:
         return None
+    Path(output_path).parent.mkdir(exist_ok=True)
 
     panel_keys = [
         key
@@ -677,7 +680,10 @@ def save_tuning_plots(
         color=PRIMARY_INK,
     )
     fig.savefig(
-        output_path, dpi=200, bbox_inches="tight", facecolor=fig.get_facecolor()
+        output_path,
+        dpi=FIGURE_DPI,
+        bbox_inches="tight",
+        facecolor=fig.get_facecolor(),
     )
     plt.close(fig)
     return str(output_path)

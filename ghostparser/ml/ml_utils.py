@@ -8,9 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from matplotlib.ticker import FuncFormatter
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
 from scipy.stats import spearmanr
@@ -44,13 +46,26 @@ MAX_STRING_CATEGORIES = 7
 # resulting drop in micro-F1.
 PERMUTATION_IMPORTANCE_REPEATS = 10
 
-# All 64 class labels are drawn on each axis of the 64-class figure, so the tick
-# font has to fit a 6-character label into one cell of the square grid.
-_CLASS_TICK_FONT_SIZE = 6
+# Every ML figure draws from the one sequential Blues palette: the heatmaps use
+# the colormap itself, and single-series marks take fixed shades of it.
+FIGURE_COLORMAP = "Blues"
+FIGURE_BLUE_DARK = mcolors.to_hex(plt.get_cmap(FIGURE_COLORMAP)(0.85))
+FIGURE_BLUE_LIGHT = mcolors.to_hex(plt.get_cmap(FIGURE_COLORMAP)(0.45))
+FIGURE_GRIDLINE = "#d9d9d9"
+FIGURE_DPI = 300
 
-# Colormap for both confusion-matrix figures. Both plot a sequential quantity,
-# and cividis is perceptually uniform and colour-vision-deficiency safe.
-CONFUSION_MATRIX_COLORMAP = "cividis"
+# The per-class accuracy figure's 1/64 chance line assumes equal class weights,
+# so it is drawn only while no class outnumbers another by more than this.
+CLASS_BALANCE_MAX_RATIO = 1.5
+
+# The figures the trainers write under ``figures/``, keyed as the metrics JSON
+# names them; each file is ``<model>_<suffix>.png``.
+EVALUATION_FIGURES = {
+    "confusion_matrix_plot": "confusion_matrices",
+    "confusion_matrix_64_plot": "confusion_matrix_64_classes",
+    "per_bit_accuracy_plot": "per_bit_accuracy",
+    "per_class_accuracy_plot": "per_class_accuracy",
+}
 
 
 @dataclass(frozen=True)
@@ -843,11 +858,6 @@ def save_confusion_matrix_plot(
         return None
 
     matrix_items = list(confusion_matrices.items())
-    max_value = max(
-        int(np.max(np.asarray(matrix_values, dtype=int)))
-        for _, matrix_values in matrix_items
-    )
-    max_value = max(1, max_value)
     n_plots = len(matrix_items)
     n_cols = min(3, n_plots)
     n_rows = math.ceil(n_plots / n_cols)
@@ -859,51 +869,51 @@ def save_confusion_matrix_plot(
         constrained_layout=True,
     )
     axes_array = np.atleast_1d(axes).ravel()
-    cmap = plt.get_cmap(CONFUSION_MATRIX_COLORMAP)
+    cmap = plt.get_cmap(FIGURE_COLORMAP)
 
     for axis_index, (bit_label, matrix_values) in enumerate(matrix_items):
         ax = axes_array[axis_index]
         data = np.asarray(matrix_values, dtype=int)
-        total = float(data.sum())
-        if total > 0:
-            label_grid = np.asarray(
-                [
-                    [f"{value}\n({value / total * 100:.1f}%)" for value in row]
-                    for row in data
-                ],
-                dtype=object,
-            )
-        else:
-            label_grid = np.asarray(
-                [[f"{value}\n(0.0%)" for value in row] for row in data],
-                dtype=object,
-            )
-        sns.heatmap(
+        row_totals = data.sum(axis=1, keepdims=True)
+        fractions = np.divide(
             data,
+            row_totals,
+            out=np.zeros_like(data, dtype=float),
+            where=row_totals > 0,
+        )
+        label_grid = np.asarray(
+            [
+                [f"{fraction:.2f}\n({value:,})" for fraction, value in zip(row, counts)]
+                for row, counts in zip(fractions, data)
+            ],
+            dtype=object,
+        )
+        sns.heatmap(
+            fractions,
             ax=ax,
             cmap=cmap,
             vmin=0,
-            vmax=max_value,
+            vmax=1,
             annot=label_grid,
             fmt="",
             square=True,
             cbar=False,
             linewidths=1,
             linecolor="white",
-            annot_kws={"size": 11, "weight": "bold"},
+            annot_kws={"size": 10},
         )
-        ax.set_title(format_bit_label_title(bit_label), fontsize=12)
-        ax.set_xlabel("Predicted label (0 = predicted zero, 1 = predicted one)")
-        ax.set_ylabel("True label (0 = true zero, 1 = true one)")
+        ax.set_title(format_bit_label_title(bit_label), fontsize=11)
+        ax.set_xlabel("Predicted bit")
+        ax.set_ylabel("True bit")
         ax.set_xticklabels(["0", "1"], rotation=0)
         ax.set_yticklabels(["0", "1"], rotation=0)
 
     for axis_index in range(n_plots, len(axes_array)):
         axes_array[axis_index].axis("off")
 
-    fig.suptitle("Confusion matrices by bit", fontsize=15)
+    fig.suptitle("Per-bit confusion matrices", fontsize=14)
     colorbar_mappable = plt.cm.ScalarMappable(
-        cmap=cmap, norm=plt.Normalize(vmin=0, vmax=max_value)
+        cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1)
     )
     colorbar_mappable.set_array([])
     fig.colorbar(
@@ -911,9 +921,9 @@ def save_confusion_matrix_plot(
         ax=axes_array[:n_plots].tolist(),
         shrink=0.85,
         pad=0.02,
-        label="Count",
+        label="Fraction of true bit",
     )
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
     plt.close(fig)
     return str(output_path)
 
@@ -993,42 +1003,299 @@ def save_64_class_confusion_matrix_plot(
     labels = [str(label) for label in class_confusion["class_labels"]]
     # Raw counts depend on how many test rows each class happened to draw, which
     # is fixed per run but arbitrary to a reader. Row-normalizing puts every cell
-    # on a common 0-1 scale that is comparable across rows and across runs.
-    data = row_normalize_confusion_matrix(class_confusion["matrix"])
+    # on a common 0-1 scale that is comparable across rows and across runs; the
+    # square root then spreads the small off-diagonal fractions apart, which a
+    # linear scale would crush against zero next to a diagonal near 1.
+    data = np.sqrt(row_normalize_confusion_matrix(class_confusion["matrix"]))
+    colorbar_fractions = [0, 0.05, 0.2, 0.5, 1]
 
-    fig, ax = plt.subplots(figsize=(18, 16), constrained_layout=True)
-    cmap = plt.get_cmap(CONFUSION_MATRIX_COLORMAP)
+    fig, ax = plt.subplots(figsize=(14, 13), constrained_layout=True)
     # Zero cells are painted at the colormap's low end like any other value, so
     # the grid reads as one continuous surface and the colour scale covers every
     # cell in it.
     sns.heatmap(
         data,
         ax=ax,
-        cmap=cmap,
+        cmap=plt.get_cmap(FIGURE_COLORMAP),
         vmin=0.0,
         vmax=1.0,
         square=True,
         cbar=True,
-        cbar_kws={"label": "Fraction of true class"},
+        cbar_kws={
+            "label": "Fraction of the true class (square-root scale)",
+            "ticks": np.sqrt(colorbar_fractions),
+            "format": FuncFormatter(lambda value, _: f"{value**2:.2g}"),
+        },
         xticklabels=False,
         yticklabels=False,
         linewidths=0,
     )
-    # Every class is labelled on both axes: a reader looking up one specific
-    # 6-bit class cannot count rows inwards from a subsampled tick.
-    tick_positions = np.arange(len(labels)) + 0.5
+    # The classes arrive ordered by number of set bits, so each count is one
+    # contiguous block: tick its middle and rule its edges.
+    set_bit_counts = np.asarray([label.count("1") for label in labels])
+    starts = np.flatnonzero(np.r_[True, set_bit_counts[1:] != set_bit_counts[:-1]])
+    ends = np.r_[starts[1:], len(labels)]
+    tick_positions = (starts + ends - 1) / 2 + 0.5
     ax.set_xticks(tick_positions)
-    ax.set_xticklabels(labels, rotation=90, fontsize=_CLASS_TICK_FONT_SIZE)
+    ax.set_xticklabels(set_bit_counts[starts])
     ax.set_yticks(tick_positions)
-    ax.set_yticklabels(labels, rotation=0, fontsize=_CLASS_TICK_FONT_SIZE)
+    ax.set_yticklabels(set_bit_counts[starts])
+    for boundary in starts[1:]:
+        ax.axvline(boundary, color="#444444", linewidth=0.8)
+        ax.axhline(boundary, color="#444444", linewidth=0.8)
     ax.tick_params(axis="both", length=2, pad=1.5)
-    ax.set_xlabel("Predicted 6 binary class")
-    ax.set_ylabel("True 6 binary class")
-    ax.set_title(
-        "Confusion matrix across all 64 possible 6-bit classes "
-        "(row-normalized: fraction of each true class)"
-    )
+    ax.set_xlabel("Predicted class (number of 1s)")
+    ax.set_ylabel("True class (number of 1s)")
+    ax.set_title("All 64 individual 6-bit classes", fontweight="bold")
 
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
     plt.close(fig)
     return str(output_path)
+
+
+def save_per_bit_accuracy_plot(
+    confusion_matrices: dict[str, list[list[int]]],
+    output_path: Path,
+) -> str | None:
+    """Save each bit's hold-out accuracy as a bar chart.
+
+    Args:
+        confusion_matrices: Bit label to its 2x2 matrix.
+        output_path: Where to write the figure.
+
+    Returns:
+        The path written, or ``None`` when there is nothing to plot.
+    """
+    if not confusion_matrices:
+        return None
+    labels = list(confusion_matrices)
+    accuracies = []
+    for bit_label in labels:
+        matrix = np.asarray(confusion_matrices[bit_label], dtype=float)
+        total = matrix.sum()
+        accuracies.append(float(np.trace(matrix) / total) if total else 0.0)
+
+    fig, ax = plt.subplots(figsize=(9, 4.8), constrained_layout=True)
+    bars = ax.bar(range(len(labels)), accuracies, color=FIGURE_BLUE_DARK)
+    ax.bar_label(bars, fmt="%.2f", padding=3, fontsize=9)
+    ax.set_ylim(0, 1.05)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(
+        [format_bit_label_title(label) for label in labels], rotation=25, ha="right"
+    )
+    ax.set_ylabel("Accuracy")
+    ax.set_title("Per-bit accuracy", fontweight="bold")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="y", color=FIGURE_GRIDLINE)
+    ax.set_axisbelow(True)
+    fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_path)
+
+
+def per_class_recall(
+    class_confusion: dict[str, object],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Read each class's recall off the 64-class matrix, skipping absent classes.
+
+    A class with no hold-out rows has no recall to report; scoring it 0 would
+    pull its group down for want of data rather than for wrong predictions.
+
+    Args:
+        class_confusion: The output of :func:`build_64_class_confusion_matrix`.
+
+    Returns:
+        ``(set_bit_counts, recalls)``, one entry per class with at least one
+        hold-out row, in the matrix's class order.
+    """
+    counts = np.asarray(class_confusion["matrix"], dtype=float)
+    present = counts.sum(axis=1) > 0
+    recalls = np.diag(row_normalize_confusion_matrix(counts))
+    set_bit_counts = np.asarray(
+        [str(label).count("1") for label in class_confusion["class_labels"]]
+    )
+    return set_bit_counts[present], recalls[present]
+
+
+def classes_are_balanced(*label_sets: Iterable[str]) -> bool:
+    """Say whether the 6-bit classes are evenly represented in each label set.
+
+    Args:
+        label_sets: The labels of each partition, such as training and hold-out.
+
+    Returns:
+        ``True`` when, in every set, all 64 classes occur and the largest
+        class count is at most ``CLASS_BALANCE_MAX_RATIO`` times the smallest.
+    """
+    all_classes = [format(index, f"0{BIT_COUNT}b") for index in range(2**BIT_COUNT)]
+    for labels in label_sets:
+        counts = Counter(str(label) for label in labels)
+        class_counts = [counts.get(label, 0) for label in all_classes]
+        smallest = min(class_counts)
+        if smallest == 0 or max(class_counts) > CLASS_BALANCE_MAX_RATIO * smallest:
+            return False
+    return True
+
+
+def save_per_class_accuracy_plot(
+    class_confusion: dict[str, object],
+    output_path: Path,
+    balanced_classes: bool,
+) -> str | None:
+    """Save per-class recall grouped by the number of set bits in the true class.
+
+    Args:
+        class_confusion: The output of :func:`build_64_class_confusion_matrix`.
+        output_path: Where to write the figure.
+        balanced_classes: Whether the classes are equally represented (see
+            :func:`classes_are_balanced`); only then is the 1/64 chance line
+            drawn, since it assumes equal class weights.
+
+    Returns:
+        The path written, or ``None`` when no class has a hold-out row.
+    """
+    set_bit_counts, recalls = per_class_recall(class_confusion)
+    if recalls.size == 0:
+        return None
+
+    fig, ax = plt.subplots(figsize=(7, 4.5), constrained_layout=True)
+    # A fixed category order keeps each group at the x position of its count
+    # even when a whole group has no hold-out rows.
+    sns.violinplot(
+        x=set_bit_counts,
+        y=recalls,
+        order=list(range(BIT_COUNT + 1)),
+        ax=ax,
+        color=FIGURE_BLUE_LIGHT,
+        inner=None,
+        cut=0,
+        linewidth=0.8,
+        saturation=1,
+        alpha=0.55,
+    )
+    rng = np.random.default_rng(0)
+    ax.scatter(
+        set_bit_counts + rng.uniform(-0.12, 0.12, recalls.size),
+        recalls,
+        color=FIGURE_BLUE_DARK,
+        s=18,
+        alpha=0.8,
+        zorder=3,
+    )
+    for number in np.unique(set_bit_counts):
+        ax.plot(
+            number,
+            recalls[set_bit_counts == number].mean(),
+            marker="_",
+            markersize=22,
+            color="#222222",
+            zorder=4,
+        )
+    if balanced_classes:
+        chance = 1 / (2**BIT_COUNT)
+        ax.axhline(chance, color="#222222", linestyle=":", linewidth=0.8)
+        ax.text(
+            BIT_COUNT + 0.35,
+            chance + 0.012,
+            "chance (assuming equal class weights)",
+            ha="right",
+            va="bottom",
+            fontsize=9,
+            color="#444444",
+        )
+    ax.set(
+        xlim=(-0.4, BIT_COUNT + 0.4),
+        ylim=(0, 1.02),
+        xticks=range(BIT_COUNT + 1),
+        xlabel="Number of 1s in true class",
+        ylabel="Per-class accuracy",
+    )
+    ax.set_title("Per-class accuracy", fontweight="bold")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="y", color=FIGURE_GRIDLINE)
+    ax.set_axisbelow(True)
+    fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_path)
+
+
+def save_evaluation_figures(
+    output_dir: Path,
+    model_name: str,
+    confusion_matrices: dict[str, list[list[int]]] | None,
+    class_confusion: dict[str, object] | None,
+    balanced_classes: bool,
+) -> dict[str, str]:
+    """Write a trainer's evaluation figures to ``output_dir/figures``.
+
+    The folder is created only when there is a figure to put in it.
+
+    Args:
+        output_dir: The run's output directory.
+        model_name: The file-name prefix, such as ``random_forest``.
+        confusion_matrices: The per-bit matrices, or ``None`` to skip the
+            per-bit figures.
+        class_confusion: The 64-class matrix, or ``None`` to skip the
+            per-class figures.
+        balanced_classes: Passed to :func:`save_per_class_accuracy_plot`.
+
+    Returns:
+        The path of each figure written, keyed as in ``EVALUATION_FIGURES``.
+    """
+    savers = {}
+    if confusion_matrices:
+        savers["confusion_matrix_plot"] = lambda path: save_confusion_matrix_plot(
+            confusion_matrices, path
+        )
+        savers["per_bit_accuracy_plot"] = lambda path: save_per_bit_accuracy_plot(
+            confusion_matrices, path
+        )
+    if class_confusion is not None:
+        savers["confusion_matrix_64_plot"] = (
+            lambda path: save_64_class_confusion_matrix_plot(class_confusion, path)
+        )
+        savers["per_class_accuracy_plot"] = lambda path: save_per_class_accuracy_plot(
+            class_confusion, path, balanced_classes
+        )
+    if not savers:
+        return {}
+
+    figures_dir = Path(output_dir) / "figures"
+    figures_dir.mkdir(exist_ok=True)
+    figure_paths = {}
+    for key, suffix in EVALUATION_FIGURES.items():
+        if key in savers:
+            written = savers[key](figures_dir / f"{model_name}_{suffix}.png")
+            if written is not None:
+                figure_paths[key] = written
+    return figure_paths
+
+
+def format_evaluation_figure_section(
+    class_confusion: dict[str, object] | None,
+    figure_paths: dict[str, str],
+) -> list[str]:
+    """Render the 64-class matrix notes and the written figure paths as text lines.
+
+    Args:
+        class_confusion: The 64-class matrix, or ``None`` when it was not built.
+        figure_paths: The output of :func:`save_evaluation_figures`.
+
+    Returns:
+        The lines, each section opened by a blank line; empty when there is
+        nothing to report.
+    """
+    lines: list[str] = []
+    if class_confusion is not None:
+        lines.extend(
+            [
+                "",
+                "64-class confusion matrix:",
+                "  Note: matrix includes all 64 possible 6-bit labels, ordered by the number of set bits (000000 first, 111111 last).",
+                "  Note: plotted cells are row-normalized fractions of each true class, on a square-root colour scale.",
+            ]
+        )
+    if figure_paths:
+        lines.extend(["", "Figures:"])
+        lines.extend(f"  {key}: {path}" for key, path in figure_paths.items())
+    return lines

@@ -1109,8 +1109,26 @@ All `core`.
   `[[0.75, 0.25, 0], [0, 0, 0], [0.25, 0.25, 0.5]]`, every value lies in
   `[0, 1]`, and the row sums are `1, 0, 1`. Purpose: the 64-class
   confusion-matrix plot is drawn on a fixed 0-1 scale, so the normalization has
-  to put populated rows on a common scale and leave an empty class at zero (the
-  value the plot masks) instead of dividing by zero.
+  to put populated rows on a common scale and leave an empty class at zero (drawn
+  at the low end of the scale) instead of dividing by zero.
+- `test_per_class_recall_skips_classes_without_hold_out_rows`. Inputs: hold-out
+  rows `000000` twice (predicted `000000` and `000001`) and `111111` once
+  (predicted correctly). Expected outputs: set-bit counts `[0, 6]` and recalls
+  `[0.5, 1.0]`, nothing for the 62 absent classes. Purpose: the per-class
+  accuracy figure must not score a class with no hold-out rows as 0, which
+  would drag its group down for want of data.
+- `test_classes_are_balanced_bounds_the_count_ratio`. Parametrized over
+  training/hold-out label sets: every class equally often; ten training
+  classes at exactly 1.5 times the others; ten training classes above 1.5
+  times; ten hold-out classes at twice the others; a class missing from the
+  hold-out set; a class missing from the training set. Expected outputs:
+  `True`, `True`, `False`, `False`, `False`, `False`. Purpose: the 1/64 chance
+  line assumes equal class weights, so it is drawn only when every partition
+  holds all 64 classes and no class outnumbers another by more than 1.5 times.
+- `test_save_evaluation_figures_creates_no_folder_without_figures` (`output`).
+  Inputs: neither the per-bit nor the 64-class matrix. Expected outputs: an
+  empty path mapping and no `figures/` folder. Purpose: a run that reports no
+  confusion matrices leaves no empty folder behind.
 - `test_correlation_feature_groups_collects_the_redundant_columns`. Inputs: a
   5-row matrix whose second column is the square of the first and whose third
   ranks the rows in an unrelated order, at a threshold of `0.7`. Expected
@@ -1139,8 +1157,8 @@ Marked `integration` and `output`.
   outputs: training completes; the returned metrics name the objective and carry
   both metric tiers, the dataset summary and the 64-class confusion matrix; the
   written metrics JSON carries the bit-label order and one timing per stage; and
-  the predictions TSV, model pickle and both confusion-matrix figures are
-  written. Purpose: the one end-to-end smoke test for this entry point, plus its
+  the predictions TSV, the model pickle and the four figures (both confusion
+  matrices, per-bit and per-class accuracy) under `figures/` are written. Purpose: the one end-to-end smoke test for this entry point, plus its
   output-file and metrics-field contract.
 
 ### tests/test_ml_multi_knn.py
@@ -1149,8 +1167,8 @@ The smoke test is `integration` and `output`; the neighbour-capping test is `cor
 
 - `test_multi_knn_train_smoke`. Inputs: `summary_statistics_tsv`. Expected
   outputs: training completes; the returned metrics carry both metric tiers and
-  the cross-validation block, and the predictions TSV, model pickle and both
-  confusion-matrix figures are written. Purpose: the one end-to-end smoke test
+  the cross-validation block, and the predictions TSV, the model pickle and
+  the four figures under `figures/` are written. Purpose: the one end-to-end smoke test
   for this entry point, plus its output-file contract.
 - `test_multi_knn_build_model_caps_neighbors_to_training_size`. Inputs:
   `n_neighbors=20` against training sets of 2 and of 50. Expected outputs: the
@@ -1210,7 +1228,7 @@ tests are `output`.
   `use_wandb` `False` in the results payload; exactly 2 candidates (the space
   crosses one parameter over two values); the best-model pickle is written
   and no `wandb/` directory is; `hyper_tune_parameter_marginals.tsv` and
-  `hyper_tune_search_report.png` exist and the plot path is returned; the
+  `figures/hyper_tune_search_report.png` exist and the plot path is returned; the
   ranked candidate TSV carries `rank`, `is_best`, `cv_score` and
   `elapsed_seconds`; the marginals TSV header matches the documented column
   order; the text report contains the search-space, top-candidate,
@@ -1232,7 +1250,7 @@ tests are `output`.
   `summary_statistics_tsv_tuning`, grid search, `use_wandb=True`, with
   `_import_wandb` patched to a stub module. Expected outputs: the output
   directory holds `hyper_tune_best_model.pkl`, `hyper_tune_results.txt` and
-  `hyper_tune_search_report.png` but none of `hyper_tune_results.json`,
+  `figures/hyper_tune_search_report.png` but none of `hyper_tune_results.json`,
   `hyper_tune_results.tsv`, `hyper_tune_parameter_marginals.tsv` or
   `predictions.tsv`; the returned paths for those four are `None`;
   `artifact_paths` names only the three written files; the stub received the

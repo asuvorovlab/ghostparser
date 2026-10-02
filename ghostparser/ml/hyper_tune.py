@@ -896,7 +896,7 @@ def tune_hyperparameters(config: argparse.Namespace) -> dict[str, object]:
     results_txt_path = output_dir / "hyper_tune_results.txt"
     results_tsv_path = output_dir / "hyper_tune_results.tsv"
     marginals_tsv_path = output_dir / "hyper_tune_parameter_marginals.tsv"
-    plot_path = output_dir / "hyper_tune_search_report.png"
+    plot_path = output_dir / "figures" / "hyper_tune_search_report.png"
     predictions_path = output_dir / "predictions.tsv"
 
     best_candidate_record = {

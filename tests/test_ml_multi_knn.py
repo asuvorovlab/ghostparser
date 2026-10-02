@@ -14,7 +14,7 @@ def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
 
     The one smoke test for this entry point: it proves the KNN path fits,
     scores and persists, and pins the output-file contract (predictions TSV,
-    model pickle, both confusion-matrix figures).
+    model pickle, the four figures under ``figures/``).
     """
     config = argparse.Namespace(
         input_path=str(summary_statistics_tsv),
@@ -68,8 +68,14 @@ def test_multi_knn_train_smoke(summary_statistics_tsv, tmp_path):
 
     model_path = tmp_path / "ml_out" / "multi_knn_model.pkl"
     assert model_path.exists()
-    assert (tmp_path / "ml_out" / "multi_knn_confusion_matrices.png").exists()
-    assert (tmp_path / "ml_out" / "multi_knn_confusion_matrix_64_classes.png").exists()
+    figures_dir = tmp_path / "ml_out" / "figures"
+    for figure in (
+        "confusion_matrices",
+        "confusion_matrix_64_classes",
+        "per_bit_accuracy",
+        "per_class_accuracy",
+    ):
+        assert (figures_dir / f"multi_knn_{figure}.png").exists()
 
 
 def test_multi_knn_build_model_caps_neighbors_to_training_size():
