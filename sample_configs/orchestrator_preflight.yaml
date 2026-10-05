@@ -1,0 +1,24 @@
+# Check the inputs before committing to a run. Only the structural check runs:
+# it writes preflight_data_check.txt into the output folder and exits, so every
+# analysis key is ignored and nothing else is produced.
+#
+#   python -m ghostparser.orchestrator -c sample_configs/orchestrator_preflight.yaml
+#
+# The report ranks the outgroups by distance from the ingroup in the species
+# tree and says, per outgroup, how many gene trees it was the farthest in,
+# rooted and sat tangled among the ingroup in.
+
+species_tree_path: ./data/species.tree
+gene_trees_path: ./data/genes.tree
+
+# Any order: each gene tree finds its own farthest, and the species tree
+# ranking breaks ties.
+outgroup:
+  - Out1
+  - Out2
+  - Out3
+
+output_folder: ./results_preflight
+
+preflight_data_check: true
+preflight_triplet_cap: 0          # 0 = walk every triplet (default 15000)

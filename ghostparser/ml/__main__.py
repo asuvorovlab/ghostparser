@@ -1,0 +1,22 @@
+"""Usage banner for ``python -m ghostparser.ml``; the trainers are run directly."""
+
+import argparse
+
+
+def main() -> None:
+    """Print the trainer commands; the package has no dispatcher of its own."""
+    parser = argparse.ArgumentParser(
+        description="ghostparser.ml package entrypoint. Run a trainer module directly."
+    )
+    parser.parse_args()
+    print("Ghostparser ML")
+    print()
+    print("This package entrypoint does not dispatch to model modules.")
+    print("Run one of:")
+    print("  python -m ghostparser.ml.random_forest -i <input.tsv> -o <out>")
+    print("  python -m ghostparser.ml.multi_knn -i <input.tsv> -o <out>")
+    print("  python -m ghostparser.ml.hyper_tune -c <config.yaml|config.json>")
+
+
+if __name__ == "__main__":
+    main()

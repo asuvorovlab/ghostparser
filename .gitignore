@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+.ipynb_checkpoints/
+
+# Environments and editors
+.env
+.venv/
+venv/
+.conda/
+.vscode/
+.DS_Store
+
+# Run inputs and outputs
+/configs/
+/data/
+/empirical_data/
+/ml_data/
+/logs/
+/job_scripts/
+/reports/
+/ml_results/
+/ghost_results/
+/ghost_tests/
+/empirical_results/
+/ghostparser_results/
+/consolidated_results/
+/consolidated_11_cases/
+**/wandb/
+
+# Root-level scratch files
+/*.tsv
+/*.txt
+!/requirements.txt
+/*.png
+/*.pdf
+/*.ipynb
+/ghost*.sh
+
+# Local-only notes and assets
+*.local.md
+*.local.html
+/docs/assets/*.png
+
+# Everything under .github except GitHub Actions
+/.github/*
+!/.github/workflows/
+
+# Generated docs build artifacts
+/site/
+/site_docs/

@@ -1,0 +1,211 @@
+name: Build and Release
+
+# Trigger on push of version tags or manual dispatch
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v0.1.0, v1.2.3, etc.
+  workflow_dispatch:  # Allows manual triggering from GitHub UI
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.10'
+
+    - name: Set package version from tag
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        set -euo pipefail
+
+        TAG_NAME="${GITHUB_REF_NAME}"
+        VERSION="${TAG_NAME#v}"
+
+        if [ "${VERSION}" = "${TAG_NAME}" ] || [ -z "${VERSION}" ]; then
+          echo "Expected tag format vX.Y.Z, got '${TAG_NAME}'"
+          exit 1
+        fi
+
+        export VERSION
+        python - <<'PY'
+        import os
+        import re
+        from pathlib import Path
+
+        version = os.environ["VERSION"]
+        pyproject = Path("pyproject.toml")
+        content = pyproject.read_text(encoding="utf-8")
+        updated, count = re.subn(
+          r'(?m)^version\s*=\s*"[^"]+"\s*$',
+          f'version = "{version}"',
+          content,
+          count=1,
+        )
+        if count != 1:
+          raise SystemExit("Could not find a single project version field in pyproject.toml")
+        pyproject.write_text(updated, encoding="utf-8")
+        print(f"Set package version to {version}")
+        PY
+        
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+        
+    - name: Build distributions
+      run: |
+        python -m build
+        
+    - name: List built artifacts
+      run: |
+        ls -lh dist/
+
+    - name: Prepare release notes from changelog
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        set -euo pipefail
+
+        WHEEL_FILE="$(basename "$(ls dist/*.whl | head -n1)")"
+        TAG_NAME="${GITHUB_REF_NAME}"
+
+        CHANGELOG_SECTION_FILE="$(mktemp)"
+        if [ -s CHANGELOG.md ]; then
+          if ! awk -v tag="${TAG_NAME}" '
+            BEGIN {
+              capture = 0
+              found = 0
+            }
+            /^##[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+/ {
+              if (capture) {
+                exit
+              }
+              if (match($0, /^##[[:space:]]+(v[0-9]+\.[0-9]+\.[0-9]+)/, m) && m[1] == tag) {
+                capture = 1
+                found = 1
+                next
+              }
+            }
+            capture {
+              print
+            }
+            END {
+              if (!found) {
+                exit 1
+              }
+            }
+          ' CHANGELOG.md > "${CHANGELOG_SECTION_FILE}"; then
+            : > "${CHANGELOG_SECTION_FILE}"
+          fi
+        else
+          : > "${CHANGELOG_SECTION_FILE}"
+        fi
+
+        {
+          echo "## Changelog"
+          echo
+          if [ -s "${CHANGELOG_SECTION_FILE}" ]; then
+            cat "${CHANGELOG_SECTION_FILE}"
+          else
+            echo "_No changelog entry was found for ${TAG_NAME} in CHANGELOG.md._"
+          fi
+          echo
+          echo "## Installation"
+          echo
+          echo "Download the wheel file and install:"
+          echo '```bash'
+          echo "pip install ${WHEEL_FILE}"
+          echo '```'
+          echo
+          echo "Or install directly from the release:"
+          echo '```bash'
+          echo "pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${WHEEL_FILE}"
+          echo '```'
+          echo
+          echo "## Usage"
+          echo "After installation, run from anywhere:"
+          echo '```bash'
+          echo "python -m ghostparser.orchestrator -c config.yaml"
+          echo '```'
+        } > RELEASE_BODY.md
+
+        rm -f "${CHANGELOG_SECTION_FILE}"
+        
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          dist/*.whl
+          dist/*.tar.gz
+        body_path: RELEASE_BODY.md
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Sync package version to main
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        set -euo pipefail
+
+        TAG_NAME="${GITHUB_REF_NAME}"
+        VERSION="${TAG_NAME#v}"
+        DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        git fetch origin "${DEFAULT_BRANCH}"
+        git checkout -B "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}"
+
+        export VERSION
+        python - <<'PY'
+        import os
+        import re
+        from pathlib import Path
+
+        version = os.environ["VERSION"]
+        pyproject = Path("pyproject.toml")
+        content = pyproject.read_text(encoding="utf-8")
+        updated, count = re.subn(
+          r'(?m)^version\s*=\s*"[^"]+"\s*$',
+          f'version = "{version}"',
+          content,
+          count=1,
+        )
+        if count != 1:
+          raise SystemExit("Could not find a single project version field in pyproject.toml")
+        pyproject.write_text(updated, encoding="utf-8")
+        print(f"Prepared pyproject.toml with version {version}")
+        PY
+
+        if git diff --quiet -- pyproject.toml; then
+          echo "pyproject.toml already has version ${VERSION} on ${DEFAULT_BRANCH}; nothing to commit."
+          exit 0
+        fi
+
+        git add pyproject.toml
+        git commit -m "chore: bump package version to ${VERSION} for ${TAG_NAME} release"
+        git push origin "${DEFAULT_BRANCH}"
+
+    # Optional: Upload to PyPI (requires PyPI API token in repository secrets)
+    # - name: Publish to PyPI
+    #   if: startsWith(github.ref, 'refs/tags/')
+    #   env:
+    #     TWINE_USERNAME: __token__
+    #     TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+    #   run: |
+    #     twine upload dist/*

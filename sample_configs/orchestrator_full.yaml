@@ -1,0 +1,86 @@
+# Every orchestrator config key at its default value, including the ones that
+# have no CLI flag. Trim this to the keys you actually want to change.
+#
+#   python -m ghostparser.orchestrator -c sample_configs/orchestrator_full.yaml
+#
+# Full reference and the other scenarios: CONFIG.md
+
+# --- Required inputs -------------------------------------------------------
+species_tree_path: ./data/species.tree
+gene_trees_path: ./data/genes.tree
+
+# One key covers both cases: a single label, a comma-separated string
+# ("Out1,Out2"), or a list as below. List entries may themselves be
+# comma-separated.
+outgroup:
+  - Out1
+  - Out2
+
+# --- Output ----------------------------------------------------------------
+output_folder: ./results
+overwrite: true
+# Restrict the run to specific triplets; one comma-separated triplet per line.
+triplet_filter: null
+# Or to every triplet among specific species; comma-separated names, any
+# number per line. Not combinable with triplet_filter.
+species_filter: null
+species_rename_map: null        # two-column TSV or YAML: tree label -> output name
+
+# --- Execution -------------------------------------------------------------
+processes: 0
+seed: null                        # run-wide RNG seed; null draws a fresh one and reports it
+
+# --- Statistical tests -----------------------------------------------------
+# false measures only what the decision cascade reads: the direction test is
+# skipped below a settled gate under every correction, and the tree-height
+# test below a settled count gate under no/bfn (holm/fdr_bh/fdr_by rank every
+# triplet's value, so it is measured for every triplet). true measures all
+# three tests for every triplet, filling every ks_* and perm_* column. Both
+# reach the same classifications and bootstrap values; the bootstrap
+# iterations skip the same tests either way.
+diagnostic: false
+
+# Gate 1: discordant count test.
+discordant_test: chi-square       # chi-square | z-test
+alpha_dct: 0.05
+
+# Gate 2: KS tree-height test.
+alpha_ks: 0.05
+
+# Gate 3: studentized permutation test on the concordant vs. discordant1 mean
+# tree heights, deciding the direction of the difference.
+alpha_perm: 0.05
+permutation_options:
+  min_resamples: 2500             # also the size of the first adaptive batch
+  max_resamples: 25000
+  ci_method: wilson               # wilson | beta | agresti_coull | jeffreys |
+                                  # binom_test | normal
+
+# Applied run-wide across triplets (DCT and KS), and inside each permutation
+# test across its pair of one-tailed p-values.
+p_value_correction: bfn           # no | bfn | holm | fdr_bh | fdr_by
+
+# How H(T) is computed per gene tree.
+tree_height_calculation_strategy: AVG   # AVG | A | B | C | SIS | INT
+
+# --- Input filtering -------------------------------------------------------
+min_support_value: 0.5
+
+# --- Bootstrap -------------------------------------------------------------
+bootstrap: true
+bootstrap_options:
+  iterations: 100
+  diagnostic: false
+  summary_only: false
+
+# --- Extra outputs ---------------------------------------------------------
+generate_summary_stats: false     # writes summary_statistics.tsv
+shape_diagnostics: false          # adds the per-group shape columns (costly)
+consolidation: true               # writes the consolidation/ subfolder
+
+# --- Data check ------------------------------------------------------------
+# When true, only the structural check runs and every key above is ignored.
+preflight_data_check: false
+# How many ingroup triplets that check walks; 0 checks every one. A real run
+# always processes every triplet regardless.
+preflight_triplet_cap: 15000
