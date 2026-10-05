@@ -8,7 +8,6 @@ import math
 from collections import Counter
 from dataclasses import dataclass, replace
 
-import dendropy
 import numpy as np
 from scipy import stats
 from statsmodels.stats.proportion import proportions_ztest
@@ -18,8 +17,6 @@ from ghostparser.triplet_utils import (
     TOPOLOGY_AB,
     TOPOLOGY_AC,
     TOPOLOGY_BC,
-    classify_triplet_topology_string,
-    find_sister_pair,
 )
 
 from .config import (
@@ -35,10 +32,8 @@ from .config import (
     DEFAULT_P_VALUE_CORRECTION,
     DEFAULT_PERMUTATION_MAX_RESAMPLES,
     DEFAULT_PERMUTATION_MIN_RESAMPLES,
-    DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
     DISCORDANT_TEST_CHOICES,
     P_VALUE_CORRECTION_CHOICES,
-    TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES,
 )
 from .correction import (
     adjust_p_value_inline as _adjust_p_value_inline,
@@ -56,7 +51,6 @@ from .permutation import (
 )
 
 Classification = str
-SerializedTripletObservation = tuple[str, float, dict | None]
 
 DISCORDANT1_TOPOLOGY_CHOICES = ("BC", "AC")
 
@@ -290,128 +284,6 @@ class TripletPipelineResult:
             "bootstrap_value": self.bootstrap_value,
             "all_bootstrap": self.all_bootstrap,
         }
-
-
-def _distance_to_root(node):
-    """Compute the root-to-node distance from edge lengths.
-
-    Missing edge lengths are treated as zero.
-
-    Args:
-        node: A DendroPy node.
-
-    Returns:
-        The accumulated distance to the root as a float.
-    """
-    distance = 0.0
-    current = node
-    while current is not None and current.parent_node is not None:
-        edge_length = current.edge_length
-        if edge_length is not None:
-            distance += float(edge_length)
-        current = current.parent_node
-    return distance
-
-
-def _compute_triplet_tree_metrics(
-    tree,
-    species_triplet=None,
-    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
-    collect_summary_statistics=False,
-):
-    """Compute the selected tree-height value H(T) and optional summary metrics.
-
-    Reached only from the DendroPy-tree reference path
-    (:func:`observation_from_subtree`, :func:`_serialize_triplet_gene_trees`);
-    a run computes these values from a cached geometry.
-
-    Args:
-        tree: A rooted 3-tip DendroPy tree.
-        species_triplet: The ``(A, B, C)`` triplet, required for the ``A``/``B``/
-            ``C`` strategies.
-        tree_height_calculation_strategy: One of ``AVG``/``A``/``B``/``C``/
-            ``SIS``/``INT``.
-        collect_summary_statistics: When ``True``, also compute the per-tree
-            ``avg_tree_height``/``internal_branch``/``sister_distance`` metrics
-            used for summary-statistics gathering.
-
-    Returns:
-        A tuple ``(selected_tree_height, summary_metrics)`` where
-        ``summary_metrics`` is a dict of the three metrics when
-        ``collect_summary_statistics`` is ``True`` (else ``None``).
-
-    Raises:
-        ValueError: If the strategy is unsupported, the tree does not have
-            exactly three tips, ``species_triplet`` is missing for A/B/C, or the
-            sister-pair MRCA cannot be determined.
-    """
-    if tree_height_calculation_strategy not in TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES:
-        raise ValueError(
-            f"Unsupported tree height calculation strategy: {tree_height_calculation_strategy}. "
-            f"Choose one of: {', '.join(TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES)}"
-        )
-
-    leaves = [leaf for leaf in tree.leaf_node_iter() if leaf.taxon and leaf.taxon.label]
-    if len(leaves) != 3:
-        raise ValueError("Triplet tree must contain exactly 3 terminal taxa")
-
-    leaf_by_label = {leaf.taxon.label: leaf for leaf in leaves}
-    leaf_distances = {
-        label: _distance_to_root(leaf) for label, leaf in leaf_by_label.items()
-    }
-    avg_tree_height = sum(leaf_distances.values()) / 3.0
-
-    selected_tree_height = None
-    if tree_height_calculation_strategy in {"A", "B", "C"}:
-        if species_triplet is None:
-            raise ValueError(
-                "species_triplet is required for tree height strategies A, B, and C"
-            )
-
-        strategy_index = {"A": 0, "B": 1, "C": 2}[tree_height_calculation_strategy]
-        selected_taxon_label = species_triplet[strategy_index]
-        if selected_taxon_label not in leaf_distances:
-            raise ValueError(
-                f"Selected taxon {selected_taxon_label} not found in triplet tree"
-            )
-        selected_tree_height = leaf_distances[selected_taxon_label]
-    elif tree_height_calculation_strategy == "AVG":
-        selected_tree_height = avg_tree_height
-
-    summary_metrics = None
-    if collect_summary_statistics or tree_height_calculation_strategy in {"SIS", "INT"}:
-        sister_pair = find_sister_pair(tree)
-        left_label, right_label = tuple(sister_pair)
-        sister_mrca = tree.mrca(taxon_labels=[left_label, right_label])
-        if sister_mrca is None:
-            raise ValueError("Could not determine sister-pair MRCA for triplet tree")
-
-        internal_branch = _distance_to_root(sister_mrca)
-        sister_distance = (
-            leaf_distances[left_label]
-            + leaf_distances[right_label]
-            - 2.0 * internal_branch
-        )
-
-        if tree_height_calculation_strategy == "SIS":
-            selected_tree_height = sister_distance
-        elif tree_height_calculation_strategy == "INT":
-            selected_tree_height = internal_branch
-
-        if collect_summary_statistics:
-            summary_metrics = {
-                "avg_tree_height": avg_tree_height,
-                "internal_branch": internal_branch,
-                "sister_distance": sister_distance,
-            }
-
-    if selected_tree_height is None:
-        raise ValueError(
-            f"Unsupported tree height calculation strategy: {tree_height_calculation_strategy}. "
-            f"Choose one of: {', '.join(TREE_HEIGHT_CALCULATION_STRATEGY_CHOICES)}"
-        )
-
-    return selected_tree_height, summary_metrics
 
 
 def _resolve_topology_roles(topology_counts, species_topology):
@@ -922,51 +794,6 @@ def _build_triplet_seed_sequence(seed, triplet):
     return np.random.SeedSequence(int.from_bytes(digest[:8], "little"))
 
 
-def observation_from_subtree(
-    subtree,
-    triplet,
-    tree_height_calculation_strategy,
-    collect_summary_statistics=False,
-):
-    """Compute a ``(topology, tree_height, metrics)`` observation by walking a
-    DendroPy subtree. This is the reference path the parity tests hold
-    the cached geometry to; no run calls it.
-
-    Args:
-        subtree: The extracted triplet subtree as a DendroPy tree.
-        triplet: The ``(A, B, C)`` triplet.
-        tree_height_calculation_strategy: Tree-height strategy to apply.
-        collect_summary_statistics: When ``True``, also compute the per-tree
-            summary metrics stored as the observation's third element.
-
-    Returns:
-        A ``(topology, tree_height, summary_metrics)`` tuple where
-        ``summary_metrics`` is ``None`` unless ``collect_summary_statistics`` is
-        ``True``, or ``None`` if the subtree's labels do not match the triplet or
-        metric computation fails.
-    """
-    labels = {
-        leaf.taxon.label
-        for leaf in subtree.leaf_node_iter()
-        if leaf.taxon and leaf.taxon.label
-    }
-    if labels != set(triplet):
-        return None
-
-    try:
-        topology = classify_triplet_topology_string(subtree, triplet)
-        tree_height, summary_metrics = _compute_triplet_tree_metrics(
-            subtree,
-            species_triplet=triplet,
-            tree_height_calculation_strategy=tree_height_calculation_strategy,
-            collect_summary_statistics=collect_summary_statistics,
-        )
-    except ValueError:
-        return None
-
-    return (topology, tree_height, summary_metrics)
-
-
 def _relabel_topology(topology, old_to_new_labels):
     """Relabel a canonical topology under an old-to-new label map.
 
@@ -1053,80 +880,6 @@ def _canonicalize_triplet_labels(species_triplet, species_topology, topology_cou
         canonical_to_original_topology,
         reported_dis1_topology,
     )
-
-
-def _species_tree_topology_only_newick(species_tree_newick):
-    """Return the species-subtree Newick with edge lengths suppressed.
-
-    Args:
-        species_tree_newick: The species subtree Newick, or a falsy value.
-
-    Returns:
-        The topology-only Newick string, or the input unchanged when falsy.
-    """
-    if not species_tree_newick:
-        return species_tree_newick
-
-    tree = dendropy.Tree.get(
-        data=species_tree_newick, schema="newick", preserve_underscores=True
-    )
-    return tree.as_string(schema="newick", suppress_edge_lengths=True).strip()
-
-
-def _serialize_triplet_gene_trees(
-    species_triplet,
-    triplet_gene_trees,
-    tree_height_calculation_strategy=DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY,
-    collect_summary_statistics=False,
-):
-    """Parse rooted triplet Newicks into observations.
-
-    Trees whose leaf set does not match the triplet, or that fail metric
-    computation, are skipped.
-
-    Args:
-        species_triplet: The ``(A, B, C)`` triplet.
-        triplet_gene_trees: Iterable of rooted triplet Newick strings.
-        tree_height_calculation_strategy: Tree-height strategy to apply.
-        collect_summary_statistics: When ``True``, also compute each
-            observation's summary metrics (third tuple element).
-
-    Returns:
-        A list of ``(topology, tree_height, summary_metrics)`` observation
-        tuples.
-    """
-    observations: list[SerializedTripletObservation] = []
-    species_set = set(species_triplet)
-
-    for newick_str in triplet_gene_trees:
-        if not str(newick_str).strip():
-            continue
-
-        tree = dendropy.Tree.get(
-            data=str(newick_str).strip(), schema="newick", preserve_underscores=True
-        )
-        labels = {
-            leaf.taxon.label
-            for leaf in tree.leaf_node_iter()
-            if leaf.taxon and leaf.taxon.label
-        }
-        if labels != species_set:
-            continue
-
-        try:
-            topology = classify_triplet_topology_string(tree, species_triplet)
-            tree_height, summary_metrics = _compute_triplet_tree_metrics(
-                tree,
-                species_triplet=species_triplet,
-                tree_height_calculation_strategy=tree_height_calculation_strategy,
-                collect_summary_statistics=collect_summary_statistics,
-            )
-        except ValueError:
-            continue
-
-        observations.append((topology, tree_height, summary_metrics))
-
-    return observations
 
 
 def _build_shape_statistics(canonical_heights, role_topologies, rng):
@@ -1987,8 +1740,8 @@ def analyze_triplet_from_observations(
     Args:
         triplet: The ``(A, B, C)`` triplet.
         observations: List of ``(topology, tree_height)`` tuples.
-        species_subtree: The triplet's species subtree Newick (with branch
-            lengths); stored topology-only on the result.
+        species_subtree: The triplet's topology-only species subtree Newick,
+            stored on the result.
         alpha_dct: Significance threshold for the discordant count test.
         alpha_ks: Significance threshold for the KS test.
         discordant_test: ``chi-square`` or ``z-test``.
@@ -2013,11 +1766,10 @@ def analyze_triplet_from_observations(
         Under a rank-based correction the bootstrap votes are parked in
         ``bootstrap_deferred`` as well.
     """
-    species_tree_topology = _species_tree_topology_only_newick(species_subtree)
     return _finalize_triplet_analysis(
         triplet,
         observations,
-        species_tree_topology,
+        species_subtree,
         alpha_dct=alpha_dct,
         alpha_ks=alpha_ks,
         discordant_test=discordant_test,

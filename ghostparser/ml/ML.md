@@ -139,14 +139,14 @@ marginal table (how each value of each parameter scored across the
 candidates that used it), a parameter-influence ranking by how far the
 objective moved across each parameter's values, the best value per parameter,
 and a warning when a winning value sits at the edge of the range searched,
-the cue to extend the range. `hyper_tune_search_report.png` shows the search
+the cue to extend the range. `figures/hyper_tune_search_report.png` shows the search
 progress in evaluation order, the top candidates, and one panel per parameter
 that varied.
 
 With `use_wandb: false` (the default) everything is written locally:
 `hyper_tune_best_model.pkl`, `hyper_tune_results.{txt,json,tsv}`,
-`hyper_tune_parameter_marginals.tsv`, `hyper_tune_search_report.png` and
-`predictions.tsv`. With `use_wandb: true` (`pip install .[wandb]`, then
+`hyper_tune_parameter_marginals.tsv`, `figures/hyper_tune_search_report.png`
+and `predictions.tsv`. With `use_wandb: true` (`pip install .[wandb]`, then
 `wandb login`; `WANDB_PROJECT`, `WANDB_ENTITY` and `WANDB_MODE=offline` are
 honoured) the TSVs and the JSON are logged to the run as tables and the
 output directory keeps the pickle, the text report and the figure.
@@ -158,10 +158,14 @@ output directory keeps the pickle, the text report and the figure.
 | --- | --- |
 | `<model>_model.pkl` | The fitted one-vs-rest classifier. |
 | `<model>_overall_metrics.json`, `<model>_metrics.txt` | Metrics, timings, the hyperparameters used, the dataset summary and the label map. |
-| `<model>_confusion_matrices.png` | The six per-bit confusion matrices. |
-| `<model>_confusion_matrix_64_classes.png` | The row-normalized 64-class confusion matrix over every 6-bit label, ordered by number of set bits; the diagonal reads as per-class recall. The metrics JSON carries the same matrix and class order. |
+| `figures/<model>_confusion_matrices.png` | The six per-bit confusion matrices, each row normalized to the fraction of its true bit, with counts in brackets. |
+| `figures/<model>_confusion_matrix_64_classes.png` | The row-normalized 64-class confusion matrix over every 6-bit label, ordered by number of set bits and divided into blocks by that number; the colour scale is square-root, so small off-diagonal fractions stay visible. The diagonal reads as per-class recall. The metrics JSON carries the same matrix and class order. |
+| `figures/<model>_per_bit_accuracy.png` | Accuracy of each bit on the hold-out partition. |
+| `figures/<model>_per_class_accuracy.png` | Per-class recall (the 64-class diagonal) grouped by the number of set bits in the true class, with each group's mean. A class with no hold-out rows is left out rather than scored 0. The 1/64 chance line is drawn only when all 64 classes occur in both partitions and no class count exceeds 1.5 times another, since it assumes equal class weights. |
 | `feature_importances.tsv` | Features ranked by importance: `feature` and `importance` under every measure, `importance_std` over the shuffles under the permutation measures, and each feature's `group` and `group_size` under `grouped_permutation`. The metrics JSON names the measure used. |
 | `predictions.tsv` | Per-row true and predicted bits, exact-match flag and matched-bit count. |
+
+The figures need `evaluation.report_confusion_matrix` and an `evaluation.metrics` of `diagnostic` or `all`; without them no `figures/` folder is created. `<model>_metrics.txt` lists the path of each figure written.
 
 To score new data with a saved model:
 

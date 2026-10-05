@@ -15,7 +15,7 @@ def test_train_random_forest_smoke(summary_statistics_tsv, tmp_path):
     The one smoke test for this entry point: it proves the forest path fits,
     scores and persists, and pins the metrics-field and output-file contracts:
     both metric tiers, the dataset summary, the 64-class matrix, one timing per
-    stage, and the four written artifacts.
+    stage, and the written artifacts, figures under ``figures/``.
     """
     config = argparse.Namespace(
         input_path=str(summary_statistics_tsv),
@@ -67,7 +67,11 @@ def test_train_random_forest_smoke(summary_statistics_tsv, tmp_path):
 
     model_path = tmp_path / "ml_out" / "random_forest_model.pkl"
     assert model_path.exists()
-    assert (tmp_path / "ml_out" / "random_forest_confusion_matrices.png").exists()
-    assert (
-        tmp_path / "ml_out" / "random_forest_confusion_matrix_64_classes.png"
-    ).exists()
+    figures_dir = tmp_path / "ml_out" / "figures"
+    for figure in (
+        "confusion_matrices",
+        "confusion_matrix_64_classes",
+        "per_bit_accuracy",
+        "per_class_accuracy",
+    ):
+        assert (figures_dir / f"random_forest_{figure}.png").exists()

@@ -9,9 +9,10 @@ included, since it is deterministic per triplet under a fixed seed). See
 """
 
 import argparse
+from io import StringIO
 
-import dendropy
 import pytest
+from Bio import Phylo
 from scipy import stats
 
 from ghostparser.config import InputError
@@ -382,12 +383,8 @@ def test_species_rename_map_reaches_every_output(
         "(('Homo sapiens','Pan sp.'),C);"
     )
     for result in results:
-        parsed = dendropy.Tree.get(
-            data=result.species_tree, schema="newick", preserve_underscores=True
-        )
-        assert {leaf.taxon.label for leaf in parsed.leaf_node_iter()} == set(
-            result.triplet
-        )
+        parsed = Phylo.read(StringIO(result.species_tree), "newick")
+        assert {leaf.name for leaf in parsed.get_terminals()} == set(result.triplet)
 
     results_tsv = (output_folder / "orchestrator_triplet_results.tsv").read_text()
     assert "Homo sapiens" in results_tsv and "Pan sp." in results_tsv

@@ -2,11 +2,11 @@
 and species-triplet normalization.
 """
 
-import multiprocessing as mp
-import os
 import re
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
 from itertools import combinations
+from typing import NamedTuple
 
 from Bio import Phylo
 from Bio.Phylo.BaseTree import Clade, Tree
@@ -14,6 +14,7 @@ from Bio.Phylo.BaseTree import Clade, Tree
 from ghostparser.config import InputError
 from ghostparser.triplet_utils import normalize_abc_from_sister_pair
 
+from .parallel import map_ordered, resolve_worker_count
 from .triplet_geometry import (
     build_taxon_index,
     build_triplet_geometry,
@@ -92,6 +93,62 @@ def _parse_outgroup_arg(outgroup_arg):
     return [str(taxon).strip() for taxon in outgroup_arg if str(taxon).strip()]
 
 
+# Bio.Phylo's own walks (``find_clades``, ``get_terminals``, ``get_path``) run
+# every clade through a generic filter; these plain walks visit the same clades
+# in the same order at a fraction of the cost.
+
+
+def _preorder(clade):
+    """List a clade and every clade below it, each parent before its children.
+
+    Args:
+        clade: A ``Bio.Phylo`` clade.
+
+    Returns:
+        The clades in pre-order, children in their listed order.
+    """
+    order = []
+    stack = [clade]
+    while stack:
+        current = stack.pop()
+        order.append(current)
+        stack.extend(reversed(current.clades))
+    return order
+
+
+def _postorder(clade):
+    """List a clade and every clade below it, each parent after its children.
+
+    Args:
+        clade: A ``Bio.Phylo`` clade.
+
+    Returns:
+        The clades in post-order, children in their listed order.
+    """
+    order = []
+    stack = [(clade, False)]
+    while stack:
+        current, expanded = stack.pop()
+        if expanded or not current.clades:
+            order.append(current)
+            continue
+        stack.append((current, True))
+        stack.extend((child, False) for child in reversed(current.clades))
+    return order
+
+
+def _terminals(clade):
+    """List the leaves under a clade in pre-order.
+
+    Args:
+        clade: A ``Bio.Phylo`` clade.
+
+    Returns:
+        The terminal clades.
+    """
+    return [current for current in _preorder(clade) if not current.clades]
+
+
 def read_tree_file(filepath):
     """Read and validate Newick trees from a file.
 
@@ -103,7 +160,7 @@ def read_tree_file(filepath):
 
     Raises:
         InputError: If the file does not exist, contains invalid Newick, or
-            holds a tree with no terminal nodes.
+            holds a tree with no terminal nodes or a leaf label used twice.
     """
     try:
         trees = list(Phylo.parse(filepath, "newick"))
@@ -114,9 +171,18 @@ def read_tree_file(filepath):
     if not trees:
         raise InputError(f"Invalid Newick format in {filepath}")
     for idx, tree in enumerate(trees, start=1):
-        if not tree.get_terminals():
+        labels = [terminal.name for terminal in _terminals(tree.root)]
+        if not labels:
             raise InputError(
                 f"Invalid Newick format in {filepath}: Tree {idx} has no terminal nodes"
+            )
+        repeated = sorted(
+            label for label, count in Counter(labels).items() if label and count > 1
+        )
+        if repeated:
+            raise InputError(
+                f"Invalid tree in {filepath}: Tree {idx} uses the leaf label(s) "
+                f"{', '.join(repeated)} more than once"
             )
     return trees
 
@@ -132,8 +198,8 @@ def calculate_average_support(tree):
         values are present.
     """
     support_values = []
-    for clade in tree.find_clades():
-        if not clade.is_terminal() and clade.confidence is not None:
+    for clade in _preorder(tree.root):
+        if clade.clades and clade.confidence is not None:
             support_values.append(clade.confidence)
 
     if not support_values:
@@ -151,8 +217,8 @@ def remove_support_values(tree):
     Returns:
         The same tree with internal-node confidence cleared.
     """
-    for clade in tree.find_clades():
-        if not clade.is_terminal():
+    for clade in _preorder(tree.root):
+        if clade.clades:
             clade.confidence = None
     return tree
 
@@ -196,8 +262,13 @@ def _newick_label(label):
     return "'" + label.replace("'", "''") + "'"
 
 
-def _format_newick_with_precision_biopython(tree, decimal_places=10):
-    """Serialize a BioPython tree to Newick with fixed branch-length precision.
+# Branch-length precision of the processed tree files. A run reads every value
+# back from these files, so it measures exactly what they record.
+CLEAN_TREE_DECIMALS = 15
+
+
+def format_newick_with_precision(tree, decimal_places=10):
+    """Serialize a tree to Newick with fixed branch-length precision.
 
     Args:
         tree: A ``Bio.Phylo`` tree object.
@@ -228,54 +299,7 @@ def _format_newick_with_precision_biopython(tree, decimal_places=10):
     return format_clade(tree.root) + ";"
 
 
-def _format_newick_with_precision_dendropy(tree, decimal_places=10):
-    """Serialize a DendroPy tree to Newick with fixed branch-length precision.
-
-    Args:
-        tree: A DendroPy tree object.
-        decimal_places: Number of decimal places for branch lengths.
-
-    Returns:
-        The Newick string.
-    """
-
-    def format_branch_length(branch_length):
-        formatted = f"{branch_length:.{decimal_places}f}"
-        if "." in formatted:
-            formatted = formatted.rstrip("0").rstrip(".")
-        return formatted
-
-    def format_node(node):
-        if node.is_leaf():
-            result = _newick_label(node.taxon.label) if node.taxon else ""
-        else:
-            children = [format_node(child) for child in node.child_node_iter()]
-            result = "(" + ",".join(children) + ")"
-
-        if node.edge_length is not None:
-            result += f":{format_branch_length(node.edge_length)}"
-
-        return result
-
-    return format_node(tree.seed_node) + ";"
-
-
-def format_newick_with_precision(tree, decimal_places=10):
-    """Serialize a BioPython or DendroPy tree to Newick with fixed precision.
-
-    Args:
-        tree: A ``Bio.Phylo`` or DendroPy tree object.
-        decimal_places: Number of decimal places for branch lengths.
-
-    Returns:
-        The Newick string.
-    """
-    if hasattr(tree, "seed_node"):
-        return _format_newick_with_precision_dendropy(tree, decimal_places)
-    return _format_newick_with_precision_biopython(tree, decimal_places)
-
-
-def write_clean_trees(trees, output_filepath, decimal_places=15):
+def write_clean_trees(trees, output_filepath, decimal_places=CLEAN_TREE_DECIMALS):
     """Write trees to a file as one Newick per line with fixed precision.
 
     Args:
@@ -331,7 +355,7 @@ def get_taxa_from_tree(tree):
     Returns:
         A sorted list of terminal taxon names.
     """
-    taxa = [terminal.name for terminal in tree.get_terminals()]
+    taxa = [terminal.name for terminal in _terminals(tree.root)]
     return sorted(taxa)
 
 
@@ -417,12 +441,12 @@ def _outgroup_attachment(tree, present):
         clade, or ``None`` when they hang off different nodes so that other
         taxa sit between the outgroups.
     """
-    tree_taxa = {terminal.name for terminal in tree.get_terminals()}
+    tree_taxa = {terminal.name for terminal in _terminals(tree.root)}
 
     # Outgroup leaves under each clade. A clade's branch lies on a path
     # between two outgroups exactly when it holds some but not all of them.
     outgroup_counts = {}
-    for clade in tree.find_clades(order="postorder"):
+    for clade in _postorder(tree.root):
         if clade.is_terminal():
             outgroup_counts[clade] = int(clade.name in present)
         else:
@@ -444,10 +468,10 @@ def _outgroup_attachment(tree, present):
             break
         mrca = below[0]
     groups = []
-    outside = tree_taxa - {terminal.name for terminal in mrca.get_terminals()}
+    outside = tree_taxa - {terminal.name for terminal in _terminals(mrca)}
     if outside:
         groups.append((mrca, outside))
-    for clade in mrca.find_clades(order="preorder"):
+    for clade in _preorder(mrca):
         if clade.is_terminal():
             continue
         if clade is not mrca and not 0 < outgroup_counts[clade] < total:
@@ -455,7 +479,7 @@ def _outgroup_attachment(tree, present):
         for child in clade.clades:
             if outgroup_counts[child] == 0:
                 groups.append(
-                    (clade, {terminal.name for terminal in child.get_terminals()})
+                    (clade, {terminal.name for terminal in _terminals(child)})
                 )
 
     hosts = {id(host) for host, _ in groups}
@@ -471,11 +495,7 @@ def has_branch_lengths(tree):
     Returns:
         ``True`` when no branch below the root lacks a length.
     """
-    return all(
-        clade.branch_length is not None
-        for clade in tree.find_clades()
-        if clade is not tree.root
-    )
+    return all(clade.branch_length is not None for clade in _preorder(tree.root)[1:])
 
 
 @dataclass(frozen=True)
@@ -557,7 +577,7 @@ def root_species_tree(tree, outgroup_taxa):
             point so the other taxa fall into groups with outgroups between
             them; the message names those groups.
     """
-    tree_taxa = {terminal.name for terminal in tree.get_terminals()}
+    tree_taxa = {terminal.name for terminal in _terminals(tree.root)}
     outgroup_list = list(dict.fromkeys(outgroup_taxa))
     missing = tuple(outgroup for outgroup in outgroup_list if outgroup not in tree_taxa)
     present = [outgroup for outgroup in outgroup_list if outgroup in tree_taxa]
@@ -592,13 +612,11 @@ def root_species_tree(tree, outgroup_taxa):
     # Rerooting turns a missing branch length into 0, so check before it.
     has_lengths = has_branch_lengths(tree)
     lengthless = all(
-        clade.branch_length is None
-        for clade in tree.find_clades()
-        if clade is not tree.root
+        clade.branch_length is None for clade in _preorder(tree.root)[1:]
     )
     tree.root_with_outgroup(host)
     if lengthless:
-        for clade in tree.find_clades():
+        for clade in _preorder(tree.root):
             clade.branch_length = None
     distances = (
         _outgroup_distances(tree, ingroup_taxa, present) if has_lengths else None
@@ -654,17 +672,25 @@ def _ingroup_distance_sums(tree, outgroups, ingroup_taxa):
     # its far side: those below it, or, when the outgroup is below it, those
     # above it. Counting them once per branch sums every path in one pass.
     ingroup_counts = {}
-    for clade in tree.find_clades(order="postorder"):
+    parent_of = {}
+    for clade in _postorder(tree.root):
         if clade.is_terminal():
             ingroup_counts[clade] = int(clade.name in ingroup_taxa)
         else:
             ingroup_counts[clade] = sum(ingroup_counts[child] for child in clade.clades)
+            for child in clade.clades:
+                parent_of[child] = clade
     total = len(ingroup_taxa)
     branches = [clade for clade in ingroup_counts if clade is not tree.root]
-    terminals = {terminal.name: terminal for terminal in tree.get_terminals()}
+    terminals = {terminal.name: terminal for terminal in _terminals(tree.root)}
     sums = {}
     for outgroup in outgroups:
-        above = set(tree.get_path(terminals[outgroup]))
+        # The branches between the outgroup and the root, the root excluded.
+        above = set()
+        clade = terminals[outgroup]
+        while clade is not tree.root:
+            above.add(clade)
+            clade = parent_of[clade]
         sums[outgroup] = sum(
             (clade.branch_length or 0.0)
             * (
@@ -691,7 +717,7 @@ def root_gene_tree(tree, outgroup_taxa):
     Returns:
         A :class:`GeneTreeRooting`.
     """
-    terminals = {terminal.name: terminal for terminal in tree.get_terminals()}
+    terminals = {terminal.name: terminal for terminal in _terminals(tree.root)}
     outgroup_list = list(dict.fromkeys(outgroup_taxa))
     present = tuple(outgroup for outgroup in outgroup_list if outgroup in terminals)
     missing = frozenset(outgroup_list) - terminals.keys()
@@ -716,7 +742,7 @@ def root_gene_tree(tree, outgroup_taxa):
     # farthest.
     tree.root_with_outgroup(terminals[farthest])
     ingroup_counts = {}
-    for clade in tree.find_clades(order="postorder"):
+    for clade in _postorder(tree.root):
         if clade.is_terminal():
             ingroup_counts[clade] = int(clade.name in ingroup_taxa)
         else:
@@ -734,7 +760,7 @@ def root_gene_tree(tree, outgroup_taxa):
         terminal.name
         for child in ingroup_mrca.clades
         if ingroup_counts[child]
-        for terminal in child.get_terminals()
+        for terminal in _terminals(child)
     }
     tangled = tuple(outgroup for outgroup in present if outgroup in among_ingroup)
     used = tuple(outgroup for outgroup in present if outgroup not in among_ingroup)
@@ -760,8 +786,8 @@ class GeneTreeCleaning:
     """What cleaning a gene-tree file kept, dropped and rooted.
 
     Attributes:
-        trees: The cleaned, rooted ``Bio.Phylo`` trees, in input order, with
-            their outgroups pruned.
+        trees: The cleaned, rooted trees as the Newick lines written to the
+            output file, in input order, with their outgroups pruned.
         dropped_trees: 1-based input index of each tree dropped for low
             support, mapped to its average support.
         missing_length_indices: 1-based input indices of the kept trees
@@ -777,6 +803,9 @@ class GeneTreeCleaning:
             was pruned without being used for rooting.
         tangled_trees: Number of kept trees with at least one tangled
             outgroup.
+        worker_count: Number of worker processes the per-tree work used.
+        worker_cpu_seconds: CPU time spent in worker processes, which the
+            caller's own ``process_time`` cannot see.
     """
 
     trees: list
@@ -787,6 +816,8 @@ class GeneTreeCleaning:
     rooted_on: dict
     tangled: dict
     tangled_trees: int
+    worker_count: int = 1
+    worker_cpu_seconds: float = 0.0
 
     @property
     def rooted_count(self):
@@ -794,8 +825,55 @@ class GeneTreeCleaning:
         return len(self.trees)
 
 
+class _CleanedGeneTree(NamedTuple):
+    """What cleaning one gene tree produced.
+
+    Attributes:
+        newick: The rooted, pruned tree's Newick line, or ``None`` when the
+            tree was dropped.
+        low_support: The tree's average support when it was dropped for it,
+            else ``None``.
+        lacks_length: Whether the tree lacks some branch length.
+        rooting: The tree's :class:`GeneTreeRooting` with its ``tree``
+            removed, or ``None`` when it was dropped for low support.
+    """
+
+    newick: str | None
+    low_support: float | None
+    lacks_length: bool
+    rooting: GeneTreeRooting | None
+
+
+def _clean_gene_tree(shared, index):
+    """Support-filter, root, standardize and serialize one gene tree.
+
+    Args:
+        shared: ``(trees, outgroups, min_avg_support)`` as
+            :func:`clean_and_save_gene_trees` passes them.
+        index: 0-based position of the tree in ``trees``.
+
+    Returns:
+        A :class:`_CleanedGeneTree`.
+    """
+    trees, outgroups, min_avg_support = shared
+    tree = trees[index]
+    avg_support = calculate_average_support(tree)
+    if avg_support is not None and avg_support < min_avg_support:
+        return _CleanedGeneTree(None, avg_support, False, None)
+    # Checked before rooting, which turns a missing length into 0.
+    lacks_length = not has_branch_lengths(tree)
+    rooting = root_gene_tree(tree, outgroups)
+    newick = None
+    if rooting.tree is not None:
+        newick = format_newick_with_precision(
+            standardize_tree(rooting.tree), CLEAN_TREE_DECIMALS
+        )
+    # The pruned tree goes back as its Newick line; the rest is small.
+    return _CleanedGeneTree(newick, None, lacks_length, replace(rooting, tree=None))
+
+
 def clean_and_save_gene_trees(
-    input_filepath, output_filepath, outgroup_taxa, min_avg_support=0.5
+    input_filepath, output_filepath, outgroup_taxa, min_avg_support=0.5, processes=1
 ):
     """Read, support-filter, root, standardize and save the gene trees,
     dropping any that carries no outgroup or nothing but outgroups.
@@ -807,12 +885,22 @@ def clean_and_save_gene_trees(
             :attr:`SpeciesTreeRooting.outgroup_order`).
         min_avg_support: Minimum average support threshold; trees below it are
             dropped.
+        processes: Worker processes for the per-tree work; ``0`` means every
+            CPU available to this process.
 
     Returns:
         A :class:`GeneTreeCleaning`.
     """
     trees = read_tree_file(input_filepath)
     outgroup_list = list(outgroup_taxa)
+
+    worker_count = resolve_worker_count(len(trees), processes)
+    cleaned, worker_cpu_seconds = map_ordered(
+        _clean_gene_tree,
+        range(len(trees)),
+        worker_count,
+        shared=(trees, outgroup_list, min_avg_support),
+    )
 
     dropped_trees = {}
     cleaned_trees = []
@@ -823,31 +911,28 @@ def clean_and_save_gene_trees(
     missing_length_indices = []
     unrootable_indices = []
 
-    for idx, tree in enumerate(trees, start=1):
-        avg_support = calculate_average_support(tree)
-        if avg_support is not None and avg_support < min_avg_support:
-            dropped_trees[idx] = avg_support
+    for idx, outcome in enumerate(cleaned, start=1):
+        if outcome.low_support is not None:
+            dropped_trees[idx] = outcome.low_support
             continue
-        # Checked before rooting, which turns a missing length into 0.
-        lacks_length = not has_branch_lengths(tree)
-        rooting = root_gene_tree(tree, outgroup_list)
-        if rooting.tree is None:
+        if outcome.newick is None:
             unrootable_indices.append(idx)
             continue
-        if lacks_length:
+        if outcome.lacks_length:
             missing_length_indices.append(idx)
 
+        rooting = outcome.rooting
         farthest[rooting.farthest] += 1
         for outgroup in rooting.used:
             rooted_on[outgroup] += 1
         for outgroup in rooting.tangled:
             tangled[outgroup] += 1
         tangled_trees += bool(rooting.tangled)
+        cleaned_trees.append(outcome.newick)
 
-        standardized = standardize_tree(rooting.tree)
-        cleaned_trees.append(standardized)
-
-    write_clean_trees(cleaned_trees, output_filepath)
+    with open(output_filepath, "w") as handle:
+        for newick in cleaned_trees:
+            handle.write(newick + "\n")
 
     return GeneTreeCleaning(
         trees=cleaned_trees,
@@ -858,6 +943,8 @@ def clean_and_save_gene_trees(
         rooted_on=rooted_on,
         tangled=tangled,
         tangled_trees=tangled_trees,
+        worker_count=worker_count,
+        worker_cpu_seconds=worker_cpu_seconds,
     )
 
 
@@ -1084,87 +1171,41 @@ def generate_triplets(taxa_list, outgroup):
     return list(combinations(ingroup_taxa, 3))
 
 
-def extract_triplet_subtree(tree, triplet_taxa):
-    """Extract the subtree spanning only the triplet taxa. This is the
-    reference path the parity tests hold the cached geometry to; no run
-    calls it.
+def _format_triplet_subtree_newick(shape, label_of):
+    """Write the topology of a triplet's induced subtree as Newick.
 
-    Args:
-        tree: A DendroPy tree object.
-        triplet_taxa: Iterable of the three taxon names.
-
-    Returns:
-        The extracted subtree, or ``None`` if any triplet taxon is absent.
-    """
-    tree_taxa = {leaf.taxon.label for leaf in tree.leaf_nodes() if leaf.taxon}
-    if not set(triplet_taxa).issubset(tree_taxa):
-        return None
-
-    subtree = tree.extract_tree_with_taxa_labels(triplet_taxa)
-    return subtree
-
-
-def _format_triplet_subtree_newick(
-    shape, label_of, decimal_places=10, with_lengths=True
-):
-    """Write the Newick for a triplet's induced subtree from its shape.
-
-    Reproduces what serializing a copied-out subtree produces, including the
-    branch-length formatting and the order the children are listed in, so the
-    ``species_tree`` column is unchanged by computing the shape directly.
+    Lists the children in the order a copied-out subtree keeps them in.
 
     Args:
         shape: The triplet's :class:`~.triplet_geometry.TripletSubtreeShape`.
         label_of: Mapping of taxon position to label.
-        decimal_places: Number of decimal places for branch lengths.
-        with_lengths: Write branch lengths; ``False`` writes the topology
-            alone, for a tree that carries none.
 
     Returns:
         The Newick string, terminated with ``;``.
     """
-    if not with_lengths:
-        first_position, second_position = shape.sister_positions
-        clade = (
-            f"({_newick_label(label_of[first_position])},"
-            f"{_newick_label(label_of[second_position])})"
-        )
-        odd = _newick_label(label_of[shape.odd_position])
-        inner = f"{clade},{odd}" if shape.sister_clade_first else f"{odd},{clade}"
-        return f"({inner});"
-
-    def branch(length):
-        formatted = f"{length:.{decimal_places}f}"
-        if "." in formatted:
-            formatted = formatted.rstrip("0").rstrip(".")
-        return formatted
-
     first_position, second_position = shape.sister_positions
-    first_edge, second_edge = shape.sister_edges
     clade = (
-        f"({_newick_label(label_of[first_position])}:{branch(first_edge)},"
-        f"{_newick_label(label_of[second_position])}:{branch(second_edge)})"
-        f":{branch(shape.internal_edge)}"
+        f"({_newick_label(label_of[first_position])},"
+        f"{_newick_label(label_of[second_position])})"
     )
-    odd = f"{_newick_label(label_of[shape.odd_position])}:{branch(shape.odd_edge)}"
+    odd = _newick_label(label_of[shape.odd_position])
     inner = f"{clade},{odd}" if shape.sister_clade_first else f"{odd},{clade}"
-    root = "" if shape.root_edge is None else f":{branch(shape.root_edge)}"
-    return f"({inner}){root};"
+    return f"({inner});"
 
 
 def _build_species_triplet_metadata(species_tree, triplets):
     """Normalize triplets to (A, B, C) with A and B sisters and record subtrees.
 
     Args:
-        species_tree: Rooted species tree as a DendroPy tree.
+        species_tree: Rooted species tree as a ``Bio.Phylo`` tree.
         triplets: Iterable of triplet tuples.
 
     Returns:
         A tuple ``(normalized_triplets, species_triplet_trees,
         skipped_triplets)`` where ``normalized_triplets`` are ordered ``(A, B,
         C)`` with A and B as sisters, ``species_triplet_trees`` maps each
-        triplet to its species subtree Newick, and ``skipped_triplets`` lists
-        triplets that could not be mapped.
+        triplet to its species subtree as a topology-only Newick, and
+        ``skipped_triplets`` lists triplets that could not be mapped.
     """
     normalized_triplets = []
     species_triplet_trees = {}
@@ -1174,11 +1215,6 @@ def _build_species_triplet_metadata(species_tree, triplets):
     # the gene trees are handled.
     taxon_index = build_taxon_index(triplets)
     geometry = build_triplet_geometry(species_tree, taxon_index)
-    with_lengths = any(
-        node.edge_length is not None
-        for node in species_tree.preorder_node_iter()
-        if node is not species_tree.seed_node
-    )
 
     seen = set()
     for triplet in triplets:
@@ -1198,50 +1234,7 @@ def _build_species_triplet_metadata(species_tree, triplets):
         seen.add(abc_triplet)
         normalized_triplets.append(abc_triplet)
         species_triplet_trees[abc_triplet] = _format_triplet_subtree_newick(
-            shape, label_of, with_lengths=with_lengths
+            shape, label_of
         )
 
     return normalized_triplets, species_triplet_trees, skipped_triplets
-
-
-def _read_gene_trees_file(gene_trees_filepath):
-    """Read all cleaned gene trees into memory as Newick strings.
-
-    Args:
-        gene_trees_filepath: Path to the cleaned gene trees file (one Newick per
-            line).
-
-    Returns:
-        A list of Newick strings with blank lines dropped.
-    """
-    trees = []
-    with open(str(gene_trees_filepath), "r") as f:
-        for line in f:
-            newick_str = line.strip()
-            if newick_str:
-                trees.append(newick_str)
-    return trees
-
-
-def _get_mp_context(prefer_fork=None):
-    """Select a multiprocessing context, preferring fork then forkserver then spawn.
-
-    Args:
-        prefer_fork: Whether to prefer ``fork`` when available. Defaults to
-            ``True`` on POSIX platforms when ``None``.
-
-    Returns:
-        A multiprocessing context (or the ``multiprocessing`` module itself).
-    """
-    if prefer_fork is None:
-        prefer_fork = os.name == "posix"
-
-    if hasattr(mp, "get_context"):
-        methods = mp.get_all_start_methods()
-        if prefer_fork and "fork" in methods:
-            return mp.get_context("fork")
-        if "forkserver" in methods:
-            return mp.get_context("forkserver")
-        if "spawn" in methods:
-            return mp.get_context("spawn")
-    return mp

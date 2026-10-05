@@ -2,21 +2,21 @@
 every problem at once.
 """
 
+import textwrap
 from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
-import dendropy
-
 from ..config import InputError
 from ..triplet_utils import normalize_abc_from_sister_pair
 from .config import DEFAULT_PREFLIGHT_TRIPLET_CAP
+from .parallel import map_ordered, resolve_worker_count
 from .trees import (
+    get_taxa_from_tree,
     has_branch_lengths,
     root_gene_tree,
     root_species_tree,
-    format_newick_with_precision,
     read_tree_file,
     read_species_filter_file,
     read_triplet_filter_file,
@@ -82,6 +82,9 @@ class PreflightResult:
             ``triplet.resolved``, ``triplet.unresolved_rooted_sister_pair``,
             and ``triplet.taxa_absent_from_gene_tree``.
         triplets_checked: Number of normalized species triplets analyzed.
+        missing_length_indices: 1-based input indices of the rooted gene
+            trees lacking some branch length, the trees the
+            ``gene_tree.missing_branch_lengths`` counter counts.
         passed: ``True`` when no issues were detected.
     """
 
@@ -90,6 +93,7 @@ class PreflightResult:
     issues: list[Issue]
     counters: dict[str, int]
     triplets_checked: int
+    missing_length_indices: list[int]
     passed: bool
 
 
@@ -101,21 +105,6 @@ def _load_single_species_tree(path):
             f"Species tree file must contain exactly one tree; found {len(trees)}"
         )
     return trees[0]
-
-
-def _to_dendropy_tree(biopython_tree) -> dendropy.Tree:
-    """Convert a BioPython tree to DendroPy via a full-precision Newick string."""
-    newick = format_newick_with_precision(biopython_tree)
-    return dendropy.Tree.get(data=newick, schema="newick", preserve_underscores=True)
-
-
-def _get_leaf_labels_dendropy(tree: dendropy.Tree) -> set[str]:
-    """Collect the non-empty leaf labels of a DendroPy tree."""
-    return {
-        leaf.taxon.label
-        for leaf in tree.leaf_node_iter()
-        if leaf.taxon is not None and leaf.taxon.label
-    }
 
 
 def _load_target_triplets(
@@ -272,12 +261,12 @@ def _load_filtered_species(species_filter, species_labels_sorted, outgroups, iss
     return sorted(kept)
 
 
-def _normalize_species_triplets(species_tree_d, triplets, issues):
+def _normalize_species_triplets(species_tree, triplets, issues):
     """Normalize each triplet to A/B/C order from the species tree's cached
     geometry, recording the ones it cannot resolve.
 
     Args:
-        species_tree_d: Rooted, standardized species tree as a DendroPy tree.
+        species_tree: Rooted, standardized species tree as a ``Bio.Phylo`` tree.
         triplets: Candidate taxon triples.
         issues: Mutable list that detected issues are appended to.
 
@@ -288,7 +277,7 @@ def _normalize_species_triplets(species_tree_d, triplets, issues):
     seen = set()
 
     taxon_index = build_taxon_index(triplets)
-    geometry = build_triplet_geometry(species_tree_d, taxon_index)
+    geometry = build_triplet_geometry(species_tree, taxon_index)
 
     for triplet in triplets:
         positions = tuple(taxon_index[label] for label in triplet)
@@ -333,12 +322,100 @@ def _load_gene_tree_lines(gene_tree_path, max_gene_trees):
     return lines
 
 
+def _check_gene_tree(shared, index):
+    """Root one gene tree and replay triplet extraction against it.
+
+    Args:
+        shared: ``(gene_trees, gene_tree_lines, outgroups, normalized_triplets,
+            taxon_index, triplet_positions)`` as
+            :func:`_check_gene_tree_triplets` passes them.
+        index: 0-based position of the tree in ``gene_trees``.
+
+    Returns:
+        A tuple ``(counters, issues, lacks_length)`` for this tree;
+        ``lacks_length`` is ``False`` for a tree that could not be rooted.
+    """
+    (
+        gene_trees,
+        gene_tree_lines,
+        outgroups,
+        normalized_triplets,
+        taxon_index,
+        triplet_positions,
+    ) = shared
+    tree = gene_trees[index]
+    idx = index + 1
+    counters: dict[str, int] = defaultdict(int)
+    issues: list[Issue] = []
+    line_preview = (
+        gene_tree_lines[index] if index < len(gene_tree_lines) else "<unavailable>"
+    )
+    # Not a defect: the run keeps the tree and reads a missing length as
+    # 0. Checked before rooting, which does the same.
+    lacks_length = not has_branch_lengths(tree)
+    rooting = root_gene_tree(tree, outgroups)
+    if rooting.tree is None:
+        counters["gene_tree.rooting_failed"] += 1
+        issues.append(
+            Issue(
+                category="gene_tree.rooting_failed",
+                message=(
+                    f"Gene tree #{idx}: "
+                    + (
+                        "every taxon is an outgroup"
+                        if rooting.present
+                        else "none of the outgroups were present"
+                    )
+                    + f"; missing outgroups: {', '.join(sorted(rooting.missing)) or 'none'}; "
+                    f"gene_tree_line={line_preview}"
+                ),
+            )
+        )
+        return dict(counters), issues, False
+
+    counters["gene_tree.rooted"] += 1
+    if lacks_length:
+        counters["gene_tree.missing_branch_lengths"] += 1
+    counters[f"gene_tree.farthest.{rooting.farthest}"] += 1
+    for outgroup in rooting.used:
+        counters[f"gene_tree.rooted_on.{outgroup}"] += 1
+    # Not a defect: the run keeps such a tree, rooted from its farthest
+    # outgroup, and prunes the tangled ones unused. Counted so the report
+    # can say how often each outgroup sits among the ingroup.
+    for outgroup in rooting.tangled:
+        counters[f"gene_tree.tangled.{outgroup}"] += 1
+    if rooting.tangled:
+        counters["gene_tree.tangled_trees"] += 1
+
+    rooted = standardize_tree(rooting.tree)
+    geometry = build_triplet_geometry(rooted, taxon_index)
+    gene_labels = set(get_taxa_from_tree(rooted))
+    for triplet in normalized_triplets:
+        if not set(triplet).issubset(gene_labels):
+            # Not a defect: a gene tree need not carry every taxon, and the
+            # engine skips these pairs too. Counted so the report can
+            # account for every pair it looked at.
+            counters["triplet.taxa_absent_from_gene_tree"] += 1
+            continue
+        _check_one_triplet(
+            geometry,
+            triplet_positions[triplet],
+            triplet,
+            idx,
+            line_preview,
+            counters,
+            issues,
+        )
+    return dict(counters), issues, lacks_length
+
+
 def _check_gene_tree_triplets(
     gene_tree_path,
     outgroups,
     normalized_triplets,
     max_gene_trees,
     issues,
+    processes=1,
 ):
     """Root each gene tree and replay triplet extraction against it.
 
@@ -350,9 +427,13 @@ def _check_gene_tree_triplets(
         normalized_triplets: A/B/C-normalized triplets from the species tree.
         max_gene_trees: Cap on gene trees to check; ``0`` means all.
         issues: Mutable list that detected issues are appended to.
+        processes: Worker processes for the per-tree checks; ``0`` means every
+            CPU available to this process.
 
     Returns:
-        A mapping of counter name to count, including ``gene_tree.total_checked``.
+        A tuple ``(counters, missing_length_indices)``: the mapping of counter
+        name to count, including ``gene_tree.total_checked``, and the 1-based
+        indices of the rooted trees lacking some branch length.
     """
     gene_trees = read_tree_file(gene_tree_path)
     if max_gene_trees > 0:
@@ -379,86 +460,31 @@ def _check_gene_tree_triplets(
             )
         )
 
-    for idx, tree in enumerate(gene_trees, start=1):
-        line_preview = (
-            gene_tree_lines[idx - 1]
-            if idx - 1 < len(gene_tree_lines)
-            else "<unavailable>"
-        )
-        # Not a defect: the run keeps the tree and reads a missing length as
-        # 0. Checked before rooting, which does the same.
-        lacks_length = not has_branch_lengths(tree)
-        rooting = root_gene_tree(tree, outgroups)
-        if rooting.tree is None:
-            counters["gene_tree.rooting_failed"] += 1
-            issues.append(
-                Issue(
-                    category="gene_tree.rooting_failed",
-                    message=(
-                        f"Gene tree #{idx}: "
-                        + (
-                            "every taxon is an outgroup"
-                            if rooting.present
-                            else "none of the outgroups were present"
-                        )
-                        + f"; missing outgroups: {', '.join(sorted(rooting.missing)) or 'none'}; "
-                        f"gene_tree_line={line_preview}"
-                    ),
-                )
-            )
-            continue
-
-        counters["gene_tree.rooted"] += 1
+    per_tree, _ = map_ordered(
+        _check_gene_tree,
+        range(len(gene_trees)),
+        resolve_worker_count(len(gene_trees), processes),
+        shared=(
+            gene_trees,
+            gene_tree_lines,
+            outgroups,
+            normalized_triplets,
+            taxon_index,
+            triplet_positions,
+        ),
+    )
+    missing_length_indices = []
+    for idx, (tree_counters, tree_issues, lacks_length) in enumerate(
+        per_tree, start=1
+    ):
+        for name, count in tree_counters.items():
+            counters[name] += count
+        issues.extend(tree_issues)
         if lacks_length:
-            counters["gene_tree.missing_branch_lengths"] += 1
-        counters[f"gene_tree.farthest.{rooting.farthest}"] += 1
-        for outgroup in rooting.used:
-            counters[f"gene_tree.rooted_on.{outgroup}"] += 1
-        # Not a defect: the run keeps such a tree, rooted from its farthest
-        # outgroup, and prunes the tangled ones unused. Counted so the report
-        # can say how often each outgroup sits among the ingroup.
-        for outgroup in rooting.tangled:
-            counters[f"gene_tree.tangled.{outgroup}"] += 1
-        if rooting.tangled:
-            counters["gene_tree.tangled_trees"] += 1
-
-        try:
-            rooted_std = standardize_tree(rooting.tree)
-            tree_d = _to_dendropy_tree(rooted_std)
-        except Exception as exc:  # defensive parse guard
-            counters["gene_tree.parse_after_rooting_failed"] += 1
-            issues.append(
-                Issue(
-                    category="gene_tree.parse_after_rooting_failed",
-                    message=(
-                        f"Gene tree #{idx}: failed to parse after rooting: {exc}; "
-                        f"gene_tree_line={line_preview}"
-                    ),
-                )
-            )
-            continue
-
-        geometry = build_triplet_geometry(tree_d, taxon_index)
-        gene_labels = _get_leaf_labels_dendropy(tree_d)
-        for triplet in normalized_triplets:
-            if not set(triplet).issubset(gene_labels):
-                # Not a defect: a gene tree need not carry every taxon, and the
-                # engine skips these pairs too. Counted so the report can
-                # account for every pair it looked at.
-                counters["triplet.taxa_absent_from_gene_tree"] += 1
-                continue
-            _check_one_triplet(
-                geometry,
-                triplet_positions[triplet],
-                triplet,
-                idx,
-                line_preview,
-                counters,
-                issues,
-            )
+            missing_length_indices.append(idx)
 
     counters["gene_tree.total_checked"] = len(gene_trees)
-    return counters
+    return counters, missing_length_indices
 
 
 def _check_one_triplet(
@@ -510,6 +536,26 @@ def _check_one_triplet(
     counters["triplet.resolved"] += 1
 
 
+def _format_index_ranges(indices):
+    """Write ascending indices compactly, runs of consecutive ones as ranges.
+
+    Args:
+        indices: Ascending integers.
+
+    Returns:
+        A string such as ``3, 17-19, 250``.
+    """
+    spans = []
+    for index in indices:
+        if spans and index == spans[-1][1] + 1:
+            spans[-1][1] = index
+        else:
+            spans.append([index, index])
+    return ", ".join(
+        str(first) if first == last else f"{first}-{last}" for first, last in spans
+    )
+
+
 def _build_report(
     species_tree_path,
     gene_trees_path,
@@ -518,6 +564,7 @@ def _build_report(
     counters,
     issues,
     report_limit,
+    missing_length_indices=(),
 ):
     """Render the human-readable preflight report.
 
@@ -531,6 +578,8 @@ def _build_report(
         counters: Per-category tallies from the gene-tree pass.
         issues: Every detected issue.
         report_limit: Maximum example lines printed per category.
+        missing_length_indices: 1-based indices of the gene trees lacking
+            some branch length, all of them listed.
 
     Returns:
         The report as a single newline-joined string.
@@ -599,6 +648,22 @@ def _build_report(
         f"{counters.get('triplet.taxa_absent_from_gene_tree', 0)} with a taxon absent",
         "",
     ]
+    if missing_length_indices:
+        # Every index, not a capped sample: the point is to find the trees.
+        lines.append(
+            "Gene trees lacking some branch length "
+            f"({len(missing_length_indices)}; 1-based, in input file order):"
+        )
+        lines.append(
+            textwrap.fill(
+                _format_index_ranges(missing_length_indices),
+                width=100,
+                initial_indent="  ",
+                subsequent_indent="  ",
+                break_on_hyphens=False,
+            )
+        )
+        lines.append("")
 
     category_counts: dict[str, int] = defaultdict(int)
     category_examples: dict[str, list[str]] = defaultdict(list)
@@ -683,6 +748,7 @@ def run_preflight_data_check(
     max_triplets=DEFAULT_PREFLIGHT_TRIPLET_CAP,
     max_gene_trees=DEFAULT_MAX_GENE_TREES,
     report_limit=DEFAULT_REPORT_LIMIT,
+    processes=1,
 ):
     """Run every structural check and write the report.
 
@@ -699,6 +765,8 @@ def run_preflight_data_check(
         max_triplets: Cap on generated triplets; ``0`` means no cap.
         max_gene_trees: Cap on gene trees checked; ``0`` means all.
         report_limit: Maximum example lines per issue category.
+        processes: Worker processes for the per-gene-tree checks; ``0`` means
+            every CPU available to this process.
 
     Returns:
         A :class:`PreflightResult`.
@@ -720,12 +788,8 @@ def run_preflight_data_check(
     # every triplet's rooted shape and the rank gene trees fall back on
     # are the ones the run would see.
     species_tree_bio = standardize_tree(_load_single_species_tree(species_tree_path))
-    species_labels_sorted = sorted(
-        terminal.name for terminal in species_tree_bio.get_terminals()
-    )
+    species_labels_sorted = get_taxa_from_tree(species_tree_bio)
     species_rooting = root_species_tree(species_tree_bio, outgroups)
-
-    species_tree_d = _to_dendropy_tree(species_rooting.tree)
 
     target_triplets = _load_target_triplets(
         species_labels_sorted=species_labels_sorted,
@@ -736,16 +800,17 @@ def run_preflight_data_check(
         issues=issues,
     )
     normalized_triplets = _normalize_species_triplets(
-        species_tree_d=species_tree_d,
+        species_tree=species_rooting.tree,
         triplets=target_triplets,
         issues=issues,
     )
-    counters = _check_gene_tree_triplets(
+    counters, missing_length_indices = _check_gene_tree_triplets(
         gene_tree_path=gene_trees_path,
         outgroups=species_rooting.outgroup_order,
         normalized_triplets=normalized_triplets,
         max_gene_trees=max_gene_trees,
         issues=issues,
+        processes=processes,
     )
 
     report_text = _build_report(
@@ -756,6 +821,7 @@ def run_preflight_data_check(
         counters=counters,
         issues=issues,
         report_limit=report_limit,
+        missing_length_indices=missing_length_indices,
     )
 
     report_path = None
@@ -770,5 +836,6 @@ def run_preflight_data_check(
         issues=issues,
         counters=dict(counters),
         triplets_checked=len(normalized_triplets),
+        missing_length_indices=missing_length_indices,
         passed=not issues,
     )

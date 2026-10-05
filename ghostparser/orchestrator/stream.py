@@ -3,19 +3,17 @@ reads each triplet's observations from it and runs inference in bounded
 batches, serially or across workers.
 """
 
-import os
-import time
-from multiprocessing import cpu_count
+from io import StringIO
 from typing import NamedTuple
 
-import dendropy
+from Bio import Phylo
 
 from .config import DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY
 from .inference import (
     _apply_triplet_result_p_value_correction,
     analyze_triplet_from_observations,
 )
-from .trees import _get_mp_context
+from .parallel import map_ordered, resolve_worker_count
 from .triplet_geometry import (
     build_taxon_index,
     build_triplet_geometry,
@@ -28,14 +26,6 @@ from .triplet_geometry import (
 # worker. Extracting a batch at a time keeps that buffer in the tens of MB
 # while the results, which are small, still accumulate for the chunk.
 _EXTRACTION_BATCH_SIZE = 128
-
-# Worker-global state shared read-only via fork/forkserver initializer.
-_RUN_GEOMETRY = None
-_SPECIES_TRIPLET_TREES: dict[tuple[str, str, str], str] = {}
-_STRATEGY: str = DEFAULT_TREE_HEIGHT_CALCULATION_STRATEGY
-_COLLECT_SUMMARY: bool = False
-_ANALYSIS_KWARGS: dict = {}
-
 
 def _split_inference_kwargs(inference_kwargs):
     """Split the extraction-time keys from the per-triplet analysis kwargs.
@@ -72,37 +62,6 @@ def _chunk_list(items, chunk_size):
         yield items[i : i + chunk_size]
 
 
-def available_cpu_count():
-    """Count the CPUs this process may run on, from its affinity mask rather
-    than the machine's core count.
-
-    Returns:
-        The usable CPU count, at least 1.
-    """
-    counter = getattr(os, "process_cpu_count", None)
-    if counter is not None:
-        return max(1, counter() or 1)
-    try:
-        return max(1, len(os.sched_getaffinity(0)))
-    except (AttributeError, OSError):
-        return max(1, cpu_count())
-
-
-def resolve_worker_count(total_items, processes):
-    """Resolve the worker count from the requested processes and item count.
-
-    Args:
-        total_items: Number of work items available.
-        processes: Requested worker count; ``0`` means every CPU available to
-            this process.
-
-    Returns:
-        The clamped worker count (at least 1, at most ``total_items``).
-    """
-    worker_count = processes or available_cpu_count()
-    return max(1, min(worker_count, total_items))
-
-
 class RunGeometry(NamedTuple):
     """Every gene tree's cached geometry, built once for the whole run.
 
@@ -117,29 +76,47 @@ class RunGeometry(NamedTuple):
     geometries: list
 
 
-def build_run_geometry(gene_trees, triplets):
+def _build_tree_geometry(taxon_index, newick_str):
+    """Parse one processed gene tree and cache its geometry.
+
+    Args:
+        taxon_index: The run's shared taxon-to-position map.
+        newick_str: The gene tree's processed Newick line.
+
+    Returns:
+        The tree's :class:`~.triplet_geometry.TripletGeometry`.
+    """
+    return build_triplet_geometry(
+        Phylo.read(StringIO(newick_str), "newick"), taxon_index
+    )
+
+
+def build_run_geometry(gene_trees, triplets, processes=1):
     """Parse and cache every gene tree once, for reuse across all triplets.
+
+    Each tree is read back from its processed Newick line, so the run measures
+    exactly the branch lengths the processed-trees file records.
 
     Args:
         gene_trees: Gene-tree Newick strings.
         triplets: Every triplet the run will analyze, used to size the shared
             taxon index.
+        processes: Worker processes; ``0`` means every CPU available to this
+            process.
 
     Returns:
-        A :class:`RunGeometry` holding the shared taxon index and one cached
-        geometry per gene tree.
+        A tuple ``(run_geometry, worker_cpu_seconds)``: the
+        :class:`RunGeometry` holding the shared taxon index and one cached
+        geometry per gene tree, and the CPU time spent in worker processes.
     """
     taxon_index = build_taxon_index(triplets)
-    geometries = [
-        build_triplet_geometry(
-            dendropy.Tree.get(
-                data=newick_str, schema="newick", preserve_underscores=True
-            ),
-            taxon_index,
-        )
-        for newick_str in gene_trees
-    ]
-    return RunGeometry(taxon_index, geometries)
+    geometries, worker_cpu_seconds = map_ordered(
+        _build_tree_geometry,
+        gene_trees,
+        resolve_worker_count(len(gene_trees), processes),
+        shared=taxon_index,
+    )
+    return RunGeometry(taxon_index, geometries), worker_cpu_seconds
 
 
 def _extract_chunk_observations(
@@ -225,49 +202,28 @@ def _analyze_chunk(
     return results
 
 
-def _init_stream_worker(run_geometry, species_triplet_trees, inference_kwargs):
-    """Seed worker globals with shared read-only state.
+def _analyze_chunk_shared(shared, triplet_chunk):
+    """Run the fused loop for one triplet chunk against the shared run state.
 
     Args:
-        run_geometry: The run-wide geometry cache, or ``None`` to keep the value
-            the parent already set via fork.
-        species_triplet_trees: Mapping of triplet to its species subtree Newick.
-        inference_kwargs: Combined inference kwargs (split into strategy and
-            analysis kwargs).
-    """
-    global _RUN_GEOMETRY, _SPECIES_TRIPLET_TREES, _STRATEGY
-    global _COLLECT_SUMMARY, _ANALYSIS_KWARGS
-    if run_geometry is not None:
-        _RUN_GEOMETRY = run_geometry
-    _SPECIES_TRIPLET_TREES = species_triplet_trees or {}
-    (
-        _STRATEGY,
-        _COLLECT_SUMMARY,
-        _ANALYSIS_KWARGS,
-    ) = _split_inference_kwargs(inference_kwargs)
-
-
-def _analyze_chunk_worker(triplet_chunk):
-    """Analyze one triplet chunk against the worker-global gene trees.
-
-    Args:
+        shared: ``(run_geometry, species_triplet_trees, inference_kwargs)``.
         triplet_chunk: Iterable of triplets in this chunk.
 
     Returns:
-        A tuple ``(results, worker_cpu_seconds)`` where ``results`` is a list of
-        ``TripletPipelineResult`` objects and ``worker_cpu_seconds`` is the CPU
-        time this worker spent on the chunk.
+        A list of ``TripletPipelineResult`` objects for the chunk.
     """
-    start_cpu = time.process_time()
-    results = _analyze_chunk(
-        triplet_chunk,
-        _RUN_GEOMETRY,
-        _SPECIES_TRIPLET_TREES,
-        _STRATEGY,
-        _COLLECT_SUMMARY,
-        _ANALYSIS_KWARGS,
+    run_geometry, species_triplet_trees, inference_kwargs = shared
+    strategy, collect_summary, analysis_kwargs = _split_inference_kwargs(
+        inference_kwargs
     )
-    return results, time.process_time() - start_cpu
+    return _analyze_chunk(
+        triplet_chunk,
+        run_geometry,
+        species_triplet_trees,
+        strategy,
+        collect_summary,
+        analysis_kwargs,
+    )
 
 
 def _run_taxon_mode(
@@ -288,28 +244,14 @@ def _run_taxon_mode(
         the total CPU time spent across all workers.
     """
     chunksize = max(1, len(triplets) // (worker_count * 4))
-    triplet_chunks = list(_chunk_list(triplets, chunksize))
-
-    ctx = _get_mp_context()
-    init_run_geometry = run_geometry
-    if hasattr(ctx, "get_start_method") and ctx.get_start_method() == "fork":
-        # Children inherit this, so hand the initializer None and let
-        # copy-on-write share one copy instead of pickling per worker.
-        global _RUN_GEOMETRY
-        _RUN_GEOMETRY = run_geometry
-        init_run_geometry = None
-
-    with ctx.Pool(
-        processes=worker_count,
-        initializer=_init_stream_worker,
-        initargs=(init_run_geometry, species_triplet_trees, inference_kwargs),
-    ) as pool:
-        chunk_payloads = list(
-            pool.imap(_analyze_chunk_worker, iter(triplet_chunks), chunksize=1)
-        )
-
-    results = [result for payload in chunk_payloads for result in payload[0]]
-    worker_cpu_seconds = sum(payload[1] for payload in chunk_payloads)
+    chunk_results, worker_cpu_seconds = map_ordered(
+        _analyze_chunk_shared,
+        _chunk_list(triplets, chunksize),
+        worker_count,
+        shared=(run_geometry, species_triplet_trees, inference_kwargs),
+        chunksize=1,
+    )
+    results = [result for chunk in chunk_results for result in chunk]
     return results, worker_cpu_seconds
 
 
@@ -363,9 +305,10 @@ def stream_triplet_results(
     strategy, collect_summary, analysis_kwargs = _split_inference_kwargs(
         inference_kwargs
     )
-    run_geometry = build_run_geometry(gene_trees, triplets)
+    run_geometry, worker_cpu_seconds = build_run_geometry(
+        gene_trees, triplets, processes=processes
+    )
 
-    worker_cpu_seconds = 0.0
     if worker_count <= 1:
         # Serial: work runs in the parent, so its CPU is captured by the caller.
         results = _analyze_chunk(
@@ -377,13 +320,14 @@ def stream_triplet_results(
             analysis_kwargs,
         )
     else:
-        results, worker_cpu_seconds = _run_taxon_mode(
+        results, inference_worker_cpu = _run_taxon_mode(
             triplets,
             species_triplet_trees,
             run_geometry,
             worker_count,
             inference_kwargs,
         )
+        worker_cpu_seconds += inference_worker_cpu
 
     corrected = _apply_triplet_result_p_value_correction(
         results,

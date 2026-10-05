@@ -10,6 +10,7 @@ import re
 import dendropy
 import pytest
 
+from ghostparser.config import InputError
 from ghostparser.orchestrator import trees as ptrees
 
 _OUTGROUP = ["OUT"]
@@ -47,7 +48,8 @@ def test_clean_and_save_trees_quotes_labels_the_format_needs(tmp_path):
     """Labels a bare Newick token cannot hold are written quoted and read back intact.
 
     The processed trees are read back by the run itself, so a label with a
-    space, a dot or a quote must survive the write in both parsers the run uses.
+    space, a dot or a quote must survive the write, and stay readable by other
+    Newick readers such as DendroPy.
     """
     in_path = tmp_path / "quoted.tree"
     in_path.write_text("(('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);\n")
@@ -173,36 +175,12 @@ def test_root_species_tree_rejects_outgroups_that_branch_off_twice(
     assert excinfo.value.separated_groups == expected_groups
 
 
-@pytest.mark.parametrize(
-    "with_lengths, expected_subtrees",
-    [
-        (
-            True,
-            {
-                ("A", "B", "C"): "((A:0.1,B:0.1):0.1,C:0.2):0.8;",
-                ("A", "B", "D"): "((A:0.1,B:0.1):0.4,D:0.1):0.5;",
-                ("A", "C", "D"): "((A:0.2,C:0.2):0.3,D:0.1):0.5;",
-                ("B", "C", "D"): "((B:0.2,C:0.2):0.3,D:0.1):0.5;",
-            },
-        ),
-        # The same tree with its branch lengths removed keeps them removed.
-        (
-            False,
-            {
-                ("A", "B", "C"): "((A,B),C);",
-                ("A", "B", "D"): "((A,B),D);",
-                ("A", "C", "D"): "((A,C),D);",
-                ("B", "C", "D"): "((B,C),D);",
-            },
-        ),
-    ],
-    ids=["lengths", "no_lengths"],
-)
+@pytest.mark.parametrize("with_lengths", [True, False], ids=["lengths", "no_lengths"])
 def test_generate_triplets_and_species_subtrees(
-    with_lengths, expected_subtrees, orchestrator_species_tree, tmp_path
+    with_lengths, orchestrator_species_tree, tmp_path
 ):
-    """Triplet enumeration and per-triplet species subtrees match hand
-    derivation, with or without branch lengths in the species tree."""
+    """Triplet enumeration and per-triplet species subtree topologies match
+    hand derivation, with or without branch lengths in the species tree."""
     if not with_lengths:
         orchestrator_species_tree.write_text(
             re.sub(r":[0-9.]+", "", orchestrator_species_tree.read_text())
@@ -215,11 +193,6 @@ def test_generate_triplets_and_species_subtrees(
         ptrees.read_tree_file(str(out_path))[0], _OUTGROUP
     )
     ingroup = rooting.ingroup
-    pruned_newick = ptrees.format_newick_with_precision(rooting.tree)
-    dendro = dendropy.Tree.get(
-        data=pruned_newick, schema="newick", preserve_underscores=True
-    )
-
     # 4 ingroup taxa -> C(4,3) = 4 triplets, enumerated in sorted order.
     raw_triplets = ptrees.generate_triplets(sorted(ingroup), [])
     assert raw_triplets == [
@@ -230,13 +203,35 @@ def test_generate_triplets_and_species_subtrees(
     ]
 
     triplets, species_map, skipped = ptrees._build_species_triplet_metadata(
-        dendro, raw_triplets
+        rooting.tree, raw_triplets
     )
     assert skipped == []
     # Species tree (((A,B),C),D): in every triplet the first two taxa are already
     # the sister pair, so A/B/C normalization is the identity here.
     assert triplets == raw_triplets
-    assert species_map == expected_subtrees
+    assert species_map == {
+        ("A", "B", "C"): "((A,B),C);",
+        ("A", "B", "D"): "((A,B),D);",
+        ("A", "C", "D"): "((A,C),D);",
+        ("B", "C", "D"): "((B,C),D);",
+    }
+
+
+@pytest.mark.parametrize(
+    "content, message",
+    [
+        ("((A:1,B:1):1,(A:1,C:1):1);\n", "uses the leaf label(s) A more than once"),
+        ("((A:1,B:1):1,C:1);\n((A:1,B:1):1,(B:1,C:1):1);\n", "Tree 2 uses"),
+    ],
+    ids=["repeated_label", "second_tree"],
+)
+def test_read_tree_file_rejects_a_repeated_leaf_label(content, message, tmp_path):
+    """A leaf label used twice in one tree is an input error naming the tree and label."""
+    path = tmp_path / "trees.tree"
+    path.write_text(content)
+
+    with pytest.raises(InputError, match=re.escape(message)):
+        ptrees.read_tree_file(str(path))
 
 
 def test_read_species_filter_file_collects_names_in_order(tmp_path):
@@ -247,8 +242,9 @@ def test_read_species_filter_file_collects_names_in_order(tmp_path):
     assert ptrees.read_species_filter_file(str(path)) == ["A", "B", "C", "D"]
 
 
+@pytest.mark.parametrize("processes", [1, 2])
 def test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup(
-    orchestrator_gene_trees, tmp_path
+    processes, orchestrator_gene_trees, tmp_path
 ):
     """Each tree is rooted at the common ancestor of its farthest outgroup and the others outside the ingroup, and pruned of them.
 
@@ -258,13 +254,19 @@ def test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup(
     clade's edge; the outgroups are then cut away, so the written tree is the
     rooted ingroup. An outgroup that sits among the ingroup taxa once the
     tree is rooted on the farthest is pruned without being used, and the
-    counts say which and how often.
+    counts say which and how often. Workers change nothing: every count and
+    every written line is the same with one process or two.
     """
     out_path = tmp_path / "clean_genes.tree"
     cleaning = ptrees.clean_and_save_gene_trees(
-        str(orchestrator_gene_trees), str(out_path), _OUTGROUP, min_avg_support=0.5
+        str(orchestrator_gene_trees),
+        str(out_path),
+        _OUTGROUP,
+        min_avg_support=0.5,
+        processes=processes,
     )
-    cleaned = ptrees._read_gene_trees_file(str(out_path))
+    cleaned = out_path.read_text().splitlines()
+    assert cleaning.trees == cleaned
 
     # All 12 fixture trees carry OUT and have no support labels, so all survive.
     assert len(cleaned) == 12
@@ -307,7 +309,11 @@ def test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup(
         "(OUT1:1,(OUT2:1,OUT3:1):1);\n"
     )
     cleaning = ptrees.clean_and_save_gene_trees(
-        str(in_path), str(out_path), ["OUT1", "OUT2", "OUT3"], min_avg_support=0.5
+        str(in_path),
+        str(out_path),
+        ["OUT1", "OUT2", "OUT3"],
+        min_avg_support=0.5,
+        processes=processes,
     )
 
     assert cleaning.rooted_count == 7
@@ -318,7 +324,7 @@ def test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup(
     assert cleaning.missing_length_indices == [6, 7]
     assert cleaning.unrootable_indices == [8, 9]
     assert cleaning.dropped_trees == {}
-    assert ptrees._read_gene_trees_file(str(out_path)) == [
+    assert out_path.read_text().splitlines() == [
         "(((A:1,B:1):1,C:1):1,D:1):2;",
         # OUT2 pruned from (C:1,OUT2:1):1 leaves C on a 2-long edge.
         "((A:1,B:1):1,C:2):2;",

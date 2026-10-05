@@ -223,23 +223,13 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
             y_test, test_predictions
         )
 
-    confusion_matrix_plot_path = output_dir / "multi_knn_confusion_matrices.png"
-    if confusion_matrices is not None:
-        confusion_matrix_plot_path = shared.save_confusion_matrix_plot(
-            confusion_matrices, confusion_matrix_plot_path
-        )
-    else:
-        confusion_matrix_plot_path = None
-
-    confusion_matrix_64_plot_path = (
-        output_dir / "multi_knn_confusion_matrix_64_classes.png"
+    figure_paths = shared.save_evaluation_figures(
+        output_dir,
+        "multi_knn",
+        confusion_matrices,
+        confusion_matrix_64_classes,
+        shared.classes_are_balanced(labels_train, labels_test),
     )
-    if confusion_matrix_64_classes is not None:
-        confusion_matrix_64_plot_path = shared.save_64_class_confusion_matrix_plot(
-            confusion_matrix_64_classes, confusion_matrix_64_plot_path
-        )
-    else:
-        confusion_matrix_64_plot_path = None
 
     # Every knob that affects the fitted model or the split it was fitted on.
     # ``n_neighbors`` is reported twice: the request is capped at the training
@@ -301,10 +291,7 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
     if feature_rows is not None:
         metrics_payload["feature_importance"] = feature_rows
         metrics_payload["feature_importance_method"] = feature_importance_method
-    if confusion_matrix_plot_path is not None:
-        metrics_payload["confusion_matrix_plot"] = confusion_matrix_plot_path
-    if confusion_matrix_64_plot_path is not None:
-        metrics_payload["confusion_matrix_64_plot"] = confusion_matrix_64_plot_path
+    metrics_payload.update(figure_paths)
 
     model_path = output_dir / "multi_knn_model.pkl"
     metrics_json_path = output_dir / "multi_knn_overall_metrics.json"
@@ -365,16 +352,11 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
             text_lines.extend(
                 shared.format_confusion_matrix_section(confusion_matrices)
             )
-        if confusion_matrix_64_classes is not None:
-            text_lines.extend(
-                [
-                    "",
-                    "64-class confusion matrix:",
-                    f"  Plot: {confusion_matrix_64_plot_path}",
-                    "  Note: matrix includes all 64 possible 6-bit labels, ordered by the number of set bits (000000 first, 111111 last).",
-                    "  Note: plotted cells are row-normalized fractions of each true class.",
-                ]
-            )
+    text_lines.extend(
+        shared.format_evaluation_figure_section(
+            confusion_matrix_64_classes, figure_paths
+        )
+    )
     if report_class_distribution:
         text_lines.extend(["", "Dataset summary:"])
         text_lines.append("  Label map:")
@@ -416,8 +398,10 @@ def train_multi_knn(config: argparse.Namespace) -> dict:
         "feature_importance_path": str(feature_importance_path)
         if feature_importance_path is not None
         else None,
-        "confusion_matrix_plot_path": confusion_matrix_plot_path,
-        "confusion_matrix_64_plot_path": confusion_matrix_64_plot_path,
+        **{
+            f"{key}_path": figure_paths.get(key)
+            for key in shared.EVALUATION_FIGURES
+        },
         "predictions_path": str(predictions_path)
         if predictions_path is not None
         else None,

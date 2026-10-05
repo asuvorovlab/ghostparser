@@ -14,11 +14,12 @@ import pytest
 from statsmodels.stats.multitest import multipletests
 
 from ghostparser.orchestrator import inference as pinf
+from tests.orchestrator.tree_references import serialize_triplet_gene_trees
 from ghostparser.orchestrator.config import P_VALUE_CORRECTION_CHOICES
 from ghostparser.orchestrator.correction import is_inline_correction
 
 _TRIPLET = ("A", "B", "C")
-_SPECIES_SUBTREE = "((A:1.0,B:1.0):1.0,C:2.0);"
+_SPECIES_SUBTREE = "((A,B),C);"
 
 _CON = "((A,B),C)"
 _DIS1 = "((B,C),A)"
@@ -285,7 +286,7 @@ def test_summary_statistics_discordant_roles_follow_the_counts(
     The summary columns must name the same gene trees ``dis1_topology`` names and
     the three tests operate on, in either direction of the count.
     """
-    observations = pinf._serialize_triplet_gene_trees(
+    observations = serialize_triplet_gene_trees(
         _TRIPLET,
         _subtrees([0.30] * 10, bc_heights, ac_heights),
         collect_summary_statistics=True,

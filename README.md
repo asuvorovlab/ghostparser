@@ -41,7 +41,7 @@ From a checkout:
 pip install -r requirements.txt   # core
 pip install .[ml]                 # adds scikit-learn for ghostparser.ml
 pip install .[ml,wandb]           # adds Weights & Biases logging for the tuner
-pip install .[dev]                # adds pytest
+pip install .[dev]                # adds pytest and DendroPy for the tests
 ```
 
 Poetry 2.x works too: `poetry install`, then `poetry run python -m ghostparser.orchestrator ...`.

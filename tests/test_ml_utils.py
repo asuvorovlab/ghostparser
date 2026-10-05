@@ -4,11 +4,15 @@ import pytest
 from ghostparser.config import ConfigError
 from ghostparser.ml.ml_utils import (
     BIT_COUNT,
+    build_64_class_confusion_matrix,
+    classes_are_balanced,
     correlation_feature_groups,
     feature_importance_rows,
     grouped_permutation_importance,
+    per_class_recall,
     row_normalize_confusion_matrix,
     rows_to_matrix,
+    save_evaluation_figures,
 )
 
 
@@ -129,9 +133,60 @@ def test_row_normalize_confusion_matrix_turns_counts_into_per_class_fractions():
     )
     assert fractions.min() >= 0.0
     assert fractions.max() <= 1.0
-    # Rows with samples normalize to 1; the empty row is left at 0 so the plot
-    # masks it rather than dividing by zero.
+    # Rows with samples normalize to 1; the empty row is left at 0 rather than
+    # dividing by zero.
     np.testing.assert_allclose(fractions.sum(axis=1), [1.0, 0.0, 1.0])
+
+
+def test_per_class_recall_skips_classes_without_hold_out_rows():
+    """Only classes with hold-out rows get a recall; absent ones are not scored 0."""
+    y_true = np.asarray([[0] * BIT_COUNT, [0] * BIT_COUNT, [1] * BIT_COUNT])
+    y_pred = np.asarray([[0] * BIT_COUNT, [0] * (BIT_COUNT - 1) + [1], [1] * BIT_COUNT])
+
+    set_bit_counts, recalls = per_class_recall(
+        build_64_class_confusion_matrix(y_true, y_pred)
+    )
+
+    np.testing.assert_array_equal(set_bit_counts, [0, BIT_COUNT])
+    np.testing.assert_allclose(recalls, [0.5, 1.0])
+
+
+_ALL_CLASSES = [format(index, f"0{BIT_COUNT}b") for index in range(2**BIT_COUNT)]
+
+
+@pytest.mark.parametrize(
+    ("train_labels", "test_labels", "expected"),
+    [
+        (_ALL_CLASSES * 4, _ALL_CLASSES, True),
+        (_ALL_CLASSES * 4 + _ALL_CLASSES[:10] * 2, _ALL_CLASSES, True),
+        (_ALL_CLASSES * 3 + _ALL_CLASSES[:10] * 2, _ALL_CLASSES, False),
+        (_ALL_CLASSES * 4, _ALL_CLASSES + _ALL_CLASSES[:10], False),
+        (_ALL_CLASSES * 4, _ALL_CLASSES[1:], False),
+        (_ALL_CLASSES[1:] * 4, _ALL_CLASSES, False),
+    ],
+    ids=[
+        "equal",
+        "ratio_at_limit",
+        "train_ratio_over_limit",
+        "test_ratio_over_limit",
+        "test_missing_a_class",
+        "train_missing_a_class",
+    ],
+)
+def test_classes_are_balanced_bounds_the_count_ratio(
+    train_labels, test_labels, expected
+):
+    """Balanced means all 64 classes in every partition, no count over 1.5x another."""
+    assert classes_are_balanced(train_labels, test_labels) is expected
+
+
+@pytest.mark.output
+def test_save_evaluation_figures_creates_no_folder_without_figures(tmp_path):
+    """With neither matrix built, nothing is written and no ``figures/`` appears."""
+    figure_paths = save_evaluation_figures(tmp_path, "random_forest", None, None, True)
+
+    assert figure_paths == {}
+    assert not (tmp_path / "figures").exists()
 
 
 def test_correlation_feature_groups_collects_the_redundant_columns():

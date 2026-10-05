@@ -6,6 +6,7 @@ from ghostparser.config import InputError
 from ghostparser.orchestrator import runner
 from ghostparser.orchestrator.preflight import (
     PREFLIGHT_REPORT_FILENAME,
+    _format_index_ranges,
     run_preflight_data_check,
 )
 
@@ -132,8 +133,11 @@ def test_species_tree_is_rooted_where_the_outgroups_branch_off(tmp_path):
     assert result.counters["triplet.taxa_absent_from_gene_tree"] == 3
 
 
-def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path):
-    """Each planted defect is reported under its own category exactly once."""
+@pytest.mark.parametrize("processes", [1, 2])
+def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path, processes):
+    """Each planted defect is reported under its own category exactly once,
+    the tree lacking a branch length is located by index, and the findings
+    are the same with one worker process or two."""
     species, genes = dirty_inputs
 
     result = run_preflight_data_check(
@@ -141,6 +145,7 @@ def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path):
         gene_trees_path=str(genes),
         outgroups=["OUT"],
         output_dir=str(tmp_path),
+        processes=processes,
     )
 
     categories = [issue.category for issue in result.issues]
@@ -149,6 +154,11 @@ def test_detects_polytomy_and_missing_outgroup(dirty_inputs, tmp_path):
     # counted but raises no issue.
     assert categories.count("gene_tree.rooting_failed") == 1
     assert result.counters["gene_tree.missing_branch_lengths"] == 1
+    assert result.missing_length_indices == [4]
+    assert (
+        "Gene trees lacking some branch length (1; 1-based, in input file order):\n  4\n"
+        in result.report_text
+    )
     # Gene tree 2 is a polytomy, and only triplet A,B,C is affected by it.
     assert categories.count("triplet.unresolved_rooted_sister_pair") == 1
     # Gene tree 3 never gets rooted, so trees 1, 2 and 4 reach triplet checks.
@@ -262,6 +272,7 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path, outgroup):
         "species_filter": None,
         "preflight_data_check": True,
         "preflight_triplet_cap": 3,
+        "processes": 1,
     }
 
     if outgroup == "NOT_PRESENT":
@@ -276,3 +287,16 @@ def test_runner_preflight_mode_skips_analysis(dirty_inputs, tmp_path, outgroup):
         issue.category == "analysis.triplet_cap_applied" for issue in result.issues
     )
     assert sorted(path.name for path in output_dir.iterdir()) == [PREFLIGHT_REPORT_FILENAME]
+
+
+@pytest.mark.parametrize(
+    "indices, expected",
+    [
+        ([4], "4"),
+        ([3, 17, 18, 19, 250], "3, 17-19, 250"),
+        ([1, 2, 4, 5, 6], "1-2, 4-6"),
+    ],
+)
+def test_index_ranges_collapse_consecutive_runs(indices, expected):
+    """Consecutive gene-tree indices print as one range, the rest one by one."""
+    assert _format_index_ranges(indices) == expected
