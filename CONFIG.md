@@ -10,7 +10,8 @@ trainers are described in [ML.md](ghostparser/ml/ML.md).
 Every module accepts `-c/--config-file` with a JSON or YAML file. The file
 supplies the settings, and any flag given beside it overrides the file's value
 for that setting; the run prints which settings it overrode. Keys without a
-flag can only be set in a file. [sample_configs/](sample_configs/) holds a
+flag can only be set in a file.
+[sample_configs/](https://github.com/asuvorovlab/ghostparser/tree/main/sample_configs) holds a
 loadable file for each common scenario to copy from (listed at the end).
 
 To run many datasets with the same settings, keep those in one file and pass
@@ -101,10 +102,10 @@ Minimal file:
 species_tree_path: sample_data/species.tree
 gene_trees_path: sample_data/genes.tree
 outgroup: OutGroup
-output_folder: results
 ```
 
-Every key at its default, as `sample_configs/orchestrator_full.yaml` ships it:
+Every key at its default (`sample_configs/orchestrator_full.yaml` holds the
+same with the accepted values of each):
 
 ```yaml
 species_tree_path: sample_data/species.tree  # Newick species tree
@@ -256,9 +257,9 @@ Default `true`: write the introgression maps.
 
 ##### `bootstrap` (`--no-bootstrap` sets `false`)
 
-Default `true`. `false` skips the iterations, so `bootstrap_value`,
-`all_bootstrap` and the `bootstrap_perm_stat_ci_*` interval are absent and
-consolidation weighs every classified triplet as 1.
+Default `true`. `false` skips the iterations: `bootstrap_value` and
+`all_bootstrap` are left out of the results, the `bootstrap_perm_stat_ci_*`
+columns stay empty, and consolidation weighs every classified triplet as 1.
 
 ##### `preflight_data_check` (`--preflight-data-check` sets `true`)
 
@@ -350,7 +351,7 @@ output_dir: ./results/ml_out
 overwrite: true
 target_column: class                 # the 6-bit label column
 test_size: 0.2                       # hold-out fraction, in (0, 1)
-cv_folds: 5                          # integer >= 1, or null for no CV
+cv_folds: 5                          # integer >= 2
 rare_class_policy: warn_reduce_cv    # warn_reduce_cv, warn_skip_cv, error
 seed: null
 n_jobs: -1                           # -1 = every core
@@ -386,25 +387,15 @@ as `null` or `~`, never the bare word `None`; `max_features: auto` is
 rejected (scikit-learn removed it; `sqrt` is the equivalent). Omit
 `min_samples_split` and `min_samples_leaf` to take their defaults.
 
-`feature_importance_method` chooses how influence is measured, and the three
-answers differ when features are correlated, as the summary statistics of one
-height distribution are:
+`feature_importance_method` chooses how influence is measured; null takes
+`mdi` for `random_forest` and `permutation` for `multi_knn`. How the three
+differ on correlated features is in [ML.md](ghostparser/ml/ML.md#feature-importance).
 
 | Value | Measure |
 | --- | --- |
-| `mdi` | Mean decrease in impurity, summed over the splits a feature makes and averaged over the six estimators. Fast, read off the fitted trees, but scored in-sample: it favours features with many split points, and correlated features divide the credit for one signal between them. Needs a tree-based model, so the neighbours classifier rejects it. |
-| `permutation` | The drop in hold-out micro-F1 when a feature's column is shuffled. Scores the metric actually reported, on rows the model never saw. Correlated features still score low, because shuffling one leaves its twin to carry the signal. |
-| `grouped_permutation` | The same shuffle applied to a whole group of correlated features at once, so one signal is scored once. Features are grouped by average-linkage clustering on `1 - abs(Spearman rho)`, cut at `feature_importance_correlation_threshold`; a lower threshold builds larger groups. |
-
-Null takes each trainer's own measure: `mdi` for `random_forest`, which reads
-impurity off its trees, and `permutation` for `multi_knn`, which has no
-impurity to read. The permutation measures shuffle ten times and report the
-mean drop with its standard deviation; on a small hold-out partition the
-scores are noisy, and an uninformative feature can score slightly negative.
-No measure is unbiased for correlated features in the strict sense, because
-two features carrying one signal have no unique split of the credit between
-them; `grouped_permutation` sidesteps the question by scoring the signal
-rather than the columns.
+| `mdi` | Mean decrease in impurity over the forest's splits. Tree models only; `multi_knn` rejects it. |
+| `permutation` | The drop in hold-out micro-F1 when one feature's column is shuffled, over ten shuffles. |
+| `grouped_permutation` | The same shuffle applied to each group of correlated features at once; `feature_importance_correlation_threshold` sets the grouping. |
 
 ### Hyperparameter tuning
 
@@ -435,16 +426,11 @@ results JSON are logged to the run instead of written to disk.
 ## Sample configs
 
 Every file under `sample_configs/` loads as shipped; change the paths and the
-outgroup labels to your data.
+outgroup labels to your data. For JSON, write the same keys as a JSON object.
 
 | File | Scenario |
 | --- | --- |
-| `orchestrator_minimal.yaml` | The three required inputs and an output folder; everything else at its default. |
-| `orchestrator_full.yaml` | Every orchestrator key at its default, with a comment on each; trim it to the keys you change. |
-| `orchestrator_preflight.yaml` | Check the trees and the outgroup order before a run; nothing else is produced. |
-| `orchestrator_species_filter.yaml` | Every triplet among a chosen set of species, a fixed seed, and `summary_statistics.tsv` for the trainers. |
-| `orchestrator_triplet_filter_diagnostic.yaml` | A few named triplets in depth: every test for every triplet, every bootstrap iteration recorded, shape diagnostics, a different height strategy. |
-| `orchestrator_screen.json` | A fast screen of a large taxon set, in JSON: no bootstrap, no maps, `fdr_bh`, the z-test, a smaller permutation budget. |
-| `random_forest_minimal.yaml`, `multi_knn_minimal.yaml` | One trainer run each on a run's `summary_statistics.tsv`. |
-| `hyperparameter_tuning_random_forest.yaml` | A grid search over the random forest, reported locally. |
-| `hyperparameter_tuning_multi_knn.json` | A random search over the KNN, in JSON. |
+| `orchestrator_minimal.yaml` | The three required inputs; everything else at its default. |
+| `orchestrator_full.yaml` | Every orchestrator key at its default, with its accepted values; trim it to the keys you change. |
+| `ml_trainer.yaml` | Every trainer key at its default, with its accepted values; both trainers read it. |
+| `hyper_tune.yaml` | Every tuner key at its default, with its accepted values, and a random-forest search space. |

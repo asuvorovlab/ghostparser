@@ -5,27 +5,8 @@ of gene trees. It decomposes the ingroup into species triplets, reads every
 gene tree's version of each triplet, and runs a three-gate cascade of tests
 per triplet that labels it `no_introgression`, `inflow_introgression`,
 `outflow_introgression`, `ghost_introgression` or `ambiguous`. This document
-explains the method; every flag and key is in [CONFIG.md](../../CONFIG.md).
-
-## Running it
-
-```bash
-# minimal run
-python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
-
-# several outgroups, a species filter, a fixed seed, all available CPUs
-python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og Out1,Out2 \
-    --species-filter species.txt --seed 42 --processes 0
-
-# a config file; a flag given beside it overrides the file's value
-python -m ghostparser.orchestrator -c run_config.yaml --seed 42
-
-# one of the shipped scenario configs (CONFIG.md lists them)
-python -m ghostparser.orchestrator -c sample_configs/orchestrator_preflight.yaml
-
-# check the inputs and exit without analysis
-python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup --preflight-data-check
-```
+explains the method; how to run it is in the [README](../../README.md) and
+every flag and key in [CONFIG.md](../../CONFIG.md).
 
 ## The pipeline
 
@@ -137,13 +118,9 @@ its position in the input file.
 
 ## Reading a triplet from a gene tree
 
-Each gene tree is cached once as three tables: the parent of every node, the
-length of the edge above every node, and the lowest common ancestor (LCA) of
-every pair of taxa. The LCA table fills in one post-order walk (a node is the
-LCA of exactly the pairs drawn from two of its different children) and after
-that no gene tree is touched again. A triplet's observation in a gene tree is
-then read from three table lookups and a few short walks up the parent chain,
-rather than by copying out a subtree.
+Each gene tree is read once, and every triplet's observation in it comes from
+the pairwise lowest common ancestors (LCAs) of its three taxa, without copying
+out a subtree.
 
 **Topology.** For taxa `a`, `b`, `c` let `m(a,b)`, `m(a,c)`, `m(b,c)` be the
 pairwise LCAs. In a binary rooted tree two of the three are the same node
@@ -164,10 +141,8 @@ internal branch is still a resolved topology, not a polytomy.
 | `INT` | `d(s)`, the internal branch from the triplet's root to the sisters' node |
 | `SIS` | `d(s1) + d(s2) - 2 d(s)`, the patristic distance between the two sisters |
 
-Every quantity is a sum along one path, never the difference of two depths
-measured from the tree's root, so nothing cancels in floating point. The
-same tables serve the species tree, from which each triplet's `(A, B, C)`
-order and its `species_tree` subtree topology are read.
+The species tree is read the same way, giving each triplet's `(A, B, C)`
+order and its `species_tree` subtree topology.
 
 ## The tests
 
@@ -414,27 +389,17 @@ consecutive trees written as ranges (`3, 17-19, 250`), so the trees can be
 found and fixed. It walks at most
 `preflight_triplet_cap` triplets (default 15,000; `0` lifts it) and says so
 when the cap binds. Passing means the data can be processed, not that the
-result is meaningful. `sample_configs/orchestrator_preflight.yaml` is a
-ready-made check.
+result is meaningful.
 
 ## Outputs
 
-The output folder is reset before the run under the default `overwrite: true`,
-so give it a directory of its own, never one holding the input trees.
-
-- `orchestrator_triplet_results.tsv`: one row per triplet (columns below).
-- `summary_statistics.tsv`: with `generate_summary_stats`: per triplet, the
-  mean, median, mode, variance, entropy, minimum and maximum of the average
-  tree height, the internal branch and the sister distance, for the
-  concordant, discordant1 and discordant2 gene trees (63 columns), plus the
-  identity columns, the counts, the classification and `bootstrap_value`.
-- `processed_<species tree>` / `processed_<gene trees>`: the cleaned, rooted
-  and pruned trees, in the input labels.
-- `metrics.txt`: the run parameters, then one block per stage (species tree,
-  gene trees, inference, introgression maps) giving what it processed, its
-  timings and what it found: the rooting counts, the classification and gate
-  counts and the permutation-test convergence summary.
-- `consolidation/`: the introgression maps and their TSV matrices.
+The files a run writes are listed in the
+[README](../../README.md#outputs). `summary_statistics.tsv` (with
+`generate_summary_stats`) holds, per triplet, the mean, median, mode, variance,
+entropy, minimum and maximum of the average tree height, the internal branch
+and the sister distance for the concordant, discordant1 and discordant2 gene
+trees (63 columns), plus the identity columns, the counts, the classification
+and `bootstrap_value`.
 
 ### Results columns
 
@@ -492,14 +457,3 @@ draws the heatmap (rows targets, columns sources, `cividis`) under the species
 tree, with the ghost bars beside it: bar length is the ghost support and bar
 colour says whether the taxon is also the target of a sampled edge. Taxa in
 `outgroup` never appear.
-
-## Parallelization
-
-`processes` workers on one machine share every stage whose work splits per
-gene tree or per triplet: cleaning and rooting the gene trees, building the
-gene-tree cache, the triplet inference, and the preflight check's gene-tree
-pass. `0` uses the CPUs the process may run on, which under a scheduler or
-container is the allocation rather than the machine's cores. The cache is
-built once and shared with the inference workers, and results are identical
-at any worker count. A job spanning several machines uses only the one the
-run starts on.

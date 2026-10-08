@@ -39,17 +39,15 @@ none into B (bit 2 clear), inflow into A from C and inflow into B from C (bits
 ```bash
 python -m ghostparser.ml.random_forest -i results/summary_statistics.tsv -o ml_out
 python -m ghostparser.ml.multi_knn -i results/summary_statistics.tsv -o ml_out --seed 7
-python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_random_forest.yaml
+python -m ghostparser.ml.hyper_tune -c sample_configs/hyper_tune.yaml
 ```
 
-The trainers take `-c/--config-file`, `-i`, `-o`, `--seed` and
-`--no-overwrite`; the tuner takes `-c`, `--seed` and `--no-overwrite`. A flag
-given beside a config file overrides the file's value. Sample configs ship as
-`sample_configs/random_forest_minimal.yaml`, `multi_knn_minimal.yaml`,
-`hyperparameter_tuning_random_forest.yaml` and
-`hyperparameter_tuning_multi_knn.json`;
-`orchestrator_species_filter.yaml` shows a run that writes the
-`summary_statistics.tsv` they read.
+The flags and the sample configs are listed in
+[CONFIG.md](../../CONFIG.md#machine-learning);
+an orchestrator run with `generate_summary_stats: true` writes the
+`summary_statistics.tsv` the trainers read, and
+`data/simulated_rf_data/consolidated_summary_ratios.tsv` is a simulated
+training set in the same format.
 
 ## Training and evaluation
 
@@ -84,19 +82,12 @@ rows, so it rewards a feature for the noise it fits, in proportion to how
 many candidate split points it offers (Strobl et al. 2007, *BMC
 Bioinformatics* 8, 25, https://doi.org/10.1186/1471-2105-8-25).
 
-Its other failure is the one that matters for these features. At each node
-the forest draws a random subset of features (`max_features`) and uses one of
-them, so when several features carry the same information each node books the
-whole impurity drop to whichever was drawn, and the credit for one signal is
-divided among its carriers roughly in proportion to how often each is drawn
-and chosen. Masking compounds it: a feature used high in a tree leaves
-nothing for its twin further down the same path. With `k` redundant carriers
-each scores about `1/k` of what the signal scores alone, so a real signal can
-rank below a unique but weaker feature, and the order within the redundant
-set moves with the seed. The input invites exactly this: the summary
-statistics are three topologies by three metrics by seven statistics, and the
+It also splits credit between correlated features: each split books its
+whole impurity drop to whichever of several redundant features the forest drew,
+so `k` features carrying one signal score about `1/k` of it each, and their
+order moves with the seed. The summary statistics are built this way (the
 mean, median, mode, minimum and maximum of one height distribution are five
-views of one quantity.
+views of one quantity).
 
 **`permutation`**, the neighbours classifier's default, shuffles one feature's
 column in the hold-out partition and records the drop in micro-F1, ten times

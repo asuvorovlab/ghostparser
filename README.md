@@ -15,19 +15,10 @@ and how deep the gene trees disagree with the species tree. The engine is
 [`ghostparser.ml`](#machine-learning) subpackage trains classifiers on the
 summary statistics of simulated runs.
 
-- [Installation](#installation)
-- [Running the orchestrator](#running-the-orchestrator)
-- [Inputs](#inputs)
-- [Outputs](#outputs)
-- [Configuration](#configuration)
-- [Machine learning](#machine-learning)
-- [Errors](#errors)
-- [Testing](#testing)
-- [Releases](#releases)
-
 The method (the tests, their formulas and the literature behind them) is
 described in [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md);
-every option is in [CONFIG.md](CONFIG.md).
+every option is in [CONFIG.md](CONFIG.md). The same pages are published at
+<https://asuvorovlab.github.io/ghostparser/>.
 
 ## Installation
 
@@ -47,7 +38,7 @@ From a checkout:
 pip install -r requirements.txt   # core
 pip install .[ml]                 # adds scikit-learn for ghostparser.ml
 pip install .[ml,wandb]           # adds Weights & Biases logging for the tuner
-pip install .[dev]                # adds pytest and DendroPy for the tests
+pip install .[dev]                # adds pytest for the tests
 ```
 
 Poetry 2.x works too: `poetry install`, then `poetry run python -m ghostparser.orchestrator ...`.
@@ -131,16 +122,21 @@ TaxaA,TaxaB,TaxaC	((TaxaA,TaxaB),TaxaC);	7	3	2	BC	no_introgression	0.82
 
 ## Configuration
 
-[CONFIG.md](CONFIG.md) documents every key and the path-resolution rules;
-[sample_configs/](sample_configs/) holds a config for each common
-scenario: minimal, every key at its default, a preflight check, a species
-filter with summary statistics, a diagnostic look at a few triplets, a fast
-screen in JSON. Defaults at a glance: `discordant_test: chi-square`,
-`tree_height_calculation_strategy: AVG`, `p_value_correction: bfn`, every
-`alpha` `0.05`, permutation resamples `2500`-`25000` with Wilson intervals,
-`bootstrap_options.iterations: 100`, `min_support_value: 0.5`, `processes: 0`,
-`overwrite: true`, consolidation and bootstrap on, `diagnostic`,
-`generate_summary_stats` and `shape_diagnostics` off.
+[CONFIG.md](CONFIG.md) documents every key, its default and the
+path-resolution rules;
+[sample_configs/](https://github.com/asuvorovlab/ghostparser/tree/main/sample_configs)
+holds a config for each common scenario: minimal, every key at its default, a
+preflight check, a species filter with summary statistics, a diagnostic look
+at a few triplets, a fast screen in JSON.
+
+## Datasets
+
+[data/](https://github.com/asuvorovlab/ghostparser/tree/main/data) holds the
+empirical gene trees and species trees analyzed in the preprint (Drosophila,
+Heliconius, Jaltomata, Thuja) and `simulated_rf_data/`, the summary statistics
+of the msprime simulations in the format the ML trainers read. The large files
+are stored with [Git LFS](https://git-lfs.com): run `git lfs pull` in a clone
+to fetch them; without Git LFS they are small pointer files.
 
 ## Machine learning
 
@@ -150,7 +146,7 @@ and tunes their hyperparameters; see [ML.md](ghostparser/ml/ML.md).
 ```bash
 python -m ghostparser.ml.random_forest -i results/summary_statistics.tsv -o results/ml_out
 python -m ghostparser.ml.multi_knn -i results/summary_statistics.tsv -o results/ml_out
-python -m ghostparser.ml.hyper_tune -c sample_configs/hyperparameter_tuning_random_forest.yaml
+python -m ghostparser.ml.hyper_tune -c sample_configs/hyper_tune.yaml
 ```
 
 ## Errors
@@ -188,22 +184,26 @@ and the accepted forms.
 ## Testing
 
 ```bash
+pip install .[dev]
 pytest                    # everything
 pytest -m core            # statistics and decisions
 pytest -m config          # config loading and validation
 pytest -m output          # files, columns and report fields
 pytest -m integration     # entry points end to end
-pytest -m parity          # one implementation against another (the cached
-                          # triplet geometry against a DendroPy and a BioPython
-                          # reference; every other test derives its expectations)
+pytest -m parity          # the triplet geometry against a BioPython reference
 ```
 
-[tests/TESTS.md](tests/TESTS.md) maps every test and
-[tests/TEST_IO.md](tests/TEST_IO.md) derives every expected value.
+[tests/TESTS.md](https://github.com/asuvorovlab/ghostparser/blob/main/tests/TESTS.md)
+maps every test and
+[tests/TEST_IO.md](https://github.com/asuvorovlab/ghostparser/blob/main/tests/TEST_IO.md)
+derives every expected value.
 
 ## Releases
 
-A push of a `v*.*.*` tag builds and publishes the wheel:
+Add a `## vX.Y.Z` section to [CHANGELOG.md](https://github.com/asuvorovlab/ghostparser/blob/main/CHANGELOG.md), then push the tag.
+The tag builds the wheel and source archive, publishes them as a GitHub release
+whose notes are that section, and sets `version` in `pyproject.toml` on `main`
+to match:
 
 ```bash
 git checkout main && git pull origin main
