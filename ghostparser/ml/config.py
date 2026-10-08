@@ -115,6 +115,16 @@ def _validate_positive_int(payload: dict, key: str, default: int | None) -> int:
     return value
 
 
+def _validate_cv_folds(payload: dict) -> int:
+    """Require ``cv_folds`` to be an integer >= 2, the fewest folds stratified k-fold splits into."""
+    value = payload.get("cv_folds", DEFAULT_CV_FOLDS)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+        raise ConfigError(
+            f"Config field cv_folds must be an integer >= 2, got {value!r}"
+        )
+    return value
+
+
 def _validate_optional_positive_int(
     payload: dict, key: str, default: int | None
 ) -> int | None:
@@ -342,9 +352,7 @@ def normalize_ml_payload(payload: dict) -> dict:
         "overwrite": _validate_overwrite_flag(payload, DEFAULT_OVERWRITE),
         "target_column": target_column,
         "test_size": _validate_optional_float(payload, "test_size", DEFAULT_TEST_SIZE),
-        "cv_folds": _validate_positive_int(
-            payload, "cv_folds", DEFAULT_CV_FOLDS
-        ),
+        "cv_folds": _validate_cv_folds(payload),
         "rare_class_policy": _validate_optional_choice(
             payload,
             "rare_class_policy",

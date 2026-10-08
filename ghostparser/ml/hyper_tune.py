@@ -46,6 +46,7 @@ from .config import (
     DEFAULT_SEED,
     DEFAULT_TARGET_COLUMN,
     _load_raw_config,
+    _validate_cv_folds,
     _validate_optional_bool,
     _validate_optional_choice,
     _validate_optional_float,
@@ -569,7 +570,7 @@ def normalize_hyper_tune_payload(payload: dict) -> dict[str, object]:
         "overwrite": _validate_overwrite_flag(payload, DEFAULT_OVERWRITE),
         "target_column": target_column,
         "test_size": _validate_optional_float(payload, "test_size", 0.2),
-        "cv_folds": _validate_optional_positive_int(payload, "cv_folds", 5),
+        "cv_folds": _validate_cv_folds(payload),
         "rare_class_policy": _validate_optional_choice(
             payload,
             "rare_class_policy",
@@ -1140,18 +1141,29 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_tuner_args(args: argparse.Namespace) -> argparse.Namespace:
+    """Resolve the tuner's config file; a flag given overrides the file's value.
+
+    Args:
+        args: The parsed CLI namespace.
+
+    Returns:
+        The resolved namespace.
+    """
+    return resolve_cli_or_config_args(
+        args,
+        normalize_payload=normalize_hyper_tune_payload,
+        payload_arg_names=["seed", "no_overwrite"],
+    )
+
+
 def _run(parsed_args) -> None:
     """Resolve the config, run the search, and print where the results went.
 
     Args:
         parsed_args: The parsed command line.
     """
-    config = resolve_cli_or_config_args(
-        parsed_args,
-        normalize_payload=normalize_hyper_tune_payload,
-        payload_arg_names=["seed", "no_overwrite"],
-    )
-    result = tune_hyperparameters(config)
+    result = tune_hyperparameters(resolve_tuner_args(parsed_args))
     print(result["results_txt_path"])
 
 
@@ -1165,6 +1177,7 @@ if __name__ == "__main__":
 __all__ = [
     "load_hyper_tune_config",
     "normalize_hyper_tune_payload",
+    "resolve_tuner_args",
     "tune_hyperparameters",
     "main",
 ]
