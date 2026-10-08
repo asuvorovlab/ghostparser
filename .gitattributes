@@ -1,0 +1,3 @@
+# Kept out of the source archives attached to each release; the datasets stay
+# in the repository.
+/data export-ignore

@@ -29,4 +29,5 @@ released with the 2025 bioRxiv preprint are archived in the
   multi-label KNN classifiers on a run's summary statistics and tunes their
   hyperparameters, optionally logging to Weights & Biases.
 - The empirical datasets (Drosophila, Heliconius, Jaltomata, Thuja) and the
-  simulated training statistics.
+  simulated training statistics, kept in the repository rather than in the
+  release downloads.
