@@ -1,4 +1,0 @@
-D_arizonae,D_hydei,D_repleta
-D_hydei,D_mojavensis,D_repleta
-D_hydei,D_navojoa,D_repleta
-D_hydei,D_repleta,D_seriema

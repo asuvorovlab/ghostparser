@@ -1,3 +1,0 @@
-Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
-D_funebris	D_innubila	D_guttifera	Anopheles_gambiae	236.6167	2.1500e-53	1955	433	98	0.0559	2.1773e-01	0.098020	0.099234	Evidence of sampled introgression, likely not involving inflow.
-D_funebris	D_mush_saotome	D_guttifera	Anopheles_gambiae	286.4989	2.8802e-64	1927	451	82	0.048	3.6941e-01	0.105055	0.105695	Evidence of sampled introgression, likely not involving inflow.

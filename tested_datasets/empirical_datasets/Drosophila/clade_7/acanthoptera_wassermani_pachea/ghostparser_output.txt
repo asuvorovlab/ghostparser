@@ -1,2 +1,0 @@
-Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
-D_pachea	D_acanthoptera	D_wassermani	Anopheles_gambiae	15.9720	6.4286e-05	1107	778	650	0.0511	1.8317e-01	0.031699	0.032024	Evidence of sampled introgression, likely not involving inflow.

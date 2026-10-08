@@ -1,5 +1,0 @@
-Hbes,Hcyd,Hnum
-Hbes,HmelDisco,Hnum
-Hbes,HmelRef,Hnum
-Hbes,Hnum,Hpar
-Hbes,Hnum,Htim

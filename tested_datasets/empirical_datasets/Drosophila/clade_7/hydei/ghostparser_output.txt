@@ -1,5 +1,0 @@
-Taxon_C	Taxon_B	Taxon_A	Taxon_out	DCT_statistic	DCT_p_value	AB_count	BC_count	AC_count	THT_statistic	THT_p_value	AB_median	BC_median	Test_conclusion
-D_hydei	D_arizonae	D_repleta	Anopheles_gambiae	361.2245	1.5239e-80	1115	953	364	0.0657	2.3577e-02	0.082073	0.085841	Evidence of unsampled introgression
-D_hydei	D_mojavensis	D_repleta	Anopheles_gambiae	368.7658	3.4747e-82	1163	969	368	0.0703	1.0813e-02	0.083483	0.086902	Evidence of unsampled introgression
-D_hydei	D_navojoa	D_repleta	Anopheles_gambiae	366.4096	1.1323e-81	1168	980	377	0.0656	2.0400e-02	0.083401	0.086669	Evidence of unsampled introgression
-D_hydei	D_seriema	D_repleta	Anopheles_gambiae	324.3658	1.6216e-72	1079	905	358	0.0736	9.6875e-03	0.084029	0.087615	Evidence of unsampled introgression
