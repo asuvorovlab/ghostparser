@@ -1,5 +1,12 @@
 # Ghostparser
 
+This package replaces the scripts released with the 2025 bioRxiv preprint. It
+runs the analysis faster, as a single installable command with config files and
+input checks and without the R and newick_utils dependencies, and it addresses
+reviewer comments and suggestions on the preprint. The legacy scripts, tutorial
+and datasets are archived in the
+[legacy-2025 release](https://github.com/asuvorovlab/ghostparser/releases/tag/legacy-2025).
+
 **Ghostparser** detects introgression, between sampled species and from
 unsampled "ghost" lineages, from a species tree and a set of gene trees. It
 decomposes the ingroup into species triplets and, for each, compares how often
