@@ -226,8 +226,8 @@ def test_run_orchestrator_matches_derived_expectation(
         assert result.dct_statistic == pytest.approx(dct_statistic)
         assert result.dct_p_value == pytest.approx(dct_p_value)
         assert result.dct_p_value_corrected == pytest.approx(_bonferroni(dct_p_value))
-        # Every triplet's corrected DCT p-value stays well above alpha (0.05),
-        # so the decision logic stops at the first gate for all of them.
+        # Every triplet's corrected DCT p-value is 1.0, above any alpha, so
+        # the decision logic stops at the first gate for all of them.
         assert result.dct_significant is False
         # Set by the run-wide correction pass, which recomputes the gate from the
         # corrected significance alongside the classification.
@@ -241,7 +241,9 @@ def test_run_orchestrator_matches_derived_expectation(
             assert result.ks_p_value_corrected == pytest.approx(
                 _bonferroni(result.ks_p_value)
             )
-            assert result.ks_significant is (result.ks_p_value_corrected <= 0.05)
+            assert result.ks_significant is (
+                result.ks_p_value_corrected <= config["alpha_ks"]
+            )
             assert result.perm_decision is not None
         else:
             # Under the default bfn the family is fixed, so a value below a

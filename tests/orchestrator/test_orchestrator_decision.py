@@ -17,6 +17,8 @@ from ghostparser.orchestrator import inference as pinf
 from ghostparser.orchestrator.config import P_VALUE_CORRECTION_CHOICES
 from ghostparser.orchestrator.correction import is_inline_correction
 from tests.orchestrator.tree_references import (
+    ALPHA as _ALPHA,
+    ALPHAS as _ALPHAS,
     CON as _CON,
     DIS1 as _DIS1,
     DIS2 as _DIS2,
@@ -40,6 +42,7 @@ def _analyze(observations, **kwargs):
         _TRIPLET,
         observations,
         species_subtree=_SPECIES_SUBTREE,
+        **_ALPHAS,
         bootstrap_options={"iterations": 0},
         **kwargs,
     )
@@ -63,6 +66,7 @@ def _measure(observations, method, family_size=1, iterations=40, seed=3, **kwarg
         _TRIPLET,
         observations,
         species_subtree=_SPECIES_SUBTREE,
+        **_ALPHAS,
         bootstrap_options={"iterations": iterations},
         p_value_correction=method,
         family_size=family_size,
@@ -74,7 +78,7 @@ def _measure(observations, method, family_size=1, iterations=40, seed=3, **kwarg
 def _decide(results, method):
     """Run the run-wide decision pass over measured results."""
     return pinf._apply_triplet_result_p_value_correction(
-        results, alpha_dct=0.05, alpha_ks=0.05, method=method
+        results, alpha_dct=_ALPHA, alpha_ks=_ALPHA, method=method
     )
 
 
@@ -262,16 +266,16 @@ def test_corrections_match_statsmodels_never_lower_a_value_and_agree_inline(meth
     family pass; a rank-based method needs the whole family and says so.
     """
     p_values = [0.001, 0.008, 0.039, 0.041, 0.042, 0.06, 0.074, 0.205, 0.212, 0.6]
-    adjusted = pinf._adjust_p_values(p_values, method=method, alpha=0.05)
+    adjusted = pinf._adjust_p_values(p_values, method=method, alpha=_ALPHA)
     if method == "no":
         assert adjusted == pytest.approx(p_values)
     else:
         mapped = {"bfn": "bonferroni"}.get(method, method)
-        _, expected, _, _ = multipletests(p_values, alpha=0.05, method=mapped)
+        _, expected, _, _ = multipletests(p_values, alpha=_ALPHA, method=mapped)
         assert adjusted == pytest.approx(list(expected))
 
     hostile = [0.001] * 8 + [0.4, 0.9]
-    adjusted = pinf._adjust_p_values(hostile, method=method, alpha=0.05)
+    adjusted = pinf._adjust_p_values(hostile, method=method, alpha=_ALPHA)
     assert all(a >= p - 1e-12 for a, p in zip(adjusted, hostile))
 
     if not is_inline_correction(method):
@@ -280,7 +284,7 @@ def test_corrections_match_statsmodels_never_lower_a_value_and_agree_inline(meth
         return
     for family_size in (1, 7, 250):
         family = [0.004] + [0.5] * (family_size - 1)
-        expected = pinf._adjust_p_values(family, method=method, alpha=0.05)[0]
+        expected = pinf._adjust_p_values(family, method=method, alpha=_ALPHA)[0]
         assert pinf._adjust_p_value_inline(0.004, method, family_size) == pytest.approx(
             expected
         ), family_size
@@ -352,12 +356,12 @@ def test_bootstrap_votes_answer_to_the_corrected_threshold():
     the same iterations would vote for an introgression class instead, which is
     the mismatch that made ``bootstrap_value`` unreadable.
     """
-    observations = _observations([0.9] * 40, [0.55] * 18, [0.55] * 6)
+    observations = _observations([0.9] * 40, [0.55] * 19, [0.55] * 5)
     raw = _corrected(observations, "no")
     corrected = _corrected(observations, "bfn", family_size=5000)
 
-    assert raw.dct_p_value <= 0.05
-    assert corrected.dct_p_value_corrected > 0.05
+    assert raw.dct_p_value <= _ALPHA
+    assert corrected.dct_p_value_corrected > _ALPHA
     assert corrected.classification == "no_introgression"
     assert corrected.all_bootstrap["no_introgression"] == 1.0
     assert corrected.bootstrap_value == 1.0
@@ -396,13 +400,14 @@ def test_diagnostic_bootstrap_records_every_test_without_moving_a_vote(con, dis1
             _TRIPLET,
             _observations(con, dis1, dis2),
             species_subtree=_SPECIES_SUBTREE,
+            **_ALPHAS,
             bootstrap_options={"iterations": iterations, "diagnostic": diagnostic},
             p_value_correction="bfn",
             family_size=1,
             triplet_seed=11,
         )
         runs[diagnostic] = pinf._apply_triplet_result_p_value_correction(
-            [result], alpha_dct=0.05, alpha_ks=0.05, method="bfn"
+            [result], alpha_dct=_ALPHA, alpha_ks=_ALPHA, method="bfn"
         )[0]
     lean, full = runs[False], runs[True]
 
@@ -432,7 +437,7 @@ def test_diagnostic_bootstrap_records_every_test_without_moving_a_vote(con, dis1
     tally = {}
     for dct_p, ks_p, decision in zip(record["dct_p"], record["ks_p"], record["decision"]):
         classification, _ = pinf._classify_introgression(
-            dct_p <= 0.05, ks_p <= 0.05, decision
+            dct_p <= _ALPHA, ks_p <= _ALPHA, decision
         )
         tally[classification] = tally.get(classification, 0) + 1
     rebuilt = {label: tally.get(label, 0) / iterations for label in full.all_bootstrap}
@@ -442,6 +447,7 @@ def test_diagnostic_bootstrap_records_every_test_without_moving_a_vote(con, dis1
         _TRIPLET,
         _observations(con, dis1, dis2),
         species_subtree=_SPECIES_SUBTREE,
+        **_ALPHAS,
         bootstrap_options={
             "iterations": iterations,
             "diagnostic": True,
@@ -632,7 +638,7 @@ def test_diagnostic_changes_what_is_measured_and_nothing_concluded(method):
 
     for test in ("dct", "ks"):
         raw = [getattr(result, f"{test}_p_value") for result in measured[True]]
-        expected = pinf._adjust_p_values(raw, method=method, alpha=0.05)
+        expected = pinf._adjust_p_values(raw, method=method, alpha=_ALPHA)
         corrected = [
             getattr(result, f"{test}_p_value_corrected") for result in families[True]
         ]
@@ -679,6 +685,7 @@ def test_bootstrap_measures_the_tree_height_test_its_correction_reads(
         _TRIPLET,
         _observations(*_CASCADE_FAMILY[0][0]),
         species_subtree=_SPECIES_SUBTREE,
+        **_ALPHAS,
         bootstrap_options={"iterations": iterations},
         p_value_correction=method,
         family_size=1,
@@ -686,7 +693,7 @@ def test_bootstrap_measures_the_tree_height_test_its_correction_reads(
         diagnostic=diagnostic,
     )
     decided = pinf._apply_triplet_result_p_value_correction(
-        [result], alpha_dct=0.05, alpha_ks=0.05, method=method
+        [result], alpha_dct=_ALPHA, alpha_ks=_ALPHA, method=method
     )[0]
     cleared = round(iterations * (1.0 - decided.all_bootstrap.get("no_introgression", 0.0)))
     assert cleared < iterations

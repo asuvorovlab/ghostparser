@@ -82,8 +82,10 @@ Shared fixtures live in `tests/conftest.py`; the orchestrator's trees live in
   `A,B,C,D,OUT` so rooting always succeeds. Expected usage: orchestrator
   preprocessing and end-to-end runs.
 
-`tests/orchestrator/tree_references.py` holds the BioPython reference and the
-observation builders the inference, decision and shape tests share.
+`tests/orchestrator/tree_references.py` holds the BioPython reference, the
+observation builders the inference, decision and shape tests share, and the
+0.01 threshold those tests pass to every gate, so their derivations, written
+at it, hold whatever the run defaults are.
 
 ## Function-Level Coverage
 
@@ -236,7 +238,7 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   three) must implement one decision rule, and the hand-off from parked votes
   to a tally completes.
 - `test_bootstrap_votes_answer_to_the_corrected_threshold`. Inputs: a triplet
-  whose raw DCT p-value clears 0.05, analyzed once with `no` and once with `bfn`
+  whose raw DCT p-value clears 0.01, analyzed once with `no` and once with `bfn`
   at family size 5000. Expected outputs: the corrected run classifies
   `no_introgression` with `all_bootstrap["no_introgression"] == 1.0`, while the
   uncorrected run's same iterations put it below 1.0. Purpose: the regression
@@ -256,7 +258,7 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   decisions) each hold one entry per iteration, every statistic and p-value
   is present, and every decision is `greater`/`less`/`inconclusive`;
   replaying `_classify_introgression` over the recorded p-values (at
-  `alpha = 0.05`, the raw value being the corrected one as a family of one)
+  `alpha = 0.01`, the raw value being the corrected one as a family of one)
   and decisions rebuilds `all_bootstrap` exactly; in summary form the
   decision counts sum to 30 and match the list, and the p-value summary
   counts 30 of 30. Purpose: a diagnostic bootstrap measures all three tests
@@ -353,7 +355,8 @@ All `core`.
   exponential families, each run twice under the same seed; then the same 8
   values as both samples. Expected outputs: for every pair a valid decision
   label, p-values in (0, 1], `p_greater + p_less > 1` (both tails count ties),
-  the resample count inside its configured bounds, a directional decision
+  the resample count at least the minimum and under twice the budget (the
+  last batch is drawn whole), a directional decision
   agreeing with the sign of the statistic, and a second run identical to the
   first; for the identical samples a statistic of 0 and a non-directional
   decision (`equivalent` or `inconclusive`). Purpose: structural invariants
@@ -363,7 +366,7 @@ All `core`.
   (parametrized, 3 rows): two samples drawn from one normal distribution at
   n=8 and n=400 per group at a fixed 1000 resamples, and the n=400 pair with
   `equivalence_test=False`. Expected outputs: `inconclusive` at n=8 and
-  `equivalent` at n=400, with `p_tost <= 0.05` exactly on the `equivalent`
+  `equivalent` at n=400, with `p_tost <= 0.01` exactly on the `equivalent`
   row and `p_tost` at or above `1 / (n_resamples + 1)` and an exact multiple
   of it on both; with the step off, `p_tost is None` and the decision falls
   through to `inconclusive`. Purpose: the equivalence margin is an effect
@@ -372,9 +375,9 @@ All `core`.
   at every n); TOST is an add-one estimator over the directional test's own
   draws, so it answers at that resolution and draws nothing extra; and the
   bootstrap path, which disables the step, pays nothing for it.
-- `test_type_one_error_rate_tracks_alpha_under_unequal_variance`. Inputs: 300
-  null replicates, n=60 at sd 1.0 against n=180 at sd 0.3, alpha 0.05. Expected
-  outputs: between 3 and 30 *directional* decisions (1%-10%; nominal is 15);
+- `test_type_one_error_rate_tracks_alpha_under_unequal_variance`. Inputs: 1500
+  null replicates, n=60 at sd 1.0 against n=180 at sd 0.3, alpha 0.01. Expected
+  outputs: between 3 and 30 *directional* decisions (0.2%-2%; nominal is 15);
   non-directional outcomes are not rejections of the directional null. Purpose: the
   studentization holds the nominal level under unequal sizes and variances,
   which is the regime where an unstudentized permutation test fails.
@@ -394,10 +397,10 @@ All `core`.
   without that disturbing the directional call, and the measure reads near
   zero when the null is symmetric, so a large value means something.
 - `test_adaptive_run_converges_or_exhausts_its_budget`. Inputs (parametrized,
-  2 rows): a clearly separated pair with `min_resamples=1000`; and a marginal
-  0.4 mean shift between two 30-element samples with `min_resamples=100`,
+  2 rows): a clearly separated pair with `min_resamples=2500`; and a marginal
+  0.6 mean shift between two 30-element samples with `min_resamples=100`,
   `max_resamples=1000`. Expected outputs: the first converges after exactly
-  one batch of 1000 with decision `greater`; the second has `batches > 1`, a
+  one batch of 2500 with decision `greater`; the second has `batches > 1`, a
   total exceeding `batches x 100`, `1000 <= n_resamples < 2000`,
   `converged is False`, and `note == "max_resamples_reached"`. Purpose: an
   easy case stops at the minimum budget instead of spending the ceiling; an

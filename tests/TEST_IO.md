@@ -117,7 +117,7 @@ Worked example, index 5, `((A:0.30,C:0.30):0.10,B:0.70);` (sisters A, C):
 ### `test_inference_matches_derived_expectation`
 
 **Inputs:** the 10 gene subtrees above serialized with the `AVG` strategy,
-`alpha_dct = alpha_ks = 0.05`, one of the 2 discordant tests, and `diagnostic`
+`alpha_dct = alpha_ks = 0.01`, one of the 2 discordant tests, and `diagnostic`
 off or on. Bootstrap runs with 40 iterations at seed `20240724`. The
 result is measured by `analyze_triplet_from_observations` and decided by
 `_apply_triplet_result_p_value_correction` under `no` as a family of one.
@@ -132,14 +132,14 @@ result is measured by `analyze_triplet_from_observations` and decided by
    frequencies `[2.5, 2.5]`, giving
    `(3-2.5)^2/2.5 + (2-2.5)^2/2.5 = 0.1 + 0.1 = 0.2`, and with df 1,
    `p ~ 0.6547`. z-test: `proportions_ztest(count=[3,2], nobs=[5,5])`, giving
-   `z ~ 0.6325`, `p ~ 0.5271`. Both p-values exceed 0.05, so
+   `z ~ 0.6325`, `p ~ 0.5271`. Both p-values exceed 0.01, so
    `dct_significant is False`; gate 1 settles the call.
 5. **KS**, with `diagnostic` on, measured regardless:
    `scipy.stats.ks_2samp(concordant_heights, dis1_heights)` on
    `[0.2333, 0.2433, 0.3167, 0.2967, 0.2500]` and `[0.3667, 0.4067, 0.5167]`;
-   they are completely separated, so `D = 1.0` and `p ~ 0.0357`, giving
-   `ks_significant is True`. The cascade never reads it, which is what the row
-   demonstrates. With `diagnostic` off the correction is `no`, an inline
+   they are completely separated, so `D = 1.0`, but with so few trees
+   `p ~ 0.0357 > 0.01`, giving `ks_significant is False`. The cascade never
+   reads it either way. With `diagnostic` off the correction is `no`, an inline
    method whose family of one is fixed, so the test below the failed count
    gate is never measured: `ks_statistic`, `ks_p_value` and `ks_significant`
    are all `None`.
@@ -186,8 +186,8 @@ so results are deterministic.
 **Inputs:** one crafted observation set per outcome, `_CASCADE_FAMILY`, which
 `test_diagnostic_changes_what_is_measured_and_nothing_concluded` measures as a
 family of five under `bfn`, `holm` and `fdr_bh`. Every p-value the derivation
-below calls significant sits below `0.05 / 5 = 0.01`, so correcting across the
-five moves no gate.
+below calls significant sits below `0.01 / 5 = 0.002`, so correcting across
+the five moves no gate.
 
 | id | con | dis1 | dis2 |
 | --- | --- | --- | --- |
@@ -200,32 +200,32 @@ five moves no gate.
 **Derivation:**
 
 - **`no_introgression`.** `chisquare([10, 10])` has expected `[10, 10]`, so the
-  statistic is exactly `0.0` and `p = 1.0 > 0.05`: gate 1 fails. The heights are
+  statistic is exactly `0.0` and `p = 1.0 > 0.01`: gate 1 fails. The heights are
   fully separated (20 at 0.1 against 10 at 0.9, `D = 1.0`), so KS *is*
   significant in a diagnostic run: this row shows the DCT gate stopping the
   cascade before a later gate can be consulted. With `diagnostic` off under
   `bfn`, an inline correction, the failed count gate is final and neither later
   test is measured (`perm_note == "direction_test_not_consulted"`).
 - **`inflow`.** `chisquare([30, 2])` has expected `[16, 16]`, so the statistic is
-  `(30-16)^2/16 + (2-16)^2/16 = 24.5`, and with df 1 `p ~ 7.4e-07 < 0.05`: gate 1
+  `(30-16)^2/16 + (2-16)^2/16 = 24.5`, and with df 1 `p ~ 7.4e-07 < 0.002`: gate 1
   passes. Every concordant and dis1 height is 0.5, so the two empirical CDFs
   coincide: `D = 0.0`, `p = 1.0`, not significant → gate 2 returns
   `inflow_introgression`.
 - **`outflow`.** The DCT is the same significant 30-vs-2 split.
   `max(_LOW) = 0.34 < min(_HIGH) = 0.85`, so the CDFs separate completely:
-  `D = 1.0` and gate 2 passes. The spread matters for gate 3: constant samples
+  `D = 1.0`, `p ~ 2.4e-09`, and gate 2 passes. The spread matters for gate 3: constant samples
   would trip the `degenerate_observed_scale` guard, but these carry real
   within-group variance, and the pooled 40 observations give
   `C(40, 10) = 847,660,528` assignments, far above the 2500 floor. No permutation
   reproduces the observed statistic, so `p_greater` sits at the add-one floor
   `1/(2500+1) = 4.0e-4`; Bonferroni over the tail pair doubles it to
-  `8.0e-4 < 0.05` → `greater` → `outflow_introgression`.
+  `8.0e-4 < 0.01` → `greater` → `outflow_introgression`.
 - **`ghost`.** The mirror image: identical DCT and KS reasoning, with gate 3
   finding a negative studentized difference and `p_less` at the floor → `less` →
   `ghost_introgression`.
 - **`ambiguous`.** The DCT sees a 30-vs-2 split → significant. The two samples
-  share the mean 0.5 but their CDFs differ sharply in spread, so KS is large and
-  gate 2 passes. Gate 3 finds no difference in means: the observed statistic is
+  share the mean 0.5 but their CDFs differ sharply in spread: `D = 0.5`,
+  `p ~ 9.0e-04 < 0.002`, and gate 2 passes. Gate 3 finds no difference in means: the observed statistic is
   near 0 and both one-tailed p-values are far above `alpha_perm`, so the outcome
   is non-directional and the classification is `ambiguous`. The distributions
   differ in shape, not location.
@@ -287,11 +287,11 @@ is why `False` stands in for it.
 **Inputs:** `[0.001, 0.008, 0.039, 0.041, 0.042, 0.06, 0.074, 0.205, 0.212, 0.6]`
 then the family `[0.001] * 8 + [0.4, 0.9]`, and `p = 0.004` padded with `0.5`
 entries to families of 1, 7 and 250, under each method in
-`P_VALUE_CORRECTION_CHOICES`, `alpha = 0.05`.
+`P_VALUE_CORRECTION_CHOICES`, `alpha = 0.01`.
 
 **Derivation:** on the first list `no` must return the input unchanged and
 every other method must equal
-`statsmodels.stats.multitest.multipletests(p_values, alpha=0.05, method=m)[1]`
+`statsmodels.stats.multitest.multipletests(p_values, alpha=0.01, method=m)[1]`
 where `m` maps `bfn → bonferroni` and the rest to their own names; Bonferroni
 is `min(1, n x p)`, so the reference also pins that arithmetic.
 
@@ -359,18 +359,19 @@ the same draws in every case.
 
 ### `test_bootstrap_votes_answer_to_the_corrected_threshold`
 
-**Inputs:** 40 concordant heights at 0.9, 18 discordant1 and 6 discordant2 at
+**Inputs:** 40 concordant heights at 0.9, 19 discordant1 and 5 discordant2 at
 0.55; run once with `no` at family size 1 and once with `bfn` at family size
 5000, 40 iterations, `triplet_seed=3`.
 
-**Derivation:** the discordant split 18 vs 6 gives a chi-square of
-`(18-12)^2/12 + (6-12)^2/12 = 6.0` on 1 df, `p = 0.0143 <= 0.05`, so the raw DCT
-gate passes. Bonferroni over 5000 tests gives `0.0143 x 5000 = 71.5 → 1.0`, far
+**Derivation:** the discordant split 19 vs 5 gives a chi-square of
+`(19-12)^2/12 + (5-12)^2/12 = 8.17` on 1 df, `p = 0.0043 <= 0.01`, so the raw DCT
+gate passes. Bonferroni over 5000 tests gives `0.0043 x 5000 = 21.3 → 1.0`, far
 above `alpha_dct`, so the corrected gate fails and the point estimate is
-`no_introgression`. Every bootstrap iteration is corrected by the same factor;
-no resample of a p-value near 0.014 survives a 5000x multiplier, so all 40
+`no_introgression`. Every bootstrap iteration is corrected by the same factor,
+so an iteration clears only with a raw p-value below `0.01 / 5000 = 2e-6`, a
+chi-square above about 22.6 that these resamples do not reach; all 40
 iterations vote `no_introgression` and the fraction is exactly 1.0. Under `no`
-the same resamples are judged raw, and enough of them clear 0.05 that the
+the same resamples are judged raw, and enough of them clear 0.01 that the
 fraction falls below 1.0, which is what makes the corrected agreement a real
 check rather than a tautology.
 
@@ -381,10 +382,10 @@ discordant1 `0.20, 0.21, ..., 0.59` (40 values), 5 discordant2 at 0.3, 200
 iterations, `no` correction.
 
 **Derivation:** the interval is the empirical `[100 x alpha, 100 x (1 - alpha)]`
-percentile pair over the per-iteration studentized differences, i.e. the 5th and
-95th percentiles at `alpha_perm = 0.05`. Each iteration resamples the observed
+percentile pair over the per-iteration studentized differences, i.e. the 1st and
+99th percentiles at `alpha_perm = 0.01`. Each iteration resamples the observed
 gene trees with replacement, so the bootstrap distribution is centred on the
-statistic computed from the observed data; a 90% percentile range of a
+statistic computed from the observed data; a 98% percentile range of a
 distribution centred on that value contains it. Ordering is immediate from the
 percentile definition.
 
@@ -431,7 +432,7 @@ regime the studentization is there to handle.
 
 **Inputs:** five seeded sample pairs from `_random_samples`,
 `min_resamples = max_resamples = 4000` (pinning the adaptive stopping off),
-`correction="bfn"`, `alpha = 0.05`.
+`correction="bfn"`, `alpha = 0.01`.
 
 **Derivation:** the observed statistic is a deterministic function of the
 inputs, not of the resampling, so it must equal SciPy's `result.statistic` for
@@ -446,15 +447,16 @@ independent resampling streams, so exact equality is not expected. Each
 estimate has binomial standard error `sqrt(p(1-p)/n)`, and the difference of
 two independent estimates has `sqrt(2)` times that. The tolerance is 5 such
 standard errors, which at `p = 0.5` and `n = 4000` is about `0.056` and at
-`p = 0.01` about `0.011`. A systematic error in the sampler or the counting
-would exceed this; ordinary Monte Carlo scatter will not.
+`p = 0.005`, the verdict threshold, about `0.008`. A systematic error in the
+sampler or the counting would exceed this; ordinary Monte Carlo scatter will
+not.
 
 With Bonferroni over a family of two the corrected p-value is `2p`, so
 `2p <= alpha` is the same condition as `p <= alpha/2`. The expected verdict is
-therefore computed from SciPy's raw one-tailed p-values at `alpha/2 = 0.025`:
+therefore computed from SciPy's raw one-tailed p-values at `alpha/2 = 0.005`:
 `greater` if the greater-tail p-value clears it, else `less` if the other
 does, else non-directional. It is asserted only when both of SciPy's p-values
-sit further than the Monte Carlo tolerance from `0.025`, since inside that band
+sit further than the Monte Carlo tolerance from `0.005`, since inside that band
 the two streams can legitimately land on opposite sides of the threshold.
 
 ### `test_permutation_statistics_match_exhaustive_enumeration`
@@ -486,7 +488,9 @@ p-values use the add-one estimator so they are strictly positive and at most 1.
 `T_perm <= T_obs`; every resample satisfies at least one and ties satisfy both,
 so the counts sum to at least `n_done` and
 `p_greater + p_less = (2 + count_greater + count_less)/(n_done+1) > 1`. The
-resample total lies within the configured bounds by the loop's construction.
+resample total is at least `min_resamples` and below `2 x max_resamples`: the
+loop stops once the budget is met, and the batch that meets it is drawn whole,
+so it overshoots by at most that batch.
 And a directional decision requires the corresponding tail to be small, which
 requires the observed statistic to sit on that side of the null, so `greater`
 implies a positive statistic and `less` a negative one.
@@ -523,7 +527,7 @@ displaced by `0.5 / sqrt(2/n) = sqrt(n/8)` null standard deviations: one at
 n=8, where the shifted nulls still cover the observed statistic and TOST
 reports `inconclusive`, and about 7 at n=400, where neither shifted null
 reaches it and the two one-sided tests reject, giving `equivalent` with
-`p_tost <= 0.05`. A margin expressed in standard-error units would displace
+`p_tost <= 0.01`. A margin expressed in standard-error units would displace
 the null by the same amount at every n, because the studentized statistic is a
 pivot whose null spread stays near 1, which is why the margin is an effect
 size rather than a number of standard errors.
@@ -541,14 +545,14 @@ and the decision must fall through to `inconclusive`, never to
 
 ### `test_type_one_error_rate_tracks_alpha_under_unequal_variance`
 
-**Inputs:** 300 replicates, `x ~ N(1.0, 1.0^2)` at n=60 against
-`y ~ N(1.0, 0.3^2)` at n=180, `alpha = 0.05`, 1000 resamples, `correction="bfn"`.
+**Inputs:** 1500 replicates, `x ~ N(1.0, 1.0^2)` at n=60 against
+`y ~ N(1.0, 0.3^2)` at n=180, `alpha = 0.01`, 1000 resamples, `correction="bfn"`.
 
 **Derivation:** both samples share the mean 1.0, so every *directional* decision
 is a type-I error; `equivalent` and `inconclusive` are not rejections of the
 directional null and are not counted. A correctly sized test rejects with probability `alpha`, giving
-`300 x 0.05 = 15` expected rejections with standard deviation
-`sqrt(300 x 0.05 x 0.95) = 3.8`. The assertion band `[3, 30]` spans 1% to 10%,
+`1500 x 0.01 = 15` expected rejections with standard deviation
+`sqrt(1500 x 0.01 x 0.99) = 3.9`. The assertion band `[3, 30]` spans 0.2% to 2%,
 roughly `+-4` standard deviations, so fixed seeds make it stable while a test
 that had stopped controlling its error rate would fall outside. Unequal sizes
 paired with unequal variances is the configuration where a permutation test of
@@ -605,21 +609,24 @@ roughly 4 standard errors.
 ### `test_adaptive_run_converges_or_exhausts_its_budget`
 
 **Inputs:** *converges:* `x ~ N(2.0, 0.2^2)` and `y ~ N(0.5, 0.2^2)`, both
-n=80, `min_resamples=1000`, `max_resamples=20000`. *Exhausts the budget:* 30
-draws from `N(1.4, 1.0^2)` against 30 from `N(1.0, 1.0^2)` (sample seed 3),
+n=80, `min_resamples=2500`, `max_resamples=20000`. *Exhausts the budget:* 30
+draws from `N(1.6, 1.0^2)` against 30 from `N(1.0, 1.0^2)` (sample seed 3),
 `min_resamples=100`, `max_resamples=1000`, resampling seed 103.
 
 **Derivation:** the first pair is separated by more than seven pooled standard
 deviations, so no permutation approaches the observed statistic and
-`p_greater` lands at the floor `1/1001 ~ 1.0e-3`. The Wilson interval around a
-count of 1 in 1001 is roughly `[0.0003, 0.0056]`; doubled by Bonferroni it stays
-far below `alpha = 0.05`, so `alpha` is outside it after the very first batch.
-The run therefore stops with `batches == 1`, `n_resamples == 1000`, and decision
-`greater`: an easy case must not spend the ceiling.
+`p_greater` lands at the floor `1/2501 ~ 4.0e-4`. The Wilson interval around a
+count of 1 in 2501 is roughly `[0.00007, 0.0023]`; doubled by Bonferroni it stays
+below `alpha = 0.01`, so `alpha` is outside it after the very first batch. A
+first batch of 1000 would not do: the interval around 1 in 1001 reaches
+`0.0056`, which doubles past 0.01. The run therefore stops with `batches == 1`,
+`n_resamples == 2500`, and decision `greater`: an easy case must not spend the
+ceiling.
 
-For the second pair the 0.4 shift is marginal at these sample sizes, so the
-corrected p-value stays near `alpha` and the Wilson interval never excludes it
-: the run draws every batch it is allowed. It therefore ends `converged=False`
+For the second pair the 0.6 shift is marginal at these sample sizes (the
+one-tailed p-value lands near `0.005`), so the corrected p-value stays near
+`alpha` and the Wilson interval never excludes it: the run draws every batch it
+is allowed. It therefore ends `converged=False`
 with `note = "max_resamples_reached"`, and takes 6 batches rather than 1.
 Two properties are asserted, neither pinning the growth factor. **Growth:** a
 schedule that repeated the opening batch would total exactly
@@ -886,7 +893,7 @@ the permutation test enabled).
   `(0.0, 1.0)`.
 - **Bonferroni correction:** 4 triplets, so `p_corrected = min(1.0, p x 4)`.
   `0.6547 x 4 = 2.62 → 1.0`; `1.0 x 4 → 1.0`. Every corrected DCT p-value is
-  `1.0`, far above `alpha_dct = 0.05`, so `dct_significant is False` and every
+  `1.0`, above any `alpha_dct`, so `dct_significant is False` and every
   triplet classifies as `no_introgression`.
 - **KS correction, `diagnostic` on (the `diagnostic_without_bootstrap` row):** asserted as a relation rather than a
   literal: `ks_p_value_corrected == min(1.0, ks_p_value x 4)`. (For (A,B,C)
@@ -1844,7 +1851,7 @@ decided as a family of one.
 
 **Derivation:** the first set's 10/10 split gives `chisquare([10, 10])` a
 p-value of 1.0, and a resample clears the count gate only when its split
-reaches 15/5 or wider (`p ≈ 0.025`), so most iterations fail at the first
+reaches 16/4 or wider (`p ≈ 0.0073`), so most iterations fail at the first
 gate and their direction tests are ones only the record asked for. The second
 set clears every gate in most resamples, so most direction tests are the
 vote's own. In both, every group keeps its spread under resampling (the
@@ -1856,7 +1863,7 @@ record's extra tests draw from a fifth child of the triplet's seed sequence,
 so the vote stream is consumed identically with the record on or off and
 `all_bootstrap` and the studentized interval must be equal. As a family of
 one under `bfn`, `_gate_p_value` is `min(1, p × 1) = p`, so replaying
-`_classify_introgression(dct_p <= 0.05, ks_p <= 0.05, decision)` over the
+`_classify_introgression(dct_p <= 0.01, ks_p <= 0.01, decision)` over the
 recorded iterations is the cascade the vote applied, and the tally it rebuilds
 must equal `all_bootstrap` exactly, which also proves the recorded decision
 in a gate-cleared iteration is the one the vote read. With `summary_only`,

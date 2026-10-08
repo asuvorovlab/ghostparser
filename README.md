@@ -17,7 +17,7 @@ summary statistics of simulated runs.
 
 The method (the tests, their formulas and the literature behind them) is
 described in [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md);
-every option is in [CONFIG.md](CONFIG.md). The same pages are published at
+every option is in [CONFIG.md](CONFIG.md). The same pages are hosted at
 <https://asuvorovlab.github.io/ghostparser/>.
 
 ## Installation

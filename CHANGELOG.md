@@ -3,7 +3,7 @@
 ## v0.1.0 - Oct 8, 2026
 
 The initial release under this repository. Earlier versions were developed in
-a private personal repository under the asif256000 account, and the scripts
+a private personal repository under the `asif256000` account, and the scripts
 released with the 2025 bioRxiv preprint are archived in the
 [legacy-2025 release](https://github.com/asuvorovlab/ghostparser/releases/tag/legacy-2025).
 
@@ -17,6 +17,8 @@ released with the 2025 bioRxiv preprint are archived in the
   tree-height test, and a studentized permutation test with a TOST
   equivalence step for the direction; the p-values are corrected across the
   run, and each call gets a bootstrap support value.
+- The default settings match those used in the IDP preprint, and
+  every one is configurable.
 - Consolidated introgression maps (a heatmap of sampled introgression beside
   a bar chart of ghost targets, with their TSV matrices).
 - Settings from command-line flags or a YAML or JSON config file, an input

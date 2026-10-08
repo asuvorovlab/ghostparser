@@ -21,12 +21,15 @@ from scipy import stats
 from ghostparser.orchestrator import inference as pinf
 from ghostparser.orchestrator import shape as pshape
 from tests.orchestrator.tree_references import (
+    ALPHA as _ALPHA,
+    ALPHAS as _ALPHAS,
     SPECIES_SUBTREE as _SPECIES_SUBTREE,
     TRIPLET as _TRIPLET,
     observations as _observations,
 )
 
-_ALPHA = 0.05
+# The modality test's own level; the run reports its p-value and no gate reads it.
+_MODALITY_ALPHA = 0.05
 
 
 def test_shape_moments_match_scipy():
@@ -77,7 +80,7 @@ def test_modality_test_rejects_only_a_well_separated_mixture(name, multimodal):
         samples[name], rng=np.random.default_rng(2)
     )
 
-    assert (p_value <= _ALPHA) is multimodal
+    assert (p_value <= _MODALITY_ALPHA) is multimodal
 
 
 @pytest.mark.parametrize(
@@ -141,13 +144,14 @@ def _shape_result(seed=9, enabled=True):
             rng.lognormal(-0.5, 0.4, 30),
         ),
         species_subtree=_SPECIES_SUBTREE,
+        **_ALPHAS,
         triplet_seed=3,
         bootstrap_options={"iterations": 5},
         shape_diagnostics=enabled,
     )
     # The writers take decided results, as they do from the runner.
     return pinf._apply_triplet_result_p_value_correction(
-        [result], alpha_dct=0.05, alpha_ks=0.05, method="no"
+        [result], alpha_dct=_ALPHA, alpha_ks=_ALPHA, method="no"
     )[0]
 
 
@@ -167,6 +171,7 @@ def test_shape_is_measured_once_and_not_per_bootstrap_iteration():
             np.random.default_rng(9).lognormal(-0.5, 0.4, 30),
         ),
         species_subtree=_SPECIES_SUBTREE,
+        **_ALPHAS,
         triplet_seed=3,
         bootstrap_options={"iterations": 60},
         shape_diagnostics=True,

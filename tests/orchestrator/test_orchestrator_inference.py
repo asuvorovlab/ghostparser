@@ -14,6 +14,8 @@ from statsmodels.stats.proportion import proportions_ztest
 
 from ghostparser.orchestrator import inference as pinf
 from tests.orchestrator.tree_references import (
+    ALPHA as _ALPHA,
+    ALPHAS as _ALPHAS,
     SPECIES_SUBTREE as _SPECIES_SUBTREE,
     TRIPLET as _TRIPLET,
     serialize_triplet_gene_trees,
@@ -107,7 +109,7 @@ def _expected_dct(n_dis1, n_dis2, discordant_test):
     return float(statistic), float(p_value)
 
 
-def _expected_result(strategy, discordant_test, diagnostic=True, alpha=0.05):
+def _expected_result(strategy, discordant_test, diagnostic=True, alpha=_ALPHA):
     """Derive every asserted inference field for the shared fixture.
 
     Groups the hand-derived heights by topology, ranks the two discordant
@@ -228,12 +230,13 @@ def _decided(observations, **kwargs):
         _TRIPLET,
         observations,
         species_subtree=_SPECIES_SUBTREE,
+        **_ALPHAS,
         bootstrap_options={"iterations": _ITERATIONS},
         triplet_seed=_SEED,
         **kwargs,
     )
     return pinf._apply_triplet_result_p_value_correction(
-        [result], alpha_dct=0.05, alpha_ks=0.05, method="no"
+        [result], alpha_dct=_ALPHA, alpha_ks=_ALPHA, method="no"
     )[0]
 
 

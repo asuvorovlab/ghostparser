@@ -37,6 +37,10 @@ exit statuses are listed under Errors in the [README](README.md#errors).
 
 ## Orchestrator
 
+The defaults are the settings used in the IDP preprint, and every one can be
+changed. They are those of v0.1.0; any later change to a default is recorded
+in the [CHANGELOG](https://github.com/asuvorovlab/ghostparser/blob/main/CHANGELOG.md).
+
 ### Arguments at a glance
 
 | Argument | Config key | Meaning |
@@ -118,9 +122,9 @@ species_filter: null
 species_rename_map: null
 processes: 0                                 # 0 = every CPU available to the process
 seed: null                                   # null = drawn and reported
-alpha_dct: 0.05
-alpha_ks: 0.05
-alpha_perm: 0.05
+alpha_dct: 0.01
+alpha_ks: 0.01
+alpha_perm: 0.01
 p_value_correction: bfn                      # no, bfn, holm, fdr_bh, fdr_by
 diagnostic: false
 consolidation: true
@@ -229,7 +233,7 @@ uses one.
 
 ##### `alpha_dct`, `alpha_ks`, `alpha_perm` (`--alpha-dct`, `--alpha-ks`, `--alpha-perm`)
 
-Default `0.05` each: the thresholds of the three gates, compared against the
+Default `0.01` each: the thresholds of the three gates, compared against the
 corrected p-values. `alpha_perm` also bounds the equivalence p-value.
 
 ##### `p_value_correction` (`--p-value-correction`)

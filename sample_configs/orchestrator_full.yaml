@@ -26,9 +26,9 @@ min_support_value: 0.5        # number; trees with a lower mean node support are
 # --- Tests and decision ------------------------------------------------------
 discordant_test: chi-square   # chi-square | z-test
 tree_height_calculation_strategy: AVG   # AVG | A | B | C | SIS | INT
-alpha_dct: 0.05               # number in (0, 1)
-alpha_ks: 0.05                # number in (0, 1)
-alpha_perm: 0.05              # number in (0, 1)
+alpha_dct: 0.01               # number in (0, 1)
+alpha_ks: 0.01                # number in (0, 1)
+alpha_perm: 0.01              # number in (0, 1)
 p_value_correction: bfn       # no | bfn | holm | fdr_bh | fdr_by
 permutation_options:
   min_resamples: 2500         # integer >= 1; the first batch

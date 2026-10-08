@@ -27,8 +27,7 @@ import pytest
 from scipy import stats
 
 from ghostparser.orchestrator import permutation as pperm
-
-_ALPHA = 0.05
+from tests.orchestrator.tree_references import ALPHA as _ALPHA
 
 
 def _studentized(x, y, axis=-1):
@@ -237,7 +236,9 @@ def test_random_inputs_preserve_test_invariants():
         # The two one-tailed counts both include ties, so together they cover
         # every resample at least once and their p-values must sum past 1.
         assert result.p_greater + result.p_less > 1.0, seed
-        assert 600 <= result.n_resamples <= 3000, seed
+        # The batch that meets the budget is drawn whole, so the total can pass
+        # it by at most that batch.
+        assert 600 <= result.n_resamples < 2 * 3000, seed
         # A significant direction must agree with the sign of the statistic.
         if result.decision == "greater":
             assert result.statistic > 0, seed
@@ -250,7 +251,7 @@ def test_random_inputs_preserve_test_invariants():
 
     values = [0.10, 0.22, 0.31, 0.44, 0.55, 0.61, 0.78, 0.83]
     result = pperm.run_studentized_permutation_test(
-        values, list(values), min_resamples=600, max_resamples=600,
+        values, list(values), alpha=_ALPHA, min_resamples=600, max_resamples=600,
         rng=np.random.default_rng(6),
     )
     assert result.statistic == pytest.approx(0.0)
@@ -283,7 +284,7 @@ def test_equivalence_step_decides_from_the_directional_resamples(
     x = rng.normal(1.0, 0.2, n)
     y = rng.normal(1.0, 0.2, n)
     result = pperm.run_studentized_permutation_test(
-        x, y, min_resamples=1000, max_resamples=1000,
+        x, y, alpha=_ALPHA, min_resamples=1000, max_resamples=1000,
         equivalence_test=equivalence_test, rng=np.random.default_rng(12),
     )
     assert result.decision == expected
@@ -291,7 +292,7 @@ def test_equivalence_step_decides_from_the_directional_resamples(
     if not equivalence_test:
         assert result.p_tost is None
         return
-    assert (result.p_tost <= 0.05) is (expected == "equivalent")
+    assert (result.p_tost <= _ALPHA) is (expected == "equivalent")
     resolution = 1.0 / (result.n_resamples + 1)
     assert result.p_tost >= resolution
     assert result.p_tost / resolution == pytest.approx(
@@ -307,14 +308,14 @@ def test_type_one_error_rate_tracks_alpha_under_unequal_variance():
     exactly where a permutation test of the raw mean difference loses its
     nominal level; holding level here is what the Welch studentization buys.
 
-    Over 300 null replicates at alpha=0.05 the expected count is 15 with a
-    standard deviation of 3.8. The assertion band spans 1% to 10%, wide enough
+    Over 1500 null replicates at alpha=0.01 the expected count is 15 with a
+    standard deviation of 3.9. The assertion band spans 0.2% to 2%, wide enough
     that fixed seeds make it stable, tight enough to catch a test that has
     stopped controlling its error rate. The level does degrade once the smaller
     group falls below roughly 30 observations *and* carries the larger spread;
     that limitation is documented in ORCHESTRATOR.md rather than asserted here.
     """
-    replicates = 300
+    replicates = 1500
     rejections = 0
     for replicate in range(replicates):
         rng = np.random.default_rng(7000 + replicate)
@@ -429,19 +430,21 @@ def test_adaptive_run_converges_or_exhausts_its_budget(separated):
         x = rng.normal(2.0, 0.2, 80)
         y = rng.normal(0.5, 0.2, 80)
         result = pperm.run_studentized_permutation_test(
-            x, y, min_resamples=1000, max_resamples=20000, rng=np.random.default_rng(9)
+            x, y, alpha=_ALPHA, min_resamples=2500, max_resamples=20000,
+            rng=np.random.default_rng(9),
         )
         assert result.converged is True
         assert result.batches == 1
-        assert result.n_resamples == 1000
+        assert result.n_resamples == 2500
         assert result.decision == "greater"
         return
 
     rng = np.random.default_rng(3)
-    x = rng.normal(1.4, 1.0, 30)
+    x = rng.normal(1.6, 1.0, 30)
     y = rng.normal(1.0, 1.0, 30)
     result = pperm.run_studentized_permutation_test(
-        x, y, min_resamples=100, max_resamples=1000, rng=np.random.default_rng(103)
+        x, y, alpha=_ALPHA, min_resamples=100, max_resamples=1000,
+        rng=np.random.default_rng(103),
     )
     assert result.batches > 1
     # Growth: a schedule that repeated the opening batch would total exactly

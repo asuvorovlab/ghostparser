@@ -16,6 +16,10 @@ from ghostparser.triplet_utils import TOPOLOGY_AB, TOPOLOGY_AC, TOPOLOGY_BC
 TRIPLET = ("A", "B", "C")
 SPECIES_SUBTREE = "((A,B),C);"
 CON, DIS1, DIS2 = TOPOLOGY_AB, TOPOLOGY_BC, TOPOLOGY_AC
+# Every gate's threshold in the inference tests, passed explicitly so the
+# derivations in TEST_IO.md, written at it, hold whatever the run defaults are.
+ALPHA = 0.01
+ALPHAS = {"alpha_dct": ALPHA, "alpha_ks": ALPHA, "permutation_kwargs": {"alpha": ALPHA}}
 
 
 def observations(con_heights, dis1_heights, dis2_heights):
