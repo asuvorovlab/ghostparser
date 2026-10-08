@@ -73,78 +73,42 @@ jobs:
       run: |
         ls -lh dist/
 
-    - name: Prepare release notes from changelog
+    - name: Check distributions
+      run: |
+        twine check dist/*
+
+    - name: Prepare release notes from the changelog
       if: startsWith(github.ref, 'refs/tags/')
       run: |
         set -euo pipefail
 
-        WHEEL_FILE="$(basename "$(ls dist/*.whl | head -n1)")"
         TAG_NAME="${GITHUB_REF_NAME}"
+        WHEEL_FILE="$(basename "$(ls dist/*.whl | head -n1)")"
 
-        CHANGELOG_SECTION_FILE="$(mktemp)"
-        if [ -s CHANGELOG.md ]; then
-          if ! awk -v tag="${TAG_NAME}" '
-            BEGIN {
-              capture = 0
-              found = 0
-            }
-            /^##[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+/ {
-              if (capture) {
-                exit
-              }
-              if (match($0, /^##[[:space:]]+(v[0-9]+\.[0-9]+\.[0-9]+)/, m) && m[1] == tag) {
-                capture = 1
-                found = 1
-                next
-              }
-            }
-            capture {
-              print
-            }
-            END {
-              if (!found) {
-                exit 1
-              }
-            }
-          ' CHANGELOG.md > "${CHANGELOG_SECTION_FILE}"; then
-            : > "${CHANGELOG_SECTION_FILE}"
-          fi
-        else
-          : > "${CHANGELOG_SECTION_FILE}"
-        fi
+        # The section under "## <tag>", up to the next "## " heading.
+        awk -v tag="${TAG_NAME}" '
+          /^## / { capture = ($2 == tag); if (capture) found = 1; next }
+          capture { print }
+          END { exit !found }
+        ' CHANGELOG.md > CHANGELOG_SECTION.md || {
+          echo "CHANGELOG.md has no '## ${TAG_NAME}' section; add one before tagging."
+          exit 1
+        }
 
         {
-          echo "## Changelog"
-          echo
-          if [ -s "${CHANGELOG_SECTION_FILE}" ]; then
-            cat "${CHANGELOG_SECTION_FILE}"
-          else
-            echo "_No changelog entry was found for ${TAG_NAME} in CHANGELOG.md._"
-          fi
+          cat CHANGELOG_SECTION.md
           echo
           echo "## Installation"
           echo
-          echo "Download the wheel file and install:"
           echo '```bash'
-          echo "pip install ${WHEEL_FILE}"
+          echo "pip install https://github.com/${{ github.repository }}/releases/download/${TAG_NAME}/${WHEEL_FILE}"
           echo '```'
           echo
-          echo "Or install directly from the release:"
-          echo '```bash'
-          echo "pip install https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${WHEEL_FILE}"
-          echo '```'
-          echo
-          echo "## Usage"
-          echo "After installation, run from anywhere:"
-          echo '```bash'
-          echo "python -m ghostparser.orchestrator -c config.yaml"
-          echo '```'
+          echo "Documentation: https://asuvorovlab.github.io/ghostparser/"
         } > RELEASE_BODY.md
 
-        rm -f "${CHANGELOG_SECTION_FILE}"
-        
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       if: startsWith(github.ref, 'refs/tags/')
       with:
         files: |
