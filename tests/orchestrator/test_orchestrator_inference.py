@@ -13,10 +13,12 @@ from scipy import stats
 from statsmodels.stats.proportion import proportions_ztest
 
 from ghostparser.orchestrator import inference as pinf
-from tests.orchestrator.tree_references import serialize_triplet_gene_trees
+from tests.orchestrator.tree_references import (
+    SPECIES_SUBTREE as _SPECIES_SUBTREE,
+    TRIPLET as _TRIPLET,
+    serialize_triplet_gene_trees,
+)
 
-_TRIPLET = ("A", "B", "C")
-_SPECIES_SUBTREE = "((A,B),C);"
 _GENE_SUBTREES = [
     "((A:0.10,B:0.10):0.10,C:0.30);",
     "((A:0.12,B:0.11):0.09,C:0.32);",

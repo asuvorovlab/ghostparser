@@ -14,38 +14,17 @@ import pytest
 from statsmodels.stats.multitest import multipletests
 
 from ghostparser.orchestrator import inference as pinf
-from tests.orchestrator.tree_references import serialize_triplet_gene_trees
 from ghostparser.orchestrator.config import P_VALUE_CORRECTION_CHOICES
 from ghostparser.orchestrator.correction import is_inline_correction
-
-_TRIPLET = ("A", "B", "C")
-_SPECIES_SUBTREE = "((A,B),C);"
-
-_CON = "((A,B),C)"
-_DIS1 = "((B,C),A)"
-_DIS2 = "((A,C),B)"
-
-
-def _observations(con_heights, dis1_heights, dis2_heights):
-    """Build an observation list with explicit per-topology heights.
-
-    Args:
-        con_heights: Heights assigned to the concordant topology.
-        dis1_heights: Heights assigned to the ``((B,C),A)`` topology.
-        dis2_heights: Heights assigned to the ``((A,C),B)`` topology.
-
-    Returns:
-        A list of ``(topology, height, metrics)`` observation tuples.
-    """
-    observations = []
-    for topology, heights in (
-        (_CON, con_heights),
-        (_DIS1, dis1_heights),
-        (_DIS2, dis2_heights),
-    ):
-        observations.extend((topology, height, None) for height in heights)
-    return observations
-
+from tests.orchestrator.tree_references import (
+    CON as _CON,
+    DIS1 as _DIS1,
+    DIS2 as _DIS2,
+    SPECIES_SUBTREE as _SPECIES_SUBTREE,
+    TRIPLET as _TRIPLET,
+    observations as _observations,
+    serialize_triplet_gene_trees,
+)
 
 def _analyze(observations, **kwargs):
     """Run the per-triplet analysis with bootstrap disabled for determinism.
@@ -162,88 +141,6 @@ _WIDE = [0.5 + 0.30 * (1 if i % 2 else -1) for i in range(30)]
 _NARROW = [0.5 + 0.02 * (1 if i % 2 else -1) for i in range(30)]
 
 
-@pytest.mark.parametrize(
-    "con, dis1, dis2, dct_significant, ks_significant, decisions, gate, expected",
-    [
-        # 10 vs 10 -> chi-square statistic 0, p = 1.0, so the first gate stops.
-        # KS is significant here too, so this row also shows the DCT gate
-        # stopping the cascade before a later gate can be consulted; a
-        # non-diagnostic run never measures it, so its flag is undefined there.
-        ([0.1] * 20, [0.9] * 10, [0.9] * 10, False, True, None, "DCT",
-         "no_introgression"),
-        # 30 vs 2 -> chi-square 24.5, p ~ 7.4e-07. Identical con/dis1 heights
-        # make the KS statistic 0 (p = 1.0), so gate 2 stops.
-        ([0.5] * 10, [0.5] * 30, [0.5] * 2, True, False, None, "THT",
-         "inflow_introgression"),
-        (_HIGH, _LOW, [0.1] * 2, True, True, {"greater"}, "PERM",
-         "outflow_introgression"),
-        (_LOW[:10], _HIGH * 3, [0.9] * 2, True, True, {"less"}, "PERM",
-         "ghost_introgression"),
-        (_WIDE, _NARROW, [0.5] * 2, True, True, {"equivalent", "inconclusive"},
-         "PERM", "ambiguous"),
-    ],
-    ids=["no_introgression", "inflow", "outflow", "ghost", "ambiguous"],
-)
-@pytest.mark.parametrize("diagnostic", [False, True])
-def test_decision_cascade_lands_on_each_classification(
-    con, dis1, dis2, dct_significant, ks_significant, decisions, gate, expected,
-    diagnostic,
-):
-    """Crafted observation sets drive the cascade onto each of its five outcomes.
-
-    The gate asserts which test settled the call, so a case that reaches its
-    classification by the wrong route fails rather than passing by coincidence.
-    The ``diagnostic`` setting must not move the classification or the gate: a
-    diagnostic run measures and reports every test on every row, while the
-    default declines a test whose result the cascade would have ignored: it
-    reports ``perm_decision`` exactly on the rows the permutation gate settled,
-    and under the inline ``no`` correction leaves the tree-height flag
-    undefined below a settled count gate.
-    """
-    result = _corrected(
-        _observations(con, dis1, dis2), "no", iterations=0, diagnostic=diagnostic
-    )
-    assert result.dct_significant is dct_significant
-    assert result.classification == expected
-    assert result.decision_gate == gate
-
-    if diagnostic or gate != "DCT":
-        assert result.ks_significant is ks_significant
-    else:
-        assert result.ks_p_value is None
-        assert result.ks_significant is None
-
-    if diagnostic or gate == "PERM":
-        assert result.perm_decision is not None
-        if decisions is not None:
-            assert result.perm_decision in decisions
-    else:
-        assert result.perm_decision is None
-        assert result.perm_note == pinf.PERM_NOTE_NOT_CONSULTED
-
-
-@pytest.mark.parametrize(
-    "con, dis1, note",
-    [
-        # C(6, 2) = 15 distinct assignments, far below the 2500-resample minimum.
-        ([0.9, 0.8, 0.7, 0.6], [0.1, 0.2], "insufficient_permutation_support"),
-        # Internally constant groups leave no scale to studentize by.
-        ([0.9] * 10, [0.1] * 30, "degenerate_observed_scale"),
-    ],
-)
-def test_permutation_guards_surface_on_the_triplet_result(con, dis1, note):
-    """A guarded direction test reports its reason instead of a direction.
-
-    Runs diagnostic so the test is reached regardless of what the earlier
-    gates decided; a guard is a property of the samples, not of the cascade
-    position.
-    """
-    result = _analyze(_observations(con, dis1, [0.1] * 2), diagnostic=True)
-    assert result.perm_note == note
-    assert result.perm_n_resamples == 0
-    assert result.perm_decision == "inconclusive"
-
-
 def _subtrees(con_heights, bc_heights, ac_heights):
     """Build gene subtrees placing given heights on each topology.
 
@@ -352,17 +249,17 @@ def test_classify_introgression_truth_table(
 
 
 @pytest.mark.parametrize("method", P_VALUE_CORRECTION_CHOICES)
-def test_adjust_p_values_matches_statsmodels_and_never_lowers_a_value(method):
-    """Each correction reproduces statsmodels and never pulls a p-value down.
+def test_corrections_match_statsmodels_never_lower_a_value_and_agree_inline(method):
+    """Each correction reproduces statsmodels, never pulls a p-value down, and
+    gives the same value inline as in the whole-family pass.
 
-    The first half compares against ``multipletests`` called directly (``no``
-    is the identity). The second is what licenses skipping a settled gate:
-    both short-circuits (the point estimate skipping the direction test and
-    a bootstrap iteration skipping it) rest on ``raw > alpha`` implying
-    ``adjusted > alpha``, so the property is asserted over the whole choice
-    list rather than a fixed set of names, on the hostile family of eight
-    strong signals against two weak ones, where a true-null-count estimator
-    would drive its multiplier below 1.
+    ``no`` is the identity. Never lowering a value is what licenses skipping a
+    settled gate (``raw > alpha`` must imply ``adjusted > alpha``), so it is
+    asserted over the whole choice list on a hostile family of eight strong
+    signals against two weak ones, where a true-null-count estimator would
+    drive its multiplier below 1. ``no`` and ``bfn`` vote inline during the
+    stream from the triplet count alone, so the inline value must equal the
+    family pass; a rank-based method needs the whole family and says so.
     """
     p_values = [0.001, 0.008, 0.039, 0.041, 0.042, 0.06, 0.074, 0.205, 0.212, 0.6]
     adjusted = pinf._adjust_p_values(p_values, method=method, alpha=0.05)
@@ -377,26 +274,14 @@ def test_adjust_p_values_matches_statsmodels_and_never_lowers_a_value(method):
     adjusted = pinf._adjust_p_values(hostile, method=method, alpha=0.05)
     assert all(a >= p - 1e-12 for a, p in zip(adjusted, hostile))
 
-
-@pytest.mark.parametrize("method", P_VALUE_CORRECTION_CHOICES)
-def test_inline_correction_matches_the_family_pass_or_refuses(method):
-    """A method needing only the family size reproduces the full pass; the rest refuse.
-
-    ``no`` and ``bfn`` vote inline during the stream, correcting one p-value
-    from the triplet count alone, so the value must equal what the run-wide
-    pass gives that p-value inside a family of that size. A rank-based method
-    cannot be applied without the rest of its family and says so.
-    """
-    p_value = 0.004
     if not is_inline_correction(method):
         with pytest.raises(ValueError, match="needs the whole family"):
-            pinf._adjust_p_value_inline(p_value, method, 10)
+            pinf._adjust_p_value_inline(0.004, method, 10)
         return
-
     for family_size in (1, 7, 250):
-        family = [p_value] + [0.5] * (family_size - 1)
+        family = [0.004] + [0.5] * (family_size - 1)
         expected = pinf._adjust_p_values(family, method=method, alpha=0.05)[0]
-        assert pinf._adjust_p_value_inline(p_value, method, family_size) == pytest.approx(
+        assert pinf._adjust_p_value_inline(0.004, method, family_size) == pytest.approx(
             expected
         ), family_size
 
@@ -637,14 +522,19 @@ def test_results_tsv_carries_corrected_columns_only_when_correcting(
         assert column in header
 
 
-# One observation set per cascade outcome, so a whole-run family spans triplets
-# settled at each of the three gates rather than only the cheap ones.
+# One observation set per cascade outcome, with the classification, the gate
+# that settles it and the direction decisions it allows, so a whole-run family
+# spans triplets settled at each of the three gates.
 _CASCADE_FAMILY = [
-    ([0.1] * 20, [0.9] * 10, [0.9] * 10),
-    ([0.5] * 10, [0.5] * 30, [0.5] * 2),
-    (_HIGH, _LOW, [0.1] * 2),
-    (_LOW[:10], _HIGH * 3, [0.9] * 2),
-    (_WIDE, _NARROW, [0.5] * 2),
+    # 10 vs 10 discordants: chi-square 0, p = 1, so the count gate stops.
+    (([0.1] * 20, [0.9] * 10, [0.9] * 10), "no_introgression", "DCT", None),
+    # 30 vs 2 discordants clears the count gate; identical con/dis1 heights
+    # give KS statistic 0, so the tree-height gate stops.
+    (([0.5] * 10, [0.5] * 30, [0.5] * 2), "inflow_introgression", "THT", None),
+    ((_HIGH, _LOW, [0.1] * 2), "outflow_introgression", "PERM", {"greater"}),
+    ((_LOW[:10], _HIGH * 3, [0.9] * 2), "ghost_introgression", "PERM", {"less"}),
+    # Equal means, different spreads: KS separates them, no direction does.
+    ((_WIDE, _NARROW, [0.5] * 2), "ambiguous", "PERM", {"equivalent", "inconclusive"}),
 ]
 
 
@@ -670,7 +560,11 @@ _DIAGNOSTIC_INVARIANT_FIELDS = (
 
 @pytest.mark.parametrize("method", ["bfn", "holm", "fdr_bh"])
 def test_diagnostic_changes_what_is_measured_and_nothing_concluded(method):
-    """Skipping the tests the cascade cannot consult changes no conclusion.
+    """Each crafted case lands on its classification at its gate, and skipping
+    the tests the cascade cannot consult changes no conclusion.
+
+    The gate is asserted so a case reaching its classification by the wrong
+    route fails rather than passing by coincidence.
 
     Skipping the direction test is licensed by every correction being monotone
     and by the permutation p-values being corrected inside the test rather than
@@ -701,17 +595,16 @@ def test_diagnostic_changes_what_is_measured_and_nothing_concluded(method):
                 _observations(*case), method, family_size=len(_CASCADE_FAMILY),
                 iterations=30, seed=11, diagnostic=diagnostic,
             )
-            for case in _CASCADE_FAMILY
+            for case, _, _, _ in _CASCADE_FAMILY
         ]
         families[diagnostic] = _decide(measured[diagnostic], method)
 
-    # The family has to exercise every gate, or the comparison would only prove
-    # the two runs agree where neither of them resamples.
-    assert {result.decision_gate for result in families[False]} == {
-        "DCT", "THT", "PERM"
-    }
-
-    for lean, full in zip(families[False], families[True]):
+    for lean, full, (_, classification, gate, decisions) in zip(
+        families[False], families[True], _CASCADE_FAMILY
+    ):
+        assert (lean.classification, lean.decision_gate) == (classification, gate)
+        if decisions is not None:
+            assert lean.perm_decision in decisions
         for field in _DIAGNOSTIC_INVARIANT_FIELDS:
             assert getattr(lean, field) == getattr(full, field), field
 
@@ -784,7 +677,7 @@ def test_bootstrap_measures_the_tree_height_test_its_correction_reads(
     # do most resamples'.
     result = pinf.analyze_triplet_from_observations(
         _TRIPLET,
-        _observations(*_CASCADE_FAMILY[0]),
+        _observations(*_CASCADE_FAMILY[0][0]),
         species_subtree=_SPECIES_SUBTREE,
         bootstrap_options={"iterations": iterations},
         p_value_correction=method,

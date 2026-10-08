@@ -15,7 +15,7 @@ pytest -m core           # the statistics and decisions
 pytest -m config         # config loading, resolution and validation
 pytest -m output         # what gets written: files, columns, report fields
 pytest -m integration    # entry points driven end to end
-pytest -m parity         # our geometry vs DendroPy and vs BioPython
+pytest -m parity         # our geometry vs an independent BioPython reference
 
 # One file / one test
 pytest tests/orchestrator/test_orchestrator_inference.py
@@ -34,7 +34,7 @@ suite. The criteria are meant to be objective:
 | `config` | Exercises a loader, normalizer or validator; asserts on the resolved config dict or a `ConfigError`. |
 | `output` | Asserts on *what was written* (files present, TSV columns, report fields, artifact routing, a figure saved), not on the numbers in them. |
 | `integration` | Drives an entry point end to end: `run_orchestrator`, `train_random_forest`, `train_multi_knn`, `tune_hyperparameters`. |
-| `parity` | Cross-implementation agreement: the cached geometry against the DendroPy subtree extraction kept as a reference, and against an independent BioPython implementation. |
+| `parity` | Cross-implementation agreement: the cached geometry against an independent BioPython implementation. |
 
 `config`, `output` and `integration` are applied in the test files, module-wide
 with `pytestmark` where a file is homogeneous, per test otherwise. `core` is
@@ -53,8 +53,8 @@ a changed default runs `config` in seconds, a changed report line runs
 Config tests do not pin individual default values. CONFIG.md and the sample
 configs state those, and two invariants keep them in step with the code
 without a per-key test: CLI mode and config-file mode resolve to one and the
-same set of defaults, and `orchestrator_full.yaml` names every runtime key at
-its default.
+same set of defaults, and each full sample (`orchestrator_full.yaml`,
+`ml_trainer.yaml`, `hyper_tune.yaml`) names every key at its default.
 
 ## Test Philosophy
 
@@ -63,30 +63,18 @@ implementation: topology counts are read off the input Newick strings by hand,
 tree heights are recomputed from root-to-tip distances, and test statistics are
 recomputed inline with SciPy/statsmodels. The one intentional exception is the
 `@pytest.mark.parity` tests, which exist specifically to check one implementation
-against another: the cached geometry against the DendroPy subtree extraction
-kept as a reference, and against a BioPython implementation written from the
-definitions in the test module itself.
+against another: the cached geometry against a BioPython implementation written
+from the definitions in `tests/orchestrator/tree_references.py`.
 
 ## Fixtures In Use
 
-Shared fixtures live in `tests/fixtures.py` and are re-exported to the whole
-suite by `tests/conftest.py`. Orchestrator-specific fixtures live in
+Shared fixtures live in `tests/conftest.py`; the orchestrator's trees live in
 `tests/orchestrator/conftest.py`.
 
-- `simple_newick_file`. Inputs: one rooted Newick tree containing `OutGroup`.
-  Expected usage: basic tree reading/standardization.
-- `newick_with_support_file`. Inputs: a Newick tree with internal support
-  labels. Expected usage: support parsing and stripping.
-- `multiple_trees_file`. Inputs: three Newick trees, one per line. Expected
-  usage: multi-tree file reading.
-- `low_support_tree_file`. Inputs: two trees, one with supports
-  (0.95, 0.99, 0.98) and one with (0.30, 0.20, 0.40). Expected usage: mean
-  support filtering at a 0.5 threshold.
-- `simple_species_tree` / `simple_gene_trees`. Inputs: a minimal species tree
-  and three gene trees. Expected usage: small parser integration checks.
-- `summary_statistics_tsv` / `summary_statistics_tsv_tuning`. Inputs: feature
-  tables with a `class` bitstring column, `dis1_topology`, and `feature_1..4`.
-  Expected usage: ML trainer and tuner tests.
+- `summary_statistics_tsv`. Inputs: 16 rows, four `class` bitstrings four times
+  each, a `dis1_topology` string column and `feature_1..4`. Expected usage: the
+  ML trainer and tuner runs (a 25% hold-out keeps one row per class, and three
+  CV folds stay feasible).
 - `orchestrator_species_tree`. Inputs: the 5-taxon species tree
   `(((A,B),C),(D,OUT))`. Expected usage: orchestrator preprocessing and end-to-end
   runs.
@@ -94,17 +82,20 @@ suite by `tests/conftest.py`. Orchestrator-specific fixtures live in
   `A,B,C,D,OUT` so rooting always succeeds. Expected usage: orchestrator
   preprocessing and end-to-end runs.
 
+`tests/orchestrator/tree_references.py` holds the BioPython reference and the
+observation builders the inference, decision and shape tests share.
+
 ## Function-Level Coverage
 
 ### tests/orchestrator/test_orchestrator.py
 
 End-to-end `run_orchestrator` behavior on the shared 5-taxon / 12-gene-tree fixture.
 
-Marked `integration` throughout (every test drives `run_orchestrator`) and `output` where it asserts on files or columns (`run_orchestrator_matches_derived_expectation`, `no_bootstrap_skips_the_bootstrap_and_its_columns`, `species_rename_map_reaches_every_output`, `run_outputs_follow_the_settings`).
+Marked `integration` throughout (every test drives `run_orchestrator`) and `output` where it asserts on files or columns (`run_orchestrator_matches_derived_expectation`, `every_optional_output_lands_where_documented_under_display_names`).
 
-- `test_run_orchestrator_matches_derived_expectation`. Inputs (parametrized
-  over `diagnostic` off and on): `run_orchestrator` (serial, fixed bootstrap
-  seed, consolidation off). Expected outputs: all 4 triplets present with the
+- `test_run_orchestrator_matches_derived_expectation`. Inputs (parametrized,
+  2 rows): `run_orchestrator` (serial, fixed bootstrap seed, consolidation off)
+  with the defaults, and with `diagnostic` on and the bootstrap off. Expected outputs: all 4 triplets present with the
   hand-derived topology counts (7/3/2 for `(A,B,C)`; 12/0/0 for each
   D-containing triplet), the SciPy chi-square DCT statistic and p-value, a
   Bonferroni-corrected DCT p-value (the raw value times the triplet count),
@@ -113,24 +104,16 @@ Marked `integration` throughout (every test drives `run_orchestrator`) and `outp
   the `ks_significant` flag follows it and `perm_decision` is populated; off,
   the raw and corrected KS columns, `ks_significant` and `perm_decision` are
   all `None` and `perm_note` reads `direction_test_not_consulted`.
-  `orchestrator_triplet_results.tsv` exists, its header starts with `triplet`
-  and includes `classification`, `bootstrap_value`, `perm_p_greater`,
+  With the bootstrap off, `bootstrap_value`, `all_bootstrap` and both
+  `bootstrap_perm_stat_ci_*` values are `None` and the first two columns are
+  absent from the header. `orchestrator_triplet_results.tsv` has a header
+  starting with `triplet` and including `classification`, `perm_p_greater`,
   `perm_p_less`, `decision_gate`, `perm_p_tost` and the two
-  `bootstrap_perm_stat_ci_*` columns, and its row count equals the number of
-  results. Purpose: end-to-end correctness against values derived from the
-  fixture rather than another module, that the setting changes only what is
-  measured below a settled gate, and the results TSV's shape and naming.
-- `test_no_bootstrap_skips_the_bootstrap_and_its_columns`. Inputs
-  (parametrized over `diagnostic` off and on): a run with `bootstrap=False`.
-  Expected outputs: all 4 triplets are produced; every result has
-  `bootstrap_value`, `all_bootstrap`, `bootstrap_perm_stat_ci_low` and
-  `bootstrap_perm_stat_ci_high` at `None` and the classification unchanged;
-  `bootstrap_value` and `all_bootstrap` are absent from the TSV header while
-  `classification` remains. Purpose: the toggle stops the work rather than
-  only the columns (the studentized interval comes from the bootstrap loop,
-  so its absence is the observable proof no iterations ran); a diagnostic
-  run does not reinstate work the user switched off, and the inference output
-  is untouched.
+  `bootstrap_perm_stat_ci_*` columns, and one row per result. Purpose:
+  end-to-end correctness against values derived from the fixture rather than
+  another module; `diagnostic` changes only what is measured below a settled
+  gate; switching the bootstrap off stops its work (the studentized interval
+  only the bootstrap loop produces is absent), even in a diagnostic run.
 - `test_species_filter_runs_every_triplet_among_the_named_species`. Inputs
   (parametrized, 2 rows): the shared fixture run with a `species_filter` file
   reading `A, B` / `D` / a blank line / `OUT` / `NOPE` / `B`, and one reading
@@ -141,39 +124,27 @@ Marked `integration` throughout (every test drives `run_orchestrator`) and `outp
   skipped, a repeat counts once); every triplet among the survivors and no
   other is run, unchanged in how it is measured, and fewer than three
   survivors is an input error.
-- `test_species_rename_map_reaches_every_output`. Inputs: the shared fixture
-  run with `species_rename_map` mapping `A -> Homo sapiens` and `B -> Pan sp.`,
-  with consolidation on. Expected outputs: the triplet taxa are
+- `test_every_optional_output_lands_where_documented_under_display_names`.
+  Inputs: one run with `species_rename_map` mapping `A -> Homo sapiens` and
+  `B -> Pan sp.`, consolidation, `generate_summary_stats` and
+  `bootstrap_diagnostic` on. Expected outputs: the triplet taxa are
   `{Homo sapiens, Pan sp., C, D}`; the `(A,B,C)` species subtree is
   `(('Homo sapiens','Pan sp.'),C);` and every `species_tree` column parses back
   to its triplet's names; the display names appear in the results TSV, the
-  consolidation taxa-order file and the inflow/outflow matrix; the combined plot
-  is written; and both processed tree files still carry only the tree labels
-  `A`-`D`/`OUT`. Purpose: the map applied to the results reaches every named
-  output, names a bare Newick label cannot hold are quoted where the output is
-  Newick, unmapped taxa are left alone, and nothing the run reads back is
-  renamed.
-- `test_run_outputs_follow_the_settings`. Inputs: one run with
-  `consolidation=True`, `generate_summary_stats=True` and
-  `bootstrap_diagnostic=True`. Expected outputs: the results TSV,
-  `metrics.txt` and both processed tree files survive and a non-empty
-  `consolidation/` subfolder exists; `summary_statistics.tsv` exists with
-  exactly 63 topology/metric columns (including
-  `concordant_avg_tree_height_mean` and `discordant2_sister_distance_max`) and
-  at least one result carries populated `topology_metric_statistics`; the
-  per-iteration columns (`bootstrap_dct_stats`, `bootstrap_dct_p_value`,
-  `bootstrap_ks_stats`, `bootstrap_ks_p_value`, `bootstrap_perm_stats`,
-  `bootstrap_perm_p_greater`, `bootstrap_perm_p_less`,
-  `bootstrap_perm_decisions`, `bootstrap_gene_tree_heights`) appear in the
-  results header and at least one result has a populated
-  `bootstrap_dct_stats` and `bootstrap_perm_decisions`. Purpose: consolidation
-  does not wipe the run folder, and the summary-statistics and
-  bootstrap-diagnostic output paths honour their column contracts, all from
-  one run.
+  consolidation taxa-order file and the inflow/outflow matrix, and the combined
+  plot is written; both processed tree files still carry only `A`-`D`/`OUT`;
+  `metrics.txt` survives consolidation; `summary_statistics.tsv` has exactly 63
+  metric columns (including `discordant2_sister_distance_max`) and every result
+  carries `topology_metric_statistics`; the nine per-iteration `bootstrap_*`
+  columns are in the results header and every result has `bootstrap_dct_stats`.
+  Purpose: every optional output honours its location and column contract, the
+  map reaches every named output (quoted where the output is Newick) and
+  nothing the run reads back is renamed, all from one run.
 - `test_parallel_runs_match_serial`. Inputs: the same fixture run serially
-  and then with 2 and with 4 workers under a fixed seed. Expected outputs:
-  every compared field, bootstrap values included, is identical at both
-  worker counts. Purpose: distributing triplet chunks must not change results.
+  and with 3 workers under a fixed seed. Expected outputs: every compared
+  field, bootstrap values included, is identical. Purpose: distributing
+  triplet chunks (three workers over four triplets split unevenly) must not
+  change results.
 
 ### tests/orchestrator/test_orchestrator_inference.py
 
@@ -197,7 +168,7 @@ All `core`.
   with the setting off and on; the heights per strategy are pinned separately
   by the geometry test below, so one strategy suffices here.
 - `test_observation_heights_match_derived_geometry`. Inputs:
-  `serialize_triplet_gene_trees` (the DendroPy reference serializer in
+  `serialize_triplet_gene_trees` (the BioPython reference serializer in
   `tests/orchestrator/tree_references.py`) under each of the 6 strategies
   in turn.
   Expected outputs: each observation's topology and H(T) match the
@@ -215,29 +186,6 @@ because the shared fixture never produces a significant DCT.
 
 All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcting`, which is `output`.
 
-- `test_decision_cascade_lands_on_each_classification`. Inputs (parametrized, 5
-  rows × `diagnostic` off and on): crafted observation sets, one per outcome:
-  an even 10/10 discordant split; a significant 30/2 split with identical
-  con/dis1 heights; the same split with fully separated spread-out heights in
-  either direction; and a split whose groups share a mean but differ sharply
-  in spread, each measured and decided under `no` correction. Expected
-  outputs: the DCT significance flag, the classification and `decision_gate`
-  with the setting off and on; the KS flag everywhere with `diagnostic` on and
-  off the `DCT` gate with it off, where the 10/10 row's raw KS p-value and
-  flag are `None`; `perm_decision` non-None everywhere with `diagnostic` on
-  and exactly on the `PERM` rows with it off, the other rows carrying
-  `perm_note == "direction_test_not_consulted"`. Purpose: every branch of the
-  cascade is reached by its intended route whatever the setting, and the gate
-  column shows which test settled each call rather than letting a case pass
-  by coincidence.
-- `test_permutation_guards_surface_on_the_triplet_result`. Inputs (parametrized,
-  2 rows): 4 concordant against 2 discordant1 heights (C(6, 2) = 15 assignments),
-  and internally constant groups with different means (`[0.9] * 10` versus
-  `[0.1] * 30`), measured with `diagnostic=True` so the direction test is
-  reached whatever the earlier gates decided. Expected outputs: the
-  matching `perm_note`, zero resamples, and `perm_decision == "inconclusive"`.
-  Purpose: a guarded direction test reports its reason on the triplet result
-  instead of a direction.
 - `test_summary_statistics_discordant_roles_follow_the_counts`. Inputs
   (parametrized, 2 rows): 10 concordant plus 3 and 9 discordant gene subtrees
   serialized with `collect_summary_statistics=True`, run once with `AC|B` the
@@ -256,23 +204,18 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   which returns the pair, so the gate column cannot drift out of step with
   the classification it explains, and the array form used to tally deferred
   votes cannot drift from the scalar one.
-- `test_adjust_p_values_matches_statsmodels_and_never_lowers_a_value`. Inputs
-  (parametrized over `P_VALUE_CORRECTION_CHOICES`): a fixed 10-value p-value
-  list, then a family of eight p-values at 0.001 plus 0.4 and 0.9. Expected
-  outputs: `no` returns the first list unchanged and every other method
-  equals `statsmodels.multipletests` called directly with the mapped method
-  name; on the second list no adjusted value falls below its raw one.
-  Purpose: correction correctness against the reference library, and the
-  monotonicity that licenses skipping a settled gate, asserted over the whole
-  choice list so adding a non-monotone method fails here immediately.
-- `test_inline_correction_matches_the_family_pass_or_refuses`. Inputs
-  (parametrized over `P_VALUE_CORRECTION_CHOICES`): p=0.004 padded out to
-  families of 1, 7 and 250 for the inline methods; the same p-value and a
-  family size for the rank-based ones. Expected outputs: `_adjust_p_value_inline`
-  equals the full `_adjust_p_values` pass on the same family under `no` and
-  `bfn`; `holm`, `fdr_bh` and `fdr_by` raise `ValueError`. Purpose: the
-  inline shortcut is exact, not an approximation, and a rank-based method
-  cannot be applied without the whole family.
+- `test_corrections_match_statsmodels_never_lower_a_value_and_agree_inline`.
+  Inputs (parametrized over `P_VALUE_CORRECTION_CHOICES`): a fixed 10-value
+  p-value list; a family of eight p-values at 0.001 plus 0.4 and 0.9; and
+  p=0.004 padded out to families of 1, 7 and 250. Expected outputs: `no`
+  returns the first list unchanged and every other method equals
+  `statsmodels.multipletests` with the mapped method name; on the second list
+  no adjusted value falls below its raw one; `_adjust_p_value_inline` equals
+  the full pass on each padded family under `no` and `bfn`, and raises
+  `ValueError` under `holm`, `fdr_bh` and `fdr_by`. Purpose: correction
+  correctness against the reference library; the monotonicity that licenses
+  skipping a settled gate, asserted over the whole choice list so a
+  non-monotone method fails here; and that the inline shortcut is exact.
 - `test_unknown_methods_are_rejected`. Inputs (parametrized, 2 rows): an
   unsupported correction method name, and an unsupported discordant-test
   method name. Expected outputs: `ValueError` naming the unsupported method.
@@ -336,11 +279,16 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   contract, including that the two conditional lists stay in step so a row never
   shifts against its header.
 - `test_diagnostic_changes_what_is_measured_and_nothing_concluded`. Inputs
-  (parametrized over `bfn`, `holm`, `fdr_bh`): one observation set per cascade
-  outcome, measured with a 30-iteration bootstrap as a family of five with
-  `diagnostic` off and again on, each run through the run-wide pass. Expected
-  outputs: the non-diagnostic family's gates span `DCT`, `THT` and `PERM`;
-  the counts, `dis1_topology`, every `dct_*` field, `classification`,
+  (parametrized over `bfn`, `holm`, `fdr_bh`): one crafted observation set per
+  cascade outcome (an even 10/10 discordant split; a 30/2 split with identical
+  con/dis1 heights; fully separated heights in either direction; groups
+  sharing a mean but differing in spread), measured with a 30-iteration
+  bootstrap as a family of five with `diagnostic` off and again on, each run
+  through the run-wide pass. Expected outputs: each set lands on its
+  classification at its gate (`no_introgression`/`DCT`,
+  `inflow_introgression`/`THT`, `outflow_introgression`, `ghost_introgression`
+  and `ambiguous` at `PERM`, with `perm_decision` `greater`, `less`, and
+  `equivalent` or `inconclusive`); the counts, `dis1_topology`, every `dct_*` field, `classification`,
   `decision_gate`, `bootstrap_value` and `all_bootstrap` are equal field for
   field between the two runs; the raw and corrected KS fields agree wherever
   the non-diagnostic run measured the test, and are `None` only on `bfn`'s
@@ -353,8 +301,10 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   `_adjust_p_values` applied to the whole raw column, and setting every raw
   DCT p-value to 1.0 and re-running the pass leaves the corrected KS column
   identical and classifies every row `no_introgression`. Purpose: the
-  setting changes what is computed and never what is concluded, across an
-  inline correction and two deferred ones, bootstrap votes included; each
+  every branch of the cascade is reached by its intended route (the gate is
+  asserted, so a case cannot pass by coincidence); the setting changes what
+  is computed and never what is concluded, across an inline correction and
+  two deferred ones, bootstrap votes included; each
   test's family is all triplets, the two corrections read nothing of each
   other, and the cascade order alone decides which one a classification
   rests on.
@@ -531,25 +481,20 @@ The statistics are `core`; the TSV column-contract test is `output`.
 
 Tree preprocessing, asserted against explicit Newick literals.
 
-All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
+All `core`, except `test_clean_and_save_trees_filters_on_support_and_quotes_labels`
 (`output`).
 
-- `test_clean_and_save_trees_keeps_well_supported_trees_and_drops_the_rest`.
-  Inputs: `orchestrator_species_tree`, then `low_support_tree_file`, each with
-  `min_avg_support=0.5`. Expected outputs: the support-free species tree
-  round-trips verbatim and reads back as one tree; of the two supported trees
-  exactly one survives (mean 0.973 kept, mean 0.300 dropped) carrying the
-  expected taxa, with its support values stripped from the output. Purpose:
-  the mean support filter, and that a tree it keeps is written unchanged.
-- `test_clean_and_save_trees_quotes_labels_the_format_needs`. Inputs: a
-  four-leaf tree whose labels hold a space, a dot, a quote (`'O''Brien'`) and
-  an underscore, written quoted as the Newick standard requires. Expected
-  outputs: the cleaned file carries the three quoted labels quoted and the
-  underscore label bare, byte for byte; read back with both Bio.Phylo and
-  DendroPy, the leaves are `Homo sapiens`, `Pan sp.`, `O'Brien`, `Mus_musculus`.
-  Purpose: the processed trees are reread by the run and may be read by other
-  tools, so the writer must quote exactly the labels a bare token cannot hold
-  and leave the rest as they were.
+- `test_clean_and_save_trees_filters_on_support_and_quotes_labels`. Inputs
+  (parametrized, 3 rows), each cleaned with `min_avg_support=0.5`: the
+  support-free fixture species tree; two supported trees, one averaging 0.97
+  and one 0.30; and a four-leaf tree whose labels hold a space, a dot, a quote
+  (`'O''Brien'`) and an underscore. Expected outputs, byte for byte: the
+  species tree verbatim; only the well-supported tree, its supports stripped;
+  the quoted tree verbatim (three labels quoted, the underscore one bare),
+  reading back as `Homo sapiens`, `Pan sp.`, `O'Brien`, `Mus_musculus`.
+  Purpose: the mean support filter, that a kept tree is written unchanged
+  apart from its supports, and that the writer quotes exactly the labels a
+  bare token cannot hold, since the run rereads the processed trees.
 - `test_root_species_tree_roots_where_the_outgroups_branch_off`. Inputs
   (parametrized, 4 rows): the fixture species tree
   `(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2)` with outgroup `OUT`;
@@ -601,8 +546,7 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   contract; names may share a line or take one each, surrounding whitespace
   and empty entries are dropped, and a repeat keeps its first position.
 - `test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup`.
-  Inputs (parametrized over `processes` 1 and 2): `orchestrator_gene_trees`
-  with outgroup `OUT`; then nine gene
+  Inputs: `orchestrator_gene_trees` with outgroup `OUT`; then nine gene
   trees with outgroups `["OUT1", "OUT2", "OUT3"]` in species-tree rank:
   `OUT1` alone; `OUT1` with `OUT2` nested among the ingroup; `OUT1` nested
   beside `C` with `OUT2` and `OUT3` sisters; the same with `OUT1` on a
@@ -618,7 +562,7 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   {"OUT1": 1, "OUT2": 4, "OUT3": 1}`, `tangled_trees == 5`,
   `missing_length_indices == [6, 7]`, `unrootable_indices == [8, 9]`, no
   support drops, the seven written trees as exact Newick, and the returned
-  `trees` equal to the written lines, with either worker count. Purpose:
+  `trees` equal to the written lines. Purpose:
   gene-tree rooting semantics; the farthest outgroup is read from the gene
   tree's own branch lengths, a missing one counting as 0, so it can differ
   from the species-tree rank either way, and the rank breaks ties, as in a
@@ -627,49 +571,44 @@ All `core`, except `test_clean_and_save_trees_quotes_labels_the_format_needs`
   on the farthest is pruned without being used, even when two others sit
   together; the tree is rooted at the common ancestor of the outgroups
   outside the ingroup; every outgroup is pruned; and the counts report, per
-  outgroup, the trees it was the farthest in, rooted and was tangled in;
-  and workers change nothing.
+  outgroup, the trees it was the farthest in, rooted and was tangled in.
 
 ### tests/orchestrator/test_orchestrator_triplet_geometry.py
 
 Covers `orchestrator/triplet_geometry.py`, which reads a triplet's geometry out
 of a cached tree instead of extracting its subtree, the path every run takes,
 for gene trees and the species tree alike; the cache is built from a
-`Bio.Phylo` tree. The parity tests compare it against two references, both in
-`tests/orchestrator/tree_references.py`: `dendropy_observation`, the DendroPy
-extraction the cache replaced (`extract_triplet_subtree` +
-`observation_from_subtree`), and `biopython_observation`, written with
-`Bio.Phylo` alone: the sister pair is the one pair whose
-common ancestor is not the common ancestor of all three, and every distance is
-a `Bio.Phylo` path sum from that three-way ancestor.
+`Bio.Phylo` tree. The parity tests compare it against
+`biopython_observation` in `tests/orchestrator/tree_references.py`, written
+with `Bio.Phylo` alone: the sister pair is the one pair whose common ancestor
+is not the common ancestor of all three, and every distance is a `Bio.Phylo`
+path sum from that three-way ancestor.
 
-All `core`; the three that compare against the references
-(`test_geometry_matches_each_reference`,
-`test_geometry_skips_exactly_what_each_reference_skips` and
-`test_geometry_matches_each_reference_across_a_nine_taxon_tree`) are `parity`
+All `core`; the three that compare against the reference
+(`test_geometry_matches_the_reference`,
+`test_geometry_skips_exactly_what_the_reference_skips` and
+`test_geometry_matches_the_reference_across_a_nine_taxon_tree`) are `parity`
 as well.
 
-- `test_geometry_matches_each_reference` - Inputs (parametrized over eleven
+- `test_geometry_matches_the_reference` - Inputs (parametrized over eleven
   `(newick, triplet)` cases covering nested pairs, pairs spanning the root,
   pruned extra taxa, a ladder, absent and mixed edge lengths, a zero-length
   internal branch, and near-degenerate lengths): the same tree and triplet
-  through each of the two references and through `build_triplet_geometry` +
+  through the reference and through `build_triplet_geometry` +
   `geometry_observation`, under each of the six tree-height strategies.
   Expected outputs: identical topology, and tree height and all three summary
-  metrics equal within `rel=1e-12`, for every reference and strategy.
-  Purpose: the cached path is a drop-in for extraction across every strategy
-  and tree shape, agreeing with two libraries that share no code with it or
-  with each other.
-- `test_geometry_matches_each_reference_across_a_nine_taxon_tree` - Inputs:
+  metrics equal within `rel=1e-12`, for every strategy. Purpose: the cached
+  path agrees, across every strategy and tree shape, with an implementation
+  that shares no code with it.
+- `test_geometry_matches_the_reference_across_a_nine_taxon_tree` - Inputs:
   all 84 triplets of a nine-taxon tree carrying an outgroup, nested clades, a
   ladder, uneven branch lengths and one zero-length internal branch, read out
-  of one cache built over the whole tree, against each of the two references
-  under each of the six strategies. Expected outputs: `triplet_resolution`
-  calls every triplet resolved, every reference yields an observation for it,
+  of one cache built over the whole tree, against the reference under each of
+  the six strategies. Expected outputs: `triplet_resolution` calls every
+  triplet resolved, the reference yields an observation for it,
   and topology, height and metrics agree within `rel=1e-12`. Purpose: a
   whole-tree sweep rather than hand-picked shapes, so sister pairs on either
-  side of the root and across the zero-length branch are all covered, against
-  each reference; one build answers every triplet, which is the reuse the
+  side of the root and across the zero-length branch are all covered; one build answers every triplet, which is the reuse the
   cache exists for; and the diagnostic agrees with the hot path on every
   triplet.
 - `test_geometry_matches_hand_derived_values` - Inputs (parametrized, 4 rows):
@@ -680,16 +619,16 @@ as well.
   and 4.0 / 1.0 / 6.0 for the first two, a zero internal branch with
   `((A,B),C)` resolved for the third, and every value zero for the fourth,
   and a `None` metrics slot when summary statistics are not requested.
-  Purpose: pins the arithmetic to a derivation rather than only to the other
-  implementations; the sister pair is chosen by LCA node identity, so a
+  Purpose: pins the arithmetic to a derivation rather than only to the
+  reference; the sister pair is chosen by LCA node identity, so a
   zero-length internal branch is not mistaken for a polytomy; a missing
   length counts as zero; and the observation contract leaves the metrics
   empty unless asked for.
-- `test_geometry_skips_exactly_what_each_reference_skips` - Inputs
+- `test_geometry_skips_exactly_what_the_reference_skips` - Inputs
   (parametrized, 3 rows): a root polytomy, a triplet with an absent taxon,
   and a triplet across a zero-length internal branch. Expected outputs:
   `triplet_resolution` returns `unresolved`, `missing taxon` and `resolved`
-  respectively, and `geometry_observation` and both references return an
+  respectively, and `geometry_observation` and the reference return an
   observation exactly on the resolved row and `None` on the other two.
   Purpose: the skip decisions match, so observation counts do, and the
   diagnostic the preflight uses restates the hot path's guards without
@@ -699,7 +638,8 @@ as well.
 
 Covers loading and validating a species rename map, and the two label helpers
 the outputs are renamed with. The end-to-end effect on the outputs is covered by
-`test_species_rename_map_reaches_every_output` in `test_orchestrator.py`.
+`test_every_optional_output_lands_where_documented_under_display_names` in
+`test_orchestrator.py`.
 
 The two map-loading tests are `config`; the renaming test is `core`.
 
@@ -724,7 +664,7 @@ The two map-loading tests are `config`; the renaming test is `core`.
   map `T1 -> Alpha`, `T2 -> Beta sp.`, and the first string with an empty
   map. Expected outputs: the exact renamed string, with `'Beta sp.'` quoted
   and the substring labels untouched, and the input unchanged under the empty
-  map; parsed with DendroPy, the leaves read as the mapped names in the
+  map; parsed with Bio.Phylo, the leaves read as the mapped names in the
   input's order with the input's edge lengths, and the plain label helper
   maps the input's leaf list to the same names. Purpose: the `species_tree`
   column is renamed as text by whole leaf token, never inside a branch
@@ -819,10 +759,11 @@ throughout. No individual default is pinned; two invariants stand in for all of
 them.
 
 - `test_cli_and_config_file_share_one_set_of_defaults`. Inputs: the real
-  parser given only `-st`/`-gt`/`-og`, and a YAML file carrying only the three
-  required keys. Expected outputs: the two resolved dicts are equal. Purpose:
-  CLI mode and config-file mode fill every key from the same constants, pinned
-  without naming any default so a changed default never needs a test edit.
+  parser given only `-st`/`-gt`/`-og` with the values of the shipped
+  `orchestrator_minimal.yaml`, and that file. Expected outputs: the two
+  resolved dicts are equal. Purpose: CLI mode and config-file mode fill every
+  key from the same constants, pinned without naming any default so a changed
+  default never needs a test edit; the minimal sample stays loadable.
 - `test_config_only_keys_and_nested_blocks_flatten_from_a_file`. Inputs: a
   file setting `discordant_test`, `tree_height_calculation_strategy`,
   `min_support_value`, `generate_summary_stats`, `alpha_dct`, `seed`, and a
@@ -836,16 +777,20 @@ them.
   value never reaches validation as a string; the mapping back to the written
   choice is what makes the unquoted spellings work.
 - `test_cli_flags_override_the_config_file`. Inputs: a config file setting
-  the paths, `alpha_dct`, `p_value_correction` and `overwrite: true`, plus the
-  flags `alpha_dct`, `alpha_perm`, `--no-overwrite` and `--no-consolidation`.
-  Expected outputs: the flags' `alpha_dct`, `alpha_perm`, `overwrite is
-  False` and `consolidation is False`; the file's `p_value_correction` and
-  paths. Purpose: precedence; a flag given beside the file replaces the
-  file's value, adds a key the file lacks, and the negated switch beats the
-  file's canonical `overwrite`; keys the command line does not touch keep the
-  file's value.
+  the species tree path, `alpha_dct`, `alpha_ks`, `p_value_correction: no`,
+  `overwrite: true` and `consolidation: true`, parsed with the real flag
+  strings `-c`, `--alpha-dct`, `--alpha-perm`, `--p-value-correction`,
+  `--diagnostic`, `--species-filter`, `--no-overwrite`, `--no-consolidation`,
+  `--no-bootstrap`, `--preflight-data-check`, `--preflight-triplet-cap 0`,
+  `--processes 3` and `--seed 5`. Expected outputs: each flag's value in its
+  key (`triplet_filter` left `None` beside the species filter); `overwrite`,
+  `consolidation` and `bootstrap` all `False`; the file's species tree path
+  and `alpha_ks` kept. Purpose: the one place the flag strings are pinned;
+  a flag beside the file replaces the file's value or adds a key it lacks, the
+  negated switches beat the file's canonical `true`, and untouched keys keep
+  the file's value.
 - `test_outgroup_key_is_normalized_or_rejected`. Inputs (parametrized, 8
-  rows): `outgroup` given as a single label, a comma-separated string, a
+  rows), each written to a config file: `outgroup` given as a single label, a comma-separated string, a
   padded string with a trailing comma, and a list whose entries are
   themselves comma-separated; then as `None`, a whitespace string, a list
   holding only an empty string, and an integer. Expected outputs: the first
@@ -864,17 +809,6 @@ them.
   non-negative int, a path whose file is read when the config resolves, and
   two paths that exclude each other, each failing by name rather than
   surfacing later.
-- `test_shipped_sample_configs_resolve`. Inputs (parametrized, 6 rows):
-  every orchestrator sample under `sample_configs/`: `orchestrator_minimal.yaml`,
-  `orchestrator_full.yaml`, `orchestrator_preflight.yaml`,
-  `orchestrator_species_filter.yaml`, `orchestrator_triplet_filter_diagnostic.yaml`
-  and `orchestrator_screen.json`. Expected
-  outputs: each loads without error, yields a non-empty list of string outgroup
-  labels, and sets the key its scenario is about (`outgroup` `["OutGroup"]` /
-  `["Out1", "Out2"]`, `preflight_data_check`, `generate_summary_stats` and
-  `diagnostic` `True`, `bootstrap` `False`). Purpose: the shipped samples cannot
-  drift out of step with the validator and leave users copying a rejected
-  config, and each still does what its name says.
 - `test_full_sample_config_names_every_runtime_key_at_its_default`. Inputs:
   `orchestrator_full.yaml` read both as raw YAML and through the loader, plus a
   required-keys-only file. Expected outputs: every key the normalizer produces
@@ -883,16 +817,6 @@ them.
   as the required-keys-only file outside the input paths. Purpose: a new key
   cannot be added without the sample gaining it, and the value the sample shows
   for each key is the one the code would use anyway.
-- `test_parser_flags_resolve_into_their_config_values`. Inputs: the CLI flag
-  strings parsed by `build_argument_parser`, then resolved. Expected outputs:
-  each flag's value reaches its config key (`--diagnostic` giving `True` and
-  `--species-filter species.txt` a resolved path ending in `species.txt`, with
-  `triplet_filter` left `None`, among them), `--no-overwrite` gives
-  `overwrite is False`, `--preflight-data-check`
-  gives `True`, and `--preflight-triplet-cap 0` gives `0`. Purpose: every other config test
-  builds a namespace directly, so this is the only place the flag names are
-  pinned; resolving covers the override path in the same pass.
-
 ### tests/test_cli.py
 
 The shared command-line wrapper in `ghostparser.cli_config`.
@@ -983,20 +907,109 @@ The count-helper test is `core`; the two that call `generate_introgression_maps`
   `no_introgression` one included; and only taxa that are the target of a
   non-zero sampled edge are flagged.
 
-### tests/test_ml_labels_and_metrics.py
+### tests/test_ml_config.py
 
-The ML label contract, evaluation metrics, distributions, and CV-fold policy.
+Trainer config resolution. Marked `config` throughout; no individual default is
+pinned.
 
-All `core`.
+- `test_trainer_sample_config_names_every_key_at_its_default`. Inputs:
+  `sample_configs/ml_trainer.yaml` read as raw YAML and through the loader,
+  plus a file holding only its two required paths. Expected outputs: every
+  resolved key is named in the sample (top level, `model` or `evaluation`),
+  and the sample resolves to exactly what the paths-only file resolves to.
+  Purpose: the one trainer sample loads, covers both trainers' keys, and shows
+  each key at the value the code would use anyway.
+- `test_ml_config_accepts_explicit_values`. Inputs (parametrized, 14 rows):
+  `overwrite: false`, an explicit `target_column` and `seed`; `n_estimators` and
+  `min_samples_leaf` under `model`; `model.max_features` as `null`, `log2`, `3`
+  and `0.5`; `model.class_weight` as `balanced`, a mapping and a list of
+  mappings; and `feature_importance_method` and its correlation threshold
+  under `evaluation`. Expected outputs: each value resolves as written, under
+  its top-level name. Purpose: precedence over the defaults, the flattening of
+  the `model` and `evaluation` blocks, and that every form scikit-learn
+  accepts for the two passthrough keys survives the validator.
+- `test_ml_config_rejects_invalid_values`. Inputs (parametrized, 17 rows):
+  `max_features` as `auto`, the string `None`, `sqrt2`, `0`, `1.5` and `true`;
+  `class_weight` as `nope` and `5`; `cv_folds` of `1`, `0`, `null`, `2.5` and
+  `true`; `feature_importance_method: shapley`; a threshold of `1.4`; the
+  method key at the top level; and `seed` under `model`. Expected outputs:
+  `ConfigError` carrying the listed fragments: the dotted location and the
+  received value with the accepted forms for the estimator keys (`auto` told
+  scikit-learn removed it, the string `None` told to omit the key or write
+  `null`), `cv_folds must be an integer >= 2`, the three methods, a fraction
+  between 0 and 1, the misplaced key's name, and `top level`. Purpose: a bad
+  value fails in config naming the key the user wrote, not as an estimator
+  error at fit time; `true` pins that a bool is not taken for the integer 1;
+  stratified k-fold cannot split into one fold; and a key in the wrong
+  section is refused rather than ignored.
+- `test_flags_beside_a_config_file_override_it`. Inputs (parametrized over the
+  trainer and the tuner): a config file with `seed: 7`, `overwrite: true` and
+  `test_size: 0.3`, parsed by that entry point's own parser with `-c`,
+  `--seed 9` and `--no-overwrite`, and resolved by its own resolver. Expected
+  outputs: `seed == 9`, `overwrite is False`, `test_size == 0.3`. Purpose:
+  both ML entry points wire their two flags through the shared resolver, and
+  the flags replace only their own keys.
 
-- `test_bit_labels_and_their_titles_cover_every_bit`. Inputs: the module
-  constants. Expected outputs: `len(BIT_LABELS) == BIT_COUNT`, all distinct,
-  and the six titles pinned by label: underscores become spaces and only the
-  first character is upper-cased, so `ghost_into_A` renders `Ghost into A`.
-  Purpose: a label can be read back positionally only while the two constants
-  agree; no label falls through the formatter and reaches a figure as a raw
-  slug; and `str.capitalize` is not used: it would lower-case the taxon
-  letters and rename the taxon.
+### tests/test_ml_utils.py
+
+The ML label contract, feature encoding, metrics, distributions, CV-fold
+policy and feature importance. All `core`, except the figure-folder test.
+
+- `test_rows_to_matrix_one_hot_encodes_strings_and_drops_the_target`. Inputs:
+  two rows with the target, two low-cardinality string columns and two numeric
+  ones. Expected outputs: the feature names `topology_a=AC`, `topology_a=BC`,
+  `topology_b=XY`, `topology_b=XZ`, `feature_a`, `feature_x`, the matching
+  one-hot and numeric values, and the labels in row order. Purpose: the saved
+  model is reused on new data, so the column layout (one-hot blocks per column
+  in sorted-category order, then the numerics) is a contract.
+- `test_rows_to_matrix_rejects_string_features`. Inputs: a string column
+  exceeding the cardinality limit. Expected outputs: an error rather than an
+  invented ordering.
+- `test_row_normalize_confusion_matrix_turns_counts_into_per_class_fractions`.
+  Inputs: a 3x3 count matrix `[[3, 1, 0], [0, 0, 0], [1, 1, 2]]` whose middle
+  true class has no samples. Expected outputs: cells become
+  `[[0.75, 0.25, 0], [0, 0, 0], [0.25, 0.25, 0.5]]`. Purpose: the 64-class
+  confusion-matrix plot is drawn on a fixed 0-1 scale, so the normalization has
+  to put populated rows on a common scale and leave an empty class at zero (drawn
+  at the low end of the scale) instead of dividing by zero.
+- `test_per_class_recall_skips_classes_without_hold_out_rows`. Inputs: hold-out
+  rows `000000` twice (predicted `000000` and `000001`) and `111111` once
+  (predicted correctly). Expected outputs: set-bit counts `[0, 6]` and recalls
+  `[0.5, 1.0]`, nothing for the 62 absent classes. Purpose: the per-class
+  accuracy figure must not score a class with no hold-out rows as 0, which
+  would drag its group down for want of data.
+- `test_classes_are_balanced_bounds_the_count_ratio`. Parametrized over
+  training/hold-out label sets: every class equally often; ten training
+  classes at exactly 1.5 times the others; ten training classes above 1.5
+  times; ten hold-out classes at twice the others; a class missing from the
+  hold-out set; a class missing from the training set. Expected outputs:
+  `True`, `True`, `False`, `False`, `False`, `False`. Purpose: the 1/64 chance
+  line assumes equal class weights, so it is drawn only when every partition
+  holds all 64 classes and no class outnumbers another by more than 1.5 times.
+- `test_save_evaluation_figures_creates_no_folder_without_figures` (`output`).
+  Inputs: neither the per-bit nor the 64-class matrix. Expected outputs: an
+  empty path mapping and no `figures/` folder. Purpose: a run that reports no
+  confusion matrices leaves no empty folder behind.
+- `test_correlation_feature_groups_collects_the_redundant_columns`. Inputs: a
+  5-row matrix whose second column is the square of the first and whose third
+  ranks the rows in an unrelated order, at a threshold of `0.7`. Expected
+  outputs: the groups `((0, 1), (2,))`. Purpose: grouping has to catch
+  features that rank the rows alike whatever their scale, since that is what
+  divides one signal's credit, and leave an unrelated feature on its own.
+- `test_grouped_permutation_importance_scores_the_group_that_carries_the_label`.
+  Inputs: a 40-row matrix whose first two columns hold one binary signal and
+  whose third counts the rows, labels equal to that signal on every bit, and a
+  stand-in model predicting from the first column alone. Expected outputs: the
+  first group's mean drop exceeds 0.2, the second group's drop and its
+  standard deviation are exactly zero. Purpose: a group is scored by the
+  micro-F1 it costs to shuffle it, so a group the model does not read must
+  cost nothing at all, not merely little.
+- `test_feature_importance_rows_refuses_impurity_without_a_tree`. Inputs: a
+  model whose estimators expose no `feature_importances_`, asked for `mdi`.
+  Expected outputs: `ConfigError` naming a tree-based model. Purpose: a model
+  with no impurity to read has to say so rather than fall back to another
+  measure, which would leave the reported ranking unexplained.
+
 - `test_64_class_matrix_orders_classes_by_set_bits`. Inputs: three rows with
   true classes `110000`, `000001`, `111111` and predicted classes `000011`,
   `000001`, `111111`. Expected outputs: 64 distinct `class_labels` whose set-bit
@@ -1040,137 +1053,22 @@ All `core`.
   `ValueError` for the empty file. Purpose: input reading and feature
   selection.
 
-### tests/test_ml_config.py
+### tests/test_ml_trainers.py
 
-Trainer config resolution. Marked `config` throughout; no individual default is
-pinned.
+The smoke tests are `integration` and `output`; the neighbour-capping test is
+`core`.
 
-- `test_shipped_trainer_sample_configs_resolve`. Inputs (parametrized):
-  `sample_configs/random_forest_minimal.yaml` and `multi_knn_minimal.yaml`.
-  Expected outputs: each loads without error, with an `input_path` ending in
-  `summary_statistics.tsv` and a non-empty `target_column`. Purpose: the
-  shipped trainer samples cannot drift out of step with the validator and leave
-  users copying a rejected config.
-- `test_ml_config_explicit_values_win_over_defaults`. Inputs (parametrized over
-  4 payloads): `overwrite: false`, an explicit `target_column`, and two
-  hyperparameters given under the nested `model` block. Expected outputs: each
-  value replaces its default. Purpose: precedence, plus the `model` block
-  flattening; a key given there must surface at the top level of the resolved
-  config, including one that also has a default.
-- `test_ml_config_accepts_every_estimator_value_form`. Inputs (parametrized
-  over 8 cases): `model.max_features` as `null`, `log2`, `3` and `0.5`;
-  `model.class_weight` as `null`, `balanced`, a mapping, and a list of mappings.
-  Expected outputs: each value passes through unchanged. Purpose: every form
-  scikit-learn accepts for these two keys survives the validator.
-- `test_ml_config_rejects_invalid_estimator_values`. Inputs (parametrized over
-  8 cases): `max_features` as `auto`, the string `None`, `sqrt2`, `0`, `1.5`
-  and `true`; `class_weight` as `nope` and `5`. Expected outputs: `ConfigError`
-  whose message names the dotted config location, the received value, and the
-  accepted forms: `auto` gets its own message saying scikit-learn removed it,
-  and the string `None` (what YAML makes of the bare word) is told to omit the
-  key or write `null`. Purpose: the failure has to name the config key the user
-  wrote, not surface as a bare estimator error at fit time, and the one
-  spelling users reach for by reflex has to be steered to the right one. `true`
-  also pins that a bool is rejected rather than passing the `int` check.
-- `test_seed_is_a_top_level_key_with_a_cli_flag`. Inputs: a config with
-  `seed: 7`; the trainer parser given `--seed 7` in CLI mode; the parser
-  given `-c` for a file holding `seed: 7` and `test_size: 0.3` plus
-  `--seed 9`; then `seed` under `model`. Expected outputs: `seed == 7` from
-  the file and from the flag; `seed == 9` with `test_size == 0.3` when both
-  are given; `ConfigError` naming the top level for `seed` under `model`.
-  Purpose: the seed has one place, and the flag overrides only that key.
-- `test_feature_importance_method_resolves_under_evaluation`. Inputs: an
-  `evaluation` block holding `feature_importance_method: grouped_permutation`
-  and `feature_importance_correlation_threshold: 0.9`; a config naming
-  neither; then `feature_importance_method: shapley`, a threshold of `1.4`,
-  and the method key at the top level. Expected outputs: both values resolve
-  as written; the method resolves to `None` when absent, which each trainer
-  reads as its own measure; `ConfigError` listing the three methods, one
-  demanding a fraction between 0 and 1, and one naming the misplaced key.
-  Purpose: the estimator is chosen in config, an unknown measure cannot reach
-  the trainer, and null has to survive normalization because the two trainers
-  resolve it differently.
-
-### tests/test_ml_utils.py
-
-All `core`.
-
-- `test_rows_to_matrix_uses_numeric_features_and_excludes_target_column`.
-  Inputs: rows with numeric features plus the target column. Expected outputs: a
-  numeric matrix excluding the target.
-- `test_rows_to_matrix_encodes_multiple_string_columns`. Inputs: rows with
-  low-cardinality string columns. Expected outputs: one-hot encoded features.
-- `test_rows_to_matrix_rejects_string_features`. Inputs: a string column
-  exceeding the cardinality limit. Expected outputs: an error rather than an
-  invented ordering.
-- `test_row_normalize_confusion_matrix_turns_counts_into_per_class_fractions`.
-  Inputs: a 3x3 count matrix `[[3, 1, 0], [0, 0, 0], [1, 1, 2]]` whose middle
-  true class has no samples. Expected outputs: cells become
-  `[[0.75, 0.25, 0], [0, 0, 0], [0.25, 0.25, 0.5]]`, every value lies in
-  `[0, 1]`, and the row sums are `1, 0, 1`. Purpose: the 64-class
-  confusion-matrix plot is drawn on a fixed 0-1 scale, so the normalization has
-  to put populated rows on a common scale and leave an empty class at zero (drawn
-  at the low end of the scale) instead of dividing by zero.
-- `test_per_class_recall_skips_classes_without_hold_out_rows`. Inputs: hold-out
-  rows `000000` twice (predicted `000000` and `000001`) and `111111` once
-  (predicted correctly). Expected outputs: set-bit counts `[0, 6]` and recalls
-  `[0.5, 1.0]`, nothing for the 62 absent classes. Purpose: the per-class
-  accuracy figure must not score a class with no hold-out rows as 0, which
-  would drag its group down for want of data.
-- `test_classes_are_balanced_bounds_the_count_ratio`. Parametrized over
-  training/hold-out label sets: every class equally often; ten training
-  classes at exactly 1.5 times the others; ten training classes above 1.5
-  times; ten hold-out classes at twice the others; a class missing from the
-  hold-out set; a class missing from the training set. Expected outputs:
-  `True`, `True`, `False`, `False`, `False`, `False`. Purpose: the 1/64 chance
-  line assumes equal class weights, so it is drawn only when every partition
-  holds all 64 classes and no class outnumbers another by more than 1.5 times.
-- `test_save_evaluation_figures_creates_no_folder_without_figures` (`output`).
-  Inputs: neither the per-bit nor the 64-class matrix. Expected outputs: an
-  empty path mapping and no `figures/` folder. Purpose: a run that reports no
-  confusion matrices leaves no empty folder behind.
-- `test_correlation_feature_groups_collects_the_redundant_columns`. Inputs: a
-  5-row matrix whose second column is the square of the first and whose third
-  ranks the rows in an unrelated order, at a threshold of `0.7`. Expected
-  outputs: the groups `((0, 1), (2,))`. Purpose: grouping has to catch
-  features that rank the rows alike whatever their scale, since that is what
-  divides one signal's credit, and leave an unrelated feature on its own.
-- `test_grouped_permutation_importance_scores_the_group_that_carries_the_label`.
-  Inputs: a 40-row matrix whose first two columns hold one binary signal and
-  whose third counts the rows, labels equal to that signal on every bit, and a
-  stand-in model predicting from the first column alone. Expected outputs: the
-  first group's mean drop exceeds 0.2, the second group's drop and its
-  standard deviation are exactly zero. Purpose: a group is scored by the
-  micro-F1 it costs to shuffle it, so a group the model does not read must
-  cost nothing at all, not merely little.
-- `test_feature_importance_rows_refuses_impurity_without_a_tree`. Inputs: a
-  model whose estimators expose no `feature_importances_`, asked for `mdi`.
-  Expected outputs: `ConfigError` naming a tree-based model. Purpose: a model
-  with no impurity to read has to say so rather than fall back to another
-  measure, which would leave the reported ranking unexplained.
-
-### tests/test_ml_random_forest.py
-
-Marked `integration` and `output`.
-
-- `test_train_random_forest_smoke`. Inputs: `summary_statistics_tsv`. Expected
-  outputs: training completes; the returned metrics name the objective and carry
-  both metric tiers, the dataset summary and the 64-class confusion matrix; the
-  written metrics JSON carries the bit-label order and one timing per stage; and
-  the predictions TSV, the model pickle and the four figures (both confusion
-  matrices, per-bit and per-class accuracy) under `figures/` are written. Purpose: the one end-to-end smoke test for this entry point, plus its
-  output-file and metrics-field contract.
-
-### tests/test_ml_multi_knn.py
-
-The smoke test is `integration` and `output`; the neighbour-capping test is `core`.
-
-- `test_multi_knn_train_smoke`. Inputs: `summary_statistics_tsv`. Expected
-  outputs: training completes; the returned metrics carry both metric tiers and
-  the cross-validation block, and the predictions TSV, the model pickle and
-  the four figures under `figures/` are written. Purpose: the one end-to-end smoke test
-  for this entry point, plus its output-file contract.
-- `test_multi_knn_build_model_caps_neighbors_to_training_size`. Inputs:
+- `test_trainer_runs_end_to_end_and_writes_every_artifact`. Inputs
+  (parametrized over `random_forest` and `multi_knn`): `summary_statistics_tsv`
+  with a 25% hold-out and three CV folds. Expected outputs: training completes;
+  the returned metrics carry both metric tiers, the dataset summary, the
+  cross-validation block and the 64-class matrix; the metrics JSON flags
+  exact match as diagnostic, carries the bit-label order and the per-stage
+  timings; and the predictions TSV (with `matched_label_count`), the model
+  pickle and the four figures under `figures/` are written. Purpose: the one
+  end-to-end smoke test per trainer, plus its output-file and metrics-field
+  contract.
+- `test_multi_knn_caps_neighbors_to_the_training_size`. Inputs:
   `n_neighbors=20` against training sets of 2 and of 50. Expected outputs: the
   effective count and the estimator's own `n_neighbors` are both `2` in the
   first case, and `20` passes through untouched in the second. Purpose: asking
@@ -1180,74 +1078,58 @@ The smoke test is `integration` and `output`; the neighbour-capping test is `cor
 ### tests/test_ml_hyper_tune.py
 
 The loader tests are marked `config`; the `tune_hyperparameters` runs are
-`integration` (and `output` where they assert on written artifacts); the
-marginal/influence math is `core`; the report-guidance and run-logger routing
-tests are `output`.
+`integration` and `output`; the marginal/influence math is `core`; the
+run-logger routing test is `output`.
 
-- `test_load_hyper_tune_config_accepts_hyperparameter_tuning_section`. Inputs
-  (parametrized, 2 rows): a full tuning section with `use_wandb: false`, its
-  `search_space.max_features` once the list `["sqrt", null, 4]` and once the
-  lone value `"log2"`. Expected outputs: the section loads with `model`,
-  `method` and `objective` renamed to `model_name`, `search_method` and
-  `objective_metric`, `use_wandb` resolves to `False`, and `max_features`
-  keeps the shape it was written in. Purpose: acceptance and the rename a
-  caller reads the resolved config by; search-space candidates reach the
-  estimator one at a time, so they pass the same per-value rules as the
-  `model` block, and the container shape a user wrote has to survive them.
-- `test_tuner_cli_flags_override_the_config_file`. Inputs: a valid tuner
-  config with `seed: 7` and `overwrite: true`, resolved through the shared
-  resolver with `seed=9` and `no_overwrite=True` given. Expected outputs:
-  `seed == 9`, `overwrite is False`, the file's search space intact. Purpose:
-  the tuner's two flags beside `-c` override the file like every other
-  module's.
+- `test_load_hyper_tune_config_accepts_hyperparameter_tuning_section`. Inputs:
+  a tuning section with `model`, `method: random`, `objective: macro_f1` and a
+  search space holding a list (`n_estimators`) and a lone value
+  (`max_features: log2`). Expected outputs: `model_name`, `search_method` and
+  `objective_metric` carry the written values, and the search space keeps the
+  shape each entry was written in. Purpose: the rename a caller reads the
+  resolved config by, and that candidates passing the `model`-block rules keep
+  their container shape.
 - `test_load_hyper_tune_config_rejects_malformed_configs`. Inputs
-  (parametrized, 5 rows): no `hyperparameter_tuning` section at all;
+  (parametrized, 7 rows): no `hyperparameter_tuning` section at all;
   `use_wandb: "yes"`; `wandb_detailed_payloads: true` beside `use_wandb: false`;
-  an `evaluation` block at the top level; and `search_space.max_features:
-  [sqrt, auto]`. Expected outputs: `ConfigError` naming, respectively,
-  `hyperparameter_tuning`, `must be a boolean`, `wandb_detailed_payloads
-  requires`, `evaluation`, and `search_space.max_features` together with
-  `'auto'`. Purpose: one case per structural rule; the section is required
+  an `evaluation` block at the top level; `search_space.max_features:
+  [sqrt, auto]`; and `cv_folds` of `1` and of `null`. Expected outputs:
+  `ConfigError` naming, respectively, `hyperparameter_tuning`, `must be a
+  boolean`, `wandb_detailed_payloads requires`, `evaluation`,
+  `search_space.max_features` together with `'auto'`, and `cv_folds must be an
+  integer >= 2` for both fold counts. Purpose: one case per structural rule; the section is required
   because nothing about a search can be inferred; `use_wandb` may be omitted
   but not mistyped, and gates the detailed payloads rather than letting them
   be silently ignored; an `evaluation` block is refused rather than ignored,
   since accepting it would let a user believe their settings applied to every
-  candidate; and a bad candidate is named against its `search_space` key
-  before any fit.
-- `test_shipped_tuning_sample_configs_resolve`. Inputs (parametrized):
-  `sample_configs/hyperparameter_tuning_random_forest.yaml` and
-  `sample_configs/hyperparameter_tuning_multi_knn.json`. Expected outputs: both
-  load, resolve to their stated model, report `use_wandb` and
-  `wandb_detailed_payloads` as `False`, and use only search-space keys their
-  model supports. Purpose: the shipped samples have not drifted out of step with
-  the validator in either config format.
-- `test_tune_hyperparameters_grid_search_runs_end_to_end`. Inputs:
-  `summary_statistics_tsv_tuning`, grid search, `top_k=3`, with the
-  `use_wandb` attribute deleted from the namespace. Expected outputs: the
-  search completes with `model_name`/`search_method` echoing the request and
-  `use_wandb` `False` in the results payload; exactly 2 candidates (the space
-  crosses one parameter over two values); the best-model pickle is written
-  and no `wandb/` directory is; `hyper_tune_parameter_marginals.tsv` and
-  `figures/hyper_tune_search_report.png` exist and the plot path is returned; the
-  ranked candidate TSV carries `rank`, `is_best`, `cv_score` and
-  `elapsed_seconds`; the marginals TSV header matches the documented column
-  order; the text report contains the search-space, top-candidate,
+  candidate; a bad candidate is named against its `search_space` key
+  before any fit; and every candidate is scored by stratified k-fold, which
+  needs at least two folds.
+- `test_tuning_sample_config_names_every_key_at_its_default`. Inputs:
+  `sample_configs/hyper_tune.yaml` read as raw YAML and through the loader,
+  plus a file holding only its required paths and its search space. Expected
+  outputs: the sample's top level is exactly the runtime keys plus
+  `hyperparameter_tuning`, that block names all nine tuner keys, and the sample
+  resolves to exactly what the minimal file resolves to. Purpose: the tuner
+  sample loads and shows every key at the value the code would use anyway.
+- `test_tune_hyperparameters_runs_end_to_end`. Inputs (parametrized over grid
+  search and random search with `n_iter=1`): `summary_statistics_tsv` over a
+  space crossing `n_estimators` and `max_depth` at two values each, with the
+  `use_wandb` attribute deleted from the namespace. Expected outputs:
+  `search_method` echoes the request and `use_wandb` is `False`; exactly 4
+  candidates under grid and 1 under random; the best-model pickle is written
+  and no `wandb/` directory is; the marginals TSV and the search-report figure
+  exist and the plot path is returned; the ranked candidate TSV carries `rank`,
+  `is_best`, `cv_score` and `elapsed_seconds`; the marginals header matches
+  the documented column order; the text report has its search-space,
   per-parameter, guidance and artifact sections and records W&B as disabled;
-  and the results JSON carries `parameter_marginals`, `artifact_paths`, and
-  one `parameter_influence` entry per search-space key. Purpose: exhaustive
-  enumeration rather than sampling; the programmatic entry point takes the
-  same W&B default as the config loader, so a caller building its own
-  namespace need not know the key exists; and with W&B off the local
-  artifacts are the only way to navigate a search, so their file and column
-  contract is pinned.
-- `test_tune_hyperparameters_random_search_smoke`. Inputs:
-  `summary_statistics_tsv_tuning` with random search, `n_iter=1` and
-  `use_wandb=False` over a space of four combinations. Expected outputs: the
-  search completes, `search_method` echoes the request, exactly one candidate
-  is evaluated and it is the best. Purpose: the sampling budget is honoured
-  rather than the grid being walked.
+  and the results JSON carries `parameter_marginals`, `artifact_paths` and one
+  `parameter_influence` entry per search-space key. Purpose: enumeration
+  against sampling; the programmatic entry point takes the same W&B default as
+  the config loader; and with W&B off the local artifacts are the only way to
+  navigate a search, so their file and column contract is pinned.
 - `test_tune_hyperparameters_routes_bulk_artifacts_to_wandb`. Inputs:
-  `summary_statistics_tsv_tuning`, grid search, `use_wandb=True`, with
+  `summary_statistics_tsv`, grid search, `use_wandb=True`, with
   `_import_wandb` patched to a stub module. Expected outputs: the output
   directory holds `hyper_tune_best_model.pkl`, `hyper_tune_results.txt` and
   `figures/hyper_tune_search_report.png` but none of `hyper_tune_results.json`,
@@ -1274,11 +1156,20 @@ tests are `output`.
   outputs: `max_depth` ranks first with a best- and mean-score spread of `0.3`,
   ahead of `n_estimators` at `0.2`. Purpose: the influence ordering tells a user
   which dimension to keep searching.
-- `test_search_space_guidance_flags_a_dimension_with_no_effect`. Inputs: two
-  candidates differing only in `max_features`, both scoring `0.8`. Expected
-  outputs: the guidance reports a score spread of zero and names `max_features`
-  as having no effect on the objective. Purpose: an inert search dimension is
-  the finding a user most needs called out.
+- `test_compute_parameter_marginals_summarizes_each_value`. Inputs
+  (parametrized over `max` and `min`): four candidates over
+  `n_estimators` in `{5, 10}` with scores `0.7/0.4` and `0.9/0.6`, ranked in the
+  objective's direction. Expected outputs: values are ranked against each other
+  in that direction, the winner's `best_score` is `0.9` under `max` and `0.4`
+  under `min`, each value counts 2 candidates and reaches `best_rank` 1, and the
+  winner is flagged `upper_bound` / `lower_bound` respectively while the runner-up
+  carries no flag. Purpose: the marginal summary drives the guidance block, so
+  the direction handling and the bound flag are checked in both directions.
+- `test_parameter_influence_ranks_by_best_score_spread`. Inputs: four candidates
+  crossing `n_estimators` and `max_depth` with scores `0.9/0.7/0.6/0.4`. Expected
+  outputs: `max_depth` ranks first with a best- and mean-score spread of `0.3`,
+  ahead of `n_estimators` at `0.2`. Purpose: the influence ordering tells a user
+  which dimension to keep searching.
 - `test_create_run_logger_routes_on_the_use_wandb_choice`. Inputs
   (parametrized): `use_wandb` false and true, with `_import_wandb` patched to a
   stub module. Expected outputs: with `false` the logger reports
@@ -1296,6 +1187,6 @@ tests are `output`.
 
 Run with `pytest -m parity`. Only the three geometry tests in
 `tests/orchestrator/test_orchestrator_triplet_geometry.py` that compare the cached
-path against the DendroPy and BioPython references carry this marker; every
+path against the BioPython reference carry this marker; every
 other test derives its expectations from definitions instead of comparing
 against a second implementation.

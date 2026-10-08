@@ -1,0 +1,37 @@
+# Every tuner key at its default; the comments give the accepted values. The
+# runtime keys are the trainer's (see ml_trainer.yaml); `model` and `evaluation`
+# sections are not allowed here.
+#
+#   python -m ghostparser.ml.hyper_tune -c sample_configs/hyper_tune.yaml
+#
+# CONFIG.md describes every key.
+
+# --- Runtime -----------------------------------------------------------------
+input_path: ./results/summary_statistics.tsv   # required
+output_dir: ./results/hyper_tune_out           # required
+overwrite: true               # true | false
+target_column: class
+test_size: 0.2                # in (0, 1)
+cv_folds: 5                   # integer >= 2; candidates are scored by cross-validation
+rare_class_policy: warn_reduce_cv   # warn_reduce_cv | warn_skip_cv | error
+seed: null                    # null | integer
+n_jobs: -1                    # integer; -1 = every core
+
+# --- Search ------------------------------------------------------------------
+hyperparameter_tuning:
+  model: random_forest        # random_forest | multi_knn
+  method: grid                # grid (every combination) | random (n_iter draws)
+  objective: exact_match_accuracy   # exact_match_accuracy | hamming_loss | bitwise_accuracy | micro_f1 | macro_f1 | weighted_f1
+  top_k: 10                   # integer >= 1; candidates in the text report
+  n_iter: 20                  # integer >= 1; draws under method: random
+  max_candidates: 5000        # integer >= 1; a larger grid is refused
+  use_wandb: false            # true | false (log to Weights & Biases; pip install .[wandb])
+  wandb_detailed_payloads: false   # true | false; needs use_wandb: true
+
+  # Required. Each key is one of the model's hyperparameters with a list of
+  # candidate values; an omitted one keeps its default (see ml_trainer.yaml).
+  # For multi_knn, use n_neighbors, weights, algorithm, leaf_size, metric, p.
+  search_space:
+    n_estimators: [100, 200, 400]
+    max_depth: [null, 10, 20]
+    max_features: [null, sqrt, log2]

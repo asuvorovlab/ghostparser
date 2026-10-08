@@ -166,16 +166,22 @@ def _assert_result_matches(orchestrator_result, reference_result, fields):
 
 
 @pytest.mark.output
-@pytest.mark.parametrize("diagnostic", [False, True])
+@pytest.mark.parametrize(
+    "diagnostic, bootstrap", [(False, True), (True, False)],
+    ids=["default", "diagnostic_without_bootstrap"],
+)
 def test_run_orchestrator_matches_derived_expectation(
-    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, diagnostic
+    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, diagnostic, bootstrap
 ):
     """run_orchestrator (serial) reproduces the hand-derived per-triplet expectation.
 
     Every triplet here stops at the count gate, so the ``diagnostic`` setting
     changes only what is measured below it: a diagnostic run still reports the
     tree-height and direction tests, the default leaves both empty and says so
-    in ``perm_note``. Everything the cascade reads is the same.
+    in ``perm_note``. Turning the bootstrap off skips its work (the
+    studentized interval, which only the bootstrap loop produces, is absent)
+    and drops its columns, even in a diagnostic run; everything the cascade
+    reads is the same either way.
     """
     output_folder = tmp_path / "out"
     config = _make_config(
@@ -183,6 +189,7 @@ def test_run_orchestrator_matches_derived_expectation(
         orchestrator_gene_trees,
         output_folder,
         processes=1,
+        bootstrap=bootstrap,
         diagnostic=diagnostic,
     )
     results = run_orchestrator(config)
@@ -197,11 +204,13 @@ def test_run_orchestrator_matches_derived_expectation(
     header = lines[0].split("\t")
     assert header[0] == "triplet"
     for column in (
-        "classification", "bootstrap_value", "perm_p_greater", "perm_p_less",
+        "classification", "perm_p_greater", "perm_p_less",
         "decision_gate", "perm_p_tost", "bootstrap_perm_stat_ci_low",
         "bootstrap_perm_stat_ci_high",
     ):
         assert column in header
+    assert ("bootstrap_value" in header) is bootstrap
+    assert ("all_bootstrap" in header) is bootstrap
     assert len(lines) - 1 == len(results)
 
     for result in results:
@@ -243,6 +252,12 @@ def test_run_orchestrator_matches_derived_expectation(
             assert result.perm_decision is None
             assert result.perm_note == "direction_test_not_consulted"
 
+        if not bootstrap:
+            assert result.bootstrap_value is None
+            assert result.all_bootstrap is None
+            assert result.bootstrap_perm_stat_ci_low is None
+            assert result.bootstrap_perm_stat_ci_high is None
+            continue
         assert 0.0 <= result.bootstrap_value <= 1.0
         assert sum(result.all_bootstrap.values()) == pytest.approx(1.0)
         # The interval is reported only when some resample yielded two
@@ -251,49 +266,6 @@ def test_run_orchestrator_matches_derived_expectation(
         assert (result.bootstrap_perm_stat_ci_low is None) == (result.bootstrap_perm_stat_ci_high is None)
         if result.bootstrap_perm_stat_ci_low is not None:
             assert result.bootstrap_perm_stat_ci_low <= result.bootstrap_perm_stat_ci_high
-
-
-@pytest.mark.output
-@pytest.mark.parametrize("diagnostic", [False, True])
-def test_no_bootstrap_skips_the_bootstrap_and_its_columns(
-    orchestrator_species_tree, orchestrator_gene_trees, tmp_path, diagnostic
-):
-    """Disabling the bootstrap stops the work and drops its columns.
-
-    The studentized interval is produced by the bootstrap loop, so its absence
-    is the observable proof no iterations ran. A diagnostic run measures every
-    test the cascade cannot consult, which is not a licence to reinstate work
-    the user switched off, so the skip holds either way. The inference columns
-    and the point estimate are untouched.
-    """
-    output_folder = tmp_path / "out"
-    config = _make_config(
-        orchestrator_species_tree,
-        orchestrator_gene_trees,
-        output_folder,
-        processes=1,
-        bootstrap=False,
-        diagnostic=diagnostic,
-    )
-    results = run_orchestrator(config)
-
-    assert len(results) == _N_TRIPLETS
-    for result in results:
-        assert result.bootstrap_value is None
-        assert result.all_bootstrap is None
-        assert result.bootstrap_perm_stat_ci_low is None
-        assert result.bootstrap_perm_stat_ci_high is None
-        assert result.classification == "no_introgression"
-
-    header = (
-        (output_folder / "orchestrator_triplet_results.tsv")
-        .read_text()
-        .splitlines()[0]
-        .split("\t")
-    )
-    assert "bootstrap_value" not in header
-    assert "all_bootstrap" not in header
-    assert "classification" in header
 
 
 @pytest.mark.parametrize(
@@ -346,16 +318,20 @@ def test_species_filter_runs_every_triplet_among_the_named_species(
 
 
 @pytest.mark.output
-def test_species_rename_map_reaches_every_output(
+def test_every_optional_output_lands_where_documented_under_display_names(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
-    """Mapped taxa appear under their display names in every output, and nowhere else.
+    """One run with every optional output on writes each where documented, with
+    mapped taxa under their display names everywhere but the processed trees.
 
-    The run works in the trees' own labels and the map is applied to the
-    results just before they are written, so the display names (chosen here
-    to hold spaces and a dot, which a bare Newick label cannot) must reach
-    the returned results, the results TSV, the ``species_tree`` column and the
-    consolidation artifacts, while the processed trees keep the tree labels.
+    Consolidation lands in its own subfolder without wiping the primary
+    outputs; ``generate_summary_stats`` writes the 63 metric columns;
+    ``bootstrap_diagnostic`` adds the per-iteration columns and fills them.
+    The run works in the trees' own labels and the map is applied just before
+    writing, so the display names (holding a space and a dot, which a bare
+    Newick label cannot) must reach the results, the results TSV, the
+    ``species_tree`` column and the consolidation artifacts, while the
+    processed trees keep the tree labels.
     """
     rename_path = tmp_path / "names.tsv"
     rename_path.write_text("A\tHomo sapiens\nB\tPan sp.\n")
@@ -368,6 +344,8 @@ def test_species_rename_map_reaches_every_output(
         consolidation=True,
         species_rename_map=str(rename_path),
     )
+    config["generate_summary_stats"] = True
+    config["bootstrap_diagnostic"] = True
 
     results = run_orchestrator(config)
     assert len(results) == _N_TRIPLETS
@@ -405,80 +383,39 @@ def test_species_rename_map_reaches_every_output(
     matrix = (consolidation_data / "introgression_matrix_inflow_outflow.tsv").read_text()
     assert "Homo sapiens" in matrix and "Pan sp." in matrix
 
-
-@pytest.mark.output
-def test_run_outputs_follow_the_settings(
-    orchestrator_species_tree, orchestrator_gene_trees, tmp_path
-):
-    """One run with every optional output on writes each where documented.
-
-    Consolidation must not wipe the run folder's primary outputs and lands in
-    its own subfolder; ``generate_summary_stats`` writes the 63 metric columns
-    and fills the per-triplet metric statistics; ``bootstrap_diagnostic`` adds
-    the per-iteration columns and populates them.
-    """
-    output_folder = tmp_path / "out"
-    config = _make_config(
-        orchestrator_species_tree,
-        orchestrator_gene_trees,
-        output_folder,
-        processes=1,
-        consolidation=True,
-    )
-    config["generate_summary_stats"] = True
-    config["bootstrap_diagnostic"] = True
-    results = run_orchestrator(config)
-    assert results
-
-    for name in (
-        "orchestrator_triplet_results.tsv",
-        "metrics.txt",
-        "processed_species.tree",
-        "processed_genes.tree",
-    ):
-        assert (output_folder / name).exists(), name
-    assert (output_folder / "consolidation").is_dir()
-    assert any((output_folder / "consolidation").iterdir())
-
+    assert (output_folder / "metrics.txt").exists()
     summary_header = (
         (output_folder / "summary_statistics.tsv").read_text().splitlines()[0].split("\t")
     )
-    assert "concordant_avg_tree_height_mean" in summary_header
-    assert "discordant2_sister_distance_max" in summary_header
     metric_columns = [
         column
         for column in summary_header
         if column.startswith(("concordant_", "discordant1_", "discordant2_"))
     ]
     assert len(metric_columns) == 63
-    assert any(result.topology_metric_statistics for result in results)
+    assert "discordant2_sister_distance_max" in metric_columns
+    assert all(result.topology_metric_statistics for result in results)
 
-    results_header = (
-        (output_folder / "orchestrator_triplet_results.tsv")
-        .read_text()
-        .splitlines()[0]
-        .split("\t")
-    )
+    results_header = results_tsv.splitlines()[0].split("\t")
     for column in (
-        "bootstrap_dct_stats",
-        "bootstrap_dct_p_value",
-        "bootstrap_ks_stats",
-        "bootstrap_ks_p_value",
-        "bootstrap_perm_stats",
-        "bootstrap_perm_p_greater",
-        "bootstrap_perm_p_less",
-        "bootstrap_perm_decisions",
-        "bootstrap_gene_tree_heights",
+        "bootstrap_dct_stats", "bootstrap_dct_p_value", "bootstrap_ks_stats",
+        "bootstrap_ks_p_value", "bootstrap_perm_stats", "bootstrap_perm_p_greater",
+        "bootstrap_perm_p_less", "bootstrap_perm_decisions", "bootstrap_gene_tree_heights",
     ):
         assert column in results_header
-    assert any(result.bootstrap_dct_stats is not None for result in results)
-    assert any(result.bootstrap_perm_decisions is not None for result in results)
+    assert all(result.bootstrap_dct_stats is not None for result in results)
+
+
 
 
 def test_parallel_runs_match_serial(
     orchestrator_species_tree, orchestrator_gene_trees, tmp_path
 ):
-    """Parallel runs yield results identical to the serial run, at any worker count."""
+    """A parallel run yields results identical to the serial run.
+
+    Three workers over four triplets split the work unevenly, the case most
+    likely to shift a per-chunk seed or reorder results.
+    """
     serial_config = _make_config(
         orchestrator_species_tree,
         orchestrator_gene_trees,
@@ -487,15 +424,15 @@ def test_parallel_runs_match_serial(
     )
     serial = {r.triplet: r for r in run_orchestrator(serial_config)}
 
-    for processes in (2, 4):
-        parallel_config = _make_config(
+    parallel = run_orchestrator(
+        _make_config(
             orchestrator_species_tree,
             orchestrator_gene_trees,
-            tmp_path / f"parallel_{processes}",
-            processes=processes,
+            tmp_path / "parallel",
+            processes=3,
         )
-        parallel = run_orchestrator(parallel_config)
+    )
 
-        assert len(parallel) == len(serial)
-        for result in parallel:
-            _assert_result_matches(result, serial[result.triplet], _ALL_FIELDS)
+    assert len(parallel) == len(serial)
+    for result in parallel:
+        _assert_result_matches(result, serial[result.triplet], _ALL_FIELDS)

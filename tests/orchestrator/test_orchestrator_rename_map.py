@@ -1,7 +1,9 @@
 """Species rename map: loading, validation, and the label helpers the outputs use."""
 
-import dendropy
+from io import StringIO
+
 import pytest
+from Bio import Phylo
 
 from ghostparser.orchestrator.trees import (
     load_species_rename_map,
@@ -87,12 +89,10 @@ def test_renaming_labels_maps_leaves_and_quotes_as_needed(newick, rename_map, ex
     renamed = rename_newick_labels(newick, rename_map)
     assert renamed == expected
 
-    before = dendropy.Tree.get(data=newick, schema="newick", preserve_underscores=True)
-    after = dendropy.Tree.get(data=renamed, schema="newick", preserve_underscores=True)
-    before_labels = [leaf.taxon.label for leaf in before.leaf_node_iter()]
-    after_labels = [leaf.taxon.label for leaf in after.leaf_node_iter()]
+    before = Phylo.read(StringIO(newick), "newick").get_terminals()
+    after = Phylo.read(StringIO(renamed), "newick").get_terminals()
+    before_labels = [leaf.name for leaf in before]
+    after_labels = [leaf.name for leaf in after]
     assert after_labels == [rename_map.get(label, label) for label in before_labels]
     assert rename_taxon_labels(before_labels, rename_map) == after_labels
-    assert [leaf.edge_length for leaf in after.leaf_node_iter()] == [
-        leaf.edge_length for leaf in before.leaf_node_iter()
-    ]
+    assert [leaf.branch_length for leaf in after] == [leaf.branch_length for leaf in before]

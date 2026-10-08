@@ -1,0 +1,47 @@
+# Every trainer key at its default; the comments give the accepted values. One
+# file serves both trainers: each reads its own keys under `model` and ignores
+# the other's.
+#
+#   python -m ghostparser.ml.random_forest -c sample_configs/ml_trainer.yaml
+#   python -m ghostparser.ml.multi_knn -c sample_configs/ml_trainer.yaml
+#
+# CONFIG.md describes every key.
+
+# --- Runtime -----------------------------------------------------------------
+input_path: ./results/summary_statistics.tsv   # required; a run with generate_summary_stats
+output_dir: ./results/ml_out                   # required
+overwrite: true               # true | false (write to ml_out_1, ml_out_2, ...)
+target_column: class          # the 6-bit label column
+test_size: 0.2                # hold-out fraction, in (0, 1)
+cv_folds: 5                   # integer >= 2
+rare_class_policy: warn_reduce_cv   # warn_reduce_cv | warn_skip_cv | error
+seed: null                    # null | integer
+n_jobs: -1                    # integer; -1 = every core
+
+# --- Hyperparameters ---------------------------------------------------------
+model:
+  # random_forest
+  n_estimators: 200           # integer >= 1
+  max_depth: null             # null (unlimited) | integer
+  min_samples_split: 2        # integer >= 2
+  min_samples_leaf: 1         # integer >= 1
+  max_features: null          # null (every feature) | sqrt | log2 | integer | fraction in (0, 1]
+  class_weight: null          # null | balanced | balanced_subsample | mapping | list of mappings
+  # multi_knn
+  n_neighbors: 5              # integer >= 1
+  weights: uniform            # uniform | distance
+  algorithm: auto             # auto | ball_tree | kd_tree | brute
+  leaf_size: 30               # integer >= 1
+  metric: minkowski           # any scikit-learn distance metric name
+  p: 2                        # integer >= 1; the Minkowski power
+
+# --- Reporting ---------------------------------------------------------------
+evaluation:
+  metrics: all                # all | primary | diagnostic | per_bit
+  report_class_distribution: true   # true | false
+  report_confusion_matrix: true     # true | false (the figures)
+  report_feature_importance: true   # true | false
+  feature_importance_method: null   # null (mdi on the forest, permutation on KNN) | mdi | permutation | grouped_permutation
+  feature_importance_correlation_threshold: 0.7   # in (0, 1); grouped_permutation only
+  save_label_map: true        # true | false
+  save_predictions: true      # true | false

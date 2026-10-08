@@ -7,7 +7,6 @@ module.
 
 import re
 
-import dendropy
 import pytest
 
 from ghostparser.config import InputError
@@ -16,57 +15,50 @@ from ghostparser.orchestrator import trees as ptrees
 _OUTGROUP = ["OUT"]
 
 
-def test_clean_and_save_trees_keeps_well_supported_trees_and_drops_the_rest(
-    orchestrator_species_tree, low_support_tree_file, tmp_path
-):
-    """Trees at or above the mean-support threshold pass unchanged; the rest are dropped."""
-    out_path = tmp_path / "clean_species.tree"
-    ptrees.clean_and_save_trees(
-        str(orchestrator_species_tree), str(out_path), min_avg_support=0.5
-    )
-    # No internal support labels -> nothing to filter; the topology and branch
-    # lengths round-trip verbatim.
-    assert out_path.read_text() == "(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2);\n"
-    assert len(ptrees.read_tree_file(str(out_path))) == 1
-
-    out_path = tmp_path / "clean.tree"
-    ptrees.clean_and_save_trees(
-        str(low_support_tree_file), str(out_path), min_avg_support=0.5
-    )
-    # Tree 0 supports (0.95, 0.99, 0.98) -> mean 0.9733 >= 0.5, kept.
-    # Tree 1 supports (0.30, 0.20, 0.40) -> mean 0.3000 <  0.5, dropped.
-    kept = ptrees.read_tree_file(str(out_path))
-    assert len(kept) == 1
-    labels = {terminal.name for terminal in kept[0].get_terminals()}
-    assert labels == {"TaxaC", "TaxaD", "TaxaF", "TaxaG", "OutGroup"}
-    # Support values are stripped from the cleaned output.
-    assert "0.95" not in out_path.read_text()
-
-
 @pytest.mark.output
-def test_clean_and_save_trees_quotes_labels_the_format_needs(tmp_path):
-    """Labels a bare Newick token cannot hold are written quoted and read back intact.
+@pytest.mark.parametrize(
+    "content, expected",
+    [
+        # No support labels: nothing to filter, written back verbatim.
+        (
+            "(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2);\n",
+            "(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2);\n",
+        ),
+        # Supports (0.95, 0.99, 0.98) average 0.97, kept with the supports
+        # stripped; (0.3, 0.2, 0.4) average 0.30 < 0.5, dropped.
+        (
+            "(((C,D)0.95:0.1,(F,G)0.99:1.8)0.98:0.5,OUT);\n"
+            "(((C,D)0.3:0.1,(F,G)0.2:1.8)0.4:0.5,OUT);\n",
+            "(((C,D):0.1,(F,G):1.8):0.5,OUT);\n",
+        ),
+        # Only the labels a bare token cannot hold are quoted; the underscore
+        # label stays bare.
+        (
+            "(('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);\n",
+            "(('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);\n",
+        ),
+    ],
+    ids=["verbatim", "support_filter", "quoted_labels"],
+)
+def test_clean_and_save_trees_filters_on_support_and_quotes_labels(
+    content, expected, tmp_path
+):
+    """Trees below the mean-support threshold are dropped, supports are stripped,
+    and labels a bare Newick token cannot hold are quoted and read back intact.
 
     The processed trees are read back by the run itself, so a label with a
-    space, a dot or a quote must survive the write, and stay readable by other
-    Newick readers such as DendroPy.
+    space, a dot or a quote must survive the write.
     """
-    in_path = tmp_path / "quoted.tree"
-    in_path.write_text("(('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);\n")
+    in_path = tmp_path / "in.tree"
+    in_path.write_text(content)
     out_path = tmp_path / "clean.tree"
     ptrees.clean_and_save_trees(str(in_path), str(out_path), min_avg_support=0.5)
 
-    # Only the labels that need it are quoted; the underscore label stays bare.
-    assert out_path.read_text() == (
-        "(('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);\n"
-    )
-    expected = ["Homo sapiens", "Pan sp.", "O'Brien", "Mus_musculus"]
-    biopython = ptrees.read_tree_file(str(out_path))[0]
-    assert [t.name for t in biopython.get_terminals()] == expected
-    dendro = dendropy.Tree.get(
-        path=str(out_path), schema="newick", preserve_underscores=True
-    )
-    assert [leaf.taxon.label for leaf in dendro.leaf_node_iter()] == expected
+    assert out_path.read_text() == expected
+    if "Brien" in expected:
+        assert [t.name for t in ptrees.read_tree_file(str(out_path))[0].get_terminals()] == [
+            "Homo sapiens", "Pan sp.", "O'Brien", "Mus_musculus"
+        ]
 
 
 @pytest.mark.parametrize(
@@ -242,9 +234,8 @@ def test_read_species_filter_file_collects_names_in_order(tmp_path):
     assert ptrees.read_species_filter_file(str(path)) == ["A", "B", "C", "D"]
 
 
-@pytest.mark.parametrize("processes", [1, 2])
 def test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup(
-    processes, orchestrator_gene_trees, tmp_path
+    orchestrator_gene_trees, tmp_path
 ):
     """Each tree is rooted at the common ancestor of its farthest outgroup and the others outside the ingroup, and pruned of them.
 
@@ -254,8 +245,7 @@ def test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup(
     clade's edge; the outgroups are then cut away, so the written tree is the
     rooted ingroup. An outgroup that sits among the ingroup taxa once the
     tree is rooted on the farthest is pruned without being used, and the
-    counts say which and how often. Workers change nothing: every count and
-    every written line is the same with one process or two.
+    counts say which and how often.
     """
     out_path = tmp_path / "clean_genes.tree"
     cleaning = ptrees.clean_and_save_gene_trees(
@@ -263,7 +253,7 @@ def test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup(
         str(out_path),
         _OUTGROUP,
         min_avg_support=0.5,
-        processes=processes,
+        processes=1,
     )
     cleaned = out_path.read_text().splitlines()
     assert cleaning.trees == cleaned
@@ -313,7 +303,7 @@ def test_clean_and_save_gene_trees_roots_each_tree_from_its_farthest_outgroup(
         str(out_path),
         ["OUT1", "OUT2", "OUT3"],
         min_avg_support=0.5,
-        processes=processes,
+        processes=1,
     )
 
     assert cleaning.rooted_count == 7

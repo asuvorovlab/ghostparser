@@ -20,36 +20,13 @@ from scipy import stats
 
 from ghostparser.orchestrator import inference as pinf
 from ghostparser.orchestrator import shape as pshape
-
-_TRIPLET = ("A", "B", "C")
-_SPECIES_SUBTREE = "((A,B),C);"
-
-_CON = "((A,B),C)"
-_DIS1 = "((B,C),A)"
-_DIS2 = "((A,C),B)"
+from tests.orchestrator.tree_references import (
+    SPECIES_SUBTREE as _SPECIES_SUBTREE,
+    TRIPLET as _TRIPLET,
+    observations as _observations,
+)
 
 _ALPHA = 0.05
-
-
-def _observations(con_heights, dis1_heights, dis2_heights):
-    """Build an observation list with explicit per-topology heights.
-
-    Args:
-        con_heights: Heights assigned to the concordant topology.
-        dis1_heights: Heights assigned to the ``((B,C),A)`` topology.
-        dis2_heights: Heights assigned to the ``((A,C),B)`` topology.
-
-    Returns:
-        A list of ``(topology, height, metrics)`` observation tuples.
-    """
-    observations = []
-    for topology, heights in (
-        (_CON, con_heights),
-        (_DIS1, dis1_heights),
-        (_DIS2, dis2_heights),
-    ):
-        observations.extend((topology, float(height), None) for height in heights)
-    return observations
 
 
 def test_shape_moments_match_scipy():

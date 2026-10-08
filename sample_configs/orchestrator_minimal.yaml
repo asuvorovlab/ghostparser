@@ -1,13 +1,8 @@
-# Minimal orchestrator run: the three required inputs plus an output folder.
-# Everything else takes its default.
+# The three required inputs; every other key takes its default
+# (orchestrator_full.yaml lists them).
 #
 #   python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
 
 species_tree_path: ./sample_data/species.tree
 gene_trees_path: ./sample_data/genes.tree
-
-# A single outgroup label. For several, use a comma-separated string
-# ("Out1,Out2") or a YAML list; see orchestrator_full.yaml.
 outgroup: OutGroup
-
-output_folder: ./results

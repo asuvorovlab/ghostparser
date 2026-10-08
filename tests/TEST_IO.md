@@ -176,15 +176,18 @@ table, independent of the implementation.
 
 ## tests/orchestrator/test_orchestrator_decision.py
 
-Observations are constructed directly as `(topology, height, None)` tuples, which
-lets each test place the triplet on a chosen branch. Bootstrap is disabled
-(`iterations: 0`) so results are deterministic.
+Observations are constructed directly as `(topology, height, None)` tuples
+(the shared `observations` builder in `tests/orchestrator/tree_references.py`),
+which lets each test place the triplet on a chosen branch. Every seed is fixed,
+so results are deterministic.
 
-### `test_decision_cascade_lands_on_each_classification`
+### The cascade cases
 
-**Inputs:** one crafted observation set per row, measured with no bootstrap
-with `diagnostic` off and on and decided under `no` correction as a family of one,
-so every corrected p-value equals its raw one.
+**Inputs:** one crafted observation set per outcome, `_CASCADE_FAMILY`, which
+`test_diagnostic_changes_what_is_measured_and_nothing_concluded` measures as a
+family of five under `bfn`, `holm` and `fdr_bh`. Every p-value the derivation
+below calls significant sits below `0.05 / 5 = 0.01`, so correcting across the
+five moves no gate.
 
 | id | con | dis1 | dis2 |
 | --- | --- | --- | --- |
@@ -199,13 +202,10 @@ so every corrected p-value equals its raw one.
 - **`no_introgression`.** `chisquare([10, 10])` has expected `[10, 10]`, so the
   statistic is exactly `0.0` and `p = 1.0 > 0.05`: gate 1 fails. The heights are
   fully separated (20 at 0.1 against 10 at 0.9, `D = 1.0`), so KS *is*
-  significant and with `diagnostic` on the row asserts `ks_significant is
-  True`, which is why this row also shows the DCT gate stopping the cascade
-  before a later gate can be consulted; the direction test runs as well and
-  reports a decision the classification never reads. With `diagnostic` off
-  neither is measured: `no` is an inline correction, so the failed count gate is final
-  and the row asserts `ks_p_value`, `ks_significant` and `perm_decision` all
-  `None` with `perm_note == "direction_test_not_consulted"`.
+  significant in a diagnostic run: this row shows the DCT gate stopping the
+  cascade before a later gate can be consulted. With `diagnostic` off under
+  `bfn`, an inline correction, the failed count gate is final and neither later
+  test is measured (`perm_note == "direction_test_not_consulted"`).
 - **`inflow`.** `chisquare([30, 2])` has expected `[16, 16]`, so the statistic is
   `(30-16)^2/16 + (2-16)^2/16 = 24.5`, and with df 1 `p ~ 7.4e-07 < 0.05`: gate 1
   passes. Every concordant and dis1 height is 0.5, so the two empirical CDFs
@@ -232,26 +232,9 @@ so every corrected p-value equals its raw one.
 
 The `decision_gate` assertion is what makes each row specific: a case that
 reached the same classification by a different route would fail. With
-`diagnostic` off, `perm_decision` is asserted non-`None` only on the three
-`PERM` rows and `None` on the `inflow` row too, whose failed tree-height gate
-settles the cascade before the direction test.
-
-### `test_permutation_guards_surface_on_the_triplet_result`
-
-**Inputs and derivation**, one row per guard, measured with
-`diagnostic=True`: the first row's 2-vs-2 discordant split gives
-`chisquare([2, 2])` a statistic of `0.0` and `p = 1.0`, so its count gate
-fails and a non-diagnostic run would skip the direction test before the guard
-could fire:
-
-| con | dis1 | Guard | Why |
-| --- | --- | --- | --- |
-| `[0.9, 0.8, 0.7, 0.6]` | `[0.1, 0.2]` | `insufficient_permutation_support` | `C(6, 2) = 15 < 2500`, so the permutation distribution cannot resolve `alpha_perm`. |
-| `[0.9] * 10` | `[0.1] * 30` | `degenerate_observed_scale` | Both groups are internally constant, so the standard error is floating-point noise near `1e-17`. |
-
-Each returns `perm_n_resamples == 0` and `perm_decision == "inconclusive"`: a
-guard means nothing was established, which is distinct from having shown the
-means equivalent.
+`diagnostic` off, `perm_decision` is non-`None` only on the three `PERM` rows,
+and `None` on the `inflow` row too, whose failed tree-height gate settles the
+cascade before the direction test.
 
 ### `test_summary_statistics_discordant_roles_follow_the_counts`
 
@@ -299,10 +282,11 @@ is why `False` stands in for it.
 | True | True | `inconclusive` | `ambiguous` | `PERM` | no direction resolved |
 | True | True | `None` | `ambiguous` | `PERM` | no direction available |
 
-### `test_adjust_p_values_matches_statsmodels_and_never_lowers_a_value`
+### `test_corrections_match_statsmodels_never_lower_a_value_and_agree_inline`
 
 **Inputs:** `[0.001, 0.008, 0.039, 0.041, 0.042, 0.06, 0.074, 0.205, 0.212, 0.6]`
-and then the family `[0.001] * 8 + [0.4, 0.9]`, under each method in
+then the family `[0.001] * 8 + [0.4, 0.9]`, and `p = 0.004` padded with `0.5`
+entries to families of 1, 7 and 250, under each method in
 `P_VALUE_CORRECTION_CHOICES`, `alpha = 0.05`.
 
 **Derivation:** on the first list `no` must return the input unchanged and
@@ -323,13 +307,8 @@ the choice list rather than a fixed set of names means such a method fails
 here the moment it is added. The `1e-12` slack absorbs floating-point
 rounding in the running max/min sweeps.
 
-### `test_inline_correction_matches_the_family_pass_or_refuses`
-
-**Inputs:** `p = 0.004` under each method in `P_VALUE_CORRECTION_CHOICES`;
-for the inline methods, padded with `0.5` entries to families of 1, 7 and 250.
-
-**Derivation:** `no` and `bfn` depend on the family only through its size, so
-the inline form must equal the full pass exactly: `0.004` at every size under
+On the padded families, `no` and `bfn` depend on the family only through its
+size, so the inline form must equal the full pass exactly: `0.004` at every size under
 `no`, and `min(1, n x p)` under `bfn`: `0.004`, `0.028`, and `1.0`
 (`250 x 0.004 = 1.0`). Holm's, BH's and BY's multipliers depend on a p-value's
 rank within its family, which a single value does not determine, so
@@ -677,45 +656,35 @@ cannot give the bootstrap a smaller one, and it holds for any divisor.
 
 ## tests/orchestrator/test_orchestrator_trees.py
 
-### `test_clean_and_save_trees_keeps_well_supported_trees_and_drops_the_rest`
+### `test_clean_and_save_trees_filters_on_support_and_quotes_labels`
 
-**Inputs:** the species-tree fixture, then `low_support_tree_file`, each with
-`min_avg_support=0.5`; the second contains
+**Inputs (parametrized), each with `min_avg_support=0.5`:**
 
 ```
-(((TaxaC,TaxaD)0.95:0.110599,(TaxaF,TaxaG)0.99:1.860334)0.98:0.500000,OutGroup);
-(((TaxaC,TaxaD)0.3:0.110599,(TaxaF,TaxaG)0.2:1.860334)0.4:0.500000,OutGroup);
+verbatim:        (((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2);
+support_filter:  (((C,D)0.95:0.1,(F,G)0.99:1.8)0.98:0.5,OUT);
+                 (((C,D)0.3:0.1,(F,G)0.2:1.8)0.4:0.5,OUT);
+quoted_labels:   (('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);
 ```
 
 **Derivation:** the species tree carries no internal support labels, so there
-is nothing for the filter to reject and nothing to strip. The output must
-therefore be the input string plus a trailing newline:
-`(((A:0.1,B:0.1):0.1,C:0.2):0.1,(D:0.1,OUT:0.5):0.2);\n`.
+is nothing for the filter to reject or strip: the output is the input plus a
+trailing newline.
 
-In the second file the mean internal support for tree 0 is
-`(0.95 + 0.99 + 0.98)/3 = 2.92/3 = 0.9733 >= 0.5` → kept. For tree 1 it is
-`(0.30 + 0.20 + 0.40)/3 = 0.90/3 = 0.3000 < 0.5` → dropped. Exactly one tree
-survives, with leaf set `{TaxaC, TaxaD, TaxaF, TaxaG, OutGroup}`, and because
-cleaning strips support labels the substring `0.95` must not appear in the
-output.
+In `support_filter` the mean internal support of the first tree is
+`(0.95 + 0.99 + 0.98)/3 = 0.9733 >= 0.5` → kept; of the second
+`(0.30 + 0.20 + 0.40)/3 = 0.3000 < 0.5` → dropped. Cleaning strips the
+support labels, so the output is `(((C,D):0.1,(F,G):1.8):0.5,OUT);` alone.
 
-### `test_clean_and_save_trees_quotes_labels_the_format_needs`
-
-**Input:** `(('Homo sapiens':0.1,'Pan sp.':0.2):0.3,'O''Brien':0.4,Mus_musculus:0.5);`,
-`min_avg_support=0.5`.
-
-**Derivation:** Newick reserves whitespace and `()[]{}':;,` for structure, and
-Bio.Phylo and DendroPy between them also trip on `"`, `\` and `=`, so a label
-holding any of those must be single-quoted, with an inner quote written twice.
-The three quoted input labels each hold such a character (a space, a space and
-a dot, a quote) and so must come out quoted again (`'O''Brien'` with its
-doubled quote intact) while `Mus_musculus` holds none and stays bare; with no
-support labels to strip and the lengths already short, the file is the input
-plus a newline, byte for byte. Read back, Bio.Phylo must give
-`Homo sapiens`, `Pan sp.`, `O'Brien`, `Mus_musculus`, and DendroPy under
-`preserve_underscores=True` the same four, or the run would be measuring
-different taxa from the ones it wrote. Unquoted, the same file reads as
-`sapiens`, `sp.`, `Brien` in Bio.Phylo and fails to parse in DendroPy.
+Newick reserves whitespace and `()[]{}':;,` for structure, and Bio.Phylo
+also trips on `"`, `\` and `=`, so a label holding any of those must be
+single-quoted, with an inner quote written twice. The three quoted input
+labels each hold such a character (a space, a space and a dot, a quote) and
+so come out quoted again (`'O''Brien'` with its doubled quote intact) while
+`Mus_musculus` holds none and stays bare; the file is the input plus a
+newline, byte for byte. Read back it gives `Homo sapiens`, `Pan sp.`,
+`O'Brien`, `Mus_musculus`, or the run would measure different taxa from the
+ones it wrote; unquoted, the same file reads as `sapiens`, `sp.`, `Brien`.
 
 ### `test_root_species_tree_roots_where_the_outgroups_branch_off`
 
@@ -919,12 +888,12 @@ the permutation test enabled).
   `0.6547 x 4 = 2.62 → 1.0`; `1.0 x 4 → 1.0`. Every corrected DCT p-value is
   `1.0`, far above `alpha_dct = 0.05`, so `dct_significant is False` and every
   triplet classifies as `no_introgression`.
-- **KS correction, `diagnostic` on only:** asserted as a relation rather than a
+- **KS correction, `diagnostic` on (the `diagnostic_without_bootstrap` row):** asserted as a relation rather than a
   literal: `ks_p_value_corrected == min(1.0, ks_p_value x 4)`. (For (A,B,C)
   the raw KS p-value is `~0.01667`, giving `~0.06667`; for the D triplets dis1
   is empty so the KS test short-circuits to `1.0` and stays `1.0`.)
   `perm_decision` is populated on every row because the direction test ran.
-- **`diagnostic` off:** the run's default correction is `bfn`, an inline
+- **`diagnostic` off (the `default` row):** the run's default correction is `bfn`, an inline
   method, so the stream judges each count gate on the exactly corrected
   `p × 4 = 1.0`, finds it failed, and measures nothing below it: `ks_p_value`,
   `ks_p_value_corrected`, `ks_significant` and `perm_decision` are `None` and
@@ -935,40 +904,37 @@ the permutation test enabled).
 - `analyzed_trees == 12` for every triplet, because all 12 gene trees contain
   all five taxa.
 
-### Output-shape tests
-
-- `test_run_orchestrator_matches_derived_expectation` also reads the results
-  TSV the run wrote: the file must exist, its header must begin with `triplet`
-  and contain `classification`, `bootstrap_value`, `perm_p_greater`,
-  `perm_p_less`, `decision_gate`, `perm_p_tost` and the two
-  `bootstrap_perm_stat_ci_*` columns, and the data-row count must equal
-  `len(results)` (4).
-- `test_no_bootstrap_skips_the_bootstrap_and_its_columns`: with
-  `bootstrap=False` no iteration runs, so every result's `bootstrap_value`,
+- **Bootstrap off:** no iteration runs, so every result's `bootstrap_value`,
   `all_bootstrap` and both `bootstrap_perm_stat_ci_*` bounds are `None` while
-  the point estimate still classifies `no_introgression` (every triplet stops
-  at the count gate); the writer skips the bootstrap columns, so
-  `bootstrap_value` and `all_bootstrap` must be absent from the header while
-  `classification` remains and all 4 triplets are produced. The studentized
-  interval is produced only by the bootstrap loop, so its absence is what
-  shows the loop did not run; `diagnostic` on measures the tests the cascade
-  cannot consult and must not reinstate the bootstrap, so both settings give
-  the same picture.
-- `test_run_outputs_follow_the_settings`: one run with consolidation, summary
-  statistics and the bootstrap diagnostic on. Consolidation writes into
-  `consolidation/`, so the run's own files (results TSV, `metrics.txt`, both
-  processed trees) must all still exist afterwards and the subfolder must be
-  non-empty. The summary column count is derived from the contract: 7
-  statistics (mean, median, mode, variance, entropy, min, max) x 3 metrics
-  (avg_tree_height, internal_branch, sister_distance) x 3 topology classes
-  (concordant, discordant1, discordant2) = **63** metric columns. The nine
-  named per-iteration bootstrap columns must appear in the results header and
-  at least one result must have a populated `bootstrap_dct_stats` and
-  `bootstrap_perm_decisions`.
-- `test_parallel_runs_match_serial`: bootstrap seeding is per-triplet and
-  derived from the run seed, so the worker count (2 or 4) cannot change any
-  value; every compared field must be equal to the serial run's, bootstrap
-  included.
+  the point estimate still classifies `no_introgression`. The studentized
+  interval is produced only by the bootstrap loop, so its absence shows the
+  loop did not run, and pairing it with `diagnostic` on shows that measuring
+  every test does not reinstate work the user switched off.
+- **The results TSV:** its header begins with `triplet` and contains
+  `classification`, `perm_p_greater`, `perm_p_less`, `decision_gate`,
+  `perm_p_tost` and the two `bootstrap_perm_stat_ci_*` columns; the writer
+  skips `bootstrap_value` and `all_bootstrap` when the bootstrap is off; and
+  the data-row count equals `len(results)` (4).
+
+### `test_every_optional_output_lands_where_documented_under_display_names`
+
+One run with consolidation, summary statistics, the bootstrap diagnostic and
+the rename map `A -> Homo sapiens`, `B -> Pan sp.`. Consolidation writes into
+`consolidation/`, so the run's own files must still exist afterwards. The
+summary column count is derived from the contract: 7 statistics (mean, median,
+mode, variance, entropy, min, max) x 3 metrics (avg_tree_height,
+internal_branch, sister_distance) x 3 topology classes (concordant,
+discordant1, discordant2) = **63** metric columns. The nine named
+per-iteration bootstrap columns must appear in the results header and every
+result must carry `bootstrap_dct_stats`. The rename derivation is under the
+rename-map section below.
+
+### `test_parallel_runs_match_serial`
+
+Bootstrap seeding is per-triplet and derived from the run seed, so the worker
+count cannot change any value: three workers over four triplets split the
+work unevenly, and every compared field must equal the serial run's,
+bootstrap included.
 
 ## tests/orchestrator/test_orchestrator_preflight.py
 
@@ -1145,24 +1111,19 @@ position with no neighbour on its own, joined by `, `: `4`; `3`, then
 ## tests/orchestrator/test_orchestrator_config.py
 
 No test here pins an individual default. Two invariants stand in for all of
-them, and the remaining tests cover precedence, parsing, validation, and the
-shipped samples.
+them, and the remaining tests cover precedence, parsing and validation.
 
 ### `test_cli_and_config_file_share_one_set_of_defaults`
 
-**Inputs:** `build_argument_parser().parse_args(["-st", "species.tree", "-gt",
-"genes.tree", "-og", "OUT"])`, and a YAML file carrying only those three keys.
+**Inputs:** the paths and outgroup of `orchestrator_minimal.yaml` given as
+`-st`/`-gt`/`-og`, and the file itself through `load_orchestrator_config`.
 
-**Derivation:** `resolve_config` on a CLI namespace and `load_orchestrator_config`
-on a file both end in `normalize_orchestrator_payload`, which fills every absent
-key from the constants in `ghostparser/orchestrator/config.py`. With the same
-three inputs and nothing else, the two resolved dicts are therefore equal in
-every key, including the resolved paths, since both resolve the same relative
-strings against the same working directory. The comparison is whole-dict
-equality, so a key that resolved differently on the two paths, or a default
-that one path filled and the other did not, fails without the test naming
-either. It was checked before being written that the two dicts are in fact
-equal today.
+**Derivation:** both paths fill every key the user did not give from the same
+module constants, so the two resolved dicts must be equal; the paths resolve
+from the same working directory, and a bare `OutGroup` resolves to
+`["OutGroup"]` either way. The placeholder tree paths need not exist, since
+`_validate_required_path` only checks that the field is a non-empty string
+before resolving it.
 
 ### `test_config_only_keys_and_nested_blocks_flatten_from_a_file`
 
@@ -1180,19 +1141,23 @@ naming the key.
 
 ### `test_cli_flags_override_the_config_file`
 
-**Input:** a config file setting file-specific tree paths, `alpha_dct: 0.03`,
-`p_value_correction: "no"` and `overwrite: true`, plus the flags
-`alpha_dct=0.5`, `alpha_perm=0.5`, `no_overwrite=True` and
-`consolidation=False` with the path flags left unset.
+**Inputs:** a file holding the required keys with
+`species_tree_path: file_species.tree`, `alpha_dct: 0.03`, `alpha_ks: 0.04`,
+`p_value_correction: no`, `overwrite: true` and `consolidation: true`, parsed
+with `-c <file> --alpha-dct 0.01 --alpha-perm 0.02 --p-value-correction fdr_bh
+--diagnostic --species-filter species.txt --no-overwrite --no-consolidation
+--no-bootstrap --preflight-data-check --preflight-triplet-cap 0 --processes 3
+--seed 5`.
 
-**Derivation:** the given flags are laid over the file's payload before it
-is normalized, so `alpha_dct` is the flag's `0.5` and `alpha_perm`, which the
-file omits, is the flag's `0.5` rather than the default. `--no-overwrite` is
-translated to `overwrite: false` before the merge, so it replaces the file's
-`overwrite: true` instead of losing to it in the overwrite validator, which
-prefers the canonical key. `--no-consolidation` gives `consolidation: false`
-the same way. `p_value_correction` and the paths have no flag given, so they
-keep the file's values.
+**Derivation:** the resolver lays every given flag over the raw file payload,
+translating the negated switches to `overwrite: false`, `consolidation: false`
+and `bootstrap: false`, before normalizing, so each flag's value wins and the
+file's `species_tree_path` and `alpha_ks`, which no flag touches, survive.
+`0` is chosen for the cap because it is the one value
+`_validate_non_negative_int` accepts that differs from the default and is also
+the documented "no cap" spelling. `--species-filter` goes through
+`_resolve_path`, so only the tail of the resolved path is pinned, and
+`triplet_filter` stays `None` because neither the file nor a flag gave it.
 
 ### `test_outgroup_key_is_normalized_or_rejected`
 
@@ -1229,22 +1194,6 @@ rather than silently producing an unrooted run.
 The `p_value_correction` row is the guard that keeps the boolean mapping from
 laundering an invalid value into a valid one.
 
-### `test_shipped_sample_configs_resolve`
-
-**Inputs:** the six orchestrator sample configs under `sample_configs/`.
-
-**Derivation:** these go through the same `load_orchestrator_config` a user
-invokes with `-c`, so anything the validator would reject surfaces here. Each
-asserted value is what its sample states literally: the outgroup lists
-`["OutGroup"]` (minimal) and `["Out1", "Out2"]` (full, written as a YAML list
-to exercise that form), `preflight_data_check: true` (preflight),
-`generate_summary_stats: true` (species filter), `diagnostic: true` (triplet
-filter) and `"bootstrap": false` (screen, JSON). The placeholder tree paths
-need not exist, since `_validate_required_path` only checks that the field is
-a non-empty string before resolving it, and neither need the filter files,
-which are read at run time; a rename map is read at load time, which is why
-the species-filter sample carries it commented out.
-
 ### `test_full_sample_config_names_every_runtime_key_at_its_default`
 
 **Inputs:** `orchestrator_full.yaml` parsed twice: once as raw YAML for the set
@@ -1275,18 +1224,6 @@ default. It was checked that the sample satisfies this today.
 choice check; quoted `"no"` arrives as a string and passes straight through.
 All three therefore resolve to `"no"`. Writing `no` unquoted is the natural
 spelling for "no correction", which is why the mapping exists.
-
-### `test_parser_flags_resolve_into_their_config_values`
-
-Parsing `-st s -gt g -og OUT --alpha-dct 0.01 --alpha-ks 0.2
---p-value-correction fdr_bh --diagnostic --species-filter species.txt
---alpha-perm 0.02 --no-overwrite --preflight-data-check
---preflight-triplet-cap 0` must yield those exact values with
-`config_file is None`; `0` is chosen for the cap because it is the one value
-`_validate_non_negative_int` accepts that differs from the default and is also
-the documented "no cap" spelling. `--species-filter` goes through
-`_resolve_path`, so only the tail of the resolved path is pinned, and
-`triplet_filter` must stay `None` because the flag was not given.
 
 ## tests/test_cli.py
 
@@ -1369,27 +1306,7 @@ scans the parent, finds suffixes `{1, 3}` in use, and returns the smallest
 missing positive suffix, `2`, creating `results_2` and leaving `fresh.txt`
 untouched in the original directory.
 
-## tests/test_ml_labels_and_metrics.py
-
-### `test_bit_labels_and_their_titles_cover_every_bit`
-
-**Inputs:** the module constants `BIT_LABELS` and `BIT_COUNT`; the six
-`BIT_LABELS` entries are `ghost_into_A`, `ghost_into_B`,
-`inflow_into_A_from_C`, `inflow_into_B_from_C`, `outflow_from_A_to_C`,
-`outflow_from_B_to_C`.
-
-**Derivation:** `BIT_COUNT` is defined as `len(BIT_LABELS)`, and the six
-names are distinct, so a bit index reads back to exactly one name. The title
-transform is `replace("_", " ")` followed by upper-casing character 0 only, so
-`inflow_into_A_from_C` → `inflow into A from C` → `Inflow into A from C`. The
-expected titles are written out per label rather than computed, because the
-point is the one spelling the obvious implementation gets wrong:
-`str.capitalize()` upper-cases the first character *and lower-cases the
-rest*, which would yield `Ghost into a` and rename taxon `A`. Every label in
-the set carries at least one trailing capital, so any label would catch it;
-they are all listed so the failure names which one broke, and comparing the
-whole mapping at once also shows six distinct titles, none keeping an
-underscore, so no label falls through to a figure as a raw slug.
+## tests/test_ml_utils.py
 
 ### `test_64_class_matrix_orders_classes_by_set_bits`
 
@@ -1758,14 +1675,26 @@ is `0.0`, which is falsy, so an edge that carries no support does not count →
 
 ## Remaining suites
 
-`tests/test_ml_config.py`, `tests/test_ml_utils.py`,
-`tests/test_ml_random_forest.py`, `tests/test_ml_multi_knn.py`, and
-`tests/test_ml_hyper_tune.py` assert structural outcomes (files written,
+`tests/test_ml_config.py`, `tests/test_ml_trainers.py`,
+`tests/test_ml_hyper_tune.py` and the rest of `tests/test_ml_utils.py` assert
+structural outcomes (files written,
 columns present, errors raised, a shipped sample loading), and their inputs
 are the fixtures described in [TESTS.md](TESTS.md). No test pins a config
 default; the samples and CONFIG.md state those. The derivations worth stating
 explicitly:
 
+- **Sample configs at their defaults**: `ml_trainer.yaml` and
+  `hyper_tune.yaml` are compared with a file holding only what has no default
+  (the two paths, plus the search space for the tuner). Both load through the
+  same path resolution from the same working directory, so equal configs mean
+  every value the sample writes is the default. The trainer sample's coverage
+  check maps `evaluation.metrics` to its resolved name `evaluation_metrics`;
+  every other key resolves under its own name.
+- **`cv_folds` bounds**: scikit-learn's `StratifiedKFold` requires
+  `n_splits >= 2`, so `2` is the smallest accepted value and `1` and `0` fall
+  below it. `null` would reach `auto_cv_folds` as `min(None, count)`, `2.5` is
+  not an integer, and `true` is rejected explicitly because `bool` is a
+  subclass of `int` and would otherwise read as `1`.
 - **KNN neighbor capping**: `n_neighbors` cannot exceed the number of training
   samples, so the builder clamps it and the metrics report states the effective
   value.
@@ -1975,9 +1904,9 @@ cache therefore holds `parent = [-1,0,1,2,2,1,0,6,6]` and
 `edge_len = [0.0,1.0,2.0,1.0,1.0,3.0,2.0,2.0,2.0]`, and the pairwise LCA table
 records `PQ->2`, `PR=QR->1`, `ST->6`, and every P/Q/R-to-S/T pair `->0`.
 
-### `test_geometry_matches_each_reference`
+### `test_geometry_matches_the_reference`
 
-**Inputs (parametrized over eleven trees, each read under both references
+**Inputs (parametrized over eleven trees, each read under the reference
 and all six strategies):** the reference tree with a nested sister pair (`P,Q,R`), a pair spanning the root (`P,R,S`), a
 triplet drawn from both sides (`P,S,T`) and one whose odd taxon is listed first
 (`S,P,Q`); a five-taxon ladder read at two depths; a tree carrying three taxa
@@ -1989,10 +1918,8 @@ sister).
 
 **Derivation:** there is no closed form to compare against here: the expected
 value *is* what an independent implementation produces, which is the point,
-and there are two of them, both in `tests/orchestrator/tree_references.py`.
-`dendropy_observation` copies the triplet's subtree out with
-`extract_triplet_subtree` and measures it with `observation_from_subtree`.
-`biopython_observation` never prunes: on the
+here `biopython_observation` in `tests/orchestrator/tree_references.py`. It
+never prunes: on the
 `Bio.Phylo` tree it takes the common ancestor of all three leaves and of each
 pair, calls the one pair whose ancestor is a different node the sisters (all
 three coinciding is a polytomy, so `None`), and reads every distance as a
@@ -2001,12 +1928,11 @@ depth of the sisters' ancestor as the internal branch, and the leaf-to-leaf
 distance of the sisters), from which `AVG`/`A`/`B`/`C`/`SIS`/`INT` follow by
 definition. `_geometry_observation` builds the cache and reads the same triplet
 out of it.
-The topology must be equal exactly, because all three derive it from discrete
-structure rather than arithmetic: extraction from the copied subtree's sister
-clade, BioPython from which pair's common ancestor is not the three-way one,
-the cache from which two of the three pairwise LCAs coincide. Heights and
-summary metrics compare at `rel=1e-12`, comfortably wider than the only
-disagreement three correct implementations can have: floating-point rounding
+The topology must be equal exactly, because both derive it from discrete
+structure rather than arithmetic: BioPython from which pair's common ancestor
+is not the three-way one, the cache from which two of the three pairwise LCAs
+coincide. Heights and summary metrics compare at `rel=1e-12`, comfortably
+wider than the only disagreement two correct implementations can have: floating-point rounding
 from summing the same edges in a different order. The cases are chosen for
 what they break rather than for coverage:
 the zero-length internal branch would be read as a polytomy by any
@@ -2015,7 +1941,7 @@ propagate `None`, the pruned taxa must not enter any path sum, and the
 `1e-12`/`1.0000000000001` case puts the two paths' summation orders as far apart
 as the fixture set can.
 
-### `test_geometry_matches_each_reference_across_a_nine_taxon_tree`
+### `test_geometry_matches_the_reference_across_a_nine_taxon_tree`
 
 **Inputs:** the nine-taxon tree
 
@@ -2024,11 +1950,10 @@ as the fixture set can.
 ```
 
 and all `C(9,3) = 84` triplets, read out of one cache built over the whole
-tree, under each of the six tree-height strategies against each reference.
+tree, under each of the six tree-height strategies against the reference.
 
-**Derivation:** the expected values are whatever the reference produces (
-`extract_triplet_subtree` + `observation_from_subtree`, or
-`biopython_observation`), so the test is a differential one: it asserts the
+**Derivation:** the expected values are whatever `biopython_observation`
+produces, so the test is a differential one: it asserts the two
 implementations agree rather than restating the arithmetic. The tree is shaped
 so the sweep covers the cases that distinguish them: `(T3,T4)` sit above a
 zero-length internal branch, `T1..T4` and `T5..T7` sit in sibling clades so
@@ -2036,7 +1961,7 @@ many triplets have their sister pair on one side and the odd taxon on the
 other, `T7` hangs off a ladder at a different depth from its clade-mates, and
 `T8`/`OUT` sit across the root so triplets drawn from them resolve at the seed
 node. Every triplet of a nine-taxon rooted binary tree is resolved, so
-`triplet_resolution` must call all 84 resolved and every reference and the
+`triplet_resolution` must call all 84 resolved and both the reference and the
 cache must yield an observation for each, asserted per triplet, so none is
 silently skipped.
 
@@ -2092,7 +2017,7 @@ per-tree summary metrics, and a run only needs them under
 than an empty dict, since the per-triplet measurement tests that slot for
 `None` to decide whether to aggregate.
 
-### `test_geometry_skips_exactly_what_each_reference_skips`
+### `test_geometry_skips_exactly_what_the_reference_skips`
 
 **Inputs (parametrized):** `(A:1.0,B:1.0,C:1.0);`,
 `((A:1.0,B:1.0):1.0,D:2.0);` and `((A:1.0,B:1.0):0.0,C:1.0);`, each with
@@ -2100,15 +2025,13 @@ triplet `(A,B,C)`.
 
 **Derivation:** in the polytomy all three pairwise LCAs are the root, so
 `triplet_resolution` reports it unresolved, the cached path sees three equal
-ids and returns `None`; the extraction path reaches `find_sister_pair`, finds
-no pair whose MRCA differs from the root, and raises `ValueError`, which
-`observation_from_subtree` converts to `None`; the BioPython path finds no
+ids and returns `None`; the BioPython path finds no
 pair whose common ancestor differs from the three-way one and returns `None`
 itself. In the second tree `C` is absent, so `leaf_node[C] = -1` in the cache
-(reported as a missing taxon), `set(triplet).issubset(tree_taxa)` fails in
-extraction, and the label is missing from BioPython's terminals. The third
+(reported as a missing taxon), and the label is missing from BioPython's
+terminals. The third
 tree is resolved on every path: the zero-length branch is not a polytomy,
-because all three compare node identity rather than depth, so the diagnostic
+because both compare node identity rather than depth, so the diagnostic
 reports it resolved and every path yields an observation. `triplet_resolution`
 restates `geometry_observation`'s guards without sharing code with it, so
 agreeing on all three rows is what stops the preflight's reasons drifting
@@ -2180,7 +2103,7 @@ writer produces. Row 4 starts from an already-quoted label: it is unquoted
 before the lookup (`O'Brien` is not in the map) and written quoted again, so a
 label the writer had to quote round-trips. Row 5 is the no-rename case every
 run without a `species_rename_map` goes through: the string must come back
-unchanged. Each output is then parsed with DendroPy and must give, leaf by
+unchanged. Each output is then parsed with Bio.Phylo and must give, leaf by
 leaf, the mapped name and the input's edge length (the check that the string
 is still valid Newick and names the right taxa, independent of the exact
 spelling asserted above), and the plain label helper, which renames the
@@ -2206,18 +2129,18 @@ file leaves only `A` and `B`, which cannot form a triplet, so the runner
 raises `InputError` ("at least 3 are needed") before any gene tree is
 measured.
 
-### `test_species_rename_map_reaches_every_output`
+### Rename map through a run (`test_every_optional_output_lands_where_documented_under_display_names`)
 
 **Inputs:** the shared 4-triplet orchestrator fixture (taxa `A`, `B`, `C`, `D`,
 outgroup `OUT`) with a TSV mapping `A -> Homo sapiens` and `B -> Pan sp.`,
-consolidation enabled.
+consolidation, summary statistics and the bootstrap diagnostic enabled.
 
 **Derivation:** the run works in the trees' own labels and
 `runner._rename_result_taxa` rebuilds the results under the display names after
 the decision pass, before anything is written. The display names hold a space
 and a dot on purpose: a bare Newick label cannot, so had they been written into
-the processed trees and reread, Bio.Phylo would read `sapiens` and `sp.` and
-DendroPy would refuse the file: the failure this design avoids. Downstream of
+the processed trees and reread unquoted, Bio.Phylo would read `sapiens` and
+`sp.`: the failure this design avoids. Downstream of
 the rename every output sees only display names, which is why the assertions
 can span outputs written by unrelated code paths: the triplet tuples
 (`{Homo sapiens, Pan sp., C, D}`; `C` and `D` are absent from the map and so

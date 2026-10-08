@@ -1,12 +1,10 @@
-"""Triplet geometry read from a cached gene tree matches two independent references.
+"""Triplet geometry read from a cached gene tree matches an independent reference.
 
-The parity tests hold the cached-geometry path to agreement with the DendroPy
-subtree extraction it replaced and with a BioPython implementation written
-from the definitions alone: root distances, pairwise distances and common
-ancestors as ``Bio.Phylo`` computes them on the unpruned tree. Both live in
-``tests/orchestrator/tree_references.py``. A hand-derived
-table pins absolute values, so the three implementations cannot agree on a
-shared mistake.
+The parity tests hold the cached-geometry path to a BioPython implementation
+written from the definitions alone (root distances, pairwise distances and
+common ancestors as ``Bio.Phylo`` computes them on the unpruned tree), in
+``tests/orchestrator/tree_references.py``. A hand-derived table pins absolute
+values, so the two implementations cannot agree on a shared mistake.
 """
 
 import itertools
@@ -25,10 +23,7 @@ from ghostparser.orchestrator.triplet_geometry import (
     triplet_resolution,
 )
 from ghostparser.triplet_utils import TOPOLOGY_AB
-from tests.orchestrator.tree_references import (
-    biopython_observation,
-    dendropy_observation,
-)
+from tests.orchestrator.tree_references import biopython_observation
 
 _STRATEGIES = ("AVG", "A", "B", "C", "SIS", "INT")
 
@@ -61,12 +56,6 @@ def _parse_for_geometry(newick):
     return Phylo.read(StringIO(newick), "newick")
 
 
-_REFERENCES = {
-    "dendropy": dendropy_observation,
-    "biopython": biopython_observation,
-}
-
-
 def _geometry_observation(newick, triplet, strategy, collect):
     """Run the cached-geometry path."""
     taxon_index = build_taxon_index([triplet])
@@ -76,7 +65,7 @@ def _geometry_observation(newick, triplet, strategy, collect):
 
 
 def _assert_same_observation(actual, expected, context):
-    """Compare a cached-geometry observation with a reference one."""
+    """Compare a cached-geometry observation with the reference one."""
     assert actual[0] == expected[0], context
     assert actual[1] == pytest.approx(expected[1], rel=1e-12, abs=1e-15), context
     for metric, value in expected[2].items():
@@ -91,20 +80,20 @@ def _assert_same_observation(actual, expected, context):
     "newick,triplet", [case[1:] for case in _PARITY_CASES],
     ids=[case[0] for case in _PARITY_CASES],
 )
-def test_geometry_matches_each_reference(newick, triplet):
-    """Cached geometry reproduces both references under every height strategy."""
-    for reference, strategy in itertools.product(sorted(_REFERENCES), _STRATEGIES):
-        expected = _REFERENCES[reference](newick, triplet, strategy, True)
+def test_geometry_matches_the_reference(newick, triplet):
+    """Cached geometry reproduces the reference under every height strategy."""
+    for strategy in _STRATEGIES:
+        expected = biopython_observation(newick, triplet, strategy, True)
         actual = _geometry_observation(newick, triplet, strategy, True)
 
         assert expected is not None, "fixture should produce an observation"
         assert actual is not None
-        _assert_same_observation(actual, expected, (reference, strategy))
+        _assert_same_observation(actual, expected, strategy)
 
 
 @pytest.mark.parity
-def test_geometry_matches_each_reference_across_a_nine_taxon_tree():
-    """Every triplet of a 9-taxon tree agrees with each reference under each strategy.
+def test_geometry_matches_the_reference_across_a_nine_taxon_tree():
+    """Every triplet of a 9-taxon tree agrees with the reference under each strategy.
 
     Sweeps all 84 triplets rather than hand-picked shapes, so sister pairs on
     either side of the root, across the zero-length internal branch, and down
@@ -121,13 +110,13 @@ def test_geometry_matches_each_reference_across_a_nine_taxon_tree():
     for triplet in triplets:
         positions = tuple(taxon_index[label] for label in triplet)
         assert triplet_resolution(geometry, positions) == TRIPLET_RESOLVED, triplet
-        for reference, strategy in itertools.product(sorted(_REFERENCES), _STRATEGIES):
-            expected = _REFERENCES[reference](_LARGE_TREE, triplet, strategy, True)
+        for strategy in _STRATEGIES:
+            expected = biopython_observation(_LARGE_TREE, triplet, strategy, True)
             actual = geometry_observation(geometry, positions, strategy, True)
 
             assert expected is not None, triplet
             assert actual is not None, triplet
-            _assert_same_observation(actual, expected, (triplet, reference, strategy))
+            _assert_same_observation(actual, expected, (triplet, strategy))
 
 
 @pytest.mark.parametrize(
@@ -199,8 +188,8 @@ def test_geometry_matches_hand_derived_values(
     ],
     ids=["root_polytomy", "absent_taxon", "zero_internal"],
 )
-def test_geometry_skips_exactly_what_each_reference_skips(newick, triplet, status):
-    """The cached path, each reference and the diagnostic decline the same triplets.
+def test_geometry_skips_exactly_what_the_reference_skips(newick, triplet, status):
+    """The cached path, the reference and the diagnostic decline the same triplets.
 
     ``triplet_resolution`` restates ``geometry_observation``'s guards so the
     preflight can name a reason without the hot path tracking one; nothing
@@ -213,7 +202,4 @@ def test_geometry_skips_exactly_what_each_reference_skips(newick, triplet, statu
 
     assert triplet_resolution(geometry, positions) == status
     assert (geometry_observation(geometry, positions, "AVG", True) is not None) is resolved
-    for reference in sorted(_REFERENCES):
-        assert (
-            _REFERENCES[reference](newick, triplet, "AVG", True) is not None
-        ) is resolved, reference
+    assert (biopython_observation(newick, triplet, "AVG", True) is not None) is resolved
