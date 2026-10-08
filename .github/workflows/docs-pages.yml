@@ -5,8 +5,9 @@ on:
     branches:
       - main
     paths:
-      - "**/*.md"
-      - "**/.pages"
+      - "README.md"
+      - "CONFIG.md"
+      - "ghostparser/**/*.md"
       - "mkdocs.yml"
       - ".github/workflows/docs-pages.yml"
   workflow_dispatch:
@@ -42,10 +43,7 @@ jobs:
           . .docs-venv/bin/activate
           python -m pip install --upgrade pip
           python -m pip cache purge || true
-          pip install --no-cache-dir \
-            "mkdocs<2" \
-            mkdocs-material \
-            mkdocs-awesome-pages-plugin
+          pip install --no-cache-dir "mkdocs<2" mkdocs-material
 
       - name: Show resolved docs tool versions
         run: |
@@ -55,24 +53,13 @@ jobs:
       - name: Prepare Markdown docs tree
         run: |
           rm -rf site_docs
-          mkdir -p site_docs
+          mkdir -p site_docs/ghostparser/orchestrator site_docs/ghostparser/ml
 
-          # Home page for the generated docs site.
+          # The user docs only, at their repository paths so relative links hold.
           cp README.md site_docs/index.md
-
-          # Copy every markdown file while preserving directory structure.
-          rsync -a --prune-empty-dirs \
-            --exclude '.git/' \
-            --exclude '.github/' \
-            --exclude 'site_docs/' \
-            --include '*/' \
-            --include '*.md' \
-            --include '*.svg' \
-            --exclude '*' \
-            ./ site_docs/
-
-          # Avoid duplicate home page entry.
-          rm -f site_docs/README.md
+          cp CONFIG.md site_docs/CONFIG.md
+          cp ghostparser/orchestrator/ORCHESTRATOR.md site_docs/ghostparser/orchestrator/
+          cp ghostparser/ml/ML.md site_docs/ghostparser/ml/
 
           # The README is the site's index.md, so point links at it there.
           find site_docs -name '*.md' -exec \

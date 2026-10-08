@@ -1,26 +1,33 @@
-site_name: Ghostparser Docs
-site_description: Public documentation site generated from repository markdown files
+site_name: GhostParser
+site_description: Detect sampled and ghost introgression from species triplets in gene trees.
+site_url: https://asuvorovlab.github.io/ghostparser/
 repo_url: https://github.com/asuvorovlab/ghostparser
+repo_name: asuvorovlab/ghostparser
+edit_uri: ""
 
-# Generated during CI from markdown files in the repository.
+# Filled in CI from the repository's user docs (see docs-pages.yml).
 docs_dir: site_docs
 site_dir: site
+
+nav:
+  - Overview: index.md
+  - Configuration: CONFIG.md
+  - Method: ghostparser/orchestrator/ORCHESTRATOR.md
+  - Machine learning: ghostparser/ml/ML.md
 
 theme:
   name: material
   features:
-    - navigation.sections
-    - navigation.expand
     - navigation.top
     - search.suggest
     - search.highlight
 
 plugins:
   - search
-  - awesome-pages
 
 markdown_extensions:
-  - toc
+  - toc:
+      permalink: true
   - tables
   - fenced_code
   - sane_lists
