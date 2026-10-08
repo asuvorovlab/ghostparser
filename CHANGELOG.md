@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.0
+## v0.1.0 - Oct 8, 2026
 
 The initial release under this repository. Earlier versions were developed in
 a private personal repository under the asif256000 account, and the scripts
