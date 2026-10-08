@@ -134,9 +134,7 @@ at a few triplets, a fast screen in JSON.
 [data/](https://github.com/asuvorovlab/ghostparser/tree/main/data) holds the
 empirical gene trees and species trees analyzed in the preprint (Drosophila,
 Heliconius, Jaltomata, Thuja) and `simulated_rf_data/`, the summary statistics
-of the msprime simulations in the format the ML trainers read. The large files
-are stored with [Git LFS](https://git-lfs.com): run `git lfs pull` in a clone
-to fetch them; without Git LFS they are small pointer files.
+of the msprime simulations in the format the ML trainers read.
 
 ## Machine learning
 
