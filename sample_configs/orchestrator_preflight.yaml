@@ -8,8 +8,8 @@
 # tree and says, per outgroup, how many gene trees it was the farthest in,
 # rooted and sat tangled among the ingroup in.
 
-species_tree_path: ./data/species.tree
-gene_trees_path: ./data/genes.tree
+species_tree_path: ./sample_data/species.tree
+gene_trees_path: ./sample_data/genes.tree
 
 # Any order: each gene tree finds its own farthest, and the species tree
 # ranking breaks ties.

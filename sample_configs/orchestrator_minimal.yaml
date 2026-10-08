@@ -3,8 +3,8 @@
 #
 #   python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
 
-species_tree_path: ./data/species.tree
-gene_trees_path: ./data/genes.tree
+species_tree_path: ./sample_data/species.tree
+gene_trees_path: ./sample_data/genes.tree
 
 # A single outgroup label. For several, use a comma-separated string
 # ("Out1,Out2") or a YAML list; see orchestrator_full.yaml.

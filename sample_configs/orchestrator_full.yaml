@@ -6,8 +6,8 @@
 # Full reference and the other scenarios: CONFIG.md
 
 # --- Required inputs -------------------------------------------------------
-species_tree_path: ./data/species.tree
-gene_trees_path: ./data/genes.tree
+species_tree_path: ./sample_data/species.tree
+gene_trees_path: ./sample_data/genes.tree
 
 # One key covers both cases: a single label, a comma-separated string
 # ("Out1,Out2"), or a list as below. List entries may themselves be

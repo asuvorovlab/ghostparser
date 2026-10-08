@@ -98,8 +98,8 @@ B: Pan troglodytes
 Minimal file:
 
 ```yaml
-species_tree_path: data/species.tree
-gene_trees_path: data/genes.tree
+species_tree_path: sample_data/species.tree
+gene_trees_path: sample_data/genes.tree
 outgroup: OutGroup
 output_folder: results
 ```
@@ -107,27 +107,27 @@ output_folder: results
 Every key at its default, as `sample_configs/orchestrator_full.yaml` ships it:
 
 ```yaml
-species_tree_path: data/species.tree     # Newick species tree
-gene_trees_path: data/genes.tree         # one Newick gene tree per line
-outgroup: Out1,Out2                      # comma-separated, or a list
+species_tree_path: sample_data/species.tree  # Newick species tree
+gene_trees_path: sample_data/genes.tree      # one Newick gene tree per line
+outgroup: Out1,Out2                          # comma-separated, or a list
 output_folder: results
-overwrite: true                          # false = write to a suffixed sibling
-triplet_filter: null                     # not with species_filter
+overwrite: true                              # false = write to a suffixed sibling
+triplet_filter: null                         # not with species_filter
 species_filter: null
 species_rename_map: null
-processes: 0                             # 0 = every CPU available to the process
-seed: null                               # null = drawn and reported
+processes: 0                                 # 0 = every CPU available to the process
+seed: null                                   # null = drawn and reported
 alpha_dct: 0.05
 alpha_ks: 0.05
 alpha_perm: 0.05
-p_value_correction: bfn                  # no, bfn, holm, fdr_bh, fdr_by
+p_value_correction: bfn                      # no, bfn, holm, fdr_bh, fdr_by
 diagnostic: false
 consolidation: true
 bootstrap: true
 preflight_data_check: false
-preflight_triplet_cap: 15000             # 0 = no cap
-discordant_test: chi-square              # chi-square or z-test
-tree_height_calculation_strategy: AVG    # AVG, A, B, C, SIS, INT
+preflight_triplet_cap: 15000                 # 0 = no cap
+discordant_test: chi-square                  # chi-square or z-test
+tree_height_calculation_strategy: AVG        # AVG, A, B, C, SIS, INT
 min_support_value: 0.5
 generate_summary_stats: false
 shape_diagnostics: false

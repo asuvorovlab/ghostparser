@@ -5,12 +5,12 @@
 #
 #   python -m ghostparser.orchestrator -c sample_configs/orchestrator_triplet_filter_diagnostic.yaml
 
-species_tree_path: ./data/species.tree
-gene_trees_path: ./data/genes.tree
+species_tree_path: ./sample_data/species.tree
+gene_trees_path: ./sample_data/genes.tree
 outgroup: Out1
 
 output_folder: ./results_diagnostic
-triplet_filter: ./data/triplet_filter.txt   # one comma-separated triplet per line
+triplet_filter: ./sample_data/triplet_filter.txt   # one comma-separated triplet per line
 seed: 42
 
 diagnostic: true                  # fill every ks_* and perm_* column; same classifications

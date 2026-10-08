@@ -5,16 +5,16 @@
 #
 # The species-filter and rename-map file formats are described in CONFIG.md.
 
-species_tree_path: ./data/species.tree
-gene_trees_path: ./data/genes.tree
+species_tree_path: ./sample_data/species.tree
+gene_trees_path: ./sample_data/genes.tree
 outgroup: Out1,Out2               # comma-separated works as well as a list
 
 output_folder: ./results_filtered
 overwrite: false                  # keep an existing folder; write to results_filtered_1
 
-species_filter: ./data/species_filter.txt   # tree labels, comma-separated, any number per line
+species_filter: ./sample_data/species_filter.txt   # tree labels, comma-separated, any number per line
 # The rename map is read when the config loads, so the file must exist:
-# species_rename_map: ./data/species_rename_map.tsv   # tree label <tab> name shown in outputs
+# species_rename_map: ./sample_data/species_rename_map.tsv   # tree label <tab> name shown in outputs
 
 seed: 42                          # every random draw derives from it; identical at any worker count
 processes: 4

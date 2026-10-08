@@ -1,8 +1,8 @@
 {
   "_comment": "A fast screen of a large taxon set, in JSON: no bootstrap, no maps, a false-discovery-rate correction and the z-test. Run with: python -m ghostparser.orchestrator -c sample_configs/orchestrator_screen.json",
 
-  "species_tree_path": "./data/species.tree",
-  "gene_trees_path": "./data/genes.tree",
+  "species_tree_path": "./sample_data/species.tree",
+  "gene_trees_path": "./sample_data/genes.tree",
   "outgroup": ["Out1", "Out2"],
 
   "output_folder": "./results_screen",
