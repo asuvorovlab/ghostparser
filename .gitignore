@@ -17,8 +17,7 @@ venv/
 
 # Run inputs and outputs
 /configs/
-/data/
-/empirical_data/
+/sample_data/
 /ml_data/
 /logs/
 /job_scripts/
