@@ -1,9 +1,5 @@
 # Ghostparser
 
-<p align="center">
-   <img width="120" height="120" alt="GhostParser icon" src="docs/assets/ghostparser_icon.svg" />
-</p>
-
 **Ghostparser** detects introgression, between sampled species and from
 unsampled "ghost" lineages, from a species tree and a set of gene trees. It
 decomposes the ingroup into species triplets and, for each, compares how often
