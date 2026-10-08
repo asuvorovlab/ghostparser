@@ -28,12 +28,15 @@ every option is in [CONFIG.md](CONFIG.md).
 
 ## Installation
 
-From a release wheel, which installs the package into your environment so the
-commands run from any directory:
+From GitHub, which installs the package into your environment so the commands
+run from any directory:
 
 ```bash
-pip install https://github.com/asif256000/ghostparser/releases/download/v0.1.0/ghostparser-0.1.0-py3-none-any.whl
+pip install git+https://github.com/asuvorovlab/ghostparser.git
 ```
+
+or `pip install` a wheel from the
+[Releases](https://github.com/asuvorovlab/ghostparser/releases) page.
 
 From a checkout:
 

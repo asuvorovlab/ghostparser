@@ -1,6 +1,6 @@
 site_name: Ghostparser Docs
 site_description: Public documentation site generated from repository markdown files
-repo_url: https://github.com/asif256000/ghostparser
+repo_url: https://github.com/asuvorovlab/ghostparser
 
 # Generated during CI from markdown files in the repository.
 docs_dir: site_docs
