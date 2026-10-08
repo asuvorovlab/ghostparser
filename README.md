@@ -206,10 +206,10 @@ to match:
 
 ```bash
 git checkout main && git pull origin main
-git tag -a v0.1.1 -m "Release v0.1.1"
-git push origin v0.1.1
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
 ```
 
-To undo a wrong tag, delete it locally and remotely (`git tag -d v0.1.1`,
-`git push origin --delete v0.1.1`) and delete the GitHub release
-(`gh release delete v0.1.1`).
+To undo a wrong tag, delete it locally and remotely (`git tag -d v0.1.0`,
+`git push origin --delete v0.1.0`) and delete the GitHub release
+(`gh release delete v0.1.0`).
