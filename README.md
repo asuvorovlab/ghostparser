@@ -211,5 +211,6 @@ git push origin v0.1.0
 ```
 
 To undo a wrong tag, delete it locally and remotely (`git tag -d v0.1.0`,
-`git push origin --delete v0.1.0`) and delete the GitHub release
-(`gh release delete v0.1.0`).
+`git push origin --delete v0.1.0`). GitHub then turns its release into a draft,
+listed on the Releases page only for maintainers; delete that draft too, or
+pushing the tag again creates a second release beside it.
