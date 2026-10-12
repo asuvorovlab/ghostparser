@@ -44,27 +44,21 @@ branch `T` coalescent units long,
 P(concordant) = 1 - (2/3) e^(-T)      P(each discordant) = (1/3) e^(-T)
 ```
 
-(Hudson 1983, *Evolution* 37(1), 203-217; Pamilo & Nei 1988, *Molecular
-Biology and Evolution* 5(5), 568-583; Degnan & Rosenberg 2009, *Trends in
-Ecology & Evolution* 24(6), 332-340, https://doi.org/10.1016/j.tree.2009.01.009).
+([Pamilo & Nei 1988](https://doi.org/10.1093/oxfordjournals.molbev.a040517);
+[Degnan & Rosenberg 2009](https://doi.org/10.1016/j.tree.2009.01.009)).
 The two discordant topologies are exchangeable under ILS, so their counts are
 expected to be equal. Gene flow between one of the sisters and C breaks that
 symmetry, the same asymmetry the ABBA-BABA *D*-statistic reads from site
-patterns (Green et al. 2010, *Science* 328(5979), 710-722,
-https://doi.org/10.1126/science.1188021; Durand et al. 2011, *Molecular
-Biology and Evolution* 28(8), 2239-2252,
-https://doi.org/10.1093/molbev/msr048), and is the signal the first test
-looks for.
+patterns ([Durand et al. 2011](https://doi.org/10.1093/molbev/msr048)), and is the signal the first
+test looks for.
 
 Counts alone do not say what kind of gene flow produced the excess. The
 *timing* of the discordant gene trees does: ILS-discordant trees coalesce
 above the species-tree root of the triplet, a gene tree produced by
-introgression between the sampled taxa coalesces at the time of that exchange,
+introgression between the sampled taxa coalesces at the time of that exchange
+([Hibbins & Hahn 2019](https://doi.org/10.1534/genetics.118.301831)),
 and a gene tree carrying DNA from an unsampled ("ghost") lineage that diverged
-before the triplet's root coalesces deeper still (Hibbins & Hahn 2019,
-*Genetics* 211(3), 1059-1073, https://doi.org/10.1534/genetics.118.301831;
-Tricou, Tannier & de Vienne 2022, *Systematic Biology* 71(5), 1147-1158,
-https://doi.org/10.1093/sysbio/syac011). Comparing the heights of the
+before the triplet's root coalesces deeper still. Comparing the heights of the
 discordant gene trees with the heights of the concordant ones is what the
 second and third tests do.
 
@@ -150,12 +144,12 @@ order and its `species_tree` subtree topology.
 
 *Are the two discordant topologies equally frequent?* Under ILS alone they
 are; an excess of one is gene flow. The test compares `n_dis1` and `n_dis2`
-against a 50/50 split and ignores the concordant count.
+against a 50/50 split and ignores the concordant count, as the discordant
+count test of [Suvorov et al. 2022](https://doi.org/10.1016/j.cub.2021.10.052) does.
 
 - `chi-square` (default): Pearson's goodness-of-fit statistic against equal
   expected counts, `(n_dis1 - n_dis2)^2 / (n_dis1 + n_dis2)`, on one degree
-  of freedom (Pearson 1900, *Philosophical Magazine* 50(302), 157-175,
-  https://doi.org/10.1080/14786440009463897).
+  of freedom ([Pearson 1900](https://doi.org/10.1080/14786440009463897)).
 - `z-test`: the two-proportion z-test of `n_dis1/n` against `n_dis2/n` with
   the pooled variance at `p = 1/2`. The two proportions are complements, so
   `z^2 = 2 chi^2` on the same counts and the z-test rejects more readily.
@@ -169,9 +163,9 @@ alpha_dct`. A triplet that fails it is `no_introgression`.
 *Do the concordant and discordant1 height distributions differ at all?* The
 two-sample Kolmogorov-Smirnov statistic is the largest gap between the two
 empirical distribution functions, `D = sup_x |F_con(x) - F_dis1(x)|`, with
-SciPy's exact or asymptotic p-value by sample size (Massey 1951, *Journal of
-the American Statistical Association* 46(253), 68-78,
-https://doi.org/10.1080/01621459.1951.10500769). The test is deliberately
+SciPy's exact or asymptotic p-value by sample size
+([Smirnov 1948](https://doi.org/10.1214/aoms/1177730256);
+[Hodges 1958](https://doi.org/10.1007/BF02589501)). The test is deliberately
 sensitive to any difference: location, spread or shape.
 
 If the discordant trees are distributed like the concordant ones, they
@@ -196,13 +190,12 @@ that diverged before the triplet's root; neither is `ambiguous`.
 T = (mean(x) - mean(y)) / sqrt(var(x)/nx + var(y)/ny)
 ```
 
-with unbiased variances. The Welch standard error (Welch 1947, *Biometrika*
-34(1-2), 28-35, https://doi.org/10.1093/biomet/34.1-2.28) matters because the
+with unbiased variances. The Welch standard error
+([Welch 1947](https://doi.org/10.1093/biomet/34.1-2.28)) matters because the
 concordant sample is usually much the larger and the two variances differ: a
 permutation test of the raw mean difference does not hold its level under
 that combination, while the studentized one stays asymptotically valid
-(Janssen 1997, *Statistics & Probability Letters* 36(1), 9-21,
-https://doi.org/10.1016/S0167-7152(97)00043-6).
+([Janssen 1997](<https://doi.org/10.1016/S0167-7152(97)00043-6>)).
 
 **Permutation null.** The pooled heights are randomly reassigned to two
 groups of the original sizes and `T` is recomputed, variances included; the
@@ -213,10 +206,9 @@ gets the add-one estimator
 p = (1 + count) / (1 + resamples)
 ```
 
-which counts the observed arrangement itself and is the correctly sized
-Monte Carlo p-value (Phipson & Smyth 2010, *Statistical Applications in
-Genetics and Molecular Biology* 9(1), Article 39,
-https://doi.org/10.2202/1544-6115.1585). `perm_p_greater` is the upper tail,
+which counts the observed arrangement itself and is a valid, slightly
+conservative Monte Carlo p-value ([Phipson & Smyth 2010](https://doi.org/10.2202/1544-6115.1585)).
+`perm_p_greater` is the upper tail,
 `perm_p_less` the lower. The two form a family of size two and are corrected
 against each other with the run's `p_value_correction` (under `bfn`,
 `min(1, 2p)`); a direction is called when exactly one corrected tail is at or
@@ -227,11 +219,9 @@ run. The direction test therefore carries no run-wide error control; a
 direction is conditional on the triplet having passed the first two gates.
 
 **Adaptive stopping.** The first batch draws `min_resamples`. After each
-batch a 95% binomial confidence interval (`ci_method`, default Wilson; Wilson
-1927, *Journal of the American Statistical Association* 22(158), 209-212,
-https://doi.org/10.1080/01621459.1927.10502953; Brown, Cai & DasGupta 2001,
-*Statistical Science* 16(2), 101-133, https://doi.org/10.1214/ss/1009213286)
-is placed around each tail's p-value and mapped onto the corrected scale. If
+batch a 95% binomial confidence interval (`ci_method`, default Wilson;
+[Wilson 1927](https://doi.org/10.1080/01621459.1927.10502953);
+[Brown, Cai & DasGupta 2001](https://doi.org/10.1214/ss/1009213286)) is placed around each tail's p-value and mapped onto the corrected scale. If
 `alpha_perm` lies outside both intervals the decision cannot flip and the test
 stops with `perm_converged = True`; otherwise the batch grows by a quarter and
 the test continues until the total reaches `max_resamples`, the last batch
@@ -255,24 +245,21 @@ at the underlying alignments.
 **Equivalence.** A non-significant pair of tails means only that no direction
 was established. Whether the two means were *shown* to be close needs its own
 test, because absence of evidence is not evidence of absence. TOST (two
-one-sided tests; Schuirmann 1987, *Journal of Pharmacokinetics and
-Biopharmaceutics* 15(6), 657-680, https://doi.org/10.1007/BF01068419) turns
+one-sided tests; [Schuirmann 1987](https://doi.org/10.1007/BF01068419)) turns
 the null around: with margin `delta`, it tests `mean(x) - mean(y) <= -delta`
 and `>= +delta` one-sidedly, and rejecting both confines the difference to
 `(-delta, +delta)`. Each null is tested at its boundary by shifting the
 concordant sample by `±delta` on the same permutations the direction test
 drew; the TOST p-value is the larger of the two, and `equivalent` needs it at
-or below `alpha_perm`. No multiplicity correction is needed: rejecting a union
-of nulls only when every component rejects is an intersection-union test,
-which holds its level whenever its components do (Berger 1982,
-*Technometrics* 24(4), 295-300, https://doi.org/10.2307/1267823). See Lakens
-2017 (*Social Psychological and Personality Science* 8(4), 355-362,
-https://doi.org/10.1177/1948550617697177) on pairing it with a significance
+or below `alpha_perm`. No multiplicity correction is needed: if the
+difference really lies outside the margin, at least one of the two nulls is
+true, and `equivalent` needs that test to reject as well, which happens with
+probability at most `alpha_perm`. See
+[Lakens 2017](https://doi.org/10.1177/1948550617697177) on pairing it with a significance
 test.
 
 The margin is `delta = 0.5 sqrt((var(x) + var(y)) / 2)`: a Cohen's *d* of 0.5,
-the conventional medium effect (Cohen 1988, *Statistical Power Analysis for the
-Behavioral Sciences*, 2nd ed., Lawrence Erlbaum). An effect-size margin
+the conventional medium effect ([Cohen 1988](https://doi.org/10.4324/9780203771587)). An effect-size margin
 shrinks relative to the standard error as gene trees accumulate, so more data
 makes equivalence easier to establish; a margin in standard-error units would
 sit permanently inside the null's own spread, because the studentized
@@ -322,10 +309,10 @@ to the triplet count. For the `j`-th smallest of `n` p-values:
 
 | Method | Adjusted value | Controls |
 | --- | --- | --- |
-| `bfn` | `min(1, n p)` (Dunn 1961, *JASA* 56(293), 52-64, https://doi.org/10.1080/01621459.1961.10482090) | family-wise error rate |
-| `holm` | `(n - j + 1) p_(j)` under a running maximum (Holm 1979, *Scandinavian Journal of Statistics* 6(2), 65-70) | family-wise error rate |
-| `fdr_bh` | `(n / j) p_(j)` under a running minimum (Benjamini & Hochberg 1995, *JRSS B* 57(1), 289-300, https://doi.org/10.1111/j.2517-6161.1995.tb02031.x) | false discovery rate, independent or positively dependent tests |
-| `fdr_by` | BH times `sum_(i=1..n) 1/i` (Benjamini & Yekutieli 2001, *Annals of Statistics* 29(4), 1165-1188, https://doi.org/10.1214/aos/1013699998) | false discovery rate under any dependence |
+| `bfn` | `min(1, n p)` | family-wise error rate |
+| `holm` | `(n - j + 1) p_(j)` under a running maximum ([Holm 1979](https://www.jstor.org/stable/4615733)) | family-wise error rate |
+| `fdr_bh` | `(n / j) p_(j)` under a running minimum ([Benjamini & Hochberg 1995](https://doi.org/10.1111/j.2517-6161.1995.tb02031.x)) | false discovery rate, independent or positively dependent tests |
+| `fdr_by` | BH times `sum_(i=1..n) 1/i` ([Benjamini & Yekutieli 2001](https://doi.org/10.1214/aos/1013699998)) | false discovery rate under any dependence |
 | `no` | `p` | nothing |
 
 Every multiplier is at least 1, which is the monotonicity the skips above rely
@@ -337,8 +324,8 @@ for every triplet under them.
 ### Bootstrap support
 
 `bootstrap_value` is the fraction of `bootstrap_options.iterations` resamples
-of the triplet's gene trees (drawn with replacement; Efron 1979, *Annals of
-Statistics* 7(1), 1-26, https://doi.org/10.1214/aos/1176344552) whose rerun of
+of the triplet's gene trees (drawn with replacement;
+[Efron 1979](https://doi.org/10.1214/aos/1176344552)) whose rerun of
 the cascade lands on the reported classification; `all_bootstrap` gives the
 fraction for every class. Iterations are judged against the same corrected
 thresholds as the reported classification (under `no`/`bfn` as they run,
@@ -365,11 +352,11 @@ them.
 
 | Column | Meaning |
 | --- | --- |
-| `<group>_n_modes` | Peaks in a Gaussian kernel density estimate at Scott's bandwidth (Scott 1992, *Multivariate Density Estimation*, Wiley). A count at one bandwidth: a strongly skewed unimodal sample can read as several. |
-| `<group>_modes_p` | Silverman's critical-bandwidth bootstrap p-value for unimodality (Silverman 1981, *JRSS B* 43(1), 97-99, https://doi.org/10.1111/j.2517-6161.1981.tb01155.x): the smallest bandwidth giving one mode is found, and resamples from that smoothed density are counted for still needing more. At or below `alpha` is evidence of a second mode; it needs about three standard deviations of separation to see one. |
+| `<group>_n_modes` | Peaks in a Gaussian kernel density estimate at Scott's bandwidth ([Scott 1992](https://doi.org/10.1002/9780470316849)). A count at one bandwidth: a strongly skewed unimodal sample can read as several. |
+| `<group>_modes_p` | Silverman's critical-bandwidth bootstrap p-value for unimodality ([Silverman 1981](https://doi.org/10.1111/j.2517-6161.1981.tb01155.x)): the smallest bandwidth giving one mode is found, and resamples from that smoothed density are counted for still needing more. At or below `alpha` is evidence of a second mode; it needs about three standard deviations of separation to see one. |
 | `<group>_skew` | Sample skewness. |
 | `<group>_excess_kurtosis` | Sample excess kurtosis, `0` for a normal. |
-| `<group>_tail_xi` | Shape parameter of a generalized Pareto distribution fitted to the exceedances over the group's 90th percentile (peaks over threshold; Pickands 1975, *Annals of Statistics* 3(1), 119-131, https://doi.org/10.1214/aos/1176343003): positive is a power-law tail, `0` exponential decay, negative a bounded tail. |
+| `<group>_tail_xi` | How heavy the upper tail of the heights is. The amounts by which heights exceed the group's 90th percentile are fitted with a generalized Pareto distribution, the form such excesses over a high threshold take for any common continuous distribution ([Pickands 1975](https://doi.org/10.1214/aos/1176343003)), and `xi` is its shape parameter. Above `0`, a heavy tail: a few trees far taller than the rest. Near `0`, the tallest trees thin out exponentially, as in a normal sample. Below `0`, the heights stop at a ceiling. |
 
 Groups with fewer than 20 observations, or no spread, leave the columns empty;
 `tail_xi` also needs 10 exceedances. The modality bootstrap is the expensive

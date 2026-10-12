@@ -72,15 +72,15 @@ classification report and per-bit confusion matrices) or `per_bit`. The
 disagree whenever features are correlated. They are all model-relative
 measures of influence, not causal statements.
 
-**`mdi`**, the forest's default, is mean decrease in impurity (Breiman 2001,
-*Machine Learning* 45(1), 5-32,
-https://doi.org/10.1023/A:1010933404324): every node that split on a feature
+**`mdi`**, the forest's default, is mean decrease in impurity, the importance
+a random forest ([Breiman 2001](https://doi.org/10.1023/A:1010933404324)) accumulates as it
+grows: every node that split on a feature
 contributes its impurity drop weighted by the rows reaching it, summed over
 the forest, averaged over the six estimators and normalized to sum to 1. It
 comes free with the fitted trees, but it is measured in-sample on in-bag
 rows, so it rewards a feature for the noise it fits, in proportion to how
-many candidate split points it offers (Strobl et al. 2007, *BMC
-Bioinformatics* 8, 25, https://doi.org/10.1186/1471-2105-8-25).
+many candidate split points it offers
+([Strobl et al. 2007](https://doi.org/10.1186/1471-2105-8-25)).
 
 It also splits credit between correlated features: each split books its
 whole impurity drop to whichever of several redundant features the forest drew,
@@ -91,8 +91,8 @@ views of one quantity).
 
 **`permutation`**, the neighbours classifier's default, shuffles one feature's
 column in the hold-out partition and records the drop in micro-F1, ten times
-per feature (Breiman 2001; Fisher, Rudin & Dominici 2019, *Journal of Machine
-Learning Research* 20(177), 1-81, https://jmlr.org/papers/v20/18-760.html).
+per feature ([Breiman 2001](https://doi.org/10.1023/A:1010933404324);
+[Fisher, Rudin & Dominici 2019](https://jmlr.org/papers/v20/18-760.html)).
 Scoring held-out rows against the metric the run reports removes both
 in-sample biases, and the score is stated in the units of that metric. It
 does not remove the redundancy problem, and arguably sharpens it: with the

@@ -499,9 +499,9 @@ def run_studentized_permutation_test(
         n_done += batch
         batches += 1
 
-        # Add-one estimator (Phipson & Smyth 2010): counting the observed
-        # arrangement itself keeps the p-value from ever reaching zero and
-        # preserves the test's nominal level.
+        # Add-one estimator: counting the observed arrangement itself keeps
+        # the p-value from ever reaching zero and preserves the test's
+        # nominal level.
         p_greater = (1 + count_greater) / (n_done + 1)
         p_less = (1 + count_less) / (n_done + 1)
 

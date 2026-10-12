@@ -120,7 +120,7 @@ def critical_bandwidth(values, max_modes=1):
         return 0.0
 
     # Mode count is monotone non-increasing in bandwidth for a Gaussian kernel
-    # in one dimension (Silverman 1981), which is what makes bisection valid.
+    # in one dimension, which is what makes bisection valid.
     low = _BANDWIDTH_LOW_FACTOR * spread
     high = _BANDWIDTH_HIGH_FACTOR * spread
     if count_kde_modes(array, high) > max_modes:
