@@ -1,9 +1,14 @@
-# Configuration Guide
+# ghostparser
 
-Every GhostParser key, for `ghostparser.orchestrator` first and the
-`ghostparser.ml` trainers and tuner after. The method behind the orchestrator
-keys is in [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md); the
-trainers are described in [ML.md](ghostparser/ml/ML.md).
+The `ghostparser` package has two parts. `ghostparser.orchestrator` is the
+introgression engine: it takes a species tree and gene trees and classifies
+every ingroup triplet. `ghostparser.ml` is optional (`pip install .[ml]`) and
+trains multi-label classifiers on the summary statistics the orchestrator
+writes. The method is in the [orchestrator guide](orchestrator/README.md) and
+the trainers in the [ML guide](ml/README.md).
+
+The rest of this page is the configuration reference: every key, the
+orchestrator's first and then the trainers' and tuner's.
 
 ## Config files and the command line
 
@@ -33,7 +38,7 @@ holding the input trees.
 
 Every command also takes `--debug`, on the command line only and off by
 default: a failed run then shows the full traceback instead of one line. The
-exit statuses are listed under Errors in the [README](README.md#errors).
+exit statuses are listed under Errors in the [README](../README.md#errors).
 
 ## Orchestrator
 
@@ -393,7 +398,7 @@ rejected (scikit-learn removed it; `sqrt` is the equivalent). Omit
 
 `feature_importance_method` chooses how influence is measured; null takes
 `mdi` for `random_forest` and `permutation` for `multi_knn`. How the three
-differ on correlated features is in [ML.md](ghostparser/ml/ML.md#feature-importance).
+differ on correlated features is in the [ML guide](ml/README.md#feature-importance).
 
 | Value | Measure |
 | --- | --- |

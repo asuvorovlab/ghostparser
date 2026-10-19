@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - "README.md"
-      - "CONFIG.md"
       - "ghostparser/**/*.md"
       - "mkdocs.yml"
       - ".github/workflows/docs-pages.yml"
@@ -55,15 +54,16 @@ jobs:
           rm -rf site_docs
           mkdir -p site_docs/ghostparser/orchestrator site_docs/ghostparser/ml
 
-          # The user docs only, at their repository paths so relative links hold.
+          # The user docs only, each folder's README as that folder's index.md,
+          # at their repository paths so relative links hold.
           cp README.md site_docs/index.md
-          cp CONFIG.md site_docs/CONFIG.md
-          cp ghostparser/orchestrator/ORCHESTRATOR.md site_docs/ghostparser/orchestrator/
-          cp ghostparser/ml/ML.md site_docs/ghostparser/ml/
+          cp ghostparser/README.md site_docs/ghostparser/index.md
+          cp ghostparser/orchestrator/README.md site_docs/ghostparser/orchestrator/index.md
+          cp ghostparser/ml/README.md site_docs/ghostparser/ml/index.md
 
-          # The README is the site's index.md, so point links at it there.
+          # Point relative links to a README at its index.md; absolute URLs keep theirs.
           find site_docs -name '*.md' -exec \
-            sed -i 's#\](\(\(\.\./\)*\)README\.md#](\1index.md#g' {} +
+            sed -i 's#\](\([^):]*\)README\.md#](\1index.md#g' {} +
 
       - name: Build static site
         run: |

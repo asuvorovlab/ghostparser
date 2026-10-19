@@ -5,7 +5,7 @@ orchestrator runs (typically simulations whose true introgression events are
 known), so that a run's statistics can be mapped onto the events that produced
 them. Two baselines ship, a random forest and a multi-label k-nearest
 neighbours, plus a hyperparameter tuner. Install with `pip install .[ml]`;
-every key is in [CONFIG.md](../../CONFIG.md#machine-learning).
+every key is in the [configuration guide](../README.md#machine-learning).
 
 ## Data contract
 
@@ -43,7 +43,7 @@ python -m ghostparser.ml.hyper_tune -c sample_configs/hyper_tune.yaml
 ```
 
 The flags and the sample configs are listed in
-[CONFIG.md](../../CONFIG.md#machine-learning);
+the [configuration guide](../README.md#machine-learning);
 an orchestrator run with `generate_summary_stats: true` writes the
 `summary_statistics.tsv` the trainers read, and
 `data/simulated_rf_data/consolidated_summary_ratios.tsv` is a simulated

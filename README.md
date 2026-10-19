@@ -16,8 +16,8 @@ and how deep the gene trees disagree with the species tree. The engine is
 summary statistics of simulated runs.
 
 The method (the tests, their formulas and the literature behind them) is
-described in [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md);
-every option is in [CONFIG.md](CONFIG.md). The same pages are hosted at
+described in the [orchestrator guide](ghostparser/orchestrator/README.md);
+every option is in the [configuration guide](ghostparser/README.md). The same pages are hosted at
 <https://asuvorovlab.github.io/ghostparser/>.
 
 ## Installation
@@ -52,7 +52,7 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 # config file; a flag given beside it overrides the file's value
 python -m ghostparser.orchestrator -c run_config.yaml --seed 42
 
-# start from a shipped sample (CONFIG.md lists them)
+# start from a shipped sample (the configuration guide lists them)
 python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
 
 # check the inputs and exit without analysis
@@ -86,7 +86,8 @@ the gene trees (`-gt`, one Newick tree per line, every branch with a length;
 a missing one is read as 0) and the outgroup label(s) (`-og`,
 comma-separated, in any order: the species tree ranks them). Everything else has a default;
 the full argument table, the config-file-only keys and the formats of the
-filter and rename-map files are in [CONFIG.md](CONFIG.md).
+filter and rename-map files are in the
+[configuration guide](ghostparser/README.md).
 
 Example species tree, gene trees and run:
 
@@ -107,7 +108,7 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 
 | File | Contents |
 | --- | --- |
-| `orchestrator_triplet_results.tsv` | One row per triplet: counts, the three tests' statistics and p-values (raw and corrected), `decision_gate`, `classification`, `inference` in words, and the bootstrap support. Columns are described in [ORCHESTRATOR.md](ghostparser/orchestrator/ORCHESTRATOR.md#results-columns). |
+| `orchestrator_triplet_results.tsv` | One row per triplet: counts, the three tests' statistics and p-values (raw and corrected), `decision_gate`, `classification`, `inference` in words, and the bootstrap support. Columns are described in the [orchestrator guide](ghostparser/orchestrator/README.md#results-columns). |
 | `summary_statistics.tsv` | With `generate_summary_stats`: per-triplet descriptive statistics of the heights per topology; the ML trainers' input. |
 | `processed_<species tree>`, `processed_<gene trees>` | The cleaned, rooted and pruned trees. |
 | `metrics.txt` | Run parameters, then per stage what it processed, its timings and what it found: rooting counts, classification and gate counts, permutation convergence. |
@@ -122,12 +123,11 @@ TaxaA,TaxaB,TaxaC	((TaxaA,TaxaB),TaxaC);	7	3	2	BC	no_introgression	0.82
 
 ## Configuration
 
-[CONFIG.md](CONFIG.md) documents every key, its default and the
+The [configuration guide](ghostparser/README.md) documents every key, its default and the
 path-resolution rules;
 [sample_configs/](https://github.com/asuvorovlab/ghostparser/tree/main/sample_configs)
-holds a config for each common scenario: minimal, every key at its default, a
-preflight check, a species filter with summary statistics, a diagnostic look
-at a few triplets, a fast screen in JSON.
+holds loadable configs to copy from: the three required inputs alone, and
+every orchestrator, trainer and tuner key at its default.
 
 ## Datasets
 
@@ -140,7 +140,7 @@ downloads leave this folder out; clone the repository to get it.
 ## Machine learning
 
 `ghostparser.ml` trains multi-label classifiers on `summary_statistics.tsv`
-and tunes their hyperparameters; see [ML.md](ghostparser/ml/ML.md).
+and tunes their hyperparameters; see the [ML guide](ghostparser/ml/README.md).
 
 ```bash
 python -m ghostparser.ml.random_forest -i results/summary_statistics.tsv -o results/ml_out
@@ -192,7 +192,7 @@ pytest -m integration     # entry points end to end
 pytest -m parity          # the triplet geometry against a BioPython reference
 ```
 
-[tests/TESTS.md](https://github.com/asuvorovlab/ghostparser/blob/main/tests/TESTS.md)
+[tests/README.md](https://github.com/asuvorovlab/ghostparser/blob/main/tests/README.md)
 maps every test and
 [tests/TEST_IO.md](https://github.com/asuvorovlab/ghostparser/blob/main/tests/TEST_IO.md)
 derives every expected value.

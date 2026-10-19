@@ -4,7 +4,7 @@
 #
 #   python -m ghostparser.ml.hyper_tune -c sample_configs/hyper_tune.yaml
 #
-# CONFIG.md describes every key.
+# ghostparser/README.md describes every key.
 
 # --- Runtime -----------------------------------------------------------------
 input_path: ./results/summary_statistics.tsv   # required

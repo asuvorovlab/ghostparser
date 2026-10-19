@@ -11,9 +11,9 @@ site_dir: site
 
 nav:
   - Overview: index.md
-  - Configuration: CONFIG.md
-  - Method: ghostparser/orchestrator/ORCHESTRATOR.md
-  - Machine learning: ghostparser/ml/ML.md
+  - Configuration: ghostparser/index.md
+  - Method: ghostparser/orchestrator/index.md
+  - Machine learning: ghostparser/ml/index.md
 
 theme:
   name: material
