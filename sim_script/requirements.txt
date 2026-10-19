@@ -1,0 +1,7 @@
+# Only for sim_script; GhostParser itself does not need these.
+msprime>=1.3
+tskit>=0.5
+numpy>=1.24
+PyYAML>=6.0
+biopython>=1.79
+matplotlib>=3.8
