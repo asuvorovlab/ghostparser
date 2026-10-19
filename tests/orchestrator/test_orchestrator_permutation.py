@@ -313,7 +313,7 @@ def test_type_one_error_rate_tracks_alpha_under_unequal_variance():
     that fixed seeds make it stable, tight enough to catch a test that has
     stopped controlling its error rate. The level does degrade once the smaller
     group falls below roughly 30 observations *and* carries the larger spread;
-    that limitation is documented in ORCHESTRATOR.md rather than asserted here.
+    that limitation is documented in ``ghostparser/orchestrator/README.md`` rather than asserted here.
     """
     replicates = 1500
     rejections = 0

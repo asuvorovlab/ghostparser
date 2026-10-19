@@ -6,7 +6,7 @@ gene tree's version of each triplet, and runs a three-gate cascade of tests
 per triplet that labels it `no_introgression`, `inflow_introgression`,
 `outflow_introgression`, `ghost_introgression` or `ambiguous`. This document
 explains the method; how to run it is in the [README](../../README.md) and
-every flag and key in [CONFIG.md](../../CONFIG.md).
+every flag and key in the [configuration guide](../README.md).
 
 ## The pipeline
 

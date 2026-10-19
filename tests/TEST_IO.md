@@ -1,6 +1,6 @@
 # Test Input/Output Derivations
 
-This document is the granular companion to [TESTS.md](TESTS.md). For each test
+This document is the granular companion to the [test map](README.md). For each test
 it records **exactly what the inputs are** (literal values, not just fixture
 names) and **how the expected output is derived**: the arithmetic, the
 definition, or the reference call that produces it.
@@ -559,7 +559,7 @@ paired with unequal variances is the configuration where a permutation test of
 the *raw* mean difference loses its level, so this measures what the
 studentization buys. The level degrades once the smaller group falls below
 roughly 30 observations while carrying the larger spread; that limitation is
-recorded in ORCHESTRATOR.md rather than asserted here.
+recorded in `ghostparser/orchestrator/README.md` rather than asserted here.
 
 ### `test_guards_short_circuit_without_resampling`
 
@@ -1686,8 +1686,8 @@ is `0.0`, which is falsy, so an edge that carries no support does not count →
 `tests/test_ml_hyper_tune.py` and the rest of `tests/test_ml_utils.py` assert
 structural outcomes (files written,
 columns present, errors raised, a shipped sample loading), and their inputs
-are the fixtures described in [TESTS.md](TESTS.md). No test pins a config
-default; the samples and CONFIG.md state those. The derivations worth stating
+are the fixtures described in the [test map](README.md). No test pins a config
+default; the samples and `ghostparser/README.md` state those. The derivations worth stating
 explicitly:
 
 - **Sample configs at their defaults**: `ml_trainer.yaml` and

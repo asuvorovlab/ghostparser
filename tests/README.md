@@ -50,8 +50,8 @@ means paying for inference tests. What the split buys is the other direction:
 a changed default runs `config` in seconds, a changed report line runs
 `output`, and the end-to-end runs wait until commit time.
 
-Config tests do not pin individual default values. CONFIG.md and the sample
-configs state those, and two invariants keep them in step with the code
+Config tests do not pin individual default values. `ghostparser/README.md`
+and the sample configs state those, and two invariants keep them in step with the code
 without a per-key test: CLI mode and config-file mode resolve to one and the
 same set of defaults, and each full sample (`orchestrator_full.yaml`,
 `ml_trainer.yaml`, `hyper_tune.yaml`) names every key at its default.

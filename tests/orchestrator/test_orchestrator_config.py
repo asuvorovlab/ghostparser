@@ -4,7 +4,7 @@ Every test here is marked ``config``: they cover how a config is loaded,
 resolved and validated, not what the pipeline computes. Run the pipeline logic
 alone with ``pytest -m "not config"``.
 
-Individual default values are deliberately not pinned. CONFIG.md and
+Individual default values are deliberately not pinned. ``ghostparser/README.md`` and
 ``sample_configs/orchestrator_full.yaml`` state them, and two invariants keep
 those in step with the code: CLI mode and config-file mode resolve to one and
 the same set of defaults, and the full sample names every runtime key at its

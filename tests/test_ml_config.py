@@ -1,6 +1,6 @@
 """Config resolution for the ML trainers.
 
-Marked ``config`` throughout. Individual defaults are not pinned: CONFIG.md
+Marked ``config`` throughout. Individual defaults are not pinned: ``ghostparser/README.md``
 and the shipped sample configs state them; what is pinned is that the loader
 resolves, that explicit values win, that the two estimator passthrough keys
 accept every form scikit-learn does and nothing else, and that a flag beside

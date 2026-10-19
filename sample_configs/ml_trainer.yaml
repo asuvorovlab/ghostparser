@@ -5,7 +5,7 @@
 #   python -m ghostparser.ml.random_forest -c sample_configs/ml_trainer.yaml
 #   python -m ghostparser.ml.multi_knn -c sample_configs/ml_trainer.yaml
 #
-# CONFIG.md describes every key.
+# ghostparser/README.md describes every key.
 
 # --- Runtime -----------------------------------------------------------------
 input_path: ./results/summary_statistics.tsv   # required; a run with generate_summary_stats
