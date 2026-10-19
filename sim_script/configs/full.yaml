@@ -1,0 +1,82 @@
+# Every key at its default, plus one example entry for each list key. Keys marked
+# "required" have no default. Times are in time_units unless stated otherwise.
+#
+#   python sim_script/simulate_trees.py -c sim_script/configs/full.yaml
+
+seed: null                      # null draws a fresh seed; resolved_config.yaml records it
+output_dir: ./sim_out
+overwrite: false                # false writes beside an existing directory as <name>_<n>
+replicates: 1
+time_units: generations         # generations | coalescent | years
+generation_time: null           # years per generation; required for time_units: years
+
+species:                        # required unless species_tree.model is newick
+  T: 5                          # T0..T4
+  G: {count: 1, ghost: true}    # G0: alive today, never sampled
+  E: 2                          # E0, E1: made extinct by the extinct key below
+  O: 1                          # O0
+outgroup: O                     # required: names or prefixes
+ghosts: []                      # names or prefixes
+extinct: [E]                    # names or prefixes
+
+species_tree:
+  model: yule                   # required: newick | yule (alias pure_birth) | birth_death
+  # newick: "(...);"            # newick only: the tree, or newick_file: path
+  root_age: 400000              # yule / birth_death: required, age of the ingroup root
+  birth_rate: 1.0               # yule / birth_death
+  # death_rate: 0.5             # birth_death only (defaults to 0.5 there)
+  extinction_fraction: [0.2, 0.8]
+  # extinct_from_process: false # birth_death only
+  outgroup_age: 1.5             # yule / birth_death
+  # max_attempts: 1000          # birth_death only
+
+population:
+  size: 10000
+  sizes:
+    - {branch: T0, size: 5000}
+    - {branch: [T1, T2], size: 20000}   # the stem above the MRCA of T1 and T2
+  ploidy: 2
+
+introgression:                  # forward in time: donor -> recipient
+  - {donor: G0, recipient: T0, time_fraction: 0.5, proportion: 0.2}
+
+random_introgression:
+  - count: 1
+    donors: [E]
+    recipients: [T]
+    proportion: [0.05, 0.3]
+    time_fraction: [0.1, 0.9]
+    allow_sisters: false
+    donor_branches: tips          # tips | ancestral | any
+    recipient_branches: any       # extinct lineages rarely meet today's terminal branches
+
+gene_flow:                      # rate is per generation, whatever time_units is
+  - {donor: T3, recipient: T4, rate: 0.0001, symmetric: false}
+
+size_changes:                   # growth_rate is per generation; time or time_fraction of the branch
+  - {branch: T1, time_fraction: 0.5, size: 2000}
+
+bottlenecks:
+  - {branch: T2, time_fraction: 0.3, strength: 2000}
+
+gene_tree_count: 1000
+
+locus:
+  sequence_length: 1
+  recombination_rate: 0.0       # per base per generation
+  tree_choice: middle           # middle | first
+
+ancestry_model: hudson          # hudson | smc | smc_prime | dtwf | {beta: {alpha}} | {dirac: {psi, c}}
+
+clock:                          # substitution rates; applies when output units are normalized or substitutions
+  model: ucln                   # ucln (uncorrelated lognormal, one rate per gene-tree branch) | strict
+  mean_rate: 1.0e-8             # mean substitutions per site per generation
+  sigma: 0.3                    # sd of the log-rate; ucln only
+  among_loci_gamma_shape: null  # extra per-gene-tree multiplier ~ Gamma(k, 1/k), mean 1
+
+output:
+  branch_length_units: normalized   # normalized | substitutions | time_units | generations | coalescent
+  scale: 1.0                        # multiplies every length; normalized puts the species-tree origin at this depth
+  decimals: 6
+  write_ghostparser_config: true
+  plot: svg                         # svg | png | pdf | false

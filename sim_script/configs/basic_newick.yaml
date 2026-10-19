@@ -1,0 +1,22 @@
+# A fixed four-taxon tree, times in generations, with one pulse from C into B.
+#
+#   python sim_script/simulate_trees.py -c sim_script/configs/basic_newick.yaml
+
+seed: 1
+output_dir: ./sim_out/basic_newick
+
+species_tree:
+  model: newick
+  newick: "(((A:40000,B:40000):40000,C:80000):120000,Out:200000);"
+outgroup: Out
+
+population:
+  size: 10000
+
+introgression:
+  - donor: C
+    recipient: B
+    time: 20000
+    proportion: 0.3
+
+gene_tree_count: 1000

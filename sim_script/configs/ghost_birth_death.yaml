@@ -1,0 +1,37 @@
+# Four sampled species, two extinct ghost lineages drawn by the birth-death
+# process itself, and two random pulses from the ghosts into the sampled
+# lineages. Extinct lineages mostly die before today's terminal branches begin,
+# so recipient_branches: any lets a pulse land on an ancestral T branch.
+#
+#   python sim_script/simulate_trees.py -c sim_script/configs/ghost_birth_death.yaml
+
+seed: 7
+output_dir: ./sim_out/ghost_birth_death
+replicates: 3
+time_units: coalescent          # 1 unit = ploidy x population.size generations
+
+species:
+  T: 4
+  E: {count: 2, extinct: true}
+  O: {count: 1, outgroup: true}
+
+species_tree:
+  model: birth_death
+  root_age: 4
+  birth_rate: 1.0
+  death_rate: 0.6
+  extinct_from_process: true
+  outgroup_age: 1.5
+
+population:
+  size: 10000
+
+random_introgression:
+  - count: 2
+    donors: E
+    recipients: T
+    proportion: [0.1, 0.4]
+    time_fraction: [0.2, 0.8]
+    recipient_branches: any
+
+gene_tree_count: 1000
