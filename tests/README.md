@@ -876,7 +876,7 @@ The count-helper test is `core`; the two that call `generate_introgression_maps`
   target `A` twice (0.8 and 0.4), and ghost targets `D` (0.4) and `C` (0.5)
   once each; then the same results written again into an existing directory
   with `overwrite=False`. Expected outputs: `taxa_count == 4`, three sampled
-  edges, three ghost targets, the combined PNG and the eight TSVs under
+  edges, three ghost targets, the bootstrap and counts PNGs and the eight TSVs under
   `consolidation_data/`; in the inflow/outflow sheets `B ← C` averages 0.4
   over a raw sum of 0.8 and a supporting count of 2, `A ← C` 0.5 / 0.5 / 1
   and `C ← B` 0.3 / 0.3 / 1, the raw sums totalling 1.6 and no average above
@@ -889,7 +889,7 @@ The count-helper test is `core`; the two that call `generate_introgression_maps`
   Purpose: artifact generation, undiluted averages (each divided by the
   triplets that produced the edge or target, never by the triplets that merely
   contain the taxa), with the raw-sum and supporting-count sheets carrying
-  the two parts, the flag that drives ghost bar colour, the non-sister
+  the two parts, the flag that drives the ghost bar outline, the non-sister
   counts, and overwrite behavior.
 - `test_generate_introgression_maps_selects_the_requested_taxa`. Inputs
   (parametrized, 3 rows): a balanced four-taxon tree with no taxon filter, the

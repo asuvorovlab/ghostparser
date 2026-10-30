@@ -1512,8 +1512,8 @@ holding `stale.txt`, with `overwrite=False`.
 **Derivation:** three distinct sampled edges (`C → B`, `C → A`, `B → C`) and
 three ghost targets (`A`, `D`, `C`) give `non_ghost_edge_count == 3` and
 `ghost_target_count == 3`; the four taxa of the tree give `taxa_count == 4`.
-The stage writes `introgression_combined.png` beside a `consolidation_data/`
-folder holding the eight TSVs.
+The stage writes `introgression_bootstrap.png` and `introgression_counts.png`
+beside a `consolidation_data/` folder holding the eight TSVs.
 
 *Sampled edges* (matrix rows are targets, columns sources): `C → B` gathers
 `0.6 + 0.2 = 0.8` over 2 supporting rows → average `0.4`; row 3 contains the

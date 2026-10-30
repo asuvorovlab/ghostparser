@@ -112,7 +112,7 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup
 | `summary_statistics.tsv` | With `generate_summary_stats`: per-triplet descriptive statistics of the heights per topology; the ML trainers' input. |
 | `processed_<species tree>`, `processed_<gene trees>` | The cleaned, rooted and pruned trees. |
 | `metrics.txt` | Run parameters, then per stage what it processed, its timings and what it found: rooting counts, classification and gate counts, permutation convergence. |
-| `consolidation/` | `introgression_combined.png`, a heatmap of directed sampled introgression beside a bar chart of ghost targets, with the TSV matrices under `consolidation_data/`. |
+| `consolidation/` | Two maps of directed sampled introgression beside ghost targets: `introgression_bootstrap.png` (average bootstrap support) and `introgression_counts.png` (supporting triplet counts), with the TSV matrices under `consolidation_data/`. |
 
 Abbreviated results:
 

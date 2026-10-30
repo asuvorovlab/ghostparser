@@ -1,7 +1,8 @@
 """Consolidation stage: introgression maps from the orchestrator's results.
 
-Builds the combined inflow/outflow heatmap and ghost bar chart plus companion
-TSV matrices, consuming the in-memory results list.
+Builds two figures, each an inflow/outflow heatmap beside a ghost bar chart
+(one shows bootstrap support, the other supporting triplet counts), plus
+companion TSV matrices, consuming the in-memory results list.
 """
 
 import textwrap
@@ -16,24 +17,36 @@ from Bio.Phylo.BaseTree import Tree
 from matplotlib import pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
-from matplotlib.colors import Normalize
-from matplotlib.patches import Patch
+from matplotlib.colors import ListedColormap, Normalize
+from matplotlib.gridspec import GridSpec
+from matplotlib.patches import Patch, Rectangle
+from matplotlib.ticker import MaxNLocator
 
 from ghostparser.config import prepare_output_directory
 
 from .trees import _copy_clade_for_taxa, _preorder, _terminals
 
-# Colormap shared by the heatmap fill and the colorbar.
+BOOTSTRAP_PLOT_NAME = "introgression_bootstrap.png"
+COUNTS_PLOT_NAME = "introgression_counts.png"
+
+# Colormap shared by the bootstrap figure's heatmap, ghost bars and colorbar.
 CONSOLIDATION_COLORMAP = "cividis"
 
-# Ghost bar colours, taken from the two extremes of CONSOLIDATION_COLORMAP. Bar
-# *length* encodes the ghost bootstrap value; colour encodes only whether the
-# same target taxon also has sampled introgression.
-GHOST_ONLY_BAR_COLOR = "#fee838"  # cividis high end: ghost introgression only
-GHOST_WITH_SAMPLED_BAR_COLOR = "#00224e"  # cividis low end: ghost + sampled
-# The high-end fill is only 1.25:1 against a white panel, so a hairline edge
-# keeps each bar's extent readable regardless of which colour it carries.
-GHOST_BAR_EDGE_COLOR = "#4d4d4d"
+# The counts figure carries its numbers as text, so every non-empty cell and
+# every ghost bar takes one fill and no colour scale.
+COUNT_FILL_COLOR = "black"
+COUNT_TEXT_COLOR = "white"
+
+# Ghost bar outlines: dashed when the target has ghost introgression only,
+# solid when it is also the target of a sampled edge. The outline sits a small
+# white gap outside the fill, so it stays readable on any fill, black included.
+GHOST_OUTLINE_COLOR = "#1f1f1f"
+GHOST_OUTLINE_WIDTH = 1.0
+GHOST_ONLY_LINESTYLE = (0, (3.0, 2.0))
+GHOST_WITH_SAMPLED_LINESTYLE = "solid"
+GHOST_OUTLINE_GAP_POINTS = 2.0
+# Fill height as a fraction of a heatmap row, leaving room for the outline.
+GHOST_BAR_HEIGHT = 0.6
 
 # Heatmap cells with no introgression edge. Lighter than every step of
 # CONSOLIDATION_COLORMAP, so an empty cell never reads as a low-valued one.
@@ -46,8 +59,16 @@ NOTE_LEGEND_GAP_POINTS = 18.0
 
 HEATMAP_PANEL_TITLE = "Sampled Introgression"
 GHOST_PANEL_TITLE = "Ghost Introgression"
+COUNT_PANEL_SUFFIX = "\n(Supporting Triplet Count)"
 # Slack around a panel title when it, rather than the data, sets panel width.
 PANEL_TITLE_PAD = 0.25
+
+# Count annotations: capped font size, and a bar longer than this fraction of
+# its axis carries its count inside the end, where outside it would run past
+# the panel edge.
+MAX_ANNOTATION_FONTSIZE = 10.0
+BAR_LABEL_INSIDE_FRACTION = 0.85
+BAR_LABEL_PAD_POINTS = 3.0
 
 # Figure margins reserved for artists that live outside the GridSpec: the
 # rotated "Target taxon" label on the left, the colorbar's label on the right,
@@ -75,12 +96,21 @@ MARGIN_RIGHT_IN = 0.80
 MARGIN_TOP_IN = 0.25
 MARGIN_BOTTOM_IN = 0.70
 
+TAXON_LABEL_FONTSIZE = 9
+TAXON_TICK_FONTSIZE = 8
+# Whitespace above and below the rotated source labels: the gap from the tree
+# and the gap to the heatmap's top edge.
+SOURCE_LABEL_TOP_PAD_IN = 5.0 / 72.0
+SOURCE_LABEL_BOTTOM_PAD_IN = 9.0 / 72.0
+COLORBAR_W_IN = 0.45
+
 
 @dataclass(frozen=True)
 class IntrogressionMapArtifacts:
     """Artifacts produced by introgression map generation."""
 
-    plot_path: str
+    bootstrap_plot_path: str
+    counts_plot_path: str
     non_ghost_matrix_tsv: str
     non_ghost_matrix_raw_sum_tsv: str
     non_ghost_matrix_supporting_count_tsv: str
@@ -545,163 +575,182 @@ def _scaled_consolidation_text_sizes(n):
     }
 
 
-def _plot_combined(
-    path,
-    species_tree,
-    taxa_order,
-    matrix_avg,
-    ghost_avg,
-    ghost_has_sampled=None,
+@dataclass(frozen=True)
+class _FigureLayout:
+    """Panel sizes in inches, plus the font sizes that scale with the taxa count."""
+
+    fig_width: float
+    fig_height: float
+    heatmap_width: float
+    label_panel_w: float
+    bar_panel_w: float
+    cbar_w: float
+    tree_h: float
+    label_strip_h: float
+    heatmap_h: float
+    text_sizes: dict
+
+
+def _figure_layout(
+    taxa_order, sampled_title, ghost_title, min_bar_panel_w, has_colorbar
 ):
-    """Plot the sampled-introgression heatmap, with the species tree above it, beside the ghost bar chart and colorbar.
+    """Size every panel from the taxa count and the measured label and title widths.
 
     Args:
-        path: Output image path.
-        species_tree: Processed species tree (``Bio.Phylo``) drawn as the top
-            strip, pruned to ``taxa_order`` on a copy.
         taxa_order: Ordered taxa for both panels.
-        matrix_avg: Target x source matrix of sampled-introgression averages.
-        ghost_avg: Mapping of taxon to ghost strength; sets bar length.
-        ghost_has_sampled: Optional mapping of taxon to ``1``/``0`` marking taxa
-            that also have sampled introgression; sets bar colour.
-    """
-    from matplotlib.gridspec import GridSpec
+        sampled_title: The heatmap's panel title.
+        ghost_title: The ghost bar chart's panel title.
+        min_bar_panel_w: Floor on the ghost panel's width, in inches.
+        has_colorbar: Whether to reserve a column for the colorbar.
 
-    norm = Normalize(vmin=0.0, vmax=1.0)
-    cmap = plt.get_cmap(CONSOLIDATION_COLORMAP)
-    label_fontsize = 9
+    Returns:
+        A ``_FigureLayout``.
+    """
     n = len(taxa_order)
     text_sizes = _scaled_consolidation_text_sizes(n)
 
-    # --- dynamic cell size (shrinks as n grows, same logic as reference) ---
+    # Cells shrink as the taxa count grows.
     scale_ref = max(min(n, 200), 1)
     frac = (scale_ref - 1) / 199.0 if scale_ref > 1 else 0.0
     cell_size = 0.35 - (0.35 - 0.18) * frac
+    heatmap_h = max(MIN_HEATMAP_IN, n * cell_size)
 
-    heatmap_width = max(n * cell_size, 1.0)
-    fig_height_heat = max(MIN_HEATMAP_IN, n * cell_size)
-
-    # --- measure longest target label and longest x-tick label in one pass ---
-    tick_fontsize = max(5, label_fontsize - 1)
     temp_fig = plt.figure(figsize=(6, 2))
     temp_fig.canvas.draw()
     renderer = temp_fig.canvas.get_renderer()
-    max_lw_px = 0  # width at label_fontsize  → used for side label panel
-    max_tick_lw_px = (
-        0  # width at tick_fontsize   → when rotated 90° this becomes height
+
+    def _width_in(text, **kwargs):
+        artist = temp_fig.text(0, 0, text, **kwargs)
+        width = artist.get_window_extent(renderer=renderer).width
+        artist.remove()
+        return width / temp_fig.dpi
+
+    longest_label = max(
+        (_width_in(t, fontsize=TAXON_LABEL_FONTSIZE) for t in taxa_order), default=0.0
     )
-    for lbl in taxa_order:
-        t = temp_fig.text(0, 0, lbl, fontsize=label_fontsize)
-        max_lw_px = max(max_lw_px, t.get_window_extent(renderer=renderer).width)
-        t.remove()
-        t = temp_fig.text(0, 0, lbl, fontsize=tick_fontsize)
-        max_tick_lw_px = max(
-            max_tick_lw_px, t.get_window_extent(renderer=renderer).width
-        )
-        t.remove()
+    longest_tick = max(
+        (_width_in(t, fontsize=TAXON_TICK_FONTSIZE) for t in taxa_order), default=0.0
+    )
     # The bold panel titles sit outside their axes and are not picked up by
     # `bbox_inches="tight"`, so each panel has to be wide enough to hold its own
     # title. This only ever binds for small taxa counts, where the heatmap is
     # narrower than the words underneath it.
-    panel_title_px = {}
-    for panel_title in (HEATMAP_PANEL_TITLE, GHOST_PANEL_TITLE):
-        t = temp_fig.text(
-            0, 0, panel_title, fontsize=text_sizes["axis_label"], fontweight="bold"
-        )
-        panel_title_px[panel_title] = t.get_window_extent(renderer=renderer).width
-        t.remove()
-    dpi = temp_fig.dpi
+    sampled_title_w, ghost_title_w = (
+        _width_in(title, fontsize=text_sizes["axis_label"], fontweight="bold")
+        for title in (sampled_title, ghost_title)
+    )
     plt.close(temp_fig)
 
-    heatmap_width = max(
-        heatmap_width, panel_title_px[HEATMAP_PANEL_TITLE] / dpi + PANEL_TITLE_PAD
-    )
-
-    pad_inches = (18 + 18) / 72.0
-    label_panel_w = max(1.2, min(8.0, (max_lw_px / dpi) + pad_inches))
-    bar_panel_w = max(
-        3.0, panel_title_px[GHOST_PANEL_TITLE] / dpi + PANEL_TITLE_PAD
-    )
-    cbar_w = 0.45
+    heatmap_width = max(n * cell_size, 1.0, sampled_title_w + PANEL_TITLE_PAD)
+    label_panel_w = max(1.2, min(8.0, longest_label + 36 / 72.0))
+    bar_panel_w = max(min_bar_panel_w, ghost_title_w + PANEL_TITLE_PAD)
+    cbar_w = COLORBAR_W_IN if has_colorbar else 0.0
     grid_width = heatmap_width + label_panel_w + bar_panel_w + cbar_w
     fig_width = min(
         MAX_FIGURE_IN, max(8.0, grid_width + MARGIN_LEFT_IN + MARGIN_RIGHT_IN)
     )
 
-    # --- measured label height drives the dedicated label-strip row ---
-    # When rotated 90°, pixel-width of the longest label becomes the required row height.
-    # Add explicit top and bottom padding so labels are not flush against adjacent rows.
-    src_top_pad = (
-        5.0 / 72.0
-    )  # inches of whitespace above the text (gap from tree bottom)
-    src_bot_pad = 9.0 / 72.0  # inches of whitespace below the text (gap to heatmap top)
-    label_strip_h = max(0.4, max_tick_lw_px / dpi + src_top_pad + src_bot_pad)
-
-    # Compact tree strip (no leaf labels needed; label strip handles them)
-    tree_h = max(1.0, fig_height_heat * TREE_STRIP_FRACTION)
+    # Rotated 90 degrees, the longest source label's width becomes the strip's
+    # height; the pads keep it clear of the tree above and the heatmap below.
+    label_strip_h = max(
+        0.4, longest_tick + SOURCE_LABEL_TOP_PAD_IN + SOURCE_LABEL_BOTTOM_PAD_IN
+    )
+    tree_h = max(1.0, heatmap_h * TREE_STRIP_FRACTION)
 
     # If the canvas would exceed the cap, the heatmap absorbs the shortfall and
     # the label strip keeps the inches it was measured to need. Scaling every row
     # down together would shrink the strip too and clip the labels it exists to
     # hold, which is the one thing the layout must not do.
     fixed_h = tree_h + label_strip_h + MARGIN_TOP_IN + MARGIN_BOTTOM_IN
-    if fig_height_heat + fixed_h > MAX_FIGURE_IN:
-        fig_height_heat = max(MIN_HEATMAP_IN, MAX_FIGURE_IN - fixed_h)
-        tree_h = max(1.0, fig_height_heat * TREE_STRIP_FRACTION)
+    if heatmap_h + fixed_h > MAX_FIGURE_IN:
+        heatmap_h = max(MIN_HEATMAP_IN, MAX_FIGURE_IN - fixed_h)
+        tree_h = max(1.0, heatmap_h * TREE_STRIP_FRACTION)
 
-    grid_height = tree_h + label_strip_h + fig_height_heat
-    fig_height = min(
-        MAX_FIGURE_IN, grid_height + MARGIN_TOP_IN + MARGIN_BOTTOM_IN
+    grid_height = tree_h + label_strip_h + heatmap_h
+    fig_height = min(MAX_FIGURE_IN, grid_height + MARGIN_TOP_IN + MARGIN_BOTTOM_IN)
+
+    return _FigureLayout(
+        fig_width=fig_width,
+        fig_height=fig_height,
+        heatmap_width=heatmap_width,
+        label_panel_w=label_panel_w,
+        bar_panel_w=bar_panel_w,
+        cbar_w=cbar_w,
+        tree_h=tree_h,
+        label_strip_h=label_strip_h,
+        heatmap_h=heatmap_h,
+        text_sizes=text_sizes,
     )
 
-    fig = plt.figure(figsize=(fig_width, fig_height), dpi=FIGURE_DPI)
+
+def _create_figure(layout, species_tree, taxa_order):
+    """Build the figure grid and draw the panels both figures share.
+
+    The species tree runs along the top, the source labels under it and the
+    target labels between the heatmap and the ghost bars; the heatmap, bars and
+    colorbar are left to the caller.
+
+    Args:
+        layout: The ``_FigureLayout``.
+        species_tree: Processed species tree, pruned to ``taxa_order`` on a copy.
+        taxa_order: Ordered taxa for both panels.
+
+    Returns:
+        ``(fig, axes)``, with ``axes`` a dict keyed by panel name; ``cbar`` is
+        ``None`` when the layout reserves no colorbar.
+    """
+    width_ratios = [layout.heatmap_width, layout.label_panel_w, layout.bar_panel_w]
+    if layout.cbar_w:
+        width_ratios.append(layout.cbar_w)
+    fig = plt.figure(figsize=(layout.fig_width, layout.fig_height), dpi=FIGURE_DPI)
     gs = GridSpec(
         nrows=3,
-        ncols=4,
-        height_ratios=[tree_h, label_strip_h, fig_height_heat],
-        width_ratios=[heatmap_width, label_panel_w, bar_panel_w, cbar_w],
+        ncols=len(width_ratios),
+        height_ratios=[layout.tree_h, layout.label_strip_h, layout.heatmap_h],
+        width_ratios=width_ratios,
         hspace=0.0,
         wspace=0.02,
         # Pin the grid to the reserved margins so each ratio keeps its intended
         # size in inches instead of being scaled into matplotlib's defaults.
-        left=MARGIN_LEFT_IN / fig_width,
-        right=1.0 - MARGIN_RIGHT_IN / fig_width,
-        top=1.0 - MARGIN_TOP_IN / fig_height,
-        bottom=MARGIN_BOTTOM_IN / fig_height,
+        left=MARGIN_LEFT_IN / layout.fig_width,
+        right=1.0 - MARGIN_RIGHT_IN / layout.fig_width,
+        top=1.0 - MARGIN_TOP_IN / layout.fig_height,
+        bottom=MARGIN_BOTTOM_IN / layout.fig_height,
         figure=fig,
     )
+    axes = {
+        "tree": fig.add_subplot(gs[0, 0]),
+        "tree_right": fig.add_subplot(gs[0, 1:]),
+        "src_labels": fig.add_subplot(gs[1, 0]),
+        "src_right": fig.add_subplot(gs[1, 1:]),
+        "heat": fig.add_subplot(gs[2, 0]),
+        "target_labels": fig.add_subplot(gs[2, 1]),
+        "bar": fig.add_subplot(gs[2, 2]),
+        "cbar": fig.add_subplot(gs[2, 3]) if layout.cbar_w else None,
+    }
+    axes["tree_right"].axis("off")
+    axes["src_right"].axis("off")
 
-    ax_tree = fig.add_subplot(gs[0, 0])
-    ax_tree_right = fig.add_subplot(gs[0, 1:])
-    ax_tree_right.axis("off")
-
-    ax_src_labels = fig.add_subplot(gs[1, 0])  # dedicated source-taxon label strip
-    ax_src_right = fig.add_subplot(gs[1, 1:])
-    ax_src_right.axis("off")
-
-    ax_heat = fig.add_subplot(gs[2, 0])
-    ax_label = fig.add_subplot(gs[2, 1])
-    ax_bar = fig.add_subplot(gs[2, 2])
-    ax_cbar = fig.add_subplot(gs[2, 3])
-
-    # --- species tree strip (no leaf labels, label strip below handles them) ---
     _draw_species_tree_strip(
-        ax_tree, species_tree, taxa_order, "top", show_leaf_labels=False
+        axes["tree"], species_tree, taxa_order, "top", show_leaf_labels=False
     )
+    _draw_source_labels(axes["src_labels"], taxa_order, layout)
+    _draw_target_labels(axes["target_labels"], taxa_order)
+    return fig, axes
 
-    # --- source-taxon label strip ---
-    # x range matches seaborn's heatmap column centres: 0..n in data coords,
-    # cell centre at i + 0.5.  y range [0, 1] (axis fraction = data coord here).
-    # Text is anchored at y_text < 1.0 so there is src_top_pad inches of whitespace
-    # between the tree bottom and the first character, and src_bot_pad inches of
-    # whitespace between the last character and the heatmap top edge.
-    ax_src_labels.set_xlim(0, n)
-    ax_src_labels.set_ylim(0, 1)
-    ax_src_labels.axis("off")
-    src_fontsize = max(5, min(tick_fontsize, int(60 / max(n, 1) * 5 + 4)))
-    y_text = 1.0 - src_top_pad / label_strip_h  # shift down by top-pad fraction
+
+def _draw_source_labels(ax, taxa_order, layout):
+    """Write the source-taxon labels, rotated, between the tree and the heatmap."""
+    n = len(taxa_order)
+    # Column centres at i + 0.5, matching seaborn's heatmap; y is the axis
+    # fraction, with the text hung `SOURCE_LABEL_TOP_PAD_IN` below the tree.
+    ax.set_xlim(0, n)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    src_fontsize = max(5, min(TAXON_TICK_FONTSIZE, int(60 / max(n, 1) * 5 + 4)))
+    y_text = 1.0 - SOURCE_LABEL_TOP_PAD_IN / layout.label_strip_h
     for i, taxon in enumerate(taxa_order):
-        ax_src_labels.text(
+        ax.text(
             i + 0.5,
             y_text,
             taxon,
@@ -713,158 +762,208 @@ def _plot_combined(
             clip_on=False,
         )
 
-    # --- heatmap ---
+
+def _draw_target_labels(ax, taxa_order):
+    """Write the target-taxon labels, centred between the heatmap and the bars."""
+    n = len(taxa_order)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_xlim(0, 1)
+    ax.set_xticks([])
+    # Seaborn puts the heatmap's rows at i + 0.5 on a [n, 0] y range.
+    ax.set_ylim(n, 0)
+    ax.set_yticks([i + 0.5 for i in range(n)])
+    ax.set_yticklabels(taxa_order, fontsize=TAXON_LABEL_FONTSIZE)
+    ax.tick_params(axis="y", left=False, right=False, labelleft=True, length=0, pad=0)
+    for tick in ax.get_yticklabels():
+        tick.set_horizontalalignment("center")
+        tick.set_x(0.5)
+        tick.set_fontstyle("italic")
+
+
+def _draw_heatmap(ax, values, cmap, norm, title, layout):
+    """Draw the sampled-introgression heatmap, leaving zero cells uncoloured."""
     # Zero cells mean "no introgression edge observed". Masking them keeps the
-    # sparse real signal legible: the colormap's low end is dark, so painting
-    # every empty cell with it would turn a sparse matrix into a solid block.
-    # Masked cells fall through to the axes facecolor, and the white gridlines
-    # plus panel border preserve the row/column structure underneath.
-    heat_values = np.asarray(matrix_avg, dtype=float)
-    ax_heat.set_facecolor(EMPTY_CELL_COLOR)
+    # sparse real signal legible: they fall through to the axes facecolor, and
+    # the white gridlines plus panel border keep the row/column structure.
+    ax.set_facecolor(EMPTY_CELL_COLOR)
     with warnings.catch_warnings():
         # A run with no sampled introgression masks every cell, and seaborn's
         # autoscale then takes nanmin/nanmax of an all-NaN array. The limits it
-        # computes are unused here because `norm` fixes them at 0..1, so the
-        # warning reports a calculation that cannot affect the output.
-        warnings.filterwarnings(
-            "ignore", "All-NaN slice encountered", RuntimeWarning
-        )
+        # computes are unused because `norm` fixes them, so the warning reports
+        # a calculation that cannot affect the output.
+        warnings.filterwarnings("ignore", "All-NaN slice encountered", RuntimeWarning)
         sns.heatmap(
-            heat_values,
-            ax=ax_heat,
+            values,
+            ax=ax,
             cmap=cmap,
             norm=norm,
-            mask=heat_values == 0.0,
+            mask=values == 0.0,
             xticklabels=False,
             yticklabels=False,
             linewidths=0.5,
             linecolor="white",
             cbar=False,
         )
-    for spine in ax_heat.spines.values():
+    for spine in ax.spines.values():
         spine.set_visible(True)
         spine.set_linewidth(0.6)
         spine.set_color(PANEL_BORDER_COLOR)
-    ax_heat.set_ylabel("Target taxon", fontsize=text_sizes["axis_label"])
-    ax_heat.set_xlabel(
-        HEATMAP_PANEL_TITLE,
-        fontweight="bold",
-        fontsize=text_sizes["axis_label"],
-    )
-    ax_heat.tick_params(
-        axis="x", bottom=False, labelbottom=False, top=False, labeltop=False
-    )
+    ax.set_ylabel("Target taxon", fontsize=layout.text_sizes["axis_label"])
+    ax.set_xlabel(title, fontweight="bold", fontsize=layout.text_sizes["axis_label"])
+    ax.tick_params(axis="x", bottom=False, labelbottom=False, top=False, labeltop=False)
 
-    # --- centered target labels between heatmap and bar ---
-    for spine in ax_label.spines.values():
+
+def _annotate_heatmap_counts(ax, values, layout):
+    """Write each non-empty cell's count on it, sized to fit the cell."""
+    rows, cols = np.nonzero(values)
+    if rows.size == 0:
+        return
+    labels = [str(int(values[r, c])) for r, c in zip(rows, cols)]
+    n = len(values)
+    cell_w_pt = layout.heatmap_width * 72.0 / n
+    cell_h_pt = layout.heatmap_h * 72.0 / n
+    # Digits run about 0.6 em wide.
+    longest = max(len(label) for label in labels)
+    fontsize = min(
+        MAX_ANNOTATION_FONTSIZE, 0.5 * cell_h_pt, 0.85 * cell_w_pt / (0.6 * longest)
+    )
+    for r, c, label in zip(rows, cols, labels):
+        ax.text(
+            c + 0.5,
+            r + 0.5,
+            label,
+            ha="center",
+            va="center",
+            fontsize=fontsize,
+            color=COUNT_TEXT_COLOR,
+        )
+
+
+def _draw_ghost_bars(fig, ax, lengths, fill_colors, has_sampled, x_limits):
+    """Draw one ghost bar per target, outlined dashed (ghost only) or solid (+ sampled).
+
+    Args:
+        fig: The figure, for converting the outline gap from points.
+        ax: The bar panel.
+        lengths: Bar length per taxon in ``taxa_order``; ``0`` draws no bar.
+        fill_colors: Fill colour per taxon.
+        has_sampled: Per taxon, whether it is also the target of a sampled edge.
+        x_limits: ``(x_min, x_max)`` of the panel.
+
+    Returns:
+        The outline gap in points, so labels can clear the outline.
+    """
+    n = len(lengths)
+    ax.set_xlim(*x_limits)
+    ax.set_ylim(n, 0)
+    ax.tick_params(axis="y", left=False, right=False, labelleft=False, labelright=False)
+    for spine in ax.spines.values():
         spine.set_visible(False)
-    ax_label.set_xlim(0, 1)
-    ax_label.set_xticks([])
-    # align y with heatmap: seaborn sets ylim to [n, 0] with ticks at i+0.5
-    ax_label.set_ylim(n, 0)
-    ax_label.set_yticks([i + 0.5 for i in range(n)])
-    ax_label.set_yticklabels(taxa_order, fontsize=label_fontsize)
-    ax_label.tick_params(
-        axis="y", left=False, right=False, labelleft=True, length=0, pad=0
-    )
-    for tick in ax_label.get_yticklabels():
-        tick.set_horizontalalignment("center")
-        tick.set_x(0.5)
-        tick.set_fontstyle("italic")
 
-    # --- ghost bar chart ---
-    # Bar length encodes the ghost bootstrap value. Colour is constant per bar
-    # and encodes only whether the taxon also has sampled introgression.
-    values = [ghost_avg.get(taxon, 0.0) for taxon in taxa_order]
-    presence = ghost_has_sampled or {}
-    bar_colors = [
-        GHOST_WITH_SAMPLED_BAR_COLOR
-        if presence.get(taxon)
-        else GHOST_ONLY_BAR_COLOR
-        for taxon in taxa_order
-    ]
-    # bars at seaborn cell centers (i+0.5), height=0.8 to match cell boundaries
-    ax_bar.barh(
-        [i + 0.5 for i in range(n)],
-        values,
-        height=0.8,
-        color=bar_colors,
-        edgecolor=GHOST_BAR_EDGE_COLOR,
-        linewidth=0.5,
-    )
-    ax_bar.set_xlim(0.0, 1.0)
-    ax_bar.set_ylim(n, 0)
-    ax_bar.set_xlabel(
-        GHOST_PANEL_TITLE,
-        fontweight="bold",
-        fontsize=text_sizes["axis_label"],
-    )
-    ax_bar.tick_params(
-        axis="y", left=False, right=False, labelleft=False, labelright=False
-    )
-    for spine in ax_bar.spines.values():
-        spine.set_visible(False)
-    ax_bar.spines["bottom"].set_visible(True)
+    # The gap is set in points so it reads the same at any figure size, then
+    # converted per axis; it shrinks on crowded rows so outlines never touch.
+    position = ax.get_position()
+    width_in = position.width * fig.get_figwidth()
+    height_in = position.height * fig.get_figheight()
+    row_h_pt = height_in * 72.0 / max(n, 1)
+    gap_pt = min(GHOST_OUTLINE_GAP_POINTS, 0.1 * row_h_pt)
+    gap_x = (gap_pt / 72.0) * (x_limits[1] - x_limits[0]) / width_in
+    gap_y = (gap_pt / 72.0) * n / height_in
 
-    # --- ghost bar colour legend (drawn in the empty strip above the bars) ---
-    legend_handles = [
+    for i, (length, fill, sampled) in enumerate(zip(lengths, fill_colors, has_sampled)):
+        if not length:
+            continue
+        y0 = i + 0.5 - GHOST_BAR_HEIGHT / 2.0
+        ax.add_patch(
+            Rectangle((0.0, y0), length, GHOST_BAR_HEIGHT, facecolor=fill, linewidth=0)
+        )
+        ax.add_patch(
+            Rectangle(
+                (-gap_x, y0 - gap_y),
+                length + 2.0 * gap_x,
+                GHOST_BAR_HEIGHT + 2.0 * gap_y,
+                fill=False,
+                edgecolor=GHOST_OUTLINE_COLOR,
+                linewidth=GHOST_OUTLINE_WIDTH,
+                linestyle=(
+                    GHOST_WITH_SAMPLED_LINESTYLE if sampled else GHOST_ONLY_LINESTYLE
+                ),
+                clip_on=False,
+            )
+        )
+    return gap_pt
+
+
+def _annotate_ghost_counts(ax, counts, x_max, gap_pt, layout):
+    """Write each ghost bar's count at its end: outside in black, or inside a long bar."""
+    row_h_pt = layout.heatmap_h * 72.0 / max(len(counts), 1)
+    fontsize = min(MAX_ANNOTATION_FONTSIZE, 0.5 * row_h_pt)
+    for i, count in enumerate(counts):
+        if not count:
+            continue
+        inside = count > BAR_LABEL_INSIDE_FRACTION * x_max
+        offset = BAR_LABEL_PAD_POINTS if inside else BAR_LABEL_PAD_POINTS + gap_pt
+        ax.annotate(
+            str(int(count)),
+            xy=(count, i + 0.5),
+            xytext=(-offset if inside else offset, 0),
+            textcoords="offset points",
+            ha="right" if inside else "left",
+            va="center",
+            fontsize=fontsize,
+            color=COUNT_TEXT_COLOR if inside else "black",
+        )
+
+
+def _draw_ghost_legend_and_note(fig, axes, layout, note):
+    """Draw the outline legend above the ghost bars, and ``note`` above the legend."""
+    outline = {
+        "facecolor": "white",
+        "edgecolor": GHOST_OUTLINE_COLOR,
+        "linewidth": GHOST_OUTLINE_WIDTH,
+    }
+    handles = [
+        Patch(linestyle=GHOST_ONLY_LINESTYLE, label="Ghost only", **outline),
         Patch(
-            facecolor=GHOST_ONLY_BAR_COLOR,
-            edgecolor=GHOST_BAR_EDGE_COLOR,
-            linewidth=0.5,
-            label="Ghost only",
-        ),
-        Patch(
-            facecolor=GHOST_WITH_SAMPLED_BAR_COLOR,
-            edgecolor=GHOST_BAR_EDGE_COLOR,
-            linewidth=0.5,
-            label="Ghost + sampled",
+            linestyle=GHOST_WITH_SAMPLED_LINESTYLE, label="Ghost + sampled", **outline
         ),
     ]
-    # Anchor the legend to the bottom of the source-label strip (the row that
-    # sits directly above the bar panel), so it reads with the bars rather than
-    # floating near the top of the figure. It grows upward into the tree-strip
-    # row, which is empty on this side.
-    legend = ax_src_right.legend(
-        handles=legend_handles,
+    # Anchored to the bottom of the source-label strip, the row directly above
+    # the bars, it grows upward into the tree-strip row, empty on this side.
+    legend = axes["src_right"].legend(
+        handles=handles,
         loc="lower center",
         bbox_to_anchor=(0.5, 0.0),
         frameon=False,
-        fontsize=text_sizes["cbar_tick"],
-        title="Ghost Introgression\nBar Color Significance",
-        title_fontsize=text_sizes["cbar_label"],
+        fontsize=layout.text_sizes["cbar_tick"],
+        title="Ghost Introgression\nBar Outline",
+        title_fontsize=layout.text_sizes["cbar_label"],
         borderpad=0.8,
     )
-    # The title wraps onto two lines; centre them on each other rather than
-    # leaving the shorter line ragged against the left edge.
+    # The title wraps onto two lines; centre them on each other.
     legend.get_title().set_multialignment("center")
 
-    # A note explaining why parts of the heatmap are blank, so the colorbar is
-    # not read as covering those cells too. It is wrapped to the bar panel's
-    # width and sits directly on top of the legend, which means its position
-    # depends on how tall the legend rendered, hence the draw to measure it.
-    note_font = text_sizes["cbar_tick"]
-    wrap_chars = max(18, int((bar_panel_w * 72.0) / (0.5 * note_font)))
-    note_text = textwrap.fill(
-        "Heatmap cells with no introgression are left uncoloured and are not "
-        "represented on the colour scale.",
-        width=wrap_chars,
-    )
+    # The note is wrapped to the bar panel's width and sits on the legend's
+    # rendered top edge, hence the draw to measure the legend.
+    note_font = layout.text_sizes["cbar_tick"]
+    wrap_chars = max(18, int((layout.bar_panel_w * 72.0) / (0.5 * note_font)))
     try:
         renderer = fig.canvas.get_renderer()
     except AttributeError:  # backend without a cached renderer
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
-    legend_extent = legend.get_window_extent(renderer)
-    legend_top = legend_extent.transformed(fig.transFigure.inverted()).y1
-    # Express the gap in points so the padding stays visually constant; a fixed
-    # figure fraction would shrink as `fig_height` grows with the taxa count.
-    note_gap = (NOTE_LEGEND_GAP_POINTS / 72.0) / fig_height
-    bar_position = ax_bar.get_position()
+    legend_top = (
+        legend.get_window_extent(renderer).transformed(fig.transFigure.inverted()).y1
+    )
+    # The gap is in points so the padding stays visually constant; a figure
+    # fraction would shrink as `fig_height` grows with the taxa count.
+    note_gap = (NOTE_LEGEND_GAP_POINTS / 72.0) / layout.fig_height
+    bar_position = axes["bar"].get_position()
     fig.text(
         bar_position.x0 + bar_position.width / 2.0,
         legend_top + note_gap,
-        note_text,
+        textwrap.fill(note, width=wrap_chars),
         ha="center",
         va="bottom",
         fontsize=note_font,
@@ -872,17 +971,136 @@ def _plot_combined(
         color="#4d4d4d",
     )
 
-    # --- heatmap colorbar ---
+
+def _plot_bootstrap_map(
+    path, species_tree, taxa_order, matrix_avg, ghost_avg, ghost_counts, ghost_has_sampled
+):
+    """Plot average bootstrap support: the sampled heatmap beside equal-length ghost bars.
+
+    Heatmap cells and ghost bars share one colour scale, so the bar colour, not
+    its length, carries the ghost support.
+
+    Args:
+        path: Output image path.
+        species_tree: Processed species tree (``Bio.Phylo``) drawn as the top
+            strip, pruned to ``taxa_order`` on a copy.
+        taxa_order: Ordered taxa for both panels.
+        matrix_avg: Target x source matrix of sampled-introgression averages.
+        ghost_avg: Mapping of taxon to its average ghost bootstrap value.
+        ghost_counts: Mapping of taxon to its ghost supporting count; a taxon
+            gets a bar when it is non-zero.
+        ghost_has_sampled: Mapping of taxon to ``1``/``0``, whether it is also
+            the target of a sampled edge.
+    """
+    cmap = plt.get_cmap(CONSOLIDATION_COLORMAP)
+    norm = Normalize(vmin=0.0, vmax=1.0)
+    layout = _figure_layout(
+        taxa_order,
+        HEATMAP_PANEL_TITLE,
+        GHOST_PANEL_TITLE,
+        min_bar_panel_w=1.5,
+        has_colorbar=True,
+    )
+    fig, axes = _create_figure(layout, species_tree, taxa_order)
+
+    _draw_heatmap(
+        axes["heat"],
+        np.asarray(matrix_avg, dtype=float),
+        cmap,
+        norm,
+        HEATMAP_PANEL_TITLE,
+        layout,
+    )
+    _draw_ghost_bars(
+        fig,
+        axes["bar"],
+        [1.0 if ghost_counts.get(taxon) else 0.0 for taxon in taxa_order],
+        [cmap(norm(ghost_avg.get(taxon, 0.0))) for taxon in taxa_order],
+        [bool(ghost_has_sampled.get(taxon)) for taxon in taxa_order],
+        x_limits=(-0.05, 1.05),
+    )
+    # Equal-length bars carry no scale, so the panel keeps only its title.
+    axes["bar"].set_xticks([])
+    axes["bar"].set_xlabel(
+        GHOST_PANEL_TITLE,
+        fontweight="bold",
+        fontsize=layout.text_sizes["axis_label"],
+    )
+    _draw_ghost_legend_and_note(
+        fig,
+        axes,
+        layout,
+        "Heatmap cells with no introgression are left uncoloured and are not "
+        "represented on the colour scale.",
+    )
+
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
-    cbar = fig.colorbar(sm, cax=ax_cbar)
+    cbar = fig.colorbar(sm, cax=axes["cbar"])
     cbar.set_ticks([0.0, 0.5, 1.0])
     cbar.set_ticklabels(["0", "0.5", "1"])
-    cbar.ax.tick_params(labelsize=text_sizes["cbar_tick"])
+    cbar.ax.tick_params(labelsize=layout.text_sizes["cbar_tick"])
     cbar.set_label(
-        "Average Bootstrap Value (heatmap)",
+        "Average Bootstrap Value",
         labelpad=8,
-        fontsize=text_sizes["cbar_label"],
+        fontsize=layout.text_sizes["cbar_label"],
+    )
+
+    fig.savefig(path, bbox_inches="tight", dpi=FIGURE_DPI)
+    plt.close(fig)
+
+
+def _plot_counts_map(
+    path, species_tree, taxa_order, matrix_counts, ghost_counts, ghost_has_sampled
+):
+    """Plot supporting triplet counts: count-labelled heatmap cells beside ghost bars as long as their counts.
+
+    Args:
+        path: Output image path.
+        species_tree: Processed species tree (``Bio.Phylo``) drawn as the top
+            strip, pruned to ``taxa_order`` on a copy.
+        taxa_order: Ordered taxa for both panels.
+        matrix_counts: Target x source matrix of sampled supporting counts.
+        ghost_counts: Mapping of taxon to its ghost supporting count.
+        ghost_has_sampled: Mapping of taxon to ``1``/``0``, whether it is also
+            the target of a sampled edge.
+    """
+    sampled_title = HEATMAP_PANEL_TITLE + COUNT_PANEL_SUFFIX
+    ghost_title = GHOST_PANEL_TITLE + COUNT_PANEL_SUFFIX
+    layout = _figure_layout(
+        taxa_order, sampled_title, ghost_title, min_bar_panel_w=3.0, has_colorbar=False
+    )
+    fig, axes = _create_figure(layout, species_tree, taxa_order)
+
+    heat_values = np.asarray(matrix_counts, dtype=float)
+    _draw_heatmap(
+        axes["heat"],
+        heat_values,
+        ListedColormap([COUNT_FILL_COLOR]),
+        Normalize(vmin=0.0, vmax=1.0),
+        sampled_title,
+        layout,
+    )
+    _annotate_heatmap_counts(axes["heat"], heat_values, layout)
+
+    counts = [ghost_counts.get(taxon, 0) for taxon in taxa_order]
+    x_max = max(max(counts, default=0), 1)
+    gap_pt = _draw_ghost_bars(
+        fig,
+        axes["bar"],
+        counts,
+        [COUNT_FILL_COLOR] * len(taxa_order),
+        [bool(ghost_has_sampled.get(taxon)) for taxon in taxa_order],
+        x_limits=(0.0, x_max),
+    )
+    _annotate_ghost_counts(axes["bar"], counts, x_max, gap_pt, layout)
+    axes["bar"].spines["bottom"].set_visible(True)
+    axes["bar"].xaxis.set_major_locator(MaxNLocator(integer=True))
+    axes["bar"].set_xlabel(
+        ghost_title, fontweight="bold", fontsize=layout.text_sizes["axis_label"]
+    )
+    _draw_ghost_legend_and_note(
+        fig, axes, layout, "Heatmap cells with no introgression are left uncoloured."
     )
 
     fig.savefig(path, bbox_inches="tight", dpi=FIGURE_DPI)
@@ -898,7 +1116,7 @@ def generate_introgression_maps(
     rename_map=None,
     overwrite=True,
 ):
-    """Generate non-ghost heatmap and ghost target-strength bar plot.
+    """Generate the bootstrap and counts introgression maps and their TSV matrices.
 
     Args:
         results: Iterable of TripletPipelineResult-like objects or dict rows.
@@ -950,7 +1168,8 @@ def generate_introgression_maps(
         taxon: ghost_counts.get(taxon, 0) for taxon in taxa_order
     }
 
-    combined_plot = output_path / "introgression_combined.png"
+    bootstrap_plot = output_path / BOOTSTRAP_PLOT_NAME
+    counts_plot = output_path / COUNTS_PLOT_NAME
 
     # ensure consolidation_data subfolder for TSV artifacts
     consolidation_dir = output_path / "consolidation_data"
@@ -989,7 +1208,7 @@ def generate_introgression_maps(
         "supporting_count",
     )
     # Cross-reference the sampled edges so each ghost target records whether it
-    # also carries sampled introgression; this drives the bar colour.
+    # also carries sampled introgression; this drives the bar outline.
     ghost_has_sampled = _sampled_introgression_presence(taxa_order, avg_non_ghost)
     _write_ghost_strength_tsv(
         ghost_tsv, taxa_order, avg_ghost, sampled_presence=ghost_has_sampled
@@ -1000,17 +1219,27 @@ def generate_introgression_maps(
     non_sister_matrix = _build_non_sister_matrix(taxa_order, non_sister_counts)
     _write_non_sister_matrix_tsv(non_sister_count_tsv, taxa_order, non_sister_matrix)
 
-    _plot_combined(
-        combined_plot,
+    _plot_bootstrap_map(
+        bootstrap_plot,
         species_tree,
         taxa_order,
         avg_non_ghost_matrix,
         avg_ghost,
-        ghost_has_sampled=ghost_has_sampled,
+        supporting_ghost_values,
+        ghost_has_sampled,
+    )
+    _plot_counts_map(
+        counts_plot,
+        species_tree,
+        taxa_order,
+        supporting_non_ghost_matrix,
+        supporting_ghost_values,
+        ghost_has_sampled,
     )
 
     return IntrogressionMapArtifacts(
-        plot_path=str(combined_plot),
+        bootstrap_plot_path=str(bootstrap_plot),
+        counts_plot_path=str(counts_plot),
         non_ghost_matrix_tsv=str(non_ghost_tsv),
         non_ghost_matrix_raw_sum_tsv=str(non_ghost_raw_sum_tsv),
         non_ghost_matrix_supporting_count_tsv=str(non_ghost_supporting_count_tsv),
@@ -1025,8 +1254,3 @@ def generate_introgression_maps(
             [taxon for taxon, value in ghost_weights.items() if value > 0.0]
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# Standalone CLI entry point
-# ---------------------------------------------------------------------------

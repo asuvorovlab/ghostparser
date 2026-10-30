@@ -81,7 +81,7 @@ def _read_column(path, column):
 @pytest.mark.core
 @pytest.mark.output
 def test_generate_introgression_maps_writes_every_sheet_from_the_results(tmp_path):
-    """The stage writes the figure and eight TSVs, with the hand-derived values.
+    """The stage writes both figures and eight TSVs, with the hand-derived values.
 
     The averages divide each edge's and ghost target's bootstrap weight by the
     number of triplets that produced it (never by the triplets that merely
@@ -102,8 +102,10 @@ def test_generate_introgression_maps_writes_every_sheet_from_the_results(tmp_pat
     assert artifacts.taxa_count == 4
     assert artifacts.non_ghost_edge_count == 3
     assert artifacts.ghost_target_count == 3
-    assert artifacts.plot_path == str(output_dir / "introgression_combined.png")
-    assert (output_dir / "introgression_combined.png").exists()
+    for name in ("introgression_bootstrap.png", "introgression_counts.png"):
+        assert (output_dir / name).exists(), name
+    assert artifacts.bootstrap_plot_path == str(output_dir / "introgression_bootstrap.png")
+    assert artifacts.counts_plot_path == str(output_dir / "introgression_counts.png")
     data = output_dir / "consolidation_data"
     for name in _CONSOLIDATION_FILES:
         assert (data / name).exists(), name
@@ -157,8 +159,8 @@ def test_generate_introgression_maps_writes_every_sheet_from_the_results(tmp_pat
         output_dir=str(existing),
         overwrite=False,
     )
-    assert again.plot_path == str(tmp_path / "introgression_1" / "introgression_combined.png")
-    assert (tmp_path / "introgression_1" / "introgression_combined.png").exists()
+    assert again.counts_plot_path == str(tmp_path / "introgression_1" / "introgression_counts.png")
+    assert (tmp_path / "introgression_1" / "introgression_counts.png").exists()
     assert (existing / "stale.txt").exists()
 
 

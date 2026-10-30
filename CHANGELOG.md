@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.1 - Oct 30, 2026
+
+- Consolidation writes two figures in place of `introgression_combined.png`.
+  `introgression_bootstrap.png` keeps the bootstrap heatmap and draws every
+  ghost target as an equal-length bar filled on the heatmap's colour scale, so
+  the bar's colour rather than its length carries the support.
+  `introgression_counts.png` shows supporting triplet counts: black heatmap
+  cells labelled with their count and no colour scale, and ghost bars as long
+  as their count. In both, a ghost bar's outline is dashed for ghost
+  introgression only and solid when the taxon is also the target of a sampled
+  edge.
+
 ## v0.1.0 - Oct 12, 2026
 
 The initial release under this repository. Earlier versions were developed in

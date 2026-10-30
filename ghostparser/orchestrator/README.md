@@ -439,8 +439,15 @@ The `*_raw_sum.tsv` and `*_supporting_count.tsv` matrices hold the numerator
 and denominator, and `introgression_matrix_sampled_non_sister.tsv` counts, per
 taxon pair, the triplets in which the two are not the species-tree sisters,
 so the averages can be reweighted against co-occurrence. Without a bootstrap
-every classified triplet weighs 1. The figure `introgression_combined.png`
-draws the heatmap (rows targets, columns sources, `cividis`) under the species
-tree, with the ghost bars beside it: bar length is the ghost support and bar
-colour says whether the taxon is also the target of a sampled edge. Taxa in
-`outgroup` never appear.
+every classified triplet weighs 1. Two figures draw the heatmap (rows
+targets, columns sources) under the species tree, with a bar beside each
+ghost target, and each figure has a different bar style:
+
+| Figure | Heatmap cell | Ghost bar |
+| --- | --- | --- |
+| `introgression_bootstrap.png` | average bootstrap value on the `cividis` scale | equal length, filled with its average bootstrap value on the same scale |
+| `introgression_counts.png` | black, labelled with its supporting triplet count | length is its supporting triplet count, labelled |
+
+In both, a bar's outline is dashed when the taxon has ghost introgression only
+and solid when it is also the target of a sampled edge. Taxa in `outgroup`
+never appear.

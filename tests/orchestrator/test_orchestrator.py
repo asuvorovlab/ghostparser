@@ -380,7 +380,8 @@ def test_every_optional_output_lands_where_documented_under_display_names(
     consolidation_data = output_folder / "consolidation" / "consolidation_data"
     taxa_order = (consolidation_data / "introgression_taxa_order.tsv").read_text()
     assert "Homo sapiens" in taxa_order and "Pan sp." in taxa_order
-    assert (output_folder / "consolidation" / "introgression_combined.png").exists()
+    for name in ("introgression_bootstrap.png", "introgression_counts.png"):
+        assert (output_folder / "consolidation" / name).exists(), name
 
     matrix = (consolidation_data / "introgression_matrix_inflow_outflow.tsv").read_text()
     assert "Homo sapiens" in matrix and "Pan sp." in matrix

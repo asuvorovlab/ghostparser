@@ -697,7 +697,8 @@ def run_orchestrator(config):
                 )
                 _log_stage_timing(metrics, map_wall_time, map_cpu_time)
                 metrics.log(f"  Taxa represented: {map_artifacts.taxa_count}")
-                metrics.log(f"  Combined plot: {map_artifacts.plot_path}")
+                metrics.log(f"  Bootstrap plot: {map_artifacts.bootstrap_plot_path}")
+                metrics.log(f"  Counts plot: {map_artifacts.counts_plot_path}")
                 metrics.log(f"  Output folder: {consolidation_dir}")
             else:
                 metrics.log(
