@@ -1,6 +1,6 @@
 """Consolidation stage: introgression maps from the orchestrator's results.
 
-Builds two figures, each an inflow/outflow heatmap beside a ghost bar chart
+Builds two figures, each a sampled-introgression heatmap beside a ghost bar chart
 (one shows bootstrap support, the other supporting triplet counts), plus
 companion TSV matrices, consuming the in-memory results list.
 """
@@ -17,7 +17,7 @@ from Bio.Phylo.BaseTree import Tree
 from matplotlib import pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.collections import LineCollection
-from matplotlib.colors import ListedColormap, Normalize
+from matplotlib.colors import ListedColormap, Normalize, to_rgba
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Patch, Rectangle
 from matplotlib.ticker import MaxNLocator
@@ -52,6 +52,23 @@ GHOST_BAR_HEIGHT = 0.6
 # CONSOLIDATION_COLORMAP, so an empty cell never reads as a low-valued one.
 EMPTY_CELL_COLOR = "#f0f0f0"
 PANEL_BORDER_COLOR = "#bdbdbd"
+
+# Probable-reverse marks: a dashed box inset this fraction of a cell from each
+# edge, drawn black or white, whichever contrasts more with the cell's fill.
+PROBABLE_REVERSE_INSET = 0.18
+PROBABLE_REVERSE_LINESTYLE = (0, (3.0, 2.0))
+# Line width as a fraction of the cell's side in points, clipped so the dashes
+# stay visible on a crowded heatmap and thin on a sparse one.
+PROBABLE_REVERSE_WIDTH_FRACTION = 0.05
+PROBABLE_REVERSE_MIN_WIDTH = 0.4
+PROBABLE_REVERSE_MAX_WIDTH = 1.2
+# Figure note, with its second sentence only when a figure draws a dashed box.
+EMPTY_CELL_NOTE = "Heatmap cells with no introgression are left uncolored."
+PROBABLE_REVERSE_NOTE = (
+    "The dashed boxes in the heatmap represent a probable reverse direction of "
+    "an outflow introgression, as the outflow inference can also be a "
+    "bidirectional introgression."
+)
 
 # Vertical gap between the ghost bar legend and the uncoloured-cell note above
 # it, in points so it holds at every figure size.
@@ -119,6 +136,7 @@ class IntrogressionMapArtifacts:
     ghost_strength_supporting_count_tsv: str
     taxa_order_tsv: str
     non_sister_count_tsv: str
+    probable_reverse_count_tsv: str
     taxa_count: int
     non_ghost_edge_count: int
     ghost_target_count: int
@@ -181,30 +199,46 @@ def _species_tree_taxa_order(tree, allowed_taxa=None):
 
 
 def _map_event(a_taxon, b_taxon, c_taxon, classification, dis1_topology):
-    """Map a classified triplet to directed non-ghost edge or ghost target."""
+    """Map a classified triplet to its sampled edge, probable reverse and ghost target.
+
+    Inflow is the edge from C into the sister it pairs with in discordant1.
+    Outflow-or-bidirectional is the edge from that sister into C, carrying the
+    weight, with C back into the sister recorded as its probable reverse.
+
+    Args:
+        a_taxon: Species-tree sister A.
+        b_taxon: Species-tree sister B.
+        c_taxon: The third taxon C.
+        classification: The triplet classification.
+        dis1_topology: The discordant1 topology label (``BC`` or ``AC``).
+
+    Returns:
+        A ``(edge, probable_reverse, ghost_target)`` tuple: the directed
+        ``(source, target)`` edge, the directed probable-reverse edge and the
+        ghost target taxon, each ``None`` when the triplet produces none.
+    """
     if not dis1_topology:
-        return None, None
+        return None, None, None
 
     topo = str(dis1_topology).strip().upper()
     if topo not in {"BC", "AC"}:
-        return None, None
+        return None, None, None
+
+    if topo == "BC":
+        c_partner, dis1_outgroup = b_taxon, a_taxon
+    else:
+        c_partner, dis1_outgroup = a_taxon, b_taxon
 
     if classification == "inflow_introgression":
-        if topo == "BC":
-            return (c_taxon, b_taxon), None
-        return (c_taxon, a_taxon), None
+        return (c_taxon, c_partner), None, None
 
-    if classification == "outflow_introgression":
-        if topo == "BC":
-            return (b_taxon, c_taxon), None
-        return (a_taxon, c_taxon), None
+    if classification == "outflow_or_bidirectional_introgression":
+        return (c_partner, c_taxon), (c_taxon, c_partner), None
 
     if classification == "ghost_introgression":
-        if topo == "BC":
-            return None, a_taxon
-        return None, b_taxon
+        return None, None, dis1_outgroup
 
-    return None, None
+    return None, None, None
 
 
 def _collect_weights(results):
@@ -226,7 +260,7 @@ def _collect_weights(results):
         if weight < 0:
             continue
 
-        edge, ghost_target = _map_event(
+        edge, _probable_reverse, ghost_target = _map_event(
             a_taxon, b_taxon, c_taxon, classification, dis1_topology
         )
         if edge is not None:
@@ -470,17 +504,20 @@ def _collect_counts(results):
 
     A directed non-ghost edge counts only the triplets whose inference produced
     that edge; a ghost target counts only the triplets classified
-    ``ghost_introgression`` for it.
+    ``ghost_introgression`` for it. Probable reverses are counted apart and
+    never enter an edge's count.
 
     Args:
         results: Iterable of ``TripletPipelineResult`` objects.
 
     Returns:
-        A tuple ``(non_ghost_counts, ghost_counts)`` keyed by directed
-        ``(source, target)`` pair and by taxon respectively.
+        A tuple ``(non_ghost_counts, ghost_counts, probable_reverse_counts)``
+        keyed by directed ``(source, target)`` pair, by taxon, and by directed
+        pair respectively.
     """
     non_ghost_counts = {}
     ghost_counts = {}
+    probable_reverse_counts = {}
     for result in results:
         triplet, classification, dis1_topology, _bootstrap_value = (
             _extract_result_fields(result)
@@ -490,16 +527,21 @@ def _collect_counts(results):
         a_taxon, b_taxon, c_taxon = triplet
 
         # Map the event for this row; only increment counts when the row
-        # produced a supporting non-ghost edge or a ghost target.
-        edge, ghost_target = _map_event(
+        # produced a supporting non-ghost edge, a probable reverse or a ghost
+        # target.
+        edge, probable_reverse, ghost_target = _map_event(
             a_taxon, b_taxon, c_taxon, classification, dis1_topology
         )
         if edge is not None:
             non_ghost_counts[edge] = non_ghost_counts.get(edge, 0) + 1
+        if probable_reverse is not None:
+            probable_reverse_counts[probable_reverse] = (
+                probable_reverse_counts.get(probable_reverse, 0) + 1
+            )
         if ghost_target is not None:
             ghost_counts[ghost_target] = ghost_counts.get(ghost_target, 0) + 1
 
-    return non_ghost_counts, ghost_counts
+    return non_ghost_counts, ghost_counts, probable_reverse_counts
 
 
 def _collect_non_sister_counts(results):
@@ -814,6 +856,68 @@ def _draw_heatmap(ax, values, cmap, norm, title, layout):
     ax.tick_params(axis="x", bottom=False, labelbottom=False, top=False, labeltop=False)
 
 
+def _contrast_line_color(rgba):
+    """Return black or white, whichever contrasts more with ``rgba``.
+
+    Args:
+        rgba: A colour matplotlib accepts.
+
+    Returns:
+        ``"black"`` or ``"white"``, by WCAG relative luminance.
+    """
+    channels = np.asarray(to_rgba(rgba)[:3], dtype=float)
+    linear = np.where(
+        channels <= 0.04045, channels / 12.92, ((channels + 0.055) / 1.055) ** 2.4
+    )
+    luminance = float(np.dot([0.2126, 0.7152, 0.0722], linear))
+    # Contrast ratios against black (luminance 0) and white (luminance 1).
+    against_black = (luminance + 0.05) / 0.05
+    against_white = 1.05 / (luminance + 0.05)
+    return "black" if against_black >= against_white else "white"
+
+
+def _draw_probable_reverse_marks(ax, values, marks, cmap, norm, layout):
+    """Draw a dashed inner box on each cell holding a probable reverse.
+
+    Args:
+        ax: The heatmap panel.
+        values: Target x source matrix the panel was drawn from, which sets
+            each cell's fill and so its dash colour.
+        marks: Target x source matrix of probable-reverse counts; a non-zero
+            cell gets a box.
+        cmap: The heatmap's colormap.
+        norm: The heatmap's normalization.
+        layout: The figure layout, for the cell size.
+    """
+    rows, cols = np.nonzero(marks)
+    if rows.size == 0:
+        return
+    n = len(values)
+    cell_pt = min(layout.heatmap_width, layout.heatmap_h) * 72.0 / n
+    linewidth = float(
+        np.clip(
+            PROBABLE_REVERSE_WIDTH_FRACTION * cell_pt,
+            PROBABLE_REVERSE_MIN_WIDTH,
+            PROBABLE_REVERSE_MAX_WIDTH,
+        )
+    )
+    side = 1.0 - 2.0 * PROBABLE_REVERSE_INSET
+    for r, c in zip(rows, cols):
+        value = values[r, c]
+        fill = EMPTY_CELL_COLOR if value == 0.0 else cmap(norm(value))
+        ax.add_patch(
+            Rectangle(
+                (c + PROBABLE_REVERSE_INSET, r + PROBABLE_REVERSE_INSET),
+                side,
+                side,
+                fill=False,
+                edgecolor=_contrast_line_color(fill),
+                linewidth=linewidth,
+                linestyle=PROBABLE_REVERSE_LINESTYLE,
+            )
+        )
+
+
 def _annotate_heatmap_counts(ax, values, layout):
     """Write each non-empty cell's count on it, sized to fit the cell."""
     rows, cols = np.nonzero(values)
@@ -973,7 +1077,14 @@ def _draw_ghost_legend_and_note(fig, axes, layout, note):
 
 
 def _plot_bootstrap_map(
-    path, species_tree, taxa_order, matrix_avg, ghost_avg, ghost_counts, ghost_has_sampled
+    path,
+    species_tree,
+    taxa_order,
+    matrix_avg,
+    ghost_avg,
+    ghost_counts,
+    ghost_has_sampled,
+    probable_reverse,
 ):
     """Plot average bootstrap support: the sampled heatmap beside equal-length ghost bars.
 
@@ -991,6 +1102,8 @@ def _plot_bootstrap_map(
             gets a bar when it is non-zero.
         ghost_has_sampled: Mapping of taxon to ``1``/``0``, whether it is also
             the target of a sampled edge.
+        probable_reverse: Target x source matrix of probable-reverse counts;
+            each non-zero cell gets a dashed inner box.
     """
     cmap = plt.get_cmap(CONSOLIDATION_COLORMAP)
     norm = Normalize(vmin=0.0, vmax=1.0)
@@ -1003,14 +1116,10 @@ def _plot_bootstrap_map(
     )
     fig, axes = _create_figure(layout, species_tree, taxa_order)
 
-    _draw_heatmap(
-        axes["heat"],
-        np.asarray(matrix_avg, dtype=float),
-        cmap,
-        norm,
-        HEATMAP_PANEL_TITLE,
-        layout,
-    )
+    heat_values = np.asarray(matrix_avg, dtype=float)
+    marks = np.asarray(probable_reverse, dtype=float)
+    _draw_heatmap(axes["heat"], heat_values, cmap, norm, HEATMAP_PANEL_TITLE, layout)
+    _draw_probable_reverse_marks(axes["heat"], heat_values, marks, cmap, norm, layout)
     _draw_ghost_bars(
         fig,
         axes["bar"],
@@ -1026,13 +1135,10 @@ def _plot_bootstrap_map(
         fontweight="bold",
         fontsize=layout.text_sizes["axis_label"],
     )
-    _draw_ghost_legend_and_note(
-        fig,
-        axes,
-        layout,
-        "Heatmap cells with no introgression are left uncoloured and are not "
-        "represented on the colour scale.",
-    )
+    note = EMPTY_CELL_NOTE
+    if marks.any():
+        note += " " + PROBABLE_REVERSE_NOTE
+    _draw_ghost_legend_and_note(fig, axes, layout, note)
 
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
@@ -1051,7 +1157,13 @@ def _plot_bootstrap_map(
 
 
 def _plot_counts_map(
-    path, species_tree, taxa_order, matrix_counts, ghost_counts, ghost_has_sampled
+    path,
+    species_tree,
+    taxa_order,
+    matrix_counts,
+    ghost_counts,
+    ghost_has_sampled,
+    probable_reverse,
 ):
     """Plot supporting triplet counts: count-labelled heatmap cells beside ghost bars as long as their counts.
 
@@ -1064,6 +1176,8 @@ def _plot_counts_map(
         ghost_counts: Mapping of taxon to its ghost supporting count.
         ghost_has_sampled: Mapping of taxon to ``1``/``0``, whether it is also
             the target of a sampled edge.
+        probable_reverse: Target x source matrix of probable-reverse counts;
+            each non-zero cell gets a dashed inner box.
     """
     sampled_title = HEATMAP_PANEL_TITLE + COUNT_PANEL_SUFFIX
     ghost_title = GHOST_PANEL_TITLE + COUNT_PANEL_SUFFIX
@@ -1073,14 +1187,11 @@ def _plot_counts_map(
     fig, axes = _create_figure(layout, species_tree, taxa_order)
 
     heat_values = np.asarray(matrix_counts, dtype=float)
-    _draw_heatmap(
-        axes["heat"],
-        heat_values,
-        ListedColormap([COUNT_FILL_COLOR]),
-        Normalize(vmin=0.0, vmax=1.0),
-        sampled_title,
-        layout,
-    )
+    marks = np.asarray(probable_reverse, dtype=float)
+    cmap = ListedColormap([COUNT_FILL_COLOR])
+    norm = Normalize(vmin=0.0, vmax=1.0)
+    _draw_heatmap(axes["heat"], heat_values, cmap, norm, sampled_title, layout)
+    _draw_probable_reverse_marks(axes["heat"], heat_values, marks, cmap, norm, layout)
     _annotate_heatmap_counts(axes["heat"], heat_values, layout)
 
     counts = [ghost_counts.get(taxon, 0) for taxon in taxa_order]
@@ -1099,9 +1210,10 @@ def _plot_counts_map(
     axes["bar"].set_xlabel(
         ghost_title, fontweight="bold", fontsize=layout.text_sizes["axis_label"]
     )
-    _draw_ghost_legend_and_note(
-        fig, axes, layout, "Heatmap cells with no introgression are left uncoloured."
-    )
+    note = EMPTY_CELL_NOTE
+    if marks.any():
+        note += " " + PROBABLE_REVERSE_NOTE
+    _draw_ghost_legend_and_note(fig, axes, layout, note)
 
     fig.savefig(path, bbox_inches="tight", dpi=FIGURE_DPI)
     plt.close(fig)
@@ -1147,7 +1259,7 @@ def generate_introgression_maps(
     taxa_order = [t for t in taxa_order if t not in outgroup_set]
 
     # compute occurrence counts so we can average bootstrap weights
-    non_ghost_counts, ghost_counts = _collect_counts(results)
+    non_ghost_counts, ghost_counts, probable_reverse_counts = _collect_counts(results)
 
     # build averaged matrices (raw sums, supporting counts, and undiluted averages)
     avg_non_ghost = {}
@@ -1163,6 +1275,9 @@ def generate_introgression_maps(
     raw_non_ghost_matrix = _build_non_ghost_matrix(taxa_order, non_ghost_weights)
     supporting_non_ghost_matrix = _build_non_ghost_matrix(taxa_order, non_ghost_counts)
     avg_non_ghost_matrix = _build_non_ghost_matrix(taxa_order, avg_non_ghost)
+    probable_reverse_matrix = _build_non_ghost_matrix(
+        taxa_order, probable_reverse_counts
+    )
     raw_ghost_values = {taxon: ghost_weights.get(taxon, 0.0) for taxon in taxa_order}
     supporting_ghost_values = {
         taxon: ghost_counts.get(taxon, 0) for taxon in taxa_order
@@ -1175,12 +1290,12 @@ def generate_introgression_maps(
     consolidation_dir = output_path / "consolidation_data"
     consolidation_dir.mkdir(parents=True, exist_ok=True)
 
-    non_ghost_tsv = consolidation_dir / "introgression_matrix_inflow_outflow.tsv"
+    non_ghost_tsv = consolidation_dir / "introgression_matrix_sampled.tsv"
     non_ghost_raw_sum_tsv = (
-        consolidation_dir / "introgression_matrix_inflow_outflow_raw_sum.tsv"
+        consolidation_dir / "introgression_matrix_sampled_raw_sum.tsv"
     )
     non_ghost_supporting_count_tsv = (
-        consolidation_dir / "introgression_matrix_inflow_outflow_supporting_count.tsv"
+        consolidation_dir / "introgression_matrix_sampled_supporting_count.tsv"
     )
     ghost_tsv = consolidation_dir / "introgression_ghost_target_strength.tsv"
     ghost_raw_sum_tsv = (
@@ -1193,13 +1308,18 @@ def generate_introgression_maps(
     non_sister_count_tsv = (
         consolidation_dir / "introgression_matrix_sampled_non_sister.tsv"
     )
+    probable_reverse_tsv = (
+        consolidation_dir / "introgression_matrix_sampled_probable_reverse.tsv"
+    )
 
     _write_non_ghost_matrix_tsv(non_ghost_raw_sum_tsv, taxa_order, raw_non_ghost_matrix)
     _write_non_ghost_matrix_tsv(
         non_ghost_supporting_count_tsv, taxa_order, supporting_non_ghost_matrix
     )
-    non_ghost_tsv = consolidation_dir / "introgression_matrix_inflow_outflow.tsv"
     _write_non_ghost_matrix_tsv(non_ghost_tsv, taxa_order, avg_non_ghost_matrix)
+    _write_non_ghost_matrix_tsv(
+        probable_reverse_tsv, taxa_order, probable_reverse_matrix
+    )
     _write_single_value_tsv(ghost_raw_sum_tsv, taxa_order, raw_ghost_values, "raw_sum")
     _write_single_value_tsv(
         ghost_supporting_count_tsv,
@@ -1227,6 +1347,7 @@ def generate_introgression_maps(
         avg_ghost,
         supporting_ghost_values,
         ghost_has_sampled,
+        probable_reverse_matrix,
     )
     _plot_counts_map(
         counts_plot,
@@ -1235,6 +1356,7 @@ def generate_introgression_maps(
         supporting_non_ghost_matrix,
         supporting_ghost_values,
         ghost_has_sampled,
+        probable_reverse_matrix,
     )
 
     return IntrogressionMapArtifacts(
@@ -1248,6 +1370,7 @@ def generate_introgression_maps(
         ghost_strength_supporting_count_tsv=str(ghost_supporting_count_tsv),
         taxa_order_tsv=str(taxa_order_tsv),
         non_sister_count_tsv=str(non_sister_count_tsv),
+        probable_reverse_count_tsv=str(probable_reverse_tsv),
         taxa_count=len(taxa_order),
         non_ghost_edge_count=len(non_ghost_weights),
         ghost_target_count=len(

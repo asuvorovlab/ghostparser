@@ -193,7 +193,7 @@ the five moves no gate.
 | --- | --- | --- | --- |
 | `no_introgression` | 20 at 0.1 | 10 at 0.9 | 10 at 0.9 |
 | `inflow` | 10 at 0.5 | 30 at 0.5 | 2 at 0.5 |
-| `outflow` | `_HIGH` = `[0.85, 0.86, ..., 0.94]` | `_LOW` = `[0.05, 0.06, ..., 0.34]` | 2 at 0.1 |
+| `outflow_or_bidirectional` | `_HIGH` = `[0.85, 0.86, ..., 0.94]` | `_LOW` = `[0.05, 0.06, ..., 0.34]` | 2 at 0.1 |
 | `ghost` | `_LOW[:10]` = `[0.05, ..., 0.14]` | `_HIGH * 3` | 2 at 0.9 |
 | `ambiguous` | 30 alternating `0.5 +- 0.30` | 30 alternating `0.5 +- 0.02` | 2 at 0.5 |
 
@@ -211,7 +211,7 @@ the five moves no gate.
   passes. Every concordant and dis1 height is 0.5, so the two empirical CDFs
   coincide: `D = 0.0`, `p = 1.0`, not significant → gate 2 returns
   `inflow_introgression`.
-- **`outflow`.** The DCT is the same significant 30-vs-2 split.
+- **`outflow_or_bidirectional`.** The DCT is the same significant 30-vs-2 split.
   `max(_LOW) = 0.34 < min(_HIGH) = 0.85`, so the CDFs separate completely:
   `D = 1.0`, `p ~ 2.4e-09`, and gate 2 passes. The spread matters for gate 3: constant samples
   would trip the `degenerate_observed_scale` guard, but these carry real
@@ -219,7 +219,7 @@ the five moves no gate.
   `C(40, 10) = 847,660,528` assignments, far above the 2500 floor. No permutation
   reproduces the observed statistic, so `p_greater` sits at the add-one floor
   `1/(2500+1) = 4.0e-4`; Bonferroni over the tail pair doubles it to
-  `8.0e-4 < 0.01` → `greater` → `outflow_introgression`.
+  `8.0e-4 < 0.01` → `greater` → `outflow_or_bidirectional_introgression`.
 - **`ghost`.** The mirror image: identical DCT and KS reasoning, with gate 3
   finding a negative studentized difference and `p_less` at the floor → `less` →
   `ghost_introgression`.
@@ -276,11 +276,33 @@ is why `False` stands in for it.
 | False | False | `less` | `no_introgression` | `DCT` | DCT fails first |
 | True | False | `greater` | `inflow_introgression` | `THT` | tree-height test not significant |
 | True | `None` | `greater` | `inflow_introgression` | `THT` | no THT ran; `not None` takes the same branch |
-| True | True | `greater` | `outflow_introgression` | `PERM` | con > dis |
+| True | True | `greater` | `outflow_or_bidirectional_introgression` | `PERM` | con > dis |
 | True | True | `less` | `ghost_introgression` | `PERM` | con < dis |
 | True | True | `equivalent` | `ambiguous` | `PERM` | means shown close, no direction |
 | True | True | `inconclusive` | `ambiguous` | `PERM` | no direction resolved |
 | True | True | `None` | `ambiguous` | `PERM` | no direction available |
+
+### `test_inference_description_names_the_discordant1_pair`
+
+**Inputs:** the triplet `(A, B, C)`, `A` and `B` the species-tree sisters,
+with each classification and `dis1_topology` in the table.
+
+**Derivation:** discordant1 pairs `C` with one sister, its partner (`B` under
+`BC`, `A` under `AC`), and leaves the other sister as its outgroup. Inflow
+runs from `C` into the partner, outflow-or-bidirectional runs from the
+partner into `C` and names the reverse as probable, and a ghost lineage
+reaches the outgroup.
+
+| Classification | `dis1_topology` | Partner | Outgroup | Expected |
+| --- | --- | --- | --- | --- |
+| `no_introgression` | `BC` | | | `no introgression` |
+| `inflow_introgression` | `BC` | `B` | `A` | `introgression from C to B` |
+| `inflow_introgression` | `AC` | `A` | `B` | `introgression from C to A` |
+| `outflow_or_bidirectional_introgression` | `BC` | `B` | `A` | `introgression from B to C with probable C to B` |
+| `outflow_or_bidirectional_introgression` | `AC` | `A` | `B` | `introgression from A to C with probable C to A` |
+| `ghost_introgression` | `BC` | `B` | `A` | `introgression from ghost lineage to A` |
+| `ghost_introgression` | `AC` | `A` | `B` | `introgression from ghost lineage to B` |
+| `ambiguous` | `BC` | | | `ambiguous` (the label itself) |
 
 ### `test_corrections_match_statsmodels_never_lower_a_value_and_agree_inline`
 
@@ -1469,19 +1491,21 @@ so the header-only file raises `ValueError("...no data rows")`.
 Consolidation reads four fields off each result: `triplet` normalized as
 `(A, B, C)` with `A`, `B` the species-tree sisters, `classification`,
 `dis1_topology` and `bootstrap_value`, and `_map_event` turns each row into
-at most one event:
+at most one event, plus a probable reverse for an outflow-or-bidirectional
+row:
 
 | Classification | `dis1_topology` | Produces |
 | --- | --- | --- |
 | `inflow_introgression` | `BC` | sampled edge `C → B` |
 | `inflow_introgression` | `AC` | sampled edge `C → A` |
-| `outflow_introgression` | `BC` | sampled edge `B → C` |
-| `outflow_introgression` | `AC` | sampled edge `A → C` |
+| `outflow_or_bidirectional_introgression` | `BC` | sampled edge `B → C`, probable reverse `C → B` |
+| `outflow_or_bidirectional_introgression` | `AC` | sampled edge `A → C`, probable reverse `C → A` |
 | `ghost_introgression` | `BC` | ghost target `A` |
 | `ghost_introgression` | `AC` | ghost target `B` |
 | anything else | any | nothing |
 
-Each event carries the row's `bootstrap_value` as its weight. A sampled edge's
+Each event carries the row's `bootstrap_value` as its weight; a probable
+reverse carries none and is only counted, in its own sheet. A sampled edge's
 raw sum is the total weight over the rows that produced it, its supporting
 count is the number of those rows, and its average is the quotient; ghost
 targets are treated the same way. Non-sister counts come from every row,
@@ -1500,7 +1524,7 @@ when it is the target of a sampled edge with non-zero average weight.
 | 2 | `(A,B,C)` | inflow | `BC` | 0.2 | edge `C → B` |
 | 3 | `(A,B,C)` | no_introgression | `BC` | 0.0 | nothing |
 | 4 | `(A,B,C)` | inflow | `AC` | 0.5 | edge `C → A` |
-| 5 | `(A,B,C)` | outflow | `BC` | 0.3 | edge `B → C` |
+| 5 | `(A,B,C)` | outflow_or_bidirectional | `BC` | 0.3 | edge `B → C`, probable reverse `C → B` |
 | 6 | `(A,B,D)` | ghost | `BC` | 0.8 | ghost target `A` |
 | 7 | `(A,B,D)` | ghost | `BC` | 0.4 | ghost target `A` |
 | 8 | `(D,B,C)` | ghost | `BC` | 0.4 | ghost target `D` |
@@ -1513,14 +1537,19 @@ holding `stale.txt`, with `overwrite=False`.
 three ghost targets (`A`, `D`, `C`) give `non_ghost_edge_count == 3` and
 `ghost_target_count == 3`; the four taxa of the tree give `taxa_count == 4`.
 The stage writes `introgression_bootstrap.png` and `introgression_counts.png`
-beside a `consolidation_data/` folder holding the eight TSVs.
+beside a `consolidation_data/` folder holding the nine TSVs.
 
 *Sampled edges* (matrix rows are targets, columns sources): `C → B` gathers
 `0.6 + 0.2 = 0.8` over 2 supporting rows → average `0.4`; row 3 contains the
-same taxa but produces no edge, so it raises neither sum nor count. `C → A`
-is `0.5` over 1 row → `0.5`, and `B → C` is `0.3` over 1 → `0.3`. The raw sums
-total `0.8 + 0.5 + 0.3 = 1.6`, and the largest average is `0.5`, so every
-value stays at or below 1 without any rescaling.
+same taxa but produces no edge, and row 5 marks `C → B` only as a probable
+reverse, so neither raises the sum or the count. `C → A` is `0.5` over 1 row
+→ `0.5`, and `B → C` is `0.3` over 1 → `0.3`. The raw sums total
+`0.8 + 0.5 + 0.3 = 1.6`, and the largest average is `0.5`, so every value
+stays at or below 1 without any rescaling.
+
+*Probable reverses*: row 5 is the only outflow-or-bidirectional row, so the
+probable-reverse sheet holds `1` at row `B`, column `C` (`C → B`) and `0`
+everywhere else.
 
 *Ghost targets*: `A` gathers `0.8 + 0.4 = 1.2` over 2 rows → `0.6`; `D` is
 `0.4` over 1 → `0.4`; `C` is `0.5` over 1 → `0.5`; `B` is never a ghost target
@@ -1559,13 +1588,14 @@ the same names.
 
 ### `test_count_helpers_follow_the_classification`
 
-**Inputs:** five rows:
+**Inputs:** six rows:
 
 | Triplet | Classification | `dis1_topology` | Event |
 | --- | --- | --- | --- |
 | `(A,B,C)` | inflow | `BC` | edge `C → B` |
 | `(A,B,C)` | no_introgression | `BC` | nothing |
 | `(A,B,D)` | inflow | `BC` | edge `D → B` |
+| `(A,B,D)` | outflow_or_bidirectional | `AC` | edge `A → D`, probable reverse `D → A` |
 | `(A,B,C)` | ghost | `BC` | ghost target `A` |
 | `(A,C,D)` | ghost | `AC` | ghost target `C` |
 
@@ -1573,10 +1603,11 @@ For the presence flag, `taxa_order = ["A","B","C","D"]` with the averages
 `{("C","A"): 0.6, ("A","B"): 0.0, ("D","C"): 0.3}`.
 
 **Derivation:** supporting counts follow the events: `(C, B)` once, `(D, B)`
-once, nothing for the `no_introgression` row; ghost counts `A` once and `C`
-once. Non-sister counts come from every row: three `(A,B,C)` rows give
-`{A,C}: 3` and `{B,C}: 3`; `(A,B,D)` gives `{A,D}` and `{B,D}` one each;
-`(A,C,D)` gives `{A,D}` (now 2) and `{C,D}: 1`. For the flag, edges are keyed
+once, `(A, D)` once, nothing for the `no_introgression` row; probable reverse
+counts hold only `(D, A)` once; ghost counts `A` once and `C` once. Non-sister
+counts come from every row: three `(A,B,C)` rows give `{A,C}: 3` and
+`{B,C}: 3`; two `(A,B,D)` rows give `{A,D}` and `{B,D}` two each; `(A,C,D)`
+gives `{A,D}` (now 3) and `{C,D}: 1`. For the flag, edges are keyed
 `(source, target)`, so it looks at the second element: `A` is the target of
 `(C,A)` with weight `0.6` → `1`; `B` is the target of `(A,B)` but the weight
 is `0.0`, which is falsy, so an edge that carries no support does not count →
@@ -1844,7 +1875,7 @@ total is the point estimate's contribution plus 20.
 
 **Inputs:** two observation sets: `(_HIGH, _LOW[:10], [0.5] * 10)`, ten
 concordant heights spread over 0.85-0.94 against 10 and 10 discordant trees,
-and the outflow set `(_HIGH, _LOW, [0.1] * 2)`, each measured with
+and the outflow-or-bidirectional set `(_HIGH, _LOW, [0.1] * 2)`, each measured with
 `family_size=1` under `bfn`, a 30-iteration bootstrap at seed 11, with
 `bootstrap_options.diagnostic` off, on, and on with `summary_only`, then
 decided as a family of one.

@@ -4,7 +4,7 @@
 of gene trees. It decomposes the ingroup into species triplets, reads every
 gene tree's version of each triplet, and runs a three-gate cascade of tests
 per triplet that labels it `no_introgression`, `inflow_introgression`,
-`outflow_introgression`, `ghost_introgression` or `ambiguous`. This document
+`outflow_or_bidirectional_introgression`, `ghost_introgression` or `ambiguous`. This document
 explains the method; how to run it is in the [README](../../README.md) and
 every flag and key in the [configuration guide](../README.md).
 
@@ -179,9 +179,11 @@ that is the third gate's question.
 
 *Is the mean concordant height greater than, less than or indistinguishable
 from the mean discordant1 height?* Concordant trees taller than the discordant
-ones (`greater`) is `outflow_introgression`; discordant trees taller than the
-concordant ones (`less`) is `ghost_introgression`, the signature of a lineage
-that diverged before the triplet's root; neither is `ambiguous`.
+ones (`greater`) is `outflow_or_bidirectional_introgression`: introgression
+from the sister discordant1 pairs with `C` into `C`, with the reverse
+direction recorded as probable; discordant trees taller than the concordant
+ones (`less`) is `ghost_introgression`, the signature of a lineage that
+diverged before the triplet's root; neither is `ambiguous`.
 
 **Statistic.** For concordant sample `x` (size `nx`) and discordant1 sample
 `y` (size `ny`),
@@ -284,7 +286,7 @@ is not significant settles the call:
 | --- | --- | --- |
 | 1 · DCT | `no_introgression` | continue |
 | 2 · THT | `inflow_introgression` | continue |
-| 3 · direction | `equivalent`/`inconclusive` → `ambiguous` | `greater` → `outflow_introgression`; `less` → `ghost_introgression` |
+| 3 · direction | `equivalent`/`inconclusive` → `ambiguous` | `greater` → `outflow_or_bidirectional_introgression`; `less` → `ghost_introgression` |
 
 `decision_gate` names the gate that settled the triplet (`DCT`, `THT`,
 `PERM`). A test reported on a row below its gate took no part in the call.
@@ -424,21 +426,24 @@ topology pairs `C` with one sister `S`:
 | Classification | Event recorded |
 | --- | --- |
 | `inflow_introgression` | edge `C → S` |
-| `outflow_introgression` | edge `S → C` |
+| `outflow_or_bidirectional_introgression` | edge `S → C`; `C → S` marked as its probable reverse |
 | `ghost_introgression` | ghost target: the sister `discordant1` leaves out |
 | `no_introgression`, `ambiguous` | nothing |
 
 Each heatmap cell and ghost bar is the mean `bootstrap_value` over the
-triplets that produced that edge or target, and nothing else:
+triplets that produced that edge or target, and nothing else; a probable
+reverse adds neither weight nor count to its cell:
 
 ```
 avg(source → target) = sum(bootstrap_value over triplets producing the edge) / count(those triplets)
 ```
 
 The `*_raw_sum.tsv` and `*_supporting_count.tsv` matrices hold the numerator
-and denominator, and `introgression_matrix_sampled_non_sister.tsv` counts, per
+and denominator. `introgression_matrix_sampled_non_sister.tsv` counts, per
 taxon pair, the triplets in which the two are not the species-tree sisters,
-so the averages can be reweighted against co-occurrence. Without a bootstrap
+so the averages can be reweighted against co-occurrence.
+`introgression_matrix_sampled_probable_reverse.tsv` counts, per directed
+pair, the triplets marking it as a probable reverse. Without a bootstrap
 every classified triplet weighs 1. Two figures draw the heatmap (rows
 targets, columns sources) under the species tree, with a bar beside each
 ghost target, and each figure has a different bar style:
@@ -448,6 +453,8 @@ ghost target, and each figure has a different bar style:
 | `introgression_bootstrap.png` | average bootstrap value on the `cividis` scale | equal length, filled with its average bootstrap value on the same scale |
 | `introgression_counts.png` | black, labelled with its supporting triplet count | length is its supporting triplet count, labelled |
 
-In both, a bar's outline is dashed when the taxon has ghost introgression only
-and solid when it is also the target of a sampled edge. Taxa in `outgroup`
+In both, a cell holding a probable reverse carries a dashed inner box, black
+or white, whichever contrasts more with the cell's fill, and a bar's outline
+is dashed when the taxon has ghost introgression only and solid when it is
+also the target of a sampled edge. Taxa in `outgroup`
 never appear.

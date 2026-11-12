@@ -133,7 +133,7 @@ Marked `integration` throughout (every test drives `run_orchestrator`) and `outp
   `{Homo sapiens, Pan sp., C, D}`; the `(A,B,C)` species subtree is
   `(('Homo sapiens','Pan sp.'),C);` and every `species_tree` column parses back
   to its triplet's names; the display names appear in the results TSV, the
-  consolidation taxa-order file and the inflow/outflow matrix, and the combined
+  consolidation taxa-order file and the sampled matrix, and the combined
   plot is written; both processed tree files still carry only `A`-`D`/`OUT`;
   `metrics.txt` survives consolidation; `summary_statistics.tsv` has exactly 63
   metric columns (including `discordant2_sister_distance_max`) and every result
@@ -206,6 +206,15 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   which returns the pair, so the gate column cannot drift out of step with
   the classification it explains, and the array form used to tally deferred
   votes cannot drift from the scalar one.
+- `test_inference_description_names_the_discordant1_pair`. Inputs
+  (parametrized, 8 rows): the triplet `(A, B, C)` with each classification on
+  each discordant1 topology (`BC`, `AC`) it names taxa on, plus
+  `no_introgression` and `ambiguous`. Expected outputs: `introgression from C
+  to B`/`to A` for inflow, `introgression from B to C with probable C to B`
+  (and the `A`/`C` form) for outflow-or-bidirectional, `introgression from
+  ghost lineage to A`/`to B` for ghost, `no introgression`, and `ambiguous`
+  passed through. Purpose: the `inference` column names the pair discordant1
+  implicates and, for outflow-or-bidirectional, its probable reverse.
 - `test_corrections_match_statsmodels_never_lower_a_value_and_agree_inline`.
   Inputs (parametrized over `P_VALUE_CORRECTION_CHOICES`): a fixed 10-value
   p-value list; a family of eight p-values at 0.001 plus 0.4 and 0.9; and
@@ -247,8 +256,8 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
 - `test_diagnostic_bootstrap_records_every_test_without_moving_a_vote`.
   Inputs (parametrized, 2 rows): an observation set whose even 10/10
   discordant split fails the count gate in most resamples (`_HIGH` concordant,
-  `_LOW[:10]` and `[0.5] * 10` discordant), and the fully separated outflow
-  set that clears every gate; each measured under `bfn` as a family of one
+  `_LOW[:10]` and `[0.5] * 10` discordant), and the fully separated
+  outflow-or-bidirectional set that clears every gate; each measured under `bfn` as a family of one
   with a 30-iteration bootstrap at seed 11, once with
   `bootstrap_options.diagnostic` off, once on, and once on with
   `summary_only`. Expected outputs: `all_bootstrap` and the
@@ -288,7 +297,8 @@ All `core` except `test_results_tsv_carries_corrected_columns_only_when_correcti
   bootstrap as a family of five with `diagnostic` off and again on, each run
   through the run-wide pass. Expected outputs: each set lands on its
   classification at its gate (`no_introgression`/`DCT`,
-  `inflow_introgression`/`THT`, `outflow_introgression`, `ghost_introgression`
+  `inflow_introgression`/`THT`, `outflow_or_bidirectional_introgression`,
+  `ghost_introgression`
   and `ambiguous` at `PERM`, with `perm_decision` `greater`, `less`, and
   `equivalent` or `inconclusive`); the counts, `dis1_topology`, every `dct_*` field, `classification`,
   `decision_gate`, `bootstrap_value` and `all_bootstrap` are equal field for
@@ -872,15 +882,16 @@ The count-helper test is `core`; the two that call `generate_introgression_maps`
 - `test_generate_introgression_maps_writes_every_sheet_from_the_results`.
   Inputs: nine result rows on the species tree `(((A,B),C),D)`, with the edge
   `C → B` produced twice (weights 0.6 and 0.2) beside a `no_introgression`
-  row over the same taxa, `C → A` once (0.5), `B → C` once (0.3), the ghost
+  row over the same taxa, `C → A` once (0.5), an outflow-or-bidirectional
+  row making `B → C` (0.3) with `C → B` as its probable reverse, the ghost
   target `A` twice (0.8 and 0.4), and ghost targets `D` (0.4) and `C` (0.5)
   once each; then the same results written again into an existing directory
   with `overwrite=False`. Expected outputs: `taxa_count == 4`, three sampled
-  edges, three ghost targets, the bootstrap and counts PNGs and the eight TSVs under
-  `consolidation_data/`; in the inflow/outflow sheets `B ← C` averages 0.4
+  edges, three ghost targets, the bootstrap and counts PNGs and the nine TSVs
+  under `consolidation_data/`; in the sampled sheets `B ← C` averages 0.4
   over a raw sum of 0.8 and a supporting count of 2, `A ← C` 0.5 / 0.5 / 1
   and `C ← B` 0.3 / 0.3 / 1, the raw sums totalling 1.6 and no average above
-  0.5; ghost strengths `A: 0.6, B: 0, C: 0.5, D: 0.4` over raw sums
+  0.5; the probable-reverse sheet holding 1 at `B ← C` and 0 elsewhere; ghost strengths `A: 0.6, B: 0, C: 0.5, D: 0.4` over raw sums
   `1.2, 0, 0.5, 0.4` and supporting counts `2, 0, 1, 1`, with
   `has_sampled_introgression` `1` for `A`, `B` and `C` and `0` for `D`; the
   non-sister sheet holding `{A,C}: 5`, `{B,C}: 6`, `{A,D}: 3`, `{B,D}: 2`,
@@ -889,8 +900,9 @@ The count-helper test is `core`; the two that call `generate_introgression_maps`
   Purpose: artifact generation, undiluted averages (each divided by the
   triplets that produced the edge or target, never by the triplets that merely
   contain the taxa), with the raw-sum and supporting-count sheets carrying
-  the two parts, the flag that drives the ghost bar outline, the non-sister
-  counts, and overwrite behavior.
+  the two parts, a probable reverse kept out of every weighted sheet, the flag
+  that drives the ghost bar outline, the non-sister counts, and overwrite
+  behavior.
 - `test_generate_introgression_maps_selects_the_requested_taxa`. Inputs
   (parametrized, 3 rows): a balanced four-taxon tree with no taxon filter, the
   same tree with `plot_taxa=["A", "B", "C"]`, and an outgroup tree with
@@ -898,15 +910,18 @@ The count-helper test is `core`; the two that call `generate_introgression_maps`
   header and the ghost rows listing the same taxa; and the excluded taxon absent
   from both. Purpose: `plot_taxa` and `outgroups` decide which taxa reach every
   output, and no output disagrees with another about the set.
-- `test_count_helpers_follow_the_classification`. Inputs: five result rows
+- `test_count_helpers_follow_the_classification`. Inputs: six result rows
   covering a classified edge, a `no_introgression` row over the same taxa, an
-  unrelated triplet, and two ghost rows on either discordant topology; and a
-  taxa order with a `(source, target)` weight map holding one zero-weight
-  edge. Expected outputs: supporting counts `{(C, B): 1, (D, B): 1}` and ghost
-  counts `{A: 1, C: 1}`; non-sister counts `{A,C}: 3`, `{B,C}: 3`, `{A,D}: 2`,
-  `{B,D}: 1`, `{C,D}: 1`; and presence flags `{"A": 1, "B": 0, "C": 1, "D": 0}`.
-  Purpose: supporting counts follow the classification, not mere
-  co-occurrence; non-sister counts come from every row, the
+  unrelated triplet, an outflow-or-bidirectional `A → D` row, and two ghost
+  rows on either discordant topology; and a taxa order with a
+  `(source, target)` weight map holding one zero-weight edge. Expected
+  outputs: supporting counts `{(C, B): 1, (D, B): 1, (A, D): 1}`, probable
+  reverse counts `{(D, A): 1}` and ghost counts `{A: 1, C: 1}`; non-sister
+  counts `{A,C}: 3`, `{B,C}: 3`, `{A,D}: 3`, `{B,D}: 2`, `{C,D}: 1`; and
+  presence flags `{"A": 1, "B": 0, "C": 1, "D": 0}`. Purpose: supporting
+  counts follow the classification, not mere co-occurrence, and a probable
+  reverse is counted apart from the edges; non-sister counts come from every
+  row, the
   `no_introgression` one included; and only taxa that are the target of a
   non-zero sampled edge are flagged.
 

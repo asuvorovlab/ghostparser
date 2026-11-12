@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.2
+
+- `outflow_introgression` is renamed `outflow_or_bidirectional_introgression`,
+  and its `inference` reads `introgression from B to C with probable C to B`.
+- Consolidation weights only the outflow edge and marks its reverse
+  cell with a dashed inner box in both figures, black or white for contrast
+  with the cell's fill; `introgression_matrix_sampled_probable_reverse.tsv`
+  counts the triplets behind each mark.
+- The sampled matrices are renamed from
+  `introgression_matrix_inflow_outflow*.tsv` to
+  `introgression_matrix_sampled*.tsv`.
+
 ## v0.1.1 - Oct 30, 2026
 
 - Consolidation writes two figures in place of `introgression_combined.png`.

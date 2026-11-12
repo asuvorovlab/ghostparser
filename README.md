@@ -71,8 +71,8 @@ What a run does:
 4. Runs three tests per triplet (the discordant count test, the tree-height
    test and the direction test), corrects the p-values across the run, and
    classifies each triplet as `no_introgression`, `inflow_introgression`,
-   `outflow_introgression`, `ghost_introgression` or `ambiguous`, with a
-   bootstrap support value.
+   `outflow_or_bidirectional_introgression`, `ghost_introgression` or
+   `ambiguous`, with a bootstrap support value.
 5. Writes the results and the consolidated introgression maps.
 
 `--preflight-data-check` validates the trees first (outgroups missing from

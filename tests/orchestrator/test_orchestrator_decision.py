@@ -220,7 +220,7 @@ def test_summary_statistics_discordant_roles_follow_the_counts(
         (False, False, "less", "no_introgression", "DCT"),
         (True, False, "greater", "inflow_introgression", "THT"),
         (True, None, "greater", "inflow_introgression", "THT"),
-        (True, True, "greater", "outflow_introgression", "PERM"),
+        (True, True, "greater", "outflow_or_bidirectional_introgression", "PERM"),
         (True, True, "less", "ghost_introgression", "PERM"),
         (True, True, "equivalent", "ambiguous", "PERM"),
         (True, True, "inconclusive", "ambiguous", "PERM"),
@@ -250,6 +250,45 @@ def test_classify_introgression_truth_table(
         np.array([pinf._DIRECTION_CODES.get(direction, pinf._DIRECTION_SKIPPED)]),
     )[0]
     assert pinf._BOOTSTRAP_CLASSES[code] == expected
+
+
+@pytest.mark.parametrize(
+    "classification,dis1_topology,expected",
+    [
+        ("no_introgression", "BC", "no introgression"),
+        ("inflow_introgression", "BC", "introgression from C to B"),
+        ("inflow_introgression", "AC", "introgression from C to A"),
+        (
+            "outflow_or_bidirectional_introgression",
+            "BC",
+            "introgression from B to C with probable C to B",
+        ),
+        (
+            "outflow_or_bidirectional_introgression",
+            "AC",
+            "introgression from A to C with probable C to A",
+        ),
+        ("ghost_introgression", "BC", "introgression from ghost lineage to A"),
+        ("ghost_introgression", "AC", "introgression from ghost lineage to B"),
+        ("ambiguous", "BC", "ambiguous"),
+    ],
+)
+def test_inference_description_names_the_discordant1_pair(
+    classification, dis1_topology, expected
+):
+    """The ``inference`` column names the taxa the classification implicates.
+
+    Discordant1 pairs C with one species-tree sister: inflow runs from C into
+    that sister, outflow-or-bidirectional runs the other way and names the
+    inflow direction as probable, and a ghost lineage reaches the other sister,
+    discordant1's outgroup.
+    """
+    assert (
+        pinf._generate_inference_description(
+            ("A", "B", "C"), classification, dis1_topology
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize("method", P_VALUE_CORRECTION_CHOICES)
@@ -537,7 +576,7 @@ _CASCADE_FAMILY = [
     # 30 vs 2 discordants clears the count gate; identical con/dis1 heights
     # give KS statistic 0, so the tree-height gate stops.
     (([0.5] * 10, [0.5] * 30, [0.5] * 2), "inflow_introgression", "THT", None),
-    ((_HIGH, _LOW, [0.1] * 2), "outflow_introgression", "PERM", {"greater"}),
+    ((_HIGH, _LOW, [0.1] * 2), "outflow_or_bidirectional_introgression", "PERM", {"greater"}),
     ((_LOW[:10], _HIGH * 3, [0.9] * 2), "ghost_introgression", "PERM", {"less"}),
     # Equal means, different spreads: KS separates them, no direction does.
     ((_WIDE, _NARROW, [0.5] * 2), "ambiguous", "PERM", {"equivalent", "inconclusive"}),

@@ -177,7 +177,7 @@ def _expected_result(strategy, discordant_test, diagnostic=True, alpha=_ALPHA):
     elif not ks_significant:
         classification = "inflow_introgression"
     elif direction == "greater":
-        classification = "outflow_introgression"
+        classification = "outflow_or_bidirectional_introgression"
     elif direction == "less":
         classification = "ghost_introgression"
     else:
