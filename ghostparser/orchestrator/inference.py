@@ -94,7 +94,7 @@ PERM_NOTE_NOT_CONSULTED = "direction_test_not_consulted"
 _BOOTSTRAP_CLASSES = [
     "ghost_introgression",
     "inflow_introgression",
-    "outflow_introgression",
+    "outflow_or_bidirectional_introgression",
     "no_introgression",
     "ambiguous",
 ]
@@ -630,7 +630,7 @@ def _classify_introgression(dct_significant, ks_significant, direction):
     if not ks_significant:
         return "inflow_introgression", DECISION_GATE_THT
     if direction == DECISION_GREATER:
-        return "outflow_introgression", DECISION_GATE_PERMUTATION
+        return "outflow_or_bidirectional_introgression", DECISION_GATE_PERMUTATION
     if direction == DECISION_LESS:
         return "ghost_introgression", DECISION_GATE_PERMUTATION
     # The heights differ in distribution but not detectably in mean, so the
@@ -738,37 +738,26 @@ def _generate_inference_description(triplet, classification, dis1_topology):
 
     topology_label = str(dis1_topology).strip().upper()
 
+    # Discordant1 pairs C with one of the species-tree sisters; the other
+    # sister is that topology's outgroup.
     if topology_label == "BC":
-        sisters_in_dis1 = {b_taxon, c_taxon}
-        outgroup_in_dis1 = a_taxon
+        c_partner, outgroup_in_dis1 = b_taxon, a_taxon
     elif topology_label == "AC":
-        sisters_in_dis1 = {a_taxon, c_taxon}
-        outgroup_in_dis1 = b_taxon
+        c_partner, outgroup_in_dis1 = a_taxon, b_taxon
     else:
         expected = " or ".join(f"'{value}'" for value in DISCORDANT1_TOPOLOGY_CHOICES)
         raise ValueError(
             f"Invalid dis1_topology '{dis1_topology}'. Expected {expected}."
         )
 
-    species_tree_sisters = {a_taxon, b_taxon}
-
     if classification == "inflow_introgression":
-        if c_taxon in sisters_in_dis1:
-            sister_who_moved = (sisters_in_dis1 - {c_taxon}).pop()
-            return f"introgression from {c_taxon} to {sister_who_moved}"
-        else:
-            sisters_str = " and ".join(sorted(sisters_in_dis1))
-            return f"introgression between {sisters_str} and {outgroup_in_dis1}"
-
-    elif classification == "outflow_introgression":
-        if c_taxon in sisters_in_dis1:
-            sister_who_introgressed = (sisters_in_dis1 - {c_taxon}).pop()
-            return f"introgression from {sister_who_introgressed} to {c_taxon}"
-        else:
-            sisters_str = " and ".join(sorted(species_tree_sisters))
-            return f"introgression from {sisters_str} to {outgroup_in_dis1}"
-
-    elif classification == "ghost_introgression":
+        return f"introgression from {c_taxon} to {c_partner}"
+    if classification == "outflow_or_bidirectional_introgression":
+        return (
+            f"introgression from {c_partner} to {c_taxon} "
+            f"with probable {c_taxon} to {c_partner}"
+        )
+    if classification == "ghost_introgression":
         return f"introgression from ghost lineage to {outgroup_in_dis1}"
 
     return classification
@@ -1808,7 +1797,7 @@ def _classification_codes(dct_significant, ks_significant, directions):
     codes[~dct_significant] = _CLASS_CODES["no_introgression"]
     codes[dct_significant & ~ks_significant] = _CLASS_CODES["inflow_introgression"]
     codes[both & (directions == _DIRECTION_GREATER)] = _CLASS_CODES[
-        "outflow_introgression"
+        "outflow_or_bidirectional_introgression"
     ]
     codes[both & (directions == _DIRECTION_LESS)] = _CLASS_CODES["ghost_introgression"]
     return codes

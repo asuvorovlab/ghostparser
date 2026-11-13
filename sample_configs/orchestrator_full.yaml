@@ -42,6 +42,9 @@ bootstrap_options:
   iterations: 100             # integer >= 1
   diagnostic: false           # true | false (record every iteration's tests; costly)
   summary_only: false         # true | false (with diagnostic: per-column summaries only)
+bootstrap_threshold: null     # null | number in [0, 1] for every class | four in order
+                              # no, inflow, outflow, ghost | mapping of MSC, MSCi_in,
+                              # MSCi_out, MSCig; filters the maps only, needs bootstrap
 
 # --- Extra outputs -----------------------------------------------------------
 consolidation: true           # true | false (the introgression maps)

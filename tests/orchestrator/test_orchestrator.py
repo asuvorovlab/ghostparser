@@ -348,6 +348,14 @@ def test_every_optional_output_lands_where_documented_under_display_names(
     )
     config["generate_summary_stats"] = True
     config["bootstrap_diagnostic"] = True
+    # Zero keeps every triplet, so the outputs below are unchanged while the
+    # threshold still travels the run's path into consolidation.
+    config["bootstrap_threshold"] = {
+        "no_introgression": 0.0,
+        "inflow_introgression": 0.0,
+        "outflow_or_bidirectional_introgression": 0.0,
+        "ghost_introgression": 0.0,
+    }
 
     results = run_orchestrator(config)
     assert len(results) == _N_TRIPLETS
@@ -383,7 +391,7 @@ def test_every_optional_output_lands_where_documented_under_display_names(
     for name in ("introgression_bootstrap.png", "introgression_counts.png"):
         assert (output_folder / "consolidation" / name).exists(), name
 
-    matrix = (consolidation_data / "introgression_matrix_inflow_outflow.tsv").read_text()
+    matrix = (consolidation_data / "introgression_matrix_sampled.tsv").read_text()
     assert "Homo sapiens" in matrix and "Pan sp." in matrix
 
     assert (output_folder / "metrics.txt").exists()

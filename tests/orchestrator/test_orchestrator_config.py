@@ -181,6 +181,56 @@ def test_cli_flags_override_the_config_file(tmp_path):
     assert (config["processes"], config["seed"]) == (3, 5)
 
 
+_THRESHOLD_LABELS = (
+    "no_introgression",
+    "inflow_introgression",
+    "outflow_or_bidirectional_introgression",
+    "ghost_introgression",
+)
+_PER_CLASS = dict(zip(_THRESHOLD_LABELS, (0.9, 0.8, 0.9, 0.85)))
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (0.9, dict.fromkeys(_THRESHOLD_LABELS, 0.9)),
+        ("0.7", dict.fromkeys(_THRESHOLD_LABELS, 0.7)),
+        ([0.9, 0.8, 0.9, 0.85], _PER_CLASS),
+        ("0.9,0.8,0.9,0.85", _PER_CLASS),
+        (
+            {"MSC": 0.9, "MSCi_in": 0.8, "MSCi_out": 0.9, "MSCig": 0.85},
+            _PER_CLASS,
+        ),
+        (
+            {"MSCig": 1, "MSCi_out": 0},
+            {
+                "outflow_or_bidirectional_introgression": 0.0,
+                "ghost_introgression": 1.0,
+            },
+        ),
+        (None, None),
+    ],
+    ids=["one", "one_string", "list", "comma_string", "mapping", "partial_bounds", "off"],
+)
+def test_bootstrap_threshold_forms_resolve_per_classification(tmp_path, value, expected):
+    """Every form of `bootstrap_threshold` resolves to one threshold per classification.
+
+    One value covers all four classes, four go in the order no, inflow,
+    outflow, ghost, and a mapping names only the classes it filters, by the
+    keys MSC, MSCi_in, MSCi_out and MSCig; both ends of ``[0, 1]`` are
+    accepted. A string is what the command line hands over, so each string row
+    is also passed as ``-bt`` and must resolve the same way.
+    """
+    config = load_orchestrator_config(str(_payload(tmp_path, bootstrap_threshold=value)))
+    assert config["bootstrap_threshold"] == expected
+
+    if isinstance(value, str):
+        opts = build_argument_parser().parse_args(
+            ["-st", "species.tree", "-gt", "genes.tree", "-og", "OUT", "-bt", value]
+        )
+        assert resolve_config(opts)["bootstrap_threshold"] == expected
+
+
 @pytest.mark.parametrize(
     "value, expected",
     [
@@ -222,6 +272,11 @@ def test_outgroup_key_is_normalized_or_rejected(value, expected, tmp_path):
             {"triplet_filter": "triplets.txt", "species_filter": "species.txt"},
             "cannot both be set",
         ),
+        ({"bootstrap_threshold": 1.5}, "bootstrap_threshold"),
+        ({"bootstrap_threshold": "high"}, "bootstrap_threshold"),
+        ({"bootstrap_threshold": [0.9, 0.8]}, "one value for every class or four"),
+        ({"bootstrap_threshold": {"MSCi": 0.5}}, "unknown key"),
+        ({"bootstrap_threshold": 0.9, "bootstrap": False}, "needs the bootstrap"),
     ],
 )
 def test_invalid_values_are_rejected_by_field_name(tmp_path, extra, match):
@@ -231,7 +286,9 @@ def test_invalid_values_are_rejected_by_field_name(tmp_path, extra, match):
     boolean with no matching choice, which is what YAML makes of a bare
     ``yes``), an optional bool, an optional int, a non-negative int whose
     ``0`` already means "no cap", a path whose file is read when the config
-    resolves, and the two triplet-selection paths that exclude each other.
+    resolves, the two triplet-selection paths that exclude each other, and
+    `bootstrap_threshold` out of range, not a number, with neither one nor
+    four values, naming an unknown key, or set with the bootstrap off.
     """
     with pytest.raises(ConfigError, match=match):
         load_orchestrator_config(str(_payload(tmp_path, **extra)))

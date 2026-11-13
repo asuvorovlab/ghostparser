@@ -63,6 +63,7 @@ in the [CHANGELOG](https://github.com/asuvorovlab/ghostparser/blob/main/CHANGELO
 | `--p-value-correction` | `p_value_correction` | `no`, `bfn`, `holm`, `fdr_bh`, `fdr_by`. |
 | `--diagnostic` | `diagnostic` | Measure every test for every triplet. |
 | `--no-consolidation`, `--no-bootstrap` | `consolidation`, `bootstrap` | Skip the maps; skip the bootstrap. |
+| `-bt`, `--bootstrap-threshold` | `bootstrap_threshold` | Minimum `bootstrap_value` a triplet needs to reach the maps. |
 | `--preflight-data-check`, `--preflight-triplet-cap` | `preflight_data_check`, `preflight_triplet_cap` | Check the inputs and exit; how many triplets the check walks. |
 | `--debug` | (command line only) | Show the full traceback when the run fails. |
 | (no flag) | `discordant_test`, `tree_height_calculation_strategy`, `min_support_value`, `generate_summary_stats`, `shape_diagnostics`, `bootstrap_options`, `permutation_options` | Config-file only. |
@@ -134,6 +135,7 @@ p_value_correction: bfn                      # no, bfn, holm, fdr_bh, fdr_by
 diagnostic: false
 consolidation: true
 bootstrap: true
+bootstrap_threshold: null                    # one value, four (no, in, out, ghost) or a mapping
 preflight_data_check: false
 preflight_triplet_cap: 15000                 # 0 = no cap
 discordant_test: chi-square                  # chi-square or z-test
@@ -269,6 +271,31 @@ Default `true`: write the introgression maps.
 Default `true`. `false` skips the iterations: `bootstrap_value` and
 `all_bootstrap` are left out of the results, the `bootstrap_perm_stat_ci_*`
 columns stay empty, and consolidation weighs every classified triplet as 1.
+
+##### `bootstrap_threshold` (`-bt`, `--bootstrap-threshold`)
+
+Default `null`: every triplet reaches the introgression maps. Otherwise a
+triplet is mapped only when its `bootstrap_value` is at least the threshold
+for its classification. It filters the maps alone: the results TSV keeps every
+triplet, `ambiguous` triplets are never filtered, and the taxa axes stay those
+of the whole species tree. A `no_introgression` triplet draws nothing, so its
+threshold moves only `introgression_matrix_sampled_non_sister.tsv`. It needs
+`bootstrap: true`. Each value lies in `[0, 1]`, given in one of three forms:
+
+| Form | Example | Meaning |
+| --- | --- | --- |
+| One number | `0.9` (`-bt 0.9`) | The same threshold for every class. |
+| Four numbers, in order no, inflow, outflow, ghost | `[0.9, 0.8, 0.9, 0.85]` (`-bt 0.9,0.8,0.9,0.85`) | One threshold per class. |
+| A mapping | `{MSC: 0.9, MSCig: 0.85}` | Only the named classes are filtered. |
+
+| Key | Classification |
+| --- | --- |
+| `MSC` | `no_introgression` |
+| `MSCi_in` | `inflow_introgression` |
+| `MSCi_out` | `outflow_or_bidirectional_introgression` |
+| `MSCig` | `ghost_introgression` |
+
+`metrics.txt` reports, per classification, how many triplets were mapped.
 
 ##### `preflight_data_check` (`--preflight-data-check` sets `true`)
 
