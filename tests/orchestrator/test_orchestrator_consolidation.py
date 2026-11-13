@@ -10,7 +10,10 @@ from types import SimpleNamespace
 import pytest
 
 from ghostparser.orchestrator.consolidation import (
+    COLORBAR_LARGE_TICK_STEP,
+    COLORBAR_TICK_TIERS,
     _collect_counts,
+    _colorbar_tick_step,
     _collect_non_sister_counts,
     _sampled_introgression_presence,
     generate_introgression_maps,
@@ -327,3 +330,20 @@ def test_count_helpers_follow_the_classification():
         ["A", "B", "C", "D"], {("C", "A"): 0.6, ("A", "B"): 0.0, ("D", "C"): 0.3}
     )
     assert presence == {"A": 1, "B": 0, "C": 1, "D": 0}
+
+
+def test_colorbar_tick_step_refines_as_the_taxa_count_grows():
+    """A figure over more taxa never gets coarser colorbar ticks.
+
+    From 3 taxa (the smallest triplet run) to 200 (the size the figure scaling
+    stops growing at), the step must pass through every tier, coarsest first,
+    and each step must divide ``[0, 1]`` evenly so the ticks end on 1.
+    """
+    offered = {step for _max_taxa, step in COLORBAR_TICK_TIERS} | {
+        COLORBAR_LARGE_TICK_STEP
+    }
+    steps = [_colorbar_tick_step(n) for n in range(3, 201)]
+
+    assert all(later <= earlier for earlier, later in zip(steps, steps[1:]))
+    assert set(steps) == offered
+    assert all(abs(round(1.0 / step) * step - 1.0) < 1e-9 for step in offered)

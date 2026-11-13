@@ -16,6 +16,8 @@
   clears their class's threshold, given as one value, four in the order no,
   inflow, outflow, ghost, or a mapping of `MSC`, `MSCi_in`, `MSCi_out` and
   `MSCig`. The results TSV keeps every triplet.
+- The bootstrap figure's colour bar is ticked every 0.2 up to 30 taxa, every
+  0.1 up to 120 and every 0.05 beyond, in place of 0, 0.5 and 1 alone.
 
 ## v0.1.1 - Oct 30, 2026
 

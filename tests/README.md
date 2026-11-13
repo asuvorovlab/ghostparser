@@ -952,6 +952,12 @@ The count-helper test is `core`; the two that call `generate_introgression_maps`
   `no_introgression` one included; and only taxa that are the target of a
   non-zero sampled edge are flagged.
 
+- `test_colorbar_tick_step_refines_as_the_taxa_count_grows`. Inputs: taxa
+  counts 3 to 200. Expected outputs: the steps never coarsen as the count
+  grows, every offered step occurs, and each divides `[0, 1]` evenly.
+  Purpose: the colour bar's ticks refine with the figure's size, asserted as
+  properties rather than pinned cut-offs.
+
 ### tests/test_ml_config.py
 
 Trainer config resolution. Marked `config` throughout; no individual default is

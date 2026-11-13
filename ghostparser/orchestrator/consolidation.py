@@ -70,6 +70,12 @@ PROBABLE_REVERSE_NOTE = (
     "bidirectional introgression."
 )
 
+# Colorbar tick step by taxa count, which sets the figure's size: up to 30
+# taxa is a small figure, up to 120 a medium one, and anything larger a large
+# one, ticked more finely as the colorbar grows with it.
+COLORBAR_TICK_TIERS = ((30, 0.2), (120, 0.1))
+COLORBAR_LARGE_TICK_STEP = 0.05
+
 # Vertical gap between the ghost bar legend and the uncoloured-cell note above
 # it, in points so it holds at every figure size.
 NOTE_LEGEND_GAP_POINTS = 18.0
@@ -861,6 +867,22 @@ def _draw_target_labels(ax, taxa_order):
         tick.set_fontstyle("italic")
 
 
+def _colorbar_tick_step(taxa_count):
+    """Pick the colorbar's tick step for a figure drawn over ``taxa_count`` taxa.
+
+    Args:
+        taxa_count: The number of taxa on the heatmap's axes.
+
+    Returns:
+        The step of the first ``COLORBAR_TICK_TIERS`` tier whose upper bound
+        holds ``taxa_count``, else ``COLORBAR_LARGE_TICK_STEP``.
+    """
+    for max_taxa, step in COLORBAR_TICK_TIERS:
+        if taxa_count <= max_taxa:
+            return step
+    return COLORBAR_LARGE_TICK_STEP
+
+
 def _draw_heatmap(ax, values, cmap, norm, title, layout):
     """Draw the sampled-introgression heatmap, leaving zero cells uncoloured."""
     # Zero cells mean "no introgression edge observed". Masking them keeps the
@@ -1181,8 +1203,10 @@ def _plot_bootstrap_map(
     sm = ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = fig.colorbar(sm, cax=axes["cbar"])
-    cbar.set_ticks([0.0, 0.5, 1.0])
-    cbar.set_ticklabels(["0", "0.5", "1"])
+    step = _colorbar_tick_step(len(taxa_order))
+    ticks = np.round(np.arange(0.0, 1.0 + step / 2.0, step), 2)
+    cbar.set_ticks(ticks)
+    cbar.set_ticklabels([f"{tick:g}" for tick in ticks])
     cbar.ax.tick_params(labelsize=layout.text_sizes["cbar_tick"])
     cbar.set_label(
         "Average Bootstrap Value",
