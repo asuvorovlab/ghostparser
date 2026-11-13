@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.2
+## v0.1.2 - Nov 13, 2026
 
 - `outflow_introgression` is renamed `outflow_or_bidirectional_introgression`,
   and its `inference` reads `introgression from B to C with probable C to B`.
