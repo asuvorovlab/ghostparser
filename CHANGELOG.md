@@ -11,6 +11,11 @@
 - The sampled matrices are renamed from
   `introgression_matrix_inflow_outflow*.tsv` to
   `introgression_matrix_sampled*.tsv`.
+- New `bootstrap_threshold` key (`-bt`, `--bootstrap-threshold`), off by
+  default: the introgression maps take only triplets whose `bootstrap_value`
+  clears their class's threshold, given as one value, four in the order no,
+  inflow, outflow, ghost, or a mapping of `MSC`, `MSCi_in`, `MSCi_out` and
+  `MSCig`. The results TSV keeps every triplet.
 
 ## v0.1.1 - Oct 30, 2026
 

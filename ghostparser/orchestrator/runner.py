@@ -336,6 +336,18 @@ def run_orchestrator(config):
         metrics.log(f"Shape diagnostics: {config['shape_diagnostics']}")
         metrics.log(f"Diagnostic: {config['diagnostic']}")
         metrics.log(f"Consolidation enabled: {config['consolidation']}")
+        bootstrap_threshold = config.get("bootstrap_threshold")
+        metrics.log(
+            "Bootstrap threshold: "
+            + (
+                ", ".join(
+                    f"{classification} >= {threshold:g}"
+                    for classification, threshold in bootstrap_threshold.items()
+                )
+                if bootstrap_threshold
+                else "off"
+            )
+        )
         metrics.log(f"Support threshold: {support_threshold}")
         metrics.log("")
 
@@ -691,11 +703,26 @@ def run_orchestrator(config):
                     outgroups=rename_taxon_labels(outgroup_taxa, rename_map),
                     rename_map=rename_map,
                     overwrite=config["overwrite"],
+                    bootstrap_threshold=bootstrap_threshold,
                 )
                 map_wall_time, map_cpu_time = _elapsed_times(
                     map_start_wall, map_start_cpu
                 )
                 _log_stage_timing(metrics, map_wall_time, map_cpu_time)
+                if map_artifacts.threshold_counts is not None:
+                    for classification, (total, kept) in sorted(
+                        map_artifacts.threshold_counts.items()
+                    ):
+                        threshold = bootstrap_threshold.get(classification)
+                        rule = (
+                            "no threshold"
+                            if threshold is None
+                            else f">= {threshold:g}"
+                        )
+                        metrics.log(
+                            f"  Mapped {classification} ({rule}): "
+                            f"{kept} of {total}"
+                        )
                 metrics.log(f"  Taxa represented: {map_artifacts.taxa_count}")
                 metrics.log(f"  Bootstrap plot: {map_artifacts.bootstrap_plot_path}")
                 metrics.log(f"  Counts plot: {map_artifacts.counts_plot_path}")

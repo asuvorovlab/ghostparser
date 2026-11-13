@@ -129,7 +129,8 @@ Marked `integration` throughout (every test drives `run_orchestrator`) and `outp
 - `test_every_optional_output_lands_where_documented_under_display_names`.
   Inputs: one run with `species_rename_map` mapping `A -> Homo sapiens` and
   `B -> Pan sp.`, consolidation, `generate_summary_stats` and
-  `bootstrap_diagnostic` on. Expected outputs: the triplet taxa are
+  `bootstrap_diagnostic` on, and a `bootstrap_threshold` of 0 for every class,
+  which keeps every triplet. Expected outputs: the triplet taxa are
   `{Homo sapiens, Pan sp., C, D}`; the `(A,B,C)` species subtree is
   `(('Homo sapiens','Pan sp.'),C);` and every `species_tree` column parses back
   to its triplet's names; the display names appear in the results TSV, the
@@ -141,7 +142,8 @@ Marked `integration` throughout (every test drives `run_orchestrator`) and `outp
   columns are in the results header and every result has `bootstrap_dct_stats`.
   Purpose: every optional output honours its location and column contract, the
   map reaches every named output (quoted where the output is Newick) and
-  nothing the run reads back is renamed, all from one run.
+  nothing the run reads back is renamed, all from one run, with a threshold
+  passed through to consolidation.
 - `test_parallel_runs_match_serial`. Inputs: the same fixture run serially
   and with 3 workers under a fixed seed. Expected outputs: every compared
   field, bootstrap values included, is identical. Purpose: distributing
@@ -802,6 +804,17 @@ them.
   a flag beside the file replaces the file's value or adds a key it lacks, the
   negated switches beat the file's canonical `true`, and untouched keys keep
   the file's value.
+- `test_bootstrap_threshold_forms_resolve_per_classification`. Inputs
+  (parametrized, 7 rows), each written to a config file: `bootstrap_threshold`
+  as `0.9`, `"0.7"`, `[0.9, 0.8, 0.9, 0.85]`, `"0.9,0.8,0.9,0.85"`, the full
+  `MSC`/`MSCi_in`/`MSCi_out`/`MSCig` mapping, the partial mapping
+  `{MSCig: 1, MSCi_out: 0}`, and `null`; each string row is also passed as
+  `-bt`. Expected outputs: one value fills all four classifications; four go
+  to no, inflow, outflow-or-bidirectional and ghost in that order; a mapping
+  fills only the classes it names, both ends of `[0, 1]` accepted; `null`
+  stays `None`; the `-bt` form resolves the same as the file form. Purpose:
+  every accepted form of the key, and the flag string, reach one threshold
+  per classification.
 - `test_outgroup_key_is_normalized_or_rejected`. Inputs (parametrized, 8
   rows), each written to a config file: `outgroup` given as a single label, a comma-separated string, a
   padded string with a trailing comma, and a list whose entries are
@@ -811,17 +824,21 @@ them.
   `outgroup`. Purpose: one key covers the single- and multiple-outgroup cases
   in every accepted shape, and a value that yields no labels is an error
   rather than an empty outgroup list.
-- `test_invalid_values_are_rejected_by_field_name`. Inputs (parametrized, 7
+- `test_invalid_values_are_rejected_by_field_name`. Inputs (parametrized, 12
   rows): `species_tree_path: null`, `p_value_correction: true` (what YAML makes
   of a bare `yes`), `diagnostic: "yes"`, `seed: "abc"`,
-  `preflight_triplet_cap: -1`, `species_rename_map: absent.tsv`, and
-  `triplet_filter` set beside `species_filter`. Expected outputs: `ConfigError`
-  whose message names the field (or, for the boolean-typed choice, says `must
-  be one of`; for the pair, `cannot both be set`). Purpose: one case per
-  validator shape: required path, choice list, optional bool, optional int,
-  non-negative int, a path whose file is read when the config resolves, and
-  two paths that exclude each other, each failing by name rather than
-  surfacing later.
+  `preflight_triplet_cap: -1`, `species_rename_map: absent.tsv`,
+  `triplet_filter` set beside `species_filter`, and `bootstrap_threshold` as
+  `1.5`, `"high"`, `[0.9, 0.8]`, `{MSCi: 0.5}`, and `0.9` beside
+  `bootstrap: false`. Expected outputs: `ConfigError` whose message names the
+  field (or, for the boolean-typed choice, says `must be one of`; for the
+  pair, `cannot both be set`; for the threshold's count, key and bootstrap
+  cases, `one value for every class or four`, `unknown key` and `needs the
+  bootstrap`). Purpose: one case per validator shape: required path, choice
+  list, optional bool, optional int, non-negative int, a path whose file is
+  read when the config resolves, two paths that exclude each other, and each
+  way a threshold can be malformed or meaningless, each failing by name rather
+  than surfacing later.
 - `test_full_sample_config_names_every_runtime_key_at_its_default`. Inputs:
   `orchestrator_full.yaml` read both as raw YAML and through the loader, plus a
   required-keys-only file. Expected outputs: every key the normalizer produces
@@ -903,6 +920,16 @@ The count-helper test is `core`; the two that call `generate_introgression_maps`
   the two parts, a probable reverse kept out of every weighted sheet, the flag
   that drives the ghost bar outline, the non-sister counts, and overwrite
   behavior.
+- `test_bootstrap_threshold_maps_only_the_triplets_that_clear_it`. Inputs:
+  the nine shared result rows on `(((A,B),C),D)` with the threshold inflow
+  0.5, outflow-or-bidirectional 0.5, ghost 0.45 and no threshold for
+  `no_introgression`. Expected outputs: `threshold_counts` inflow `(3, 2)`,
+  no `(1, 1)`, outflow `(1, 0)`, ghost `(4, 2)`; `taxa_count == 4`; `B ← C`
+  0.6 over 1, `A ← C` 0.5 over 1, `C ← B` 0 and no probable reverse; ghost
+  counts `A: 1, B: 0, C: 1, D: 0`; non-sister counts `{A,C}: 3`, `{B,C}: 3`,
+  `{A,D}: 2`, `{B,D}: 1`, `{C,D}: 1`. Purpose: the threshold is inclusive,
+  leaves an unnamed class whole, and every sheet, non-sister counts included,
+  is built from the kept triplets while the axes stay the species tree's.
 - `test_generate_introgression_maps_selects_the_requested_taxa`. Inputs
   (parametrized, 3 rows): a balanced four-taxon tree with no taxon filter, the
   same tree with `plot_taxa=["A", "B", "C"]`, and an outgroup tree with

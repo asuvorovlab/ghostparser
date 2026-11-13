@@ -140,6 +140,9 @@ class IntrogressionMapArtifacts:
     taxa_count: int
     non_ghost_edge_count: int
     ghost_target_count: int
+    # Per classification, ``(triplets, kept)`` under ``bootstrap_threshold``;
+    # ``None`` when no threshold was given.
+    threshold_counts: dict | None = None
 
 
 def _extract_result_fields(result):
@@ -157,6 +160,41 @@ def _extract_result_fields(result):
         getattr(result, "dis1_topology", None),
         getattr(result, "bootstrap_value", None),
     )
+
+
+def _apply_bootstrap_threshold(results, bootstrap_threshold):
+    """Keep the triplets whose ``bootstrap_value`` clears their class's threshold.
+
+    Args:
+        results: List of ``TripletPipelineResult``-like objects.
+        bootstrap_threshold: Mapping of classification to its minimum
+            ``bootstrap_value``; a class it does not name is kept whole, and a
+            triplet without a ``bootstrap_value`` never clears a threshold.
+
+    Returns:
+        A tuple ``(kept, counts)``: the kept results in input order, and a dict
+        mapping each classification seen to ``(triplets, kept)``.
+    """
+    kept = []
+    totals = {}
+    kept_counts = {}
+    for result in results:
+        _triplet, classification, _topology, bootstrap_value = (
+            _extract_result_fields(result)
+        )
+        totals[classification] = totals.get(classification, 0) + 1
+        threshold = bootstrap_threshold.get(classification)
+        if threshold is not None and (
+            bootstrap_value is None or float(bootstrap_value) < threshold
+        ):
+            continue
+        kept.append(result)
+        kept_counts[classification] = kept_counts.get(classification, 0) + 1
+    counts = {
+        classification: (total, kept_counts.get(classification, 0))
+        for classification, total in totals.items()
+    }
+    return kept, counts
 
 
 def _load_species_tree(species_tree_path, rename_map=None):
@@ -1227,6 +1265,7 @@ def generate_introgression_maps(
     outgroups=None,
     rename_map=None,
     overwrite=True,
+    bootstrap_threshold=None,
 ):
     """Generate the bootstrap and counts introgression maps and their TSV matrices.
 
@@ -1244,12 +1283,26 @@ def generate_introgression_maps(
             the tree labels.
         overwrite: Whether to overwrite an existing output directory or write
             to an auto-suffixed sibling.
+        bootstrap_threshold: Optional mapping of classification to the minimum
+            ``bootstrap_value`` a triplet of that class needs to be mapped; a
+            class it does not name is mapped whole. The taxa axes still follow
+            the species tree, so they do not shrink with the kept triplets.
+
+    Returns:
+        An ``IntrogressionMapArtifacts`` naming every output.
     """
     # The orchestrator hands this a dedicated ``consolidation/`` subfolder of a
     # freshly prepared run directory, so the reset only ever creates it.
     output_path = Path(prepare_output_directory(output_dir, overwrite=overwrite))
 
     outgroup_set = set(outgroups) if outgroups else set()
+
+    results = list(results)
+    threshold_counts = None
+    if bootstrap_threshold:
+        results, threshold_counts = _apply_bootstrap_threshold(
+            results, bootstrap_threshold
+        )
 
     non_ghost_weights, ghost_weights, taxa_seen = _collect_weights(results)
     species_tree = _load_species_tree(species_tree_path, rename_map)
@@ -1376,4 +1429,5 @@ def generate_introgression_maps(
         ghost_target_count=len(
             [taxon for taxon, value in ghost_weights.items() if value > 0.0]
         ),
+        threshold_counts=threshold_counts,
     )

@@ -175,6 +175,64 @@ def test_generate_introgression_maps_writes_every_sheet_from_the_results(tmp_pat
 
 @pytest.mark.core
 @pytest.mark.output
+def test_bootstrap_threshold_maps_only_the_triplets_that_clear_it(tmp_path):
+    """`bootstrap_threshold` drops a triplet whose support falls below its class's bar.
+
+    The threshold is inclusive, a class it does not name (``no_introgression``
+    here) is kept whole, and every sheet is built from the kept triplets
+    alone, the non-sister counts included, while the taxa axes still follow
+    the species tree. The per-class ``(triplets, kept)`` counts are returned
+    for the run to report.
+    """
+    species_tree = tmp_path / "species.tree"
+    species_tree.write_text(_SPECIES_TREE)
+    output_dir = tmp_path / "out"
+
+    artifacts = generate_introgression_maps(
+        _RESULTS,
+        species_tree_path=str(species_tree),
+        output_dir=str(output_dir),
+        bootstrap_threshold={
+            "inflow_introgression": 0.5,
+            "outflow_or_bidirectional_introgression": 0.5,
+            "ghost_introgression": 0.45,
+        },
+    )
+
+    assert artifacts.threshold_counts == {
+        "inflow_introgression": (3, 2),
+        "no_introgression": (1, 1),
+        "outflow_or_bidirectional_introgression": (1, 0),
+        "ghost_introgression": (4, 2),
+    }
+    assert artifacts.taxa_count == 4
+
+    data = output_dir / "consolidation_data"
+    avg = _read_matrix(data / "introgression_matrix_sampled.tsv")
+    count = _read_matrix(data / "introgression_matrix_sampled_supporting_count.tsv")
+    reverse = _read_matrix(data / "introgression_matrix_sampled_probable_reverse.tsv")
+    # C->B keeps only its 0.6 row; C->A's 0.5 sits exactly on the bar; the
+    # outflow row's 0.3 falls below it, so neither B->C nor its reverse remains.
+    assert (avg["B"]["C"], count["B"]["C"]) == (0.6, 1)
+    assert (avg["A"]["C"], count["A"]["C"]) == (0.5, 1)
+    assert avg["C"]["B"] == 0
+    assert sum(sum(row.values()) for row in reverse.values()) == 0
+
+    ghost_count = _read_column(
+        data / "introgression_ghost_target_strength_supporting_count.tsv", "supporting_count"
+    )
+    assert ghost_count == {"A": 1, "B": 0, "C": 1, "D": 0}
+
+    non_sister = _read_matrix(data / "introgression_matrix_sampled_non_sister.tsv")
+    expected_pairs = {("A", "C"): 3, ("B", "C"): 3, ("A", "D"): 2, ("B", "D"): 1, ("C", "D"): 1}
+    for first in "ABCD":
+        for second in "ABCD":
+            expected = expected_pairs.get(tuple(sorted((first, second))), 0)
+            assert non_sister[first][second] == expected, (first, second)
+
+
+@pytest.mark.core
+@pytest.mark.output
 @pytest.mark.parametrize(
     "tree, results, kwargs, absent, expected_count",
     [

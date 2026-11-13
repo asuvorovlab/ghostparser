@@ -955,8 +955,11 @@ mode, variance, entropy, min, max) x 3 metrics (avg_tree_height,
 internal_branch, sister_distance) x 3 topology classes (concordant,
 discordant1, discordant2) = **63** metric columns. The nine named
 per-iteration bootstrap columns must appear in the results header and every
-result must carry `bootstrap_dct_stats`. The rename derivation is under the
-rename-map section below.
+result must carry `bootstrap_dct_stats`. The `bootstrap_threshold` of 0 for
+every class is cleared by every `bootstrap_value`, a fraction in `[0, 1]`, so
+consolidation maps every triplet and the outputs checked are those of an
+unthresholded run. The rename derivation is under the rename-map section
+below.
 
 ### `test_parallel_runs_match_serial`
 
@@ -1188,6 +1191,25 @@ the documented "no cap" spelling. `--species-filter` goes through
 `_resolve_path`, so only the tail of the resolved path is pinned, and
 `triplet_filter` stays `None` because neither the file nor a flag gave it.
 
+### `test_bootstrap_threshold_forms_resolve_per_classification`
+
+**Inputs and derivation:** the keys, in order, are `MSC` (`no_introgression`),
+`MSCi_in` (`inflow_introgression`), `MSCi_out`
+(`outflow_or_bidirectional_introgression`) and `MSCig`
+(`ghost_introgression`). One value is repeated four times; four values pair
+with the keys in order; a string is split on commas first, which is how `-bt`
+reaches the normalizer; a mapping fills only the classes it names.
+
+| Input | Result |
+| --- | --- |
+| `0.9` | all four `0.9` |
+| `"0.7"` | all four `0.7` |
+| `[0.9, 0.8, 0.9, 0.85]` | no `0.9`, inflow `0.8`, outflow `0.9`, ghost `0.85` |
+| `"0.9,0.8,0.9,0.85"` | the same as the list |
+| `{MSC: 0.9, MSCi_in: 0.8, MSCi_out: 0.9, MSCig: 0.85}` | the same as the list |
+| `{MSCig: 1, MSCi_out: 0}` | outflow `0.0`, ghost `1.0`; `[0, 1]` is closed at both ends |
+| `null` | `None` (off) |
+
 ### `test_outgroup_key_is_normalized_or_rejected`
 
 **Inputs and derivation:** every accepted shape flattens the same way: each
@@ -1218,6 +1240,11 @@ rather than silently producing an unrooted run.
 | `seed: "abc"` | `_validate_optional_int` | Accepts `None` or an `int`; also rejects `bool`, since `isinstance(True, int)` holds and `seed: true` is a mistake rather than a seed of 1. | `seed` |
 | `preflight_triplet_cap: -1` | `_validate_non_negative_int` | Accepts `int >= 0`; `0` is the documented "no cap", so `-1` is the nearest value with no meaning. | `preflight_triplet_cap` |
 | `species_rename_map: absent.tsv` | `_validate_species_rename_map` | The path resolves, but the file is read on the spot (`load_species_rename_map`) and does not exist; its `FileNotFoundError` is re-raised as a config error. | `species_rename_map` |
+| `bootstrap_threshold: 1.5` | `_threshold_number` | Outside `[0, 1]`. | `bootstrap_threshold` |
+| `bootstrap_threshold: "high"` | `_threshold_number` | `float("high")` raises. | `bootstrap_threshold` |
+| `bootstrap_threshold: [0.9, 0.8]` | `_validate_bootstrap_threshold` | Two values are neither one for every class nor one per class. | `one value for every class or four` |
+| `bootstrap_threshold: {MSCi: 0.5}` | `_validate_bootstrap_threshold` | `MSCi` is none of `MSC`, `MSCi_in`, `MSCi_out`, `MSCig`. | `unknown key` |
+| `bootstrap_threshold: 0.9` beside `bootstrap: false` | `normalize_orchestrator_payload` | Without the bootstrap no triplet has a `bootstrap_value` to compare. | `needs the bootstrap` |
 | `triplet_filter: triplets.txt` beside `species_filter: species.txt` | `_validate_triplet_selection` | Each path resolves on its own (neither file is read here), but the two select triplets in ways that cannot be reconciled (named triplets against every triplet among named species), so both set is an error before any file is opened. | `cannot both be set` |
 
 The `p_value_correction` row is the guard that keeps the boolean mapping from
@@ -1569,6 +1596,36 @@ symmetrically with a zero diagonal.
 which with `overwrite=False` leaves `introgression` and its `stale.txt` alone
 and picks the smallest free suffix, `introgression_1`, so the plot path
 returned points there.
+
+### `test_bootstrap_threshold_maps_only_the_triplets_that_clear_it`
+
+**Inputs:** the nine rows above with the threshold inflow `0.5`,
+outflow-or-bidirectional `0.5`, ghost `0.45`, and none for
+`no_introgression`.
+
+**Derivation:** a row is kept when its class has no threshold or its weight
+is at least the threshold.
+
+| # | Class | Weight | Threshold | Kept |
+| --- | --- | --- | --- | --- |
+| 1 | inflow | 0.6 | 0.5 | yes |
+| 2 | inflow | 0.2 | 0.5 | no |
+| 3 | no_introgression | 0.0 | none | yes |
+| 4 | inflow | 0.5 | 0.5 | yes (inclusive) |
+| 5 | outflow_or_bidirectional | 0.3 | 0.5 | no |
+| 6 | ghost | 0.8 | 0.45 | yes |
+| 7 | ghost | 0.4 | 0.45 | no |
+| 8 | ghost | 0.4 | 0.45 | no |
+| 9 | ghost | 0.5 | 0.45 | yes |
+
+Counts per class, `(triplets, kept)`: inflow `(3, 2)`, no `(1, 1)`, outflow
+`(1, 0)`, ghost `(4, 2)`. Sampled edges: `C → B` from row 1 alone, `0.6` over
+1; `C → A` from row 4, `0.5` over 1; row 5 is gone, so `B → C` is `0` and the
+probable-reverse sheet is all zero. Ghost targets: `A` from row 6 and `C` from
+row 9, one each; `D` lost row 8. Non-sister pairs from the kept rows: rows 1,
+3 and 4 are `(A,B,C)` → `{A,C}: 3`, `{B,C}: 3`; row 6 `(A,B,D)` → `{A,D}: 1`,
+`{B,D}: 1`; row 9 `(A,C,D)` has sisters `A`, `C` → `{A,D}` now `2`,
+`{C,D}: 1`. The species tree still lists `A, B, C, D`, so `taxa_count == 4`.
 
 ### `test_generate_introgression_maps_selects_the_requested_taxa`
 

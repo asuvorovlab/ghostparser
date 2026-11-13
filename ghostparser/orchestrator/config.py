@@ -62,6 +62,15 @@ PERMUTATION_CI_METHOD_CHOICES = (
     "normal",
 )
 
+# ``bootstrap_threshold`` keys, in the order a list or comma-separated value
+# gives them, each with the classification it filters. ``ambiguous`` has none.
+BOOTSTRAP_THRESHOLD_KEYS = (
+    ("MSC", "no_introgression"),
+    ("MSCi_in", "inflow_introgression"),
+    ("MSCi_out", "outflow_or_bidirectional_introgression"),
+    ("MSCig", "ghost_introgression"),
+)
+
 # Parallelization knobs specific to this package.
 
 # CLI argument dest names that also map to config-file payload keys. These are
@@ -88,6 +97,7 @@ _ORCHESTRATOR_PAYLOAD_ARG_NAMES = [
     "diagnostic",
     "consolidation",
     "bootstrap",
+    "bootstrap_threshold",
     "preflight_data_check",
     "preflight_triplet_cap",
 ]
@@ -380,6 +390,89 @@ def _validate_bootstrap_options(payload: dict) -> tuple[bool, dict]:
     }
 
 
+def _threshold_number(value, field: str) -> float:
+    """Validate one bootstrap threshold, a fraction in ``[0, 1]``.
+
+    Args:
+        value: The number, or its string form from the command line.
+        field: The field name reported in an error.
+
+    Returns:
+        The threshold as a float.
+
+    Raises:
+        ConfigError: If the value is not a number in ``[0, 1]``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ConfigError(f"Config field {field} must be a number between 0 and 1")
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise ConfigError(
+            f"Config field {field} must be a number between 0 and 1, got {value!r}"
+        ) from exc
+    # NaN fails both comparisons, so it is rejected here too.
+    if not 0.0 <= number <= 1.0:
+        raise ConfigError(
+            f"Config field {field} must be a number between 0 and 1, got {value!r}"
+        )
+    return number
+
+
+def _validate_bootstrap_threshold(payload: dict) -> dict | None:
+    """Validate ``bootstrap_threshold``: one value for every class, four in
+    ``BOOTSTRAP_THRESHOLD_KEYS`` order, or a mapping of some of those keys.
+
+    Args:
+        payload: The config/CLI payload.
+
+    Returns:
+        ``None`` when unset, else a dict mapping each thresholded
+        classification to its minimum ``bootstrap_value``.
+
+    Raises:
+        ConfigError: If a value is outside ``[0, 1]``, the count is neither one
+            nor four, or a mapping names an unknown key or none at all.
+    """
+    value = payload.get("bootstrap_threshold")
+    if value is None:
+        return None
+
+    key_names = [key for key, _label in BOOTSTRAP_THRESHOLD_KEYS]
+    if isinstance(value, dict):
+        unknown = sorted(str(key) for key in value if key not in key_names)
+        if unknown or not value:
+            raise ConfigError(
+                "Config field bootstrap_threshold must map some of "
+                f"{', '.join(key_names)} to a threshold"
+                + (f"; unknown key(s): {', '.join(unknown)}" if unknown else "")
+            )
+        return {
+            label: _threshold_number(value[key], f"bootstrap_threshold.{key}")
+            for key, label in BOOTSTRAP_THRESHOLD_KEYS
+            if key in value
+        }
+
+    if isinstance(value, str):
+        values = [part.strip() for part in value.split(",")]
+    elif isinstance(value, (list, tuple)):
+        values = list(value)
+    else:
+        values = [value]
+    if len(values) == 1:
+        values = values * len(BOOTSTRAP_THRESHOLD_KEYS)
+    if len(values) != len(BOOTSTRAP_THRESHOLD_KEYS):
+        raise ConfigError(
+            "Config field bootstrap_threshold takes one value for every class or "
+            "four in the order no, inflow, outflow, ghost "
+            f"({', '.join(key_names)}), got {len(values)}"
+        )
+    return {
+        label: _threshold_number(number, "bootstrap_threshold")
+        for (_key, label), number in zip(BOOTSTRAP_THRESHOLD_KEYS, values)
+    }
+
+
 def _validate_permutation_options(payload: dict) -> dict:
     """Validate the config-file-only ``permutation_options`` block.
 
@@ -605,6 +698,18 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Disable bootstrap sampling-with-replacement during triplet inference",
     )
     parser.add_argument(
+        "-bt",
+        "--bootstrap-threshold",
+        dest="bootstrap_threshold",
+        default=None,
+        help=(
+            "Minimum bootstrap_value a triplet needs to reach the introgression "
+            "maps: one value for every class, or four comma-separated in the "
+            "order no, inflow, outflow, ghost (e.g. 0.9,0.8,0.9,0.85); "
+            "ambiguous triplets are never filtered (default: off)"
+        ),
+    )
+    parser.add_argument(
         "--preflight-data-check",
         dest="preflight_data_check",
         action="store_true",
@@ -653,6 +758,12 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         output = _resolve_path(DEFAULT_OUTPUT_FOLDER)
 
     bootstrap, bootstrap_options = _validate_bootstrap_options(payload)
+    bootstrap_threshold = _validate_bootstrap_threshold(payload)
+    if bootstrap_threshold is not None and not bootstrap:
+        raise ConfigError(
+            "Config field bootstrap_threshold needs the bootstrap: without it no "
+            "triplet has a bootstrap_value to compare"
+        )
     permutation_options = _validate_permutation_options(payload)
     triplet_filter, species_filter = _validate_triplet_selection(payload)
     return {
@@ -716,6 +827,7 @@ def normalize_orchestrator_payload(payload: dict) -> dict:
         "bootstrap_iterations": bootstrap_options["iterations"],
         "bootstrap_diagnostic": bootstrap_options["diagnostic"],
         "bootstrap_summary_only": bootstrap_options["summary_only"],
+        "bootstrap_threshold": bootstrap_threshold,
     }
 
 

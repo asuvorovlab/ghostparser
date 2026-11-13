@@ -444,9 +444,11 @@ taxon pair, the triplets in which the two are not the species-tree sisters,
 so the averages can be reweighted against co-occurrence.
 `introgression_matrix_sampled_probable_reverse.tsv` counts, per directed
 pair, the triplets marking it as a probable reverse. Without a bootstrap
-every classified triplet weighs 1. Two figures draw the heatmap (rows
-targets, columns sources) under the species tree, with a bar beside each
-ghost target, and each figure has a different bar style:
+every classified triplet weighs 1. With
+[`bootstrap_threshold`](../README.md#orchestrator) set, only triplets whose
+`bootstrap_value` clears their class's threshold are mapped. Two figures draw
+the heatmap (rows targets, columns sources) under the species tree, with a bar
+beside each ghost target, and each figure has a different bar style:
 
 | Figure | Heatmap cell | Ghost bar |
 | --- | --- | --- |
