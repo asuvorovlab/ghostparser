@@ -1671,6 +1671,17 @@ is `0.0`, which is falsy, so an edge that carries no support does not count →
 `0`; `C` is the target of `(D,C)` with `0.3` → `1`; `D` is never a target →
 `0`.
 
+### `test_colorbar_tick_step_refines_as_the_taxa_count_grows`
+
+**Inputs:** taxa counts `3, 4, ..., 200`: 3 is the fewest a run can map and
+200 the count the figure scaling stops growing at.
+
+**Derivation:** the tiers are `<= 30` taxa → `0.2`, `<= 120` → `0.1`, and
+anything larger → `0.05`, checked in that order, so a larger count can only
+fall in the same or a later, finer tier. The range holds counts in all three
+(3, 31 and 121 among them). `1 / 0.2`, `1 / 0.1` and `1 / 0.05` are whole
+numbers, so every tick set ends on `1`.
+
 ## tests/orchestrator/test_orchestrator_shape.py
 
 ### `test_shape_moments_match_scipy`
