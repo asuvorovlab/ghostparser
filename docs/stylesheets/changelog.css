@@ -1,11 +1,24 @@
 /* Changelog page only (the docs workflow wraps it in div.changelog).
-   Version headings cycle through six colours, counted from the oldest
+   Each version heading is a coloured pill with white text, overriding the
+   site-wide h2 style. The colours cycle through six, counted from the oldest
    release, so a version keeps its colour when newer ones are added. */
-.changelog h2:nth-last-of-type(6n + 1) { color: #1565c0; } /* blue */
-.changelog h2:nth-last-of-type(6n + 2) { color: #2e7d32; } /* green */
-.changelog h2:nth-last-of-type(6n + 3) { color: #d84315; } /* orange */
-.changelog h2:nth-last-of-type(6n + 4) { color: #6a1b9a; } /* purple */
-.changelog h2:nth-last-of-type(6n + 5) { color: #00838f; } /* teal */
-.changelog h2:nth-last-of-type(6n + 6) { color: #ad1457; } /* pink */
+.md-typeset .changelog h2 {
+  width: fit-content;
+  padding: 0.3em 0.9em;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 1.25em;
+  font-weight: 600;
+}
 
-.changelog h2 { font-weight: 500; }
+.md-typeset .changelog h2 .headerlink {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.md-typeset .changelog h2:nth-last-of-type(6n + 1) { background: #1565c0; } /* blue */
+.md-typeset .changelog h2:nth-last-of-type(6n + 2) { background: #2e7d32; } /* green */
+.md-typeset .changelog h2:nth-last-of-type(6n + 3) { background: #d84315; } /* orange */
+.md-typeset .changelog h2:nth-last-of-type(6n + 4) { background: #6a1b9a; } /* purple */
+.md-typeset .changelog h2:nth-last-of-type(6n + 5) { background: #00838f; } /* teal */
+.md-typeset .changelog h2:nth-last-of-type(6n + 6) { background: #ad1457; } /* pink */

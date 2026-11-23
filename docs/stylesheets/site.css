@@ -7,6 +7,50 @@
   --gp-rule: color-mix(in srgb, var(--md-primary-fg-color) 25%, var(--md-default-bg-color));
 }
 
+/* Headings in the page content: heavier and in the theme colour, each level
+   distinct, in place of Material's thin grey defaults. */
+.md-typeset h1 {
+  padding-bottom: 0.3em;
+  border-bottom: 0.1rem solid var(--gp-rule);
+  color: var(--gp-accent);
+  font-weight: 700;
+}
+
+.md-typeset h2 {
+  padding: 0.25em 0.6em;
+  border-left: 0.25rem solid var(--gp-accent);
+  border-radius: 0 0.3rem 0.3rem 0;
+  background: linear-gradient(to right, var(--gp-tint-strong), transparent);
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+}
+
+.md-typeset h3 {
+  color: var(--gp-accent);
+  font-weight: 600;
+}
+
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6 {
+  color: var(--md-default-fg-color);
+  font-weight: 700;
+}
+
+/* The small headings name config keys in code; Material shrinks that code,
+   so enlarge it and set it on an accent chip. */
+.md-typeset h5 {
+  font-size: 0.9em;
+}
+
+.md-typeset :is(h4, h5, h6) code {
+  padding: 0.15em 0.45em;
+  border-radius: 0.25rem;
+  background: var(--gp-tint-strong);
+  color: var(--gp-accent);
+  font-size: 0.95em;
+}
+
 /* Left: the page list, where it is a sidebar (narrower screens use Material's drawer). */
 @media screen and (min-width: 76.25em) {
   /* The top margin clears the fade Material draws under the sticky site title. */
