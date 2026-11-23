@@ -11,6 +11,7 @@ site_dir: site
 
 nav:
   - Overview: index.md
+  - Tutorial: ghostparser/tutorial.md
   - Configuration: ghostparser/index.md
   - Method: ghostparser/orchestrator/index.md
   - Machine learning: ghostparser/ml/index.md

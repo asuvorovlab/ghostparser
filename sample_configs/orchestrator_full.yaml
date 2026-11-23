@@ -1,5 +1,6 @@
 # Every orchestrator key at its default; the comments give the accepted values.
-# Copy it, set the three inputs, and keep only the keys you change.
+# Copy it, set the three inputs, and keep only the keys you change. As shipped
+# it analyzes the Thuja data in data/, so it runs from the top of a clone:
 #
 #   python -m ghostparser.orchestrator -c sample_configs/orchestrator_full.yaml
 #
@@ -7,11 +8,10 @@
 # every key.
 
 # --- Inputs (required) -------------------------------------------------------
-species_tree_path: ./sample_data/species.tree   # Newick, one tree
-gene_trees_path: ./sample_data/genes.tree       # Newick, one tree per line
+species_tree_path: ./data/empirical_data/Thuja/species.tree    # Newick, one tree
+gene_trees_path: ./data/empirical_data/Thuja/combined.trees    # Newick, one tree per line
 outgroup:                                       # one label, "Out1,Out2", or a list
-  - Out1
-  - Out2
+  - Tdol
 
 # --- Output ------------------------------------------------------------------
 output_folder: ./results      # reset before the run when overwrite is true

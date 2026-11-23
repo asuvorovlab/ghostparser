@@ -1152,10 +1152,11 @@ them, and the remaining tests cover precedence, parsing and validation.
 
 **Derivation:** both paths fill every key the user did not give from the same
 module constants, so the two resolved dicts must be equal; the paths resolve
-from the same working directory, and a bare `OutGroup` resolves to
-`["OutGroup"]` either way. The placeholder tree paths need not exist, since
-`_validate_required_path` only checks that the field is a non-empty string
-before resolving it.
+from the same working directory, and a bare `Tdol` resolves to `["Tdol"]`
+either way. The sample's tree paths point at the shipped Thuja data relative
+to the repository root, but they need not exist from wherever pytest runs,
+since `_validate_required_path` only checks that the field is a non-empty
+string before resolving it.
 
 ### `test_config_only_keys_and_nested_blocks_flatten_from_a_file`
 

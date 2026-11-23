@@ -60,6 +60,7 @@ jobs:
           # at their repository paths so relative links hold.
           cp README.md site_docs/index.md
           cp ghostparser/README.md site_docs/ghostparser/index.md
+          cp ghostparser/TUTORIAL.md site_docs/ghostparser/tutorial.md
           cp ghostparser/orchestrator/README.md site_docs/ghostparser/orchestrator/index.md
           cp ghostparser/ml/README.md site_docs/ghostparser/ml/index.md
 
@@ -74,9 +75,11 @@ jobs:
           # The stylesheets mkdocs.yml lists under extra_css.
           cp docs/stylesheets/*.css site_docs/stylesheets/
 
-          # Point relative links to a README at its index.md; absolute URLs keep theirs.
+          # Point relative links to a README at its index.md, and to the tutorial
+          # at its lowercase copy; absolute URLs keep theirs.
           find site_docs -name '*.md' -exec \
-            sed -i 's#\](\([^):]*\)README\.md#](\1index.md#g' {} +
+            sed -i -e 's#\](\([^):]*\)README\.md#](\1index.md#g' \
+                   -e 's#\](\([^):]*\)TUTORIAL\.md#](\1tutorial.md#g' {} +
 
       - name: Build static site
         run: |

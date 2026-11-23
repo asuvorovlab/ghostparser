@@ -1,8 +1,9 @@
 # The three required inputs; every other key takes its default
-# (orchestrator_full.yaml lists them).
+# (orchestrator_full.yaml lists them). As shipped it analyzes the Thuja data
+# in data/, so it runs from the top of a clone:
 #
 #   python -m ghostparser.orchestrator -c sample_configs/orchestrator_minimal.yaml
 
-species_tree_path: ./sample_data/species.tree
-gene_trees_path: ./sample_data/genes.tree
-outgroup: OutGroup
+species_tree_path: ./data/empirical_data/Thuja/species.tree
+gene_trees_path: ./data/empirical_data/Thuja/combined.trees
+outgroup: Tdol

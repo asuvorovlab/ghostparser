@@ -15,6 +15,10 @@ and how deep the gene trees disagree with the species tree. The engine is
 [`ghostparser.ml`](#machine-learning) subpackage trains classifiers on the
 summary statistics of simulated runs.
 
+New users can start with the [tutorial](ghostparser/TUTORIAL.md): a first
+run on a shipped dataset, the input format the trees need, and how to read
+the results.
+
 The method (the tests, their formulas and the literature behind them) is
 described in the [orchestrator guide](ghostparser/orchestrator/README.md);
 every option is in the [configuration guide](ghostparser/README.md). The same pages are hosted at
@@ -84,7 +88,9 @@ gene trees, unresolved triplets, filter lines naming unknown taxa) and writes
 Three inputs are required: the species tree (`-st`, branch lengths optional),
 the gene trees (`-gt`, one Newick tree per line, every branch with a length;
 a missing one is read as 0) and the outgroup label(s) (`-og`,
-comma-separated, in any order: the species tree ranks them). Everything else has a default;
+comma-separated, in any order: the species tree ranks them). The species tree
+and every gene tree must contain the outgroups, whether rooted or not:
+GhostParser roots each tree on them itself and then prunes them. Everything else has a default;
 the full argument table, the config-file-only keys and the formats of the
 filter and rename-map files are in the
 [configuration guide](ghostparser/README.md).
@@ -92,12 +98,14 @@ filter and rename-map files are in the
 Example species tree, gene trees and run:
 
 ```
-(((TaxaA:0.1,TaxaB:0.2):0.3,TaxaC:0.4):0.5,(TaxaD:0.6,OutGroup:0.7):0.8);
+((((TaxaA:0.1,TaxaB:0.2):0.3,TaxaC:0.4):0.2,TaxaD:0.6):0.5,OutGroup:1.1);
 ```
 
+Every gene tree carries the outgroup, rooted (first line) or not (second):
+
 ```
-((TaxaA:0.15,TaxaB:0.25):0.35,TaxaC:0.45);
-((TaxaA:0.11,TaxaC:0.22):0.33,TaxaD:0.44);
+((((TaxaA:0.15,TaxaB:0.25):0.35,TaxaC:0.45):0.2,TaxaD:0.6):0.4,OutGroup:1.2);
+(((TaxaA:0.11,TaxaC:0.22):0.33,TaxaB:0.4):0.25,TaxaD:0.5,OutGroup:1.3);
 ```
 
 ```bash

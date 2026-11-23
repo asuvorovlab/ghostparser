@@ -5,7 +5,8 @@ introgression engine: it takes a species tree and gene trees and classifies
 every ingroup triplet. `ghostparser.ml` is optional (`pip install .[ml]`) and
 trains multi-label classifiers on the summary statistics the orchestrator
 writes. The method is in the [orchestrator guide](orchestrator/README.md) and
-the trainers in the [ML guide](ml/README.md).
+the trainers in the [ML guide](ml/README.md); a first run, step by step, is in
+the [tutorial](TUTORIAL.md).
 
 The rest of this page is the configuration reference: every key, the
 orchestrator's first and then the trainers' and tuner's.
@@ -106,21 +107,21 @@ A: Homo sapiens
 B: Pan troglodytes
 ```
 
-Minimal file:
+Minimal file, here on the *Thuja* data shipped in `data/`:
 
 ```yaml
-species_tree_path: sample_data/species.tree
-gene_trees_path: sample_data/genes.tree
-outgroup: OutGroup
+species_tree_path: data/empirical_data/Thuja/species.tree
+gene_trees_path: data/empirical_data/Thuja/combined.trees
+outgroup: Tdol
 ```
 
 Every key at its default (`sample_configs/orchestrator_full.yaml` holds the
 same with the accepted values of each):
 
 ```yaml
-species_tree_path: sample_data/species.tree  # Newick species tree
-gene_trees_path: sample_data/genes.tree      # one Newick gene tree per line
-outgroup: Out1,Out2                          # comma-separated, or a list
+species_tree_path: data/empirical_data/Thuja/species.tree  # Newick species tree
+gene_trees_path: data/empirical_data/Thuja/combined.trees  # one Newick gene tree per line
+outgroup: Tdol                               # one label, comma-separated, or a list
 output_folder: results
 overwrite: true                              # false = write to a suffixed sibling
 triplet_filter: null                         # not with species_filter
@@ -461,8 +462,10 @@ results JSON are logged to the run instead of written to disk.
 
 ## Sample configs
 
-Every file under `sample_configs/` loads as shipped; change the paths and the
-outgroup labels to your data. For JSON, write the same keys as a JSON object.
+Every file under `sample_configs/` loads as shipped. The two orchestrator
+samples analyze the *Thuja* data in `data/`, so they run as they are from the
+top of a clone; change the paths and the outgroup labels to your data. For
+JSON, write the same keys as a JSON object.
 
 | File | Scenario |
 | --- | --- |
