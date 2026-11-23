@@ -1,5 +1,7 @@
 # Changelog
 
+## v0.1.3 - Unreleased
+
 ## v0.1.2 - Nov 13, 2026
 
 - `outflow_introgression` is renamed `outflow_or_bidirectional_introgression`,
