@@ -10,10 +10,8 @@ every flag and key in the [configuration guide](../README.md).
 
 ## The pipeline
 
-1. **Rooting.** The species tree is rooted where the outgroups branch off and
-   pruned of them; the remaining taxa are the ingroup. Each gene tree is
-   rooted from its farthest outgroup, at the common ancestor of the
-   outgroups outside the ingroup, and pruned of them.
+1. **Rooting.** Every tree is rooted on the outgroups and pruned of them; the
+   taxa left in the species tree are the ingroup ([Rooting](#rooting)).
 2. **Triplets.** Every ingroup triplet is enumerated (or the ones a
    `triplet_filter` names, or every triplet among the species a
    `species_filter` names) and written `(A, B, C)` with A and B the
@@ -68,47 +66,63 @@ what the last two tests compare.
 
 ## Rooting
 
-Read unrooted, a tree is rooted by its outgroups when one branch (or, inside
-a polytomy, one node) parts every outgroup from every other taxon, in
-whatever orientation the file was written. The species tree must root this
-way; if other taxa sit between the outgroups the run stops and names the
-groups those taxa fall into, so the ones that are outgroups can be added to
-the list.
+Every tree is rooted on the outgroups you name, whether or not the file was
+already rooted, and then pruned of them, so no triplet contains an outgroup.
+Read unrooted, a set of outgroups roots a tree when one branch (or, inside a
+polytomy, one node) parts every one of them from every other taxon, in
+whatever orientation the file was written.
 
-The rooted species tree ranks the outgroups by their distance from the
-ingroup root, the summed branch lengths along the path, with the listed order
-breaking exact ties. A species tree lacking any branch length keeps the
-listed order; nothing else in a run reads species-tree lengths. An outgroup
-the species tree lacks ranks after the rest.
+### Species tree
 
-A gene tree is rooted from its farthest outgroup, taken as the most reliable
-because a closer outgroup can carry genes that sit nearer the ingroup through
-incomplete lineage sorting or introgression. The farthest is the outgroup
-with the longest mean path to the ingroup taxa in that gene tree. The mean
-needs no root, and for outgroups outside the ingroup it ranks them as their
-distance from the ingroup root does. A missing branch length counts as 0 here
-and in every tree height; when two outgroups tie, as all do in a tree without
-lengths, the species-tree rank decides.
+- **Root.** The tree is rooted where all the outgroups branch off. If other
+  taxa sit between the outgroups, the run stops and names the groups those
+  taxa fall into, so the ones that are outgroups can be added to the list.
+- **Ingroup.** The outgroups are pruned; the taxa left are the ingroup.
+- **Outgroup rank.** The outgroups are ranked by their distance from the
+  ingroup root (the summed branch lengths along the path), farthest first,
+  with the listed order breaking exact ties. If any branch lacks a length,
+  the rank is the listed order. Outgroups the species tree lacks rank after
+  the rest, in listed order. This rank is all that species-tree branch
+  lengths are used for, and it matters only when a gene tree's outgroups tie.
 
-Rooted on the farthest, any other outgroup that sits among the ingroup taxa
-(inside the ingroup's common ancestor, on a branch that also leads to
-ingroup taxa) is pruned without being used, because rooting on it would move
-the root into the ingroup and change the rooted shape of every triplet
-spanning the two. The tree is then rooted at the common ancestor of the
-farthest and the other outgroups outside the ingroup, read unrooted, as for
-the species tree; for the ingroup this is the same root as the farthest
-outgroup's own branch. All outgroups are then pruned: no triplet contains
-one, and removing a leaf changes no other taxon's rooted shape or heights.
+### Gene trees
 
-`metrics.txt` and the preflight report give the ranking and count, per
-outgroup, the trees in which it was the farthest, the trees rooted using it
-and the trees in which it was pruned unused. A distant outgroup on a long
-branch can attach inside the ingroup in a single gene and still be the
+- **Farthest outgroup.** Each gene tree is rooted from its farthest outgroup,
+  taken as the most reliable because a closer outgroup can carry genes that
+  sit nearer the ingroup through incomplete lineage sorting or introgression.
+  The farthest is the outgroup with the longest mean path to the ingroup taxa,
+  measured on that gene tree's own branch lengths. The mean needs no root, and
+  for outgroups outside the ingroup it ranks them as their distance from the
+  ingroup root does. A missing branch length counts as 0, here and in every
+  tree height.
+- **Ties.** When outgroups tie, the species-tree rank decides. In a gene tree
+  without branch lengths every outgroup ties, so its farthest is the
+  highest-ranked outgroup it carries; with a species tree that also lacks
+  lengths, that is the first listed. List the outgroup you trust most first.
+- **Tangled outgroups.** Once the tree is rooted on the farthest, any other
+  outgroup that sits among the ingroup taxa (inside the ingroup's common
+  ancestor, on a branch that also leads to ingroup taxa) is pruned without
+  being used, because rooting on it would move the root into the ingroup and
+  change the rooted shape of every triplet spanning the two.
+- **Root.** The tree is rooted at the common ancestor of the farthest and the
+  other outgroups outside the ingroup, read unrooted, as for the species
+  tree. For the ingroup this is the same root as the farthest outgroup's own
+  branch.
+- **Pruning.** All outgroups are then pruned; removing a leaf changes no other
+  taxon's rooted shape or heights.
+- **Dropped trees.** A gene tree carrying no outgroup, or nothing but
+  outgroups, is dropped.
+
+### Checking the rooting
+
+`metrics.txt` and the preflight report give the species-tree rank and count,
+per outgroup, the gene trees in which it was the farthest, the trees rooted
+using it and the trees in which it was pruned unused. A distant outgroup on a
+long branch can attach inside the ingroup in a single gene and still be the
 farthest, so a closer outgroup that is often pruned unused is the sign to
-compare with a run that leaves the distant one out. A gene tree carrying no
-outgroup, or nothing but outgroups, is dropped. `metrics.txt` counts the gene
-trees lacking some branch length, and the preflight report lists each one by
-its position in the input file.
+compare with a run that leaves the distant one out. `metrics.txt` counts the
+gene trees lacking some branch length, and the preflight report lists each
+one by its position in the input file.
 
 ## Reading a triplet from a gene tree
 

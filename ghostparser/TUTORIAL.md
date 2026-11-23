@@ -42,8 +42,8 @@ analyzed plus the outgroup(s). `species.tree` for *Thuja*:
 - With several outgroups, they must branch off together: one branch has to
   separate all of them from all the other species. If another species sits
   between them, the run stops and names the groups the species fall into.
-- Branch lengths are optional. They are used only to rank several outgroups;
-  the topology alone defines the triplets.
+- Branch lengths are optional. They only break ties when a gene tree's
+  outgroup is chosen; the topology alone defines the triplets.
 - Every label must be unique.
 
 ### The gene trees
@@ -83,7 +83,9 @@ lines of `combined.trees`:
 One or more labels from the species tree, given with `-og`; separate several
 with commas (`-og Out1,Out2`). It is required even when your trees are
 already rooted, since it is what GhostParser roots them on. Choose species
-clearly outside the group you are studying.
+clearly outside the group you are studying. With several outgroups, list the
+one you trust most first: how each tree is rooted, and when that order
+matters, is under [Rooting](orchestrator/README.md#rooting).
 
 ## 3. Check the inputs
 

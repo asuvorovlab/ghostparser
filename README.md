@@ -65,9 +65,8 @@ python -m ghostparser.orchestrator -st species.tree -gt genes.tree -og OutGroup 
 
 What a run does:
 
-1. Roots the species tree where the outgroups branch off and prunes them;
-   roots each gene tree from its farthest outgroup, at the common ancestor
-   of the outgroups outside the ingroup, and prunes them.
+1. Roots the species tree and each gene tree on the outgroups and prunes
+   them ([Rooting](ghostparser/orchestrator/README.md#rooting)).
 2. Enumerates every ingroup triplet (or the ones a triplet or species filter
    names), written `(A, B, C)` with A and B the species-tree sisters.
 3. Reads each triplet's rooted topology and tree height out of every gene
@@ -88,9 +87,10 @@ gene trees, unresolved triplets, filter lines naming unknown taxa) and writes
 Three inputs are required: the species tree (`-st`, branch lengths optional),
 the gene trees (`-gt`, one Newick tree per line, every branch with a length;
 a missing one is read as 0) and the outgroup label(s) (`-og`,
-comma-separated, in any order: the species tree ranks them). The species tree
-and every gene tree must contain the outgroups, whether rooted or not:
-GhostParser roots each tree on them itself and then prunes them. Everything else has a default;
+comma-separated). The species tree and every gene tree must contain the
+outgroups, whether rooted or not: GhostParser roots each tree on them itself
+and then prunes them, as [Rooting](ghostparser/orchestrator/README.md#rooting)
+describes, including when the order of several outgroups matters. Everything else has a default;
 the full argument table, the config-file-only keys and the formats of the
 filter and rename-map files are in the
 [configuration guide](ghostparser/README.md).
