@@ -14,6 +14,7 @@ nav:
   - Configuration: ghostparser/index.md
   - Method: ghostparser/orchestrator/index.md
   - Machine learning: ghostparser/ml/index.md
+  - Changelog: changelog.md
 
 theme:
   name: material
@@ -21,6 +22,10 @@ theme:
     - navigation.top
     - search.suggest
     - search.highlight
+
+extra_css:
+  - stylesheets/site.css
+  - stylesheets/changelog.css
 
 plugins:
   - search
@@ -31,6 +36,7 @@ markdown_extensions:
   - tables
   - fenced_code
   - sane_lists
+  - md_in_html
   - pymdownx.superfences
 
 use_directory_urls: true

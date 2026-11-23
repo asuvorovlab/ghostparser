@@ -1,0 +1,87 @@
+/* Sidebar styling for every page, layered over Material's defaults.
+   Tints are mixed from the theme's own colours, so they follow a palette change. */
+:root {
+  --gp-accent: var(--md-primary-fg-color);
+  --gp-tint: color-mix(in srgb, var(--md-primary-fg-color) 7%, var(--md-default-bg-color));
+  --gp-tint-strong: color-mix(in srgb, var(--md-primary-fg-color) 15%, var(--md-default-bg-color));
+  --gp-rule: color-mix(in srgb, var(--md-primary-fg-color) 25%, var(--md-default-bg-color));
+}
+
+/* Left: the page list, where it is a sidebar (narrower screens use Material's drawer). */
+@media screen and (min-width: 76.25em) {
+  /* The top margin clears the fade Material draws under the sticky site title. */
+  .md-sidebar--primary .md-nav--primary > .md-nav__list {
+    margin-top: 0.6rem;
+    padding: 0.4rem;
+    background: var(--gp-tint);
+    border-radius: 0.4rem;
+  }
+
+  .md-sidebar--primary .md-nav--primary > .md-nav__list > .md-nav__item > .md-nav__link {
+    margin: 0.15rem 0;
+    padding: 0.45rem 0.7rem;
+    border-radius: 0.3rem;
+    font-weight: 600;
+    color: var(--md-default-fg-color);
+    transition: background-color 125ms, color 125ms;
+  }
+
+  .md-sidebar--primary .md-nav--primary > .md-nav__list > .md-nav__item > .md-nav__link:hover {
+    background: var(--gp-tint-strong);
+    color: var(--gp-accent);
+  }
+
+  .md-sidebar--primary .md-nav--primary > .md-nav__list > .md-nav__item--active > .md-nav__link,
+  .md-sidebar--primary .md-nav--primary > .md-nav__list > .md-nav__item--active > .md-nav__link:hover {
+    background: var(--gp-accent);
+    color: var(--md-primary-bg-color);
+  }
+}
+
+/* Right: the page's table of contents, as a tinted card with an accent edge. */
+@media screen and (min-width: 60em) {
+  .md-sidebar--secondary .md-nav--secondary {
+    background: var(--gp-tint);
+    border-left: 0.2rem solid var(--gp-accent);
+    border-radius: 0.4rem;
+  }
+
+  /* The title stays pinned while the list scrolls, so it needs the card's solid fill. */
+  .md-sidebar--secondary .md-nav--secondary > .md-nav__title {
+    padding-top: 0.5rem;
+    padding-bottom: 0.4rem;
+    background: var(--gp-tint);
+    box-shadow: none;
+    border-bottom: 0.05rem solid var(--gp-rule);
+    border-radius: 0 0.4rem 0 0;
+    color: var(--gp-accent);
+    font-size: 0.64rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .md-sidebar--secondary .md-nav--secondary > .md-nav__list {
+    padding: 0.2rem 0.6rem 0.6rem 0.6rem;
+  }
+
+  /* Top-level sections stand out; deeper ones hang off a guide line. */
+  .md-sidebar--secondary .md-nav--secondary > .md-nav__list > .md-nav__item > .md-nav__link {
+    font-weight: 600;
+    color: var(--md-default-fg-color);
+  }
+
+  .md-sidebar--secondary .md-nav--secondary .md-nav__item > .md-nav {
+    margin-left: 0.15rem;
+    border-left: 0.05rem solid var(--gp-rule);
+  }
+
+  /* The section being read: highlighted in place, without shifting the text. */
+  .md-sidebar--secondary .md-nav--secondary .md-nav__link--active {
+    margin-left: -0.3rem;
+    padding: 0 0.3rem;
+    border-radius: 0.2rem;
+    background: var(--gp-tint-strong);
+    color: var(--gp-accent);
+    font-weight: 700;
+  }
+}

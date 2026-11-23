@@ -6,7 +6,9 @@ on:
       - main
     paths:
       - "README.md"
+      - "CHANGELOG.md"
       - "ghostparser/**/*.md"
+      - "docs/stylesheets/**"
       - "mkdocs.yml"
       - ".github/workflows/docs-pages.yml"
   workflow_dispatch:
@@ -52,7 +54,7 @@ jobs:
       - name: Prepare Markdown docs tree
         run: |
           rm -rf site_docs
-          mkdir -p site_docs/ghostparser/orchestrator site_docs/ghostparser/ml
+          mkdir -p site_docs/ghostparser/orchestrator site_docs/ghostparser/ml site_docs/stylesheets
 
           # The user docs only, each folder's README as that folder's index.md,
           # at their repository paths so relative links hold.
@@ -60,6 +62,17 @@ jobs:
           cp ghostparser/README.md site_docs/ghostparser/index.md
           cp ghostparser/orchestrator/README.md site_docs/ghostparser/orchestrator/index.md
           cp ghostparser/ml/README.md site_docs/ghostparser/ml/index.md
+
+          # The changelog, wrapped in div.changelog so its stylesheet colours
+          # only that page's version headings.
+          {
+            printf '<div class="changelog" markdown>\n\n'
+            cat CHANGELOG.md
+            printf '\n</div>\n'
+          } > site_docs/changelog.md
+
+          # The stylesheets mkdocs.yml lists under extra_css.
+          cp docs/stylesheets/*.css site_docs/stylesheets/
 
           # Point relative links to a README at its index.md; absolute URLs keep theirs.
           find site_docs -name '*.md' -exec \
